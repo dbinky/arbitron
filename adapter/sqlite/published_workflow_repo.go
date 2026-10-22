@@ -17,6 +17,8 @@ var _ workflow.PublishedStore = (*PublishedWorkflowRepo)(nil)
 
 // PublishedWorkflow is the domain-facing publication record.
 type PublishedWorkflow struct {
+	Revision    string
+	WorkflowID  uuid.UUID
 	Name        string
 	PublisherID uuid.UUID
 	SourceName  string
@@ -56,6 +58,73 @@ func (r *PublishedWorkflowRepo) SetWorkflowID(ctx context.Context, name string, 
 	return nil
 }
 
+var _ workflow.RevisionPublicationStore = (*PublishedWorkflowRepo)(nil)
+
+// CommitPublication makes identity and exact revision proof visible together.
+// A nil identity is supported for local, registry-less publication only.
+func (r *PublishedWorkflowRepo) CommitPublication(ctx context.Context, name string, publication workflow.Publication) error {
+	if publication.Revision == "" {
+		return fmt.Errorf("publication requires a saved revision")
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT INTO published_workflows (
+        name,publisher_id,source_name,visibility,department,workflow_id,saved_revision
+    ) VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(name) DO UPDATE SET
+        publisher_id=excluded.publisher_id,source_name=excluded.source_name,
+        visibility=excluded.visibility,department=excluded.department,
+        workflow_id=excluded.workflow_id,saved_revision=excluded.saved_revision,
+        published_at=strftime('%Y-%m-%dT%H:%M:%SZ')`, name, publication.Publisher.String(), publication.SourceName, publication.Visibility, deptToNullString(publication.Department), ownerToNullString(publication.WorkflowID), publication.Revision)
+	if err != nil {
+		return fmt.Errorf("committing publication %q: %w", name, err)
+	}
+	return nil
+}
+
+// RenamePublication is the shared rename commit point. Private workflows use
+// Registry.Rename instead; they have no publication to prove this operation.
+func (r *PublishedWorkflowRepo) RenamePublication(ctx context.Context, id uuid.UUID, oldName, newName string, publication workflow.Publication) error {
+	if id == uuid.Nil || publication.WorkflowID != id || publication.Revision == "" {
+		return fmt.Errorf("rename publication requires matching identity and saved revision")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin publication rename: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE workflow_identity SET name=?
+    WHERE id=? AND name=? AND scope='shared' AND EXISTS (
+        SELECT 1 FROM published_workflows
+        WHERE name=? AND workflow_id=? AND publisher_id=? AND source_name=?
+    )`, newName, id.String(), oldName, oldName, id.String(), publication.Publisher.String(), publication.SourceName)
+	if err != nil {
+		return publicationRenameError(newName, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return publicationRenameError(newName, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("publication source %q: %w", oldName, workflow.ErrNotFound)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE published_workflows SET
+        name=?,publisher_id=?,source_name=?,visibility=?,department=?,workflow_id=?,saved_revision=?,
+        published_at=strftime('%Y-%m-%dT%H:%M:%SZ')
+    WHERE name=?`, newName, publication.Publisher.String(), publication.SourceName, publication.Visibility, deptToNullString(publication.Department), id.String(), publication.Revision, oldName)
+	if err != nil {
+		return publicationRenameError(newName, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return publicationRenameError(newName, err)
+	}
+	return nil
+}
+func publicationRenameError(name string, err error) error {
+	if isUniqueViolation(err) {
+		return fmt.Errorf("publication %q: %w", name, workflow.ErrAlreadyExists)
+	}
+	return fmt.Errorf("renaming publication %q: %w", name, err)
+}
+
 // PublisherOf implements workflow.PublisherLookup.
 func (r *PublishedWorkflowRepo) PublisherOf(ctx context.Context, name string) (uuid.UUID, bool, error) {
 	row, err := r.queries.GetPublishedWorkflow(ctx, name)
@@ -75,29 +144,41 @@ func (r *PublishedWorkflowRepo) PublisherOf(ctx context.Context, name string) (u
 // Get returns the full publication record for a name, or (nil, false, nil) when
 // it does not exist.
 func (r *PublishedWorkflowRepo) Get(ctx context.Context, name string) (*PublishedWorkflow, bool, error) {
-	row, err := r.queries.GetPublishedWorkflow(ctx, name)
+	row, err := scanPublication(r.db.QueryRowContext(ctx, `SELECT `+publicationColumns+` FROM published_workflows WHERE name=?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("get published %q: %w", name, err)
 	}
-	id, perr := parseUUID(row.PublisherID)
-	if perr != nil {
-		return nil, false, fmt.Errorf("parse publisher id: %w", perr)
+	return &row, true, nil
+}
+
+const publicationColumns = `name,publisher_id,source_name,published_at,visibility,department,workflow_id,saved_revision`
+
+func scanPublication(row interface{ Scan(...any) error }) (PublishedWorkflow, error) {
+	var p PublishedWorkflow
+	var publisher, published string
+	var department, id, revision sql.NullString
+	err := row.Scan(&p.Name, &publisher, &p.SourceName, &published, &p.Visibility, &department, &id, &revision)
+	if err != nil {
+		return p, err
 	}
-	publishedAt, terr := parseTime(row.PublishedAt)
-	if terr != nil {
-		return nil, false, fmt.Errorf("parse published_at: %w", terr)
+	p.PublisherID, err = uuid.Parse(publisher)
+	if err != nil {
+		return p, fmt.Errorf("parse publisher id: %w", err)
 	}
-	return &PublishedWorkflow{
-		Name:        row.Name,
-		PublisherID: id,
-		SourceName:  row.SourceName,
-		PublishedAt: publishedAt,
-		Visibility:  row.Visibility,
-		Department:  row.Department.String, // "" when NULL
-	}, true, nil
+	p.PublishedAt, err = parseTime(published)
+	if err != nil {
+		return p, fmt.Errorf("parse published_at: %w", err)
+	}
+	p.WorkflowID, err = ownerFromNullString(id)
+	if err != nil {
+		return p, err
+	}
+	p.Department = department.String
+	p.Revision = revision.String
+	return p, nil
 }
 
 // GetPublication returns the full publication record for name, including its
@@ -115,6 +196,8 @@ func (r *PublishedWorkflowRepo) PublicationOf(ctx context.Context, name string) 
 		return workflow.Publication{}, ok, err
 	}
 	return workflow.Publication{
+		Revision:   row.Revision,
+		WorkflowID: row.WorkflowID,
 		Publisher:  row.PublisherID,
 		SourceName: row.SourceName,
 		Visibility: workflow.Visibility(row.Visibility),
@@ -145,30 +228,20 @@ func (r *PublishedWorkflowRepo) Upsert(ctx context.Context, name string, publish
 
 // List returns all publication records sorted by name.
 func (r *PublishedWorkflowRepo) List(ctx context.Context) ([]PublishedWorkflow, error) {
-	rows, err := r.queries.ListPublishedWorkflows(ctx)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+publicationColumns+` FROM published_workflows ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list published workflows: %w", err)
 	}
-	out := make([]PublishedWorkflow, 0, len(rows))
-	for _, row := range rows {
-		id, perr := parseUUID(row.PublisherID)
-		if perr != nil {
-			return nil, fmt.Errorf("parse publisher id: %w", perr)
+	defer rows.Close()
+	out := []PublishedWorkflow{}
+	for rows.Next() {
+		row, err := scanPublication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("decode publication: %w", err)
 		}
-		publishedAt, terr := parseTime(row.PublishedAt)
-		if terr != nil {
-			return nil, fmt.Errorf("parse published_at: %w", terr)
-		}
-		out = append(out, PublishedWorkflow{
-			Name:        row.Name,
-			PublisherID: id,
-			SourceName:  row.SourceName,
-			PublishedAt: publishedAt,
-			Visibility:  row.Visibility,
-			Department:  row.Department.String,
-		})
+		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // Delete removes the publication record (used if a publish rolls back, or when

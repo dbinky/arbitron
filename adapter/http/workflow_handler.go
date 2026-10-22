@@ -45,9 +45,12 @@ func (c ownerBoundChecker) FileExists(workflowName, relativePath string) bool {
 }
 
 // writeSharedReadOnlyOrNotFound maps a write-path error to the right HTTP
-// status: shared-read-only → 409, not-found → 404; returns false if the error
-// is neither (caller handles the remaining cases).
+// status: pending recovery → 503, shared-read-only → 409, not-found → 404.
+// It returns false for other errors (caller handles the remaining cases).
 func writeSharedReadOnlyOrNotFound(w http.ResponseWriter, name string, err error) bool {
+	if writeMutationPending(w, err) {
+		return true
+	}
 	switch {
 	case errors.Is(err, workflow.ErrSharedReadOnly):
 		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
@@ -178,6 +181,9 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
+		if writeMutationPending(w, err) {
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load workflow")
 		return
 	}
@@ -235,6 +241,9 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		if writeMutationPending(w, err) {
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load workflow")
@@ -316,6 +325,9 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	id, started, err := h.service.TriggerWithDepartment(r.Context(), name, req.Variables, req.Priority, req.Department)
 	if err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 			return
@@ -396,6 +408,9 @@ func (h *WorkflowHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		vis = "public"
 	}
 	if err := h.wfSvc.Publish(r.Context(), name, req.PublishedName, workflow.Visibility(vis), req.Department); err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		if writeGroupValidationError(w, err) {
 			return
 		}
@@ -431,6 +446,9 @@ func (h *WorkflowHandler) SetVisibility(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.wfSvc.SetVisibility(r.Context(), name, workflow.Visibility(req.Visibility), req.Department); err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, workflow.ErrInvalidVisibility):
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -467,6 +485,9 @@ func (h *WorkflowHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.wfSvc.Copy(r.Context(), name, req.NewName); err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		if writeGroupValidationError(w, err) {
 			return
 		}
@@ -481,41 +502,6 @@ func (h *WorkflowHandler) Copy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "copied", "name": req.NewName})
-}
-
-// saveLayoutRequest is the JSON body for saving node positions.
-type saveLayoutRequest struct {
-	Positions map[string]workflow.NodePosition `json:"positions"`
-}
-
-// SaveLayout handles PUT /workflows/{name}/layout and persists node positions.
-func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if !safeWorkflowName(name) {
-		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
-	var req saveLayoutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
-		return
-	}
-	if len(req.Positions) == 0 {
-		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "positions must not be empty")
-		return
-	}
-
-	if err := h.wfSvc.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
-		if writeSharedReadOnlyOrNotFound(w, name, err) {
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to save layout")
-		return
-	}
-
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 
 // Stats handles GET /workflows/{name}/stats and returns execution statistics.
@@ -586,6 +572,9 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.wfSvc.Create(r.Context(), wf.Name, &wf); err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		if writeGroupValidationError(w, err) {
 			return
 		}
@@ -703,6 +692,9 @@ func (h *WorkflowHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}
+		if writeMutationPending(w, err) {
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to read file")
 		return
 	}
@@ -733,6 +725,9 @@ func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.wfSvc.WriteFile(r.Context(), name, filePath, data); err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
@@ -761,6 +756,9 @@ func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.wfSvc.DeleteFile(r.Context(), name, filePath); err != nil {
+		if writeMutationPending(w, err) {
+			return
+		}
 		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return

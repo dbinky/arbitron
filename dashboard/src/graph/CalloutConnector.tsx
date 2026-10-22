@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNodes, useReactFlow } from '@xyflow/react'
+import { useNodes, useReactFlow, useStoreApi } from '@xyflow/react'
 import styles from './CalloutConnector.module.css'
 
 interface CalloutConnectorProps {
@@ -7,6 +7,8 @@ interface CalloutConnectorProps {
   nodeId: string
   /** Whether the connector should be visible. */
   visible: boolean
+  /** Original execution owner, not the scene tile's layout instance. */
+  instanceId?: string | null
 }
 
 interface ConnectorGeometry {
@@ -28,13 +30,17 @@ interface ConnectorGeometry {
  * - Target end: triangle arrowhead pointing right
  * - Only rendered when `visible` is true (i.e. an interactive session is active)
  */
-export default function CalloutConnector({ nodeId, visible }: CalloutConnectorProps) {
+export default function CalloutConnector({ nodeId, visible, instanceId }: CalloutConnectorProps) {
   const nodes = useNodes()
+  const store = useStoreApi()
   const { flowToScreenPosition } = useReactFlow()
   const [geometry, setGeometry] = useState<ConnectorGeometry | null>(null)
 
   const computeGeometry = useCallback(() => {
-    const node = nodes.find((n) => n.id === nodeId)
+    const candidates = nodes.filter(n => n.data.definitionNodeId === nodeId && n.data.instanceId === instanceId)
+    const node = (instanceId !== undefined
+      ? candidates.find(n => n.type === 'groupFooter') ?? candidates.find(n => n.type === 'arrangedNode' || n.type === 'arbitronNode')
+      : null) ?? nodes.find(n => n.id === nodeId && (instanceId === undefined || !('instanceId' in n.data) || n.data.instanceId === instanceId))
     if (!node) {
       setGeometry(null)
       return
@@ -49,9 +55,10 @@ export default function CalloutConnector({ nodeId, visible }: CalloutConnectorPr
     // node wider than 200 (e.g. long interactive labels).
     let sourceX: number
     let sourceY: number
-    const nodeEl = document.querySelector(
-      `.react-flow__node[data-id="${nodeId}"]`,
-    ) as HTMLElement | null
+    const graphRoot = store.getState().domNode
+    const nodeEl = graphRoot?.querySelector<HTMLElement>(
+      `.react-flow__node[data-id="${CSS.escape(node.id)}"]`,
+    )
     if (nodeEl) {
       const rect = nodeEl.getBoundingClientRect()
       sourceX = rect.right
@@ -59,8 +66,14 @@ export default function CalloutConnector({ nodeId, visible }: CalloutConnectorPr
     } else {
       const nodeWidth = node.measured?.width ?? node.width ?? 200
       const nodeHeight = node.measured?.height ?? node.height ?? 80
-      const flowX = (node.position?.x ?? 0) + nodeWidth
-      const flowY = (node.position?.y ?? 0) + nodeHeight / 2
+      let x = node.position.x, y = node.position.y, parentId = node.parentId
+      while (parentId) {
+        const parent = nodes.find(n => n.id === parentId)
+        if (!parent) break
+        x += parent.position.x; y += parent.position.y; parentId = parent.parentId
+      }
+      const flowX = x + nodeWidth
+      const flowY = y + nodeHeight / 2
       const screenPos = flowToScreenPosition({ x: flowX, y: flowY })
       sourceX = screenPos.x
       sourceY = screenPos.y
@@ -69,7 +82,7 @@ export default function CalloutConnector({ nodeId, visible }: CalloutConnectorPr
     // Target: left edge of the panel divider.
     // The ResizablePanel divider is the boundary. We find it by looking for the
     // divider element, or fall back to the right panel's left edge.
-    const divider = document.querySelector('[class*="divider"]') as HTMLElement | null
+    const divider = graphRoot?.closest('[data-execution-view]')?.querySelector<HTMLElement>('[class*="divider"]')
     let targetX: number
     if (divider) {
       const dividerRect = divider.getBoundingClientRect()
@@ -85,7 +98,7 @@ export default function CalloutConnector({ nodeId, visible }: CalloutConnectorPr
       targetX,
       targetY: sourceY,
     })
-  }, [nodes, nodeId, flowToScreenPosition])
+  }, [nodes, nodeId, instanceId, flowToScreenPosition, store])
 
   // Recompute on node changes and on viewport transforms.
   // We use an interval for viewport changes since ReactFlow doesn't expose a

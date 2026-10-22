@@ -22,6 +22,9 @@ type Seeder struct {
 	ledger    Ledger
 	owner     uuid.UUID
 	logger    *slog.Logger
+	stamper   *workflow.RevisionStamper
+	mutations workflow.MutationCoordinator
+	registry  workflow.Registry
 	validator *workflow.Service
 }
 
@@ -54,6 +57,12 @@ func (s *Seeder) Seed(ctx context.Context) error {
 		if seeded[name] {
 			continue
 		}
+		if s.stamper != nil {
+			if err := s.seedRevision(ctx, name); err != nil {
+				return err
+			}
+			continue
+		}
 		ok, err := s.seedOne(ctx, name)
 		if err != nil {
 			return err
@@ -71,15 +80,14 @@ func (s *Seeder) Seed(ctx context.Context) error {
 // seedOne returns (true, nil) on success, (false, nil) when the sample was
 // skipped as malformed, and (false, err) on an infrastructure failure.
 //
-// Seeding is re-entrant: if a previous boot was killed between writing the
-// shared tree and recording the ledger, the shared dir already exists. The
-// write-tree + record + rollback + idempotency invariant lives in
-// workflow.WriteAndRecord; seedOne supplies a write step that tolerates an
-// already-present, bootstrap-owned tree (resume) and rolls back a fresh write
-// whose publication failed.
+// Legacy isolated callers can create fresh samples only. Resuming requires
+// the stamped protocol's exact publication and journal proof.
 func (s *Seeder) seedOne(ctx context.Context, name string) (bool, error) {
 	wf, files, err := s.source.Read(ctx, name)
 	if err != nil {
+		if !errors.Is(err, ErrMalformedSample) {
+			return false, fmt.Errorf("reading sample %q: %w", name, err)
+		}
 		s.logger.Warn("skipping malformed sample", "name", name, "err", err)
 		return false, nil
 	}
@@ -111,29 +119,13 @@ func (s *Seeder) seedOne(ctx context.Context, name string) (bool, error) {
 	return true, nil
 }
 
-// writeTree materializes the shared sample tree. On a fresh publish it Creates
-// the workflow; if Create reports the dir already exists, the prior boot crashed
-// after Create but before recording the publication — adopt that orphaned,
-// bootstrap-owned tree and re-write its files idempotently rather than wedging.
-// On the resume (overwrite) path the publication already exists, so Create is
-// skipped and the files are re-written to heal any partial prior write.
+// writeTree never adopts an existing tree without durable seed provenance.
 func (s *Seeder) writeTree(ctx context.Context, shared workflow.Scope, name string, wf *workflow.Workflow, files map[string][]byte, overwrite bool) error {
-	if !overwrite {
-		if err := s.repo.Create(ctx, shared, name, wf); err != nil {
-			if !errors.Is(err, workflow.ErrAlreadyExists) {
-				return fmt.Errorf("creating shared sample %q: %w", name, err)
-			}
-			// An unpublished shared dir of this name already exists — only safe to
-			// adopt if it was left by us (a crashed prior seed). A dir we did not
-			// create means a name collision we must not silently overwrite.
-			exists, exErr := s.repo.Exists(ctx, shared, name)
-			if exErr != nil {
-				return fmt.Errorf("checking shared sample %q: %w", name, exErr)
-			}
-			if !exists {
-				return fmt.Errorf("creating shared sample %q: %w", name, err)
-			}
-		}
+	if overwrite {
+		return fmt.Errorf("%w: shared sample %q requires commit proof", workflow.ErrAlreadyExists, name)
+	}
+	if err := s.repo.Create(ctx, shared, name, wf); err != nil {
+		return fmt.Errorf("creating shared sample %q: %w", name, err)
 	}
 	for rel, content := range files {
 		if err := s.repo.WriteFile(ctx, shared, name, rel, content); err != nil {

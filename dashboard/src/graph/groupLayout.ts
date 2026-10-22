@@ -1,4 +1,5 @@
 import type { Node } from '@xyflow/react'
+import type { ArrangedGroupElementData } from './arranged/buildArrangedFlow'
 import type { GroupGraph, GroupProgress, GroupScope } from '../api/types'
 import type { WorkflowEdge, WorkflowNode } from './types'
 
@@ -81,6 +82,8 @@ export interface NodeContextInfo {
 
 /** data of groupHeader / groupFooter nodes. */
 export interface GroupEndpointData {
+  layoutInstanceId?: string
+  reviewed?: ArrangedGroupElementData
   definitionNodeId: string
   role: 'header' | 'footer'
   label: string
@@ -96,6 +99,8 @@ export interface GroupEndpointData {
 
 /** data of groupTaskCard nodes (workflows form). */
 export interface GroupTaskCardData {
+  layoutInstanceId?: string
+  reviewed?: ArrangedGroupElementData
   definitionNodeId: string
   role: 'task'
   taskKey: string
@@ -109,6 +114,8 @@ export interface GroupTaskCardData {
 
 /** data of groupContainer nodes. */
 export interface GroupContainerData {
+  layoutInstanceId?: string
+  reviewed?: ArrangedGroupElementData
   definitionNodeId: string
   label: string
   depth: number

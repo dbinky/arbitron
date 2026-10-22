@@ -95,7 +95,9 @@ func contentOf(t *testing.T, dir string) map[string]string {
 func author(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	full := append([]string{"-C", dir, "-c", "user.name=Author", "-c", "user.email=author@example.com",
-		"-c", "commit.gpgSign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=" + os.DevNull}, args...)
+		"-c", "commit.gpgSign=false", "-c", "init.defaultBranch=main", "-c", "core.hooksPath=" + os.DevNull,
+		// No background auto-gc/maintenance, as runner.go: it races the fixtures.
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)
 	cmd := exec.Command("git", full...)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 	var out, errb bytes.Buffer

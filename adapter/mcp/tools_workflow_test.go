@@ -101,10 +101,6 @@ func (s *stubWorkflowRepo) ListFiles(ctx context.Context, _ workflow.Scope, name
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
-	return nil
-}
-
 func (s *stubWorkflowRepo) Exists(_ context.Context, scope workflow.Scope, name string) (bool, error) {
 	if s.existsFn != nil {
 		return s.existsFn(scope, name), nil
@@ -1839,4 +1835,37 @@ func TestRegisterWorkflowTools_RegistersLifecycleTools(t *testing.T) {
 			require.NotEmpty(t, result.Content, "tool %q must be registered (non-empty result)", name)
 		})
 	}
+}
+
+func (s *stubWorkflowRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	source, err := s.Load(ctx, src, sn)
+	if err != nil {
+		return err
+	}
+	if source == nil {
+		return workflow.ErrNotFound
+	}
+	exists, err := s.Exists(ctx, dst, dn)
+	if err != nil {
+		return err
+	}
+	if exists && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	data, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	copied.Name = dn
+	if err := stamp(&copied); err != nil {
+		return err
+	}
+	if exists {
+		return s.Update(ctx, dst, dn, &copied)
+	}
+	return s.Create(ctx, dst, dn, &copied)
 }

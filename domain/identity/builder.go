@@ -57,3 +57,16 @@ func BuildIdentity(in UserIdentityInput, groups GroupConfig) Identity {
 		LedDepartments: led,
 	}
 }
+
+// LocalAdminIdentity is the single-user local-mode identity: the seeded default
+// user as an admin of the default group, so every RBAC predicate passes. The
+// HTTP auth middleware and the operator-local stdio MCP transport both use it
+// so the two entries resolve the same caller.
+func LocalAdminIdentity(userID uuid.UUID, groups GroupConfig) Identity {
+	return Identity{
+		UserID:      userID,
+		Username:    "local",
+		Role:        RoleAdmin,
+		Departments: []string{groups.DefaultGroupOr()},
+	}
+}

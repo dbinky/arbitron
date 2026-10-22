@@ -1,0 +1,36 @@
+/* Edge label box at its reviewed position (flow coordinates). Inline styles
+   carry the box geometry, padding and colour; this class carries typography so
+   the measure surface (P3T4) can measure labels exactly as they render. */
+.edgeLabel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  font-family: 'Inter', 'Noto Sans SC', 'Noto Emoji';
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+/* Running-source animation drawn as a SEPARATE path on top of the edge, so the
+   edge's own stroke, crossing gaps and arrowhead never change. */
+.activeOverlay {
+  fill: none;
+  stroke: #ffffff;
+  stroke-opacity: 0.55;
+  stroke-dasharray: 4 10;
+  stroke-linecap: round;
+  pointer-events: none;
+  animation: arrangedEdgeFlow 0.9s linear infinite;
+}
+
+@keyframes arrangedEdgeFlow {
+  from { stroke-dashoffset: 14; }
+  to { stroke-dashoffset: 0; }
+}

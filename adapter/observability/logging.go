@@ -86,7 +86,7 @@ func parseLevel(level string) (slog.Level, error) {
 }
 
 // SetupLogging configures structured logging with a MultiHandler that writes
-// JSON to a log file and text to stdout. It sets the result as the default logger.
+// JSON to a log file and text to stderr. It sets the result as the default logger.
 // The returned io.Closer should be closed on shutdown to flush the log file.
 func SetupLogging(cfg config.LoggingConfig) (*slog.Logger, io.Closer, error) {
 	level, err := parseLevel(cfg.Level)
@@ -112,7 +112,7 @@ func SetupLogging(cfg config.LoggingConfig) (*slog.Logger, io.Closer, error) {
 	opts := &slog.HandlerOptions{Level: level}
 
 	jsonHandler := slog.NewJSONHandler(f, opts)
-	textHandler := slog.NewTextHandler(os.Stdout, opts)
+	textHandler := slog.NewTextHandler(os.Stderr, opts)
 
 	multi := NewMultiHandler(jsonHandler, textHandler)
 	logger := slog.New(multi)

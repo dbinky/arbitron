@@ -1,0 +1,37 @@
+.canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.fitButton {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #ccccdd;
+  background: #1a1a2e;
+  border: 1px solid #444466;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fitButton:hover {
+  border-color: #6666aa;
+}
+
+.fontReloadButton {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #ccccdd;
+  background: #1a1a2e;
+  border: 1px solid #aa6644;
+  border-radius: 4px;
+  cursor: pointer;
+}

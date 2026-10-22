@@ -232,12 +232,7 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 			}
 			// Local mode: the single user is admin in the default group, so all
 			// RBAC predicates pass trivially and today's behavior is preserved.
-			m.local.id = identity.Identity{
-				UserID:      uid,
-				Username:    "local",
-				Role:        identity.RoleAdmin,
-				Departments: []string{m.groups.DefaultGroupOr()},
-			}
+			m.local.id = identity.LocalAdminIdentity(uid, m.groups)
 		})
 		if m.local.err != nil {
 			// Server-state failure, NOT a missing-credential 401.

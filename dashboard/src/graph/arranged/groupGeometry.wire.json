@@ -1,0 +1,35 @@
+{
+  "element": {
+    "id": "[\"group\",\"fan ✅\",\"task\",\"二\"]",
+    "groupNodeId": "fan ✅",
+    "taskKey": "二",
+    "role": "task",
+    "box": { "x": 32, "y": 160, "w": 240, "h": 160 },
+    "texts": [{
+      "key": "[\"text\",\"[\\\"group\\\",\\\"fan ✅\\\",\\\"task\\\",\\\"二\\\"]\",\"title\"]",
+      "text": "共有の子 ✅",
+      "style": "node_label",
+      "box": { "x": 48, "y": 176, "w": 200, "h": 36 },
+      "lines": 2
+    }],
+    "overlayBox": { "x": 48, "y": 224, "w": 200, "h": 64 }
+  },
+  "lane": {
+    "groupNodeId": "fan ✅", "taskKey": "二",
+    "box": { "x": 32, "y": 160, "w": 240, "h": 160 },
+    "nodeIds": ["nested", "done"]
+  },
+  "connector": {
+    "id": "[\"connector\",\"fan ✅\",\"fanout\",\"二\",\"[\\\"node\\\",\\\"fan ✅\\\"]\",\"[\\\"group\\\",\\\"fan ✅\\\",\\\"task\\\",\\\"二\\\"]\"]",
+    "groupNodeId": "fan ✅", "taskKey": "二", "kind": "fanout",
+    "sourceElementId": "[\"node\",\"fan ✅\"]",
+    "targetElementId": "[\"group\",\"fan ✅\",\"task\",\"二\"]",
+    "points": [{ "x": 152, "y": 128 }, { "x": 152, "y": 160 }],
+    "sourceAttach": { "nodeId": "fan ✅", "elementId": "[\"node\",\"fan ✅\"]", "side": "bottom", "point": { "x": 152, "y": 128 } },
+    "targetAttach": { "nodeId": "", "elementId": "[\"group\",\"fan ✅\",\"task\",\"二\"]", "side": "top", "point": { "x": 152, "y": 160 } }
+  },
+  "crossing": {
+    "point": { "x": 152, "y": 144 }, "over": "edge:0",
+    "under": "[\"connector\",\"fan ✅\",\"fanout\",\"二\",\"[\\\"node\\\",\\\"fan ✅\\\"]\",\"[\\\"group\\\",\\\"fan ✅\\\",\\\"task\\\",\\\"二\\\"]\"]"
+  }
+}

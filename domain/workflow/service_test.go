@@ -2,7 +2,10 @@ package workflow_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -43,7 +46,15 @@ func (r *fakeRepo) Load(_ context.Context, s workflow.Scope, name string) (*work
 	if !ok {
 		return nil, workflow.ErrNotFound
 	}
-	return wf, nil
+	data, err := json.Marshal(wf)
+	if err != nil {
+		return nil, err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return nil, err
+	}
+	return &copied, nil
 }
 
 func (r *fakeRepo) List(_ context.Context, s workflow.Scope) ([]workflow.WorkflowSummary, error) {
@@ -54,19 +65,20 @@ func (r *fakeRepo) List(_ context.Context, s workflow.Scope) ([]workflow.Workflo
 	return out, nil
 }
 
-func (r *fakeRepo) SaveNodePositions(_ context.Context, s workflow.Scope, name string, _ map[string]workflow.NodePosition) error {
-	if _, ok := r.bucket(s)[name]; !ok {
-		return workflow.ErrNotFound
-	}
-	return nil
-}
-
 func (r *fakeRepo) Create(_ context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
 	b := r.bucket(s)
 	if _, ok := b[name]; ok {
 		return workflow.ErrAlreadyExists
 	}
-	b[name] = wf
+	data, err := json.Marshal(wf)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	b[name] = &copied
 	return nil
 }
 
@@ -75,7 +87,15 @@ func (r *fakeRepo) Update(_ context.Context, s workflow.Scope, name string, wf *
 	if _, ok := b[name]; !ok {
 		return workflow.ErrNotFound
 	}
-	b[name] = wf
+	data, err := json.Marshal(wf)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	b[name] = &copied
 	return nil
 }
 
@@ -177,7 +197,8 @@ func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.U
 	if p.upsertErr != nil {
 		return p.upsertErr
 	}
-	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department}
+	prior := p.pub[name]
+	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department, Revision: prior.Revision, WorkflowID: prior.WorkflowID}
 	return nil
 }
 
@@ -704,63 +725,6 @@ func TestService_DeleteFile_OnlyAffectsCallerPrivate(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SaveNodePositions (service-level)
-// ---------------------------------------------------------------------------
-
-// Happy path: SaveNodePositions routes to the caller's private scope.
-func TestService_SaveNodePositions_TargetsPrivate(t *testing.T) {
-	repo := newFakeRepo()
-	svc := workflow.NewWorkflowService(repo, nil)
-	owner := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "wf", wf("wf")))
-
-	err := svc.SaveNodePositions(ctxWith(owner, false), "wf", map[string]workflow.NodePosition{"n1": {X: 1, Y: 2}})
-	assert.NoError(t, err)
-}
-
-// Failure: saving positions on a shared-only workflow returns ErrSharedReadOnly.
-func TestService_SaveNodePositions_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
-	repo := newFakeRepo()
-	svc := workflow.NewWorkflowService(repo, nil)
-	owner := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
-
-	err := svc.SaveNodePositions(ctxWith(owner, false), "pub", map[string]workflow.NodePosition{})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
-}
-
-// Error: no identity is rejected.
-func TestService_SaveNodePositions_NoIdentity_Rejected(t *testing.T) {
-	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
-
-	err := svc.SaveNodePositions(context.Background(), "wf", map[string]workflow.NodePosition{})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
-}
-
-// Failure: workflow in neither scope returns ErrNotFound.
-func TestService_SaveNodePositions_Nowhere_ReturnsNotFound(t *testing.T) {
-	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
-
-	err := svc.SaveNodePositions(ctxWith(uuid.New(), false), "ghost", nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrNotFound)
-}
-
-// Edge: SaveNodePositions does not reach another user's private workflow.
-func TestService_SaveNodePositions_OnlyAffectsCallerPrivate(t *testing.T) {
-	repo := newFakeRepo()
-	svc := workflow.NewWorkflowService(repo, nil)
-	a := uuid.New()
-	b := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "shared-name", wf("shared-name")))
-
-	err := svc.SaveNodePositions(ctxWith(a, false), "shared-name", map[string]workflow.NodePosition{})
-	require.Error(t, err, "must not reach another user's private scope")
-}
-
-// ---------------------------------------------------------------------------
 // ListFiles (service-level)
 // ---------------------------------------------------------------------------
 
@@ -860,27 +824,33 @@ func TestService_Publish_FreshUpsertFailure_RollsBackCopiedTree(t *testing.T) {
 	assert.False(t, exists, "fresh-publish Upsert failure must roll back (delete) the copied shared tree")
 }
 
-// Failure (overwrite path): when recording the publication (Upsert) fails on a
-// re-publish by the same publisher, the error must surface loudly and the
-// previously-good shared copy must NOT be deleted (no data loss).
-func TestService_Publish_OverwriteUpsertFailure_DoesNotDelete(t *testing.T) {
-	repo := newFakeRepo()
-	pubs := newFakePublishers()
-	svc := workflow.NewWorkflowService(repo, pubs)
+// A failed re-publication restores the complete old tree and exact proof, not
+// merely the existence of some shared folder containing the uncommitted bytes.
+func TestService_Publish_OverwritePublicationFailure_RestoresPriorTreeAndProof(t *testing.T) {
+	svc, repo, pubs, journal, requester, _, _ := sharedRevisionFixture(t)
 	owner := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
-
-	// First publish succeeds (records owner as publisher).
-	require.NoError(t, svc.Publish(ctxWith(owner, true), "mine", "shared-name", workflow.VisibilityPublic, ""))
-
-	// Re-publish by the same owner, but Upsert now fails.
-	pubs.upsertErr = errors.New("db write failed")
-	err := svc.Publish(ctxWith(owner, true), "mine", "shared-name", workflow.VisibilityPublic, "")
-	require.Error(t, err, "overwrite Upsert failure must surface loudly")
-	assert.ErrorIs(t, err, pubs.upsertErr)
-
-	exists, _ := repo.Exists(context.Background(), workflow.Shared(), "shared-name")
-	assert.True(t, exists, "overwrite-publish Upsert failure must NOT delete the previously-good shared copy")
+	ctx := ctxWith(owner, true)
+	require.NoError(t, svc.Create(ctx, "mine", wf("mine")))
+	require.NoError(t, svc.WriteFile(ctx, "mine", "notes.txt", []byte("A")))
+	require.NoError(t, svc.Publish(ctx, "mine", "shared-name", workflow.VisibilityPublic, ""))
+	prior, err := repo.Load(ctx, workflow.Shared(), "shared-name")
+	require.NoError(t, err)
+	proof := pubs.pub["shared-name"]
+	count := len(requester.requests)
+	require.NoError(t, svc.Update(ctx, "mine", &workflow.Workflow{Name: "mine", Description: "B"}))
+	require.NoError(t, svc.WriteFile(ctx, "mine", "notes.txt", []byte("B")))
+	count++
+	pubs.commitErr = errors.New("publication write failed")
+	require.ErrorIs(t, svc.Publish(ctx, "mine", "shared-name", workflow.VisibilityPublic, ""), pubs.commitErr)
+	got, err := repo.Load(ctx, workflow.Shared(), "shared-name")
+	require.NoError(t, err)
+	assert.JSONEq(t, jsonValue(t, prior), jsonValue(t, got))
+	assert.Equal(t, proof, pubs.pub["shared-name"])
+	data, err := os.ReadFile(filepath.Join(repo.base, "shared", "shared-name", "notes.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "A", string(data))
+	assert.Len(t, requester.requests, count)
+	assert.Empty(t, journal.entries)
 }
 
 // --- Phase 2: visibility gating (Task 3) ---
@@ -1296,4 +1266,39 @@ func TestService_ListFiles_DeptVisibility_NonMember_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrNotFound,
 		"ListFiles must return ErrNotFound for dept workflow when caller is not a member (no existence leak)")
+}
+
+func (r *fakeRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	source, ok := r.bucket(src)[srcName]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, exists := r.bucket(dst)[dstName]; exists && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	data, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	copied.Name = dstName
+	if err := stamp(&copied); err != nil {
+		return err
+	}
+	data, err = json.Marshal(&copied)
+	if err != nil {
+		return err
+	}
+	var saved workflow.Workflow
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return err
+	}
+	r.bucket(dst)[dstName] = &saved
+	return nil
 }

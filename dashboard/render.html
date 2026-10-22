@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Arbitron render surface</title>
+    <style>
+      html, body { margin: 0; overflow: hidden; }
+      /* Deterministic baseline capture; runRenderJob separately samples animation extrema using the Web Animations API. */
+      html:not([data-render-probing]) *, html:not([data-render-probing]) *::before,
+      html:not([data-render-probing]) *::after { transition: none !important; animation-play-state: paused !important; caret-color: transparent !important; }
+      /* Occlusion hit-testing: only arranged content (nodes, edge labels, edge strokes) is hit-testable. */
+      #render-root * { pointer-events: none !important; }
+      #render-root [data-arranged-node], #render-root [data-arranged-node] *,
+      #render-root [data-edge-label], #render-root [data-edge-label] *,
+      #render-root path[data-edge-path] { pointer-events: auto !important; }
+      #render-root path[data-group-connector],
+      #render-root [data-arranged-group-element], #render-root [data-arranged-group-element] * { pointer-events: auto !important; }
+      /* Nothing but the graph is painted. */
+      .react-flow__attribution { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div id="render-root"></div>
+    <script type="module" src="/src/render/main.tsx"></script>
+  </body>
+</html>

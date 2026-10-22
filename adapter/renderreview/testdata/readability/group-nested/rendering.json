@@ -1,0 +1,2491 @@
+{
+  "revision": "group-capture",
+  "attempt": 4,
+  "geometryDigest": "67a12fa66b10d26036ceccb988cba6370594036f61afedf19bc1b1d4c40b937e",
+  "report": {
+    "surfaceVersion": "arranged-renderer/2",
+    "contract": {
+      "version": "arranged-renderer/2",
+      "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+      "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+      "nodeLabelFontPx": 13,
+      "nodeLabelWeight": 600,
+      "nodeTypeFontPx": 10,
+      "nodeTypeWeight": 700,
+      "edgeLabelFontPx": 11,
+      "edgeLabelWeight": 500,
+      "lineHeight": 1.35,
+      "nodePaddingX": 12,
+      "nodePaddingY": 8,
+      "nodeBorderPx": 2,
+      "nodeTypeBarPx": 4,
+      "nodeTextGapPx": 2,
+      "nodeMinWidth": 180,
+      "nodeTextMaxWidth": 240,
+      "edgeLabelPaddingX": 6,
+      "edgeLabelPaddingY": 3,
+      "edgeLabelMaxWidth": 160,
+      "strokePx": 2,
+      "arrowPx": 10,
+      "crossingTreatment": "gap",
+      "crossingGapPx": 10,
+      "forwardColor": "#8a8ab0",
+      "loopReturnColor": "#7c8cf5",
+      "loopReturnDash": "6 4",
+      "practicalZoom": 0.9,
+      "minReadableTextPx": 9,
+      "minContrastRatio": 4.5,
+      "minClearancePx": 4,
+      "groupPaddingPx": 32,
+      "groupTaskGapPx": 24,
+      "groupRowGapPx": 48,
+      "groupMinWidth": 200,
+      "groupHeaderMinHeight": 80,
+      "groupFooterMinHeight": 80,
+      "groupTaskMinHeight": 96,
+      "groupConnectorDash": "3 3"
+    },
+    "fontsReady": true,
+    "fontFamilyResolved": true,
+    "zoom": 0.9,
+    "canvas": {
+      "x": 0,
+      "y": 0,
+      "w": 1394,
+      "h": 2944
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "box": {
+          "x": 577.5,
+          "y": 40,
+          "w": 238.99997287326389,
+          "h": 95
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 591.4999728732639,
+              "y": 69.49999915228949,
+              "w": 209.87501356336804,
+              "h": 15.999997456868488
+            },
+            {
+              "x": 591.4999728732639,
+              "y": 87.046873304579,
+              "w": 104.00004069010416,
+              "h": 16.000001695421005
+            },
+            {
+              "x": 591.4999728732639,
+              "y": 104.59374321831596,
+              "w": 176.49997287326389,
+              "h": 16.000001695421005
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 591.4999728732639,
+            "y": 69.49999915228949,
+            "w": 209.87501356336804,
+            "h": 52.640622456868485
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "script",
+          "glyphs": [
+            {
+              "x": 591.4999728732639,
+              "y": 53.999998304578995,
+              "w": 42.48440212673611,
+              "h": 11.999999152289496
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 591.4999728732639,
+            "y": 53.999998304578995,
+            "w": 42.48440212673611,
+            "h": 13.500001695421007
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "fan",
+        "box": {
+          "x": 469.49998643663196,
+          "y": 376.99998643663196,
+          "w": 455,
+          "h": 130
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 483.499993218316,
+              "y": 406.49997287326386,
+              "w": 209.8749796549479,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 483.499993218316,
+              "y": 424.046868218316,
+              "w": 104.00000678168402,
+              "h": 15.999993218315971
+            },
+            {
+              "x": 483.499993218316,
+              "y": 441.5937296549479,
+              "w": 176.50000678168402,
+              "h": 15.999993218315971
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 483.499993218316,
+            "y": 406.49997287326386,
+            "w": 209.8749796549479,
+            "h": 52.64065212673611
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "parallel group",
+          "glyphs": [
+            {
+              "x": 483.499993218316,
+              "y": 390.999993218316,
+              "w": 102.14060465494791,
+              "h": 11.999986436631945
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 483.499993218316,
+            "y": 390.999993218316,
+            "w": 102.14060465494791,
+            "h": 13.499993218315971
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "done",
+        "box": {
+          "x": 430,
+          "y": 2808.9998372395835,
+          "w": 238.99997287326389,
+          "h": 95
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 443.99997287326386,
+              "y": 2838.4998914930557,
+              "w": 209.87501356336804,
+              "h": 16.000162760416668
+            },
+            {
+              "x": 443.99997287326386,
+              "y": 2856.046820746528,
+              "w": 104.00000678168402,
+              "h": 15.999891493055555
+            },
+            {
+              "x": 443.99997287326386,
+              "y": 2873.59375,
+              "w": 176.50004069010416,
+              "h": 15.999891493055555
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 443.99997287326386,
+            "y": 2838.4998914930557,
+            "w": 209.87501356336804,
+            "h": 52.640787760416664
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "script",
+          "glyphs": [
+            {
+              "x": 443.99997287326386,
+              "y": 2822.999945746528,
+              "w": 42.48440212673611,
+              "h": 12.000054253472221
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 443.99997287326386,
+            "y": 2822.999945746528,
+            "w": 42.48440212673611,
+            "h": 13.499891493055555
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "oops",
+        "box": {
+          "x": 725,
+          "y": 2808.9998372395835,
+          "w": 238.99997287326389,
+          "h": 95
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 738.9999728732639,
+              "y": 2838.4998914930557,
+              "w": 209.87501356336804,
+              "h": 16.000162760416668
+            },
+            {
+              "x": 738.9999728732639,
+              "y": 2856.046820746528,
+              "w": 103.99997287326389,
+              "h": 15.999891493055555
+            },
+            {
+              "x": 738.9999728732639,
+              "y": 2873.59375,
+              "w": 176.49997287326389,
+              "h": 15.999891493055555
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 738.9999728732639,
+            "y": 2838.4998914930557,
+            "w": 209.87501356336804,
+            "h": 52.640787760416664
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "script",
+          "glyphs": [
+            {
+              "x": 738.9999728732639,
+              "y": 2822.999945746528,
+              "w": 42.48440212673611,
+              "h": 12.000054253472221
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 738.9999728732639,
+            "y": 2822.999945746528,
+            "w": 42.48440212673611,
+            "h": 13.499891493055555
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "a",
+        "box": {
+          "x": 374.000006781684,
+          "y": 951.999986436632,
+          "w": 239.00000678168402,
+          "h": 130
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 387.9999796549479,
+              "y": 981.4999728732639,
+              "w": 209.8749796549479,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 387.9999796549479,
+              "y": 999.0468343098958,
+              "w": 104.00000678168402,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 387.9999796549479,
+              "y": 1016.5936957465277,
+              "w": 176.50000678168402,
+              "h": 16.00002712673611
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 387.9999796549479,
+            "y": 981.4999728732639,
+            "w": 209.8749796549479,
+            "h": 52.64065212673611
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "parallel group",
+          "glyphs": [
+            {
+              "x": 387.9999796549479,
+              "y": 965.9999593098958,
+              "w": 102.14063856336806,
+              "h": 11.999986436631945
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 387.9999796549479,
+            "y": 965.9999593098958,
+            "w": 102.14063856336806,
+            "h": 13.50002712673611
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "b",
+        "box": {
+          "x": 1010.9999593098958,
+          "y": 871.999986436632,
+          "w": 239.00004069010416,
+          "h": 95
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 1025,
+              "y": 901.4999728732639,
+              "w": 209.87494574652777,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 1025,
+              "y": 919.0468343098958,
+              "w": 103.99997287326389,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 1025,
+              "y": 936.5936957465277,
+              "w": 176.49997287326389,
+              "h": 16.00002712673611
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 1025,
+            "y": 901.4999728732639,
+            "w": 209.87494574652777,
+            "h": 52.64065212673611
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "script",
+          "glyphs": [
+            {
+              "x": 1025,
+              "y": 885.9999593098958,
+              "w": 42.484334309895836,
+              "h": 11.999986436631945
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 1025,
+            "y": 885.9999593098958,
+            "w": 42.484334309895836,
+            "h": 13.50002712673611
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "inner-done",
+        "box": {
+          "x": 226.49998982747394,
+          "y": 2012.9999457465278,
+          "w": 238.99998982747394,
+          "h": 95
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 240.499996609158,
+              "y": 2042.5,
+              "w": 209.874996609158,
+              "h": 15.999891493055555
+            },
+            {
+              "x": 240.499996609158,
+              "y": 2060.0467936197915,
+              "w": 103.99998982747395,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 240.499996609158,
+              "y": 2077.5937228732637,
+              "w": 176.49998982747397,
+              "h": 16.00002712673611
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 240.499996609158,
+            "y": 2042.5,
+            "w": 209.874996609158,
+            "h": 52.64051649305556
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "script",
+          "glyphs": [
+            {
+              "x": 240.499996609158,
+              "y": 2026.9999186197915,
+              "w": 42.48436821831597,
+              "h": 12.000054253472221
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 240.499996609158,
+            "y": 2026.9999186197915,
+            "w": 42.48436821831597,
+            "h": 13.50002712673611
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "inner-oops",
+        "box": {
+          "x": 521.4999728732639,
+          "y": 2012.9999457465278,
+          "w": 239.00004069010416,
+          "h": 95
+        },
+        "label": {
+          "content": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+          "glyphs": [
+            {
+              "x": 535.4999796549479,
+              "y": 2042.5,
+              "w": 209.8749796549479,
+              "h": 15.999891493055555
+            },
+            {
+              "x": 535.4999796549479,
+              "y": 2060.0467936197915,
+              "w": 104.00000678168402,
+              "h": 16.00002712673611
+            },
+            {
+              "x": 535.4999796549479,
+              "y": 2077.5937228732637,
+              "w": 176.50000678168402,
+              "h": 16.00002712673611
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 535.4999796549479,
+            "y": 2042.5,
+            "w": 209.8749796549479,
+            "h": 52.64051649305556
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "script",
+          "glyphs": [
+            {
+              "x": 535.4999796549479,
+              "y": 2026.9999186197915,
+              "w": 42.48436821831597,
+              "h": 12.000054253472221
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 535.4999796549479,
+            "y": 2026.9999186197915,
+            "w": 42.48436821831597,
+            "h": 13.50002712673611
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      }
+    ],
+    "edges": [
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 696.9999815358055,
+              "y": 134.9999964237213
+            },
+            "end": {
+              "x": 696.9999815358055,
+              "y": 376.99999001291064
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 701.9999814033508,
+            "y": 366.99999027782013
+          },
+          {
+            "x": 696.9999815358055,
+            "y": 376.99999001291064
+          },
+          {
+            "x": 691.9999816682604,
+            "y": 366.99999027782013
+          }
+        ],
+        "ordinal": 0,
+        "start": {
+          "x": 696.9999815358055,
+          "y": 134.9999964237213
+        },
+        "end": {
+          "x": 696.9999815358055,
+          "y": 376.99999001291064
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 623.4999834828907,
+              "y": 2446.9999351766373
+            },
+            "end": {
+              "x": 623.4999834828907,
+              "y": 2460.999934805764
+            }
+          },
+          {
+            "start": {
+              "x": 623.4999834828907,
+              "y": 2460.999934805764
+            },
+            "end": {
+              "x": 549.4999854432211,
+              "y": 2460.999934805764
+            }
+          },
+          {
+            "start": {
+              "x": 549.4999854432211,
+              "y": 2460.999934805764
+            },
+            "end": {
+              "x": 549.4999854432211,
+              "y": 2808.9999255869125
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 554.4999853107664,
+            "y": 2798.999925851822
+          },
+          {
+            "x": 549.4999854432211,
+            "y": 2808.9999255869125
+          },
+          {
+            "x": 544.499985575676,
+            "y": 2798.999925851822
+          }
+        ],
+        "ordinal": 1,
+        "start": {
+          "x": 623.4999834828907,
+          "y": 2446.9999351766373
+        },
+        "end": {
+          "x": 549.4999854432211,
+          "y": 2808.9999255869125
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "success",
+          "glyphs": [
+            {
+              "x": 639.499986436632,
+              "y": 2460,
+              "w": 43.56248643663194,
+              "h": 13.999837239583332
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 633.4999593098959,
+            "y": 2457.000054253472,
+            "w": 57.00005425347222,
+            "h": 21.99978298611111
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 714.4999810722139,
+              "y": 2446.9999351766373
+            },
+            "end": {
+              "x": 714.4999810722139,
+              "y": 2794.9999259577858
+            }
+          },
+          {
+            "start": {
+              "x": 714.4999810722139,
+              "y": 2794.9999259577858
+            },
+            "end": {
+              "x": 844.49997762839,
+              "y": 2794.9999259577858
+            }
+          },
+          {
+            "start": {
+              "x": 844.49997762839,
+              "y": 2794.9999259577858
+            },
+            "end": {
+              "x": 844.49997762839,
+              "y": 2808.9999255869125
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 849.4999774959352,
+            "y": 2798.999925851822
+          },
+          {
+            "x": 844.49997762839,
+            "y": 2808.9999255869125
+          },
+          {
+            "x": 839.4999777608448,
+            "y": 2798.999925851822
+          }
+        ],
+        "ordinal": 2,
+        "start": {
+          "x": 714.4999810722139,
+          "y": 2446.9999351766373
+        },
+        "end": {
+          "x": 844.49997762839,
+          "y": 2808.9999255869125
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "failure",
+          "glyphs": [
+            {
+              "x": 730.500013563368,
+              "y": 2460,
+              "w": 32.906222873263886,
+              "h": 13.999837239583332
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 724.499986436632,
+            "y": 2457.000054253472,
+            "w": 45.999959309895836,
+            "h": 21.99978298611111
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 578.999984661738,
+              "y": 506.9999865690867
+            },
+            "end": {
+              "x": 578.999984661738,
+              "y": 937.9999751514858
+            }
+          },
+          {
+            "start": {
+              "x": 578.999984661738,
+              "y": 937.9999751514858
+            },
+            "end": {
+              "x": 493.49998692671454,
+              "y": 937.9999751514858
+            }
+          },
+          {
+            "start": {
+              "x": 493.49998692671454,
+              "y": 937.9999751514858
+            },
+            "end": {
+              "x": 493.49998692671454,
+              "y": 951.9999747806125
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 498.4999867942598,
+            "y": 941.999975045522
+          },
+          {
+            "x": 493.49998692671454,
+            "y": 951.9999747806125
+          },
+          {
+            "x": 488.4999870591693,
+            "y": 941.999975045522
+          }
+        ],
+        "ordinal": 3,
+        "start": {
+          "x": 578.999984661738,
+          "y": 506.9999865690867
+        },
+        "end": {
+          "x": 493.49998692671454,
+          "y": 951.9999747806125
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "Same port label",
+          "glyphs": [
+            {
+              "x": 595,
+              "y": 520,
+              "w": 82.14063856336806,
+              "h": 13.99997287326389
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 588.9999728732639,
+            "y": 516.999986436632,
+            "w": 96.00002712673611,
+            "h": 21.999986436631943
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 708.9999812179142,
+              "y": 506.9999865690867
+            },
+            "end": {
+              "x": 708.9999812179142,
+              "y": 614.9999837080637
+            }
+          },
+          {
+            "start": {
+              "x": 708.9999812179142,
+              "y": 614.9999837080637
+            },
+            "end": {
+              "x": 1130.4999700519772,
+              "y": 614.9999837080637
+            }
+          },
+          {
+            "start": {
+              "x": 1130.4999700519772,
+              "y": 614.9999837080637
+            },
+            "end": {
+              "x": 1130.4999700519772,
+              "y": 871.9999768998888
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 1135.4999699195225,
+            "y": 861.9999771647983
+          },
+          {
+            "x": 1130.4999700519772,
+            "y": 871.9999768998888
+          },
+          {
+            "x": 1125.4999701844322,
+            "y": 861.9999771647983
+          }
+        ],
+        "ordinal": 4,
+        "start": {
+          "x": 708.9999812179142,
+          "y": 506.9999865690867
+        },
+        "end": {
+          "x": 1130.4999700519772,
+          "y": 871.9999768998888
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "Same port label",
+          "glyphs": [
+            {
+              "x": 725,
+              "y": 520,
+              "w": 82.14057074652777,
+              "h": 13.99997287326389
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 718.9999728732639,
+            "y": 516.999986436632,
+            "w": 96.00002712673611,
+            "h": 21.999986436631943
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 419.9999888737996,
+              "y": 1650.9999562634362
+            },
+            "end": {
+              "x": 419.9999888737996,
+              "y": 1998.9999470445844
+            }
+          },
+          {
+            "start": {
+              "x": 419.9999888737996,
+              "y": 1998.9999470445844
+            },
+            "end": {
+              "x": 345.9999908341302,
+              "y": 1998.9999470445844
+            }
+          },
+          {
+            "start": {
+              "x": 345.9999908341302,
+              "y": 1998.9999470445844
+            },
+            "end": {
+              "x": 345.9999908341302,
+              "y": 2012.999946673711
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 350.9999907016754,
+            "y": 2002.9999469386207
+          },
+          {
+            "x": 345.9999908341302,
+            "y": 2012.999946673711
+          },
+          {
+            "x": 340.99999096658496,
+            "y": 2002.9999469386207
+          }
+        ],
+        "ordinal": 5,
+        "start": {
+          "x": 419.9999888737996,
+          "y": 1650.9999562634362
+        },
+        "end": {
+          "x": 345.9999908341302,
+          "y": 2012.999946673711
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "success",
+          "glyphs": [
+            {
+              "x": 435.999993218316,
+              "y": 1663.999972873264,
+              "w": 43.56248643663194,
+              "h": 13.99997287326389
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 430,
+            "y": 1660.9998914930554,
+            "w": 56.99998643663194,
+            "h": 22.00005425347222
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 510.99998646312287,
+              "y": 1650.9999562634362
+            },
+            "end": {
+              "x": 510.99998646312287,
+              "y": 1998.9999470445844
+            }
+          },
+          {
+            "start": {
+              "x": 510.99998646312287,
+              "y": 1998.9999470445844
+            },
+            "end": {
+              "x": 640.999983019299,
+              "y": 1998.9999470445844
+            }
+          },
+          {
+            "start": {
+              "x": 640.999983019299,
+              "y": 1998.9999470445844
+            },
+            "end": {
+              "x": 640.999983019299,
+              "y": 2012.999946673711
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 645.9999828868442,
+            "y": 2002.9999469386207
+          },
+          {
+            "x": 640.999983019299,
+            "y": 2012.999946673711
+          },
+          {
+            "x": 635.9999831517538,
+            "y": 2002.9999469386207
+          }
+        ],
+        "ordinal": 6,
+        "start": {
+          "x": 510.99998646312287,
+          "y": 1650.9999562634362
+        },
+        "end": {
+          "x": 640.999983019299,
+          "y": 2012.999946673711
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "failure",
+          "glyphs": [
+            {
+              "x": 526.999986436632,
+              "y": 1663.999972873264,
+              "w": 32.90625678168403,
+              "h": 13.99997287326389
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 520.9999932183159,
+            "y": 1660.9998914930554,
+            "w": 45.99999321831597,
+            "h": 22.00005425347222
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      }
+    ],
+    "crossings": [],
+    "states": [
+      {
+        "state": "pending",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "running",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "completed",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "failed",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "waiting",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "skipped",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "selected",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:not_started",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:launching",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:running",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:decided",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:gathering",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:resolving_conflicts",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:done",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:run:unknown",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:not_started",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:queued",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:running",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:waiting",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:paused",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:completed",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:failed",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:cancelled",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:unfinished",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:task:unknown",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:badges",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:redacted",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "group:selected-running",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "[\"group-probe\",\"winner\",\"a\",\"second\"]",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "[\"group-probe\",\"winner\",\"a\",\"first\"]",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "[\"group-probe\",\"winner\",\"fan\",\"second\"]",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "[\"group-probe\",\"winner\",\"fan\",\"first\"]",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      }
+    ],
+    "groupElements": [
+      {
+        "id": "[\"group\",\"fan\",\"container\",\"\"]",
+        "box": {
+          "x": 40,
+          "y": 296.99998643663196,
+          "w": 1313.999972873264,
+          "h": 2181.999782986111
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+            "text": {
+              "content": "Parallel branches · all succeed",
+              "glyphs": [
+                {
+                  "x": 53.999998304578995,
+                  "y": 306.99998643663196,
+                  "w": 159.53125,
+                  "h": 14.000006781684027
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 53.999998304578995,
+                "y": 306.99998643663196,
+                "w": 160.99999321831598,
+                "h": 15.999993218315971
+              },
+              "clipped": false,
+              "fontPx": 11,
+              "contrast": 12.921514369638777,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(26, 26, 46)"
+      },
+      {
+        "id": "[\"node\",\"fan\"]",
+        "box": {
+          "x": 469.49998643663196,
+          "y": 376.99998643663196,
+          "w": 455,
+          "h": 130
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+            "text": {
+              "content": "fan-out",
+              "glyphs": [
+                {
+                  "x": 483.499993218316,
+                  "y": 463.99997287326386,
+                  "w": 53.4375,
+                  "h": 12.000020345052082
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 483.499993218316,
+                "y": 463.99997287326386,
+                "w": 55,
+                "h": 15
+              },
+              "clipped": false,
+              "fontPx": 10,
+              "contrast": 7.966831219191241,
+              "occluded": false
+            }
+          },
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+            "text": {
+              "content": "2 tasks · branches",
+              "glyphs": [
+                {
+                  "x": 483.499993218316,
+                  "y": 480.999993218316,
+                  "w": 96.18750678168402,
+                  "h": 14.000006781684027
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 483.499993218316,
+                "y": 480.999993218316,
+                "w": 97.99997965494791,
+                "h": 15.999993218315971
+              },
+              "clipped": false,
+              "fontPx": 11,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(30, 30, 56)"
+      },
+      {
+        "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+        "box": {
+          "x": 469.49998643663196,
+          "y": 2283.9998372395835,
+          "w": 455,
+          "h": 163.00021701388889
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+            "text": {
+              "content": "gather · All succeed",
+              "glyphs": [
+                {
+                  "x": 483.499993218316,
+                  "y": 2293.9998372395835,
+                  "w": 124.99996609157986,
+                  "h": 16.000162760416668
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 483.499993218316,
+                "y": 2293.9998372395835,
+                "w": 125.99999321831596,
+                "h": 19.000108506944443
+              },
+              "clipped": false,
+              "fontPx": 13,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+            "text": {
+              "content": "wait for remaining · results",
+              "glyphs": [
+                {
+                  "x": 483.499993218316,
+                  "y": 2315,
+                  "w": 139.39063178168402,
+                  "h": 13.999837239583332
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 483.499993218316,
+                "y": 2315,
+                "w": 140.99999321831598,
+                "h": 15.999891493055555
+              },
+              "clipped": false,
+              "fontPx": 11,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(30, 30, 56)"
+      },
+      {
+        "id": "[\"group\",\"fan\",\"lane\",\"second\"]",
+        "box": {
+          "x": 71.99999491373698,
+          "y": 618.9999728732639,
+          "w": 843.000013563368,
+          "h": 1561.000027126736
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"second\\\"]\",\"caption\"]",
+            "text": {
+              "content": "task 1 · second",
+              "glyphs": [
+                {
+                  "x": 86.000001695421,
+                  "y": 628.9999728732639,
+                  "w": 99.17186313205295,
+                  "h": 11.999986436631945
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 86.000001695421,
+                "y": 628.9999728732639,
+                "w": 101.000001695421,
+                "h": 15
+              },
+              "clipped": false,
+              "fontPx": 10,
+              "contrast": 8.399662496395955,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(26, 26, 46)"
+      },
+      {
+        "id": "[\"group\",\"a\",\"container\",\"\"]",
+        "box": {
+          "x": 143.99998982747397,
+          "y": 871.999986436632,
+          "w": 698.9999728732639,
+          "h": 810.9999593098958
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+            "text": {
+              "content": "Parallel workflows · all succeed",
+              "glyphs": [
+                {
+                  "x": 157.999996609158,
+                  "y": 881.999986436632,
+                  "w": 164.92185804578992,
+                  "h": 13.99997287326389
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 157.999996609158,
+                "y": 881.999986436632,
+                "w": 166.00001017252603,
+                "h": 15.999959309895832
+              },
+              "clipped": false,
+              "fontPx": 11,
+              "contrast": 12.921514369638777,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(26, 26, 46)"
+      },
+      {
+        "id": "[\"node\",\"a\"]",
+        "box": {
+          "x": 374.000006781684,
+          "y": 951.999986436632,
+          "w": 239.00000678168402,
+          "h": 130
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"a\\\"]\",\"fanout\"]",
+            "text": {
+              "content": "fan-out",
+              "glyphs": [
+                {
+                  "x": 387.9999796549479,
+                  "y": 1038.999972873264,
+                  "w": 53.4375,
+                  "h": 11.999986436631945
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 387.9999796549479,
+                "y": 1038.999972873264,
+                "w": 55,
+                "h": 15
+              },
+              "clipped": false,
+              "fontPx": 10,
+              "contrast": 7.966831219191241,
+              "occluded": false
+            }
+          },
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"a\\\"]\",\"metadata\"]",
+            "text": {
+              "content": "2 tasks · workflows",
+              "glyphs": [
+                {
+                  "x": 387.9999796549479,
+                  "y": 1055.9999593098958,
+                  "w": 101.5625,
+                  "h": 14.000040690104166
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 387.9999796549479,
+                "y": 1055.9999593098958,
+                "w": 103.00001356336806,
+                "h": 16.00002712673611
+              },
+              "clipped": false,
+              "fontPx": 11,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(30, 30, 56)"
+      },
+      {
+        "id": "[\"group\",\"a\",\"footer\",\"\"]",
+        "box": {
+          "x": 374.000006781684,
+          "y": 1487.9999457465278,
+          "w": 239.00000678168402,
+          "h": 162.99994574652777
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+            "text": {
+              "content": "gather · All succeed",
+              "glyphs": [
+                {
+                  "x": 387.9999796549479,
+                  "y": 1497.9999457465278,
+                  "w": 125,
+                  "h": 16.00002712673611
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 387.9999796549479,
+                "y": 1497.9999457465278,
+                "w": 125.99999321831596,
+                "h": 18.99997287326389
+              },
+              "clipped": false,
+              "fontPx": 13,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+            "text": {
+              "content": "wait for remaining · results",
+              "glyphs": [
+                {
+                  "x": 387.9999796549479,
+                  "y": 1518.999972873264,
+                  "w": 139.39063178168402,
+                  "h": 13.99997287326389
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 387.9999796549479,
+                "y": 1518.999972873264,
+                "w": 140.99999321831598,
+                "h": 16.00002712673611
+              },
+              "clipped": false,
+              "fontPx": 11,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(30, 30, 56)"
+      },
+      {
+        "id": "[\"group\",\"a\",\"task\",\"second\"]",
+        "box": {
+          "x": 176.49998982747397,
+          "y": 1193.999972873264,
+          "w": 305,
+          "h": 203.99997287326389
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"caption\"]",
+            "text": {
+              "content": "task 1 · second",
+              "glyphs": [
+                {
+                  "x": 190.499996609158,
+                  "y": 1203.999972873264,
+                  "w": 99.17187160915799,
+                  "h": 12.000054253472221
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 190.499996609158,
+                "y": 1203.999972873264,
+                "w": 101.00001017252603,
+                "h": 15
+              },
+              "clipped": false,
+              "fontPx": 10,
+              "contrast": 7.966831219191241,
+              "occluded": false
+            }
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"title\"]",
+            "text": {
+              "content": "Überprüfe sämtliche Abhängigkeiten 🧪 審查",
+              "glyphs": [
+                {
+                  "x": 190.499996609158,
+                  "y": 1221.000027126736,
+                  "w": 234.015621609158,
+                  "h": 15.999891493055555
+                },
+                {
+                  "x": 190.499996609158,
+                  "y": 1238.5468207465278,
+                  "w": 45.78125,
+                  "h": 16.00002712673611
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 190.499996609158,
+                "y": 1221.000027126736,
+                "w": 239.99998304578992,
+                "h": 36.999918619791664
+              },
+              "clipped": false,
+              "fontPx": 13,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(30, 30, 56)"
+      },
+      {
+        "id": "[\"group\",\"a\",\"task\",\"first\"]",
+        "box": {
+          "x": 505.4999796549479,
+          "y": 1193.999972873264,
+          "w": 304.99996609157984,
+          "h": 203.99997287326389
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"caption\"]",
+            "text": {
+              "content": "task 2 · first",
+              "glyphs": [
+                {
+                  "x": 519.499986436632,
+                  "y": 1203.999972873264,
+                  "w": 85.98436143663194,
+                  "h": 12.000054253472221
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 519.499986436632,
+                "y": 1203.999972873264,
+                "w": 86.99998643663194,
+                "h": 15
+              },
+              "clipped": false,
+              "fontPx": 10,
+              "contrast": 7.966831219191241,
+              "occluded": false
+            }
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"title\"]",
+            "text": {
+              "content": "Überprüfe sämtliche Abhängigkeiten 🧪 審查",
+              "glyphs": [
+                {
+                  "x": 519.499986436632,
+                  "y": 1221.000027126736,
+                  "w": 234.01563856336804,
+                  "h": 15.999891493055555
+                },
+                {
+                  "x": 519.499986436632,
+                  "y": 1238.5468207465278,
+                  "w": 45.78125,
+                  "h": 16.00002712673611
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 519.499986436632,
+                "y": 1221.000027126736,
+                "w": 240,
+                "h": 36.999918619791664
+              },
+              "clipped": false,
+              "fontPx": 13,
+              "contrast": 12.25567385873378,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(30, 30, 56)"
+      },
+      {
+        "id": "[\"group\",\"fan\",\"lane\",\"first\"]",
+        "box": {
+          "x": 938.9999728732639,
+          "y": 618.9999728732639,
+          "w": 382.99994574652777,
+          "h": 1561.000027126736
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"first\\\"]\",\"caption\"]",
+            "text": {
+              "content": "task 2 · first",
+              "glyphs": [
+                {
+                  "x": 952.9999457465277,
+                  "y": 628.9999728732639,
+                  "w": 85.98442925347221,
+                  "h": 11.999986436631945
+                }
+              ],
+              "visible": true,
+              "box": {
+                "x": 952.9999457465277,
+                "y": 628.9999728732639,
+                "w": 87.00005425347221,
+                "h": 15
+              },
+              "clipped": false,
+              "fontPx": 10,
+              "contrast": 8.399662496395955,
+              "occluded": false
+            }
+          }
+        ],
+        "visible": true,
+        "borderColor": "rgb(138, 138, 176)",
+        "borderPx": 2,
+        "backgroundColor": "rgb(26, 26, 46)"
+      }
+    ],
+    "groupConnectors": [
+      {
+        "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 345.9999908341302,
+              "y": 2107.9999441570703
+            },
+            "end": {
+              "x": 345.9999908341302,
+              "y": 2121.999943786197
+            }
+          },
+          {
+            "start": {
+              "x": 345.9999908341302,
+              "y": 2121.999943786197
+            },
+            "end": {
+              "x": 634.9999831782446,
+              "y": 2121.999943786197
+            }
+          },
+          {
+            "start": {
+              "x": 634.9999831782446,
+              "y": 2121.999943786197
+            },
+            "end": {
+              "x": 637.9999830987718,
+              "y": 2121.999943786197
+            }
+          },
+          {
+            "start": {
+              "x": 637.9999830987718,
+              "y": 2121.999943786197
+            },
+            "end": {
+              "x": 640.999983019299,
+              "y": 2121.999943786197
+            }
+          },
+          {
+            "start": {
+              "x": 640.999983019299,
+              "y": 2121.999943786197
+            },
+            "end": {
+              "x": 643.999982939826,
+              "y": 2121.999943786197
+            }
+          },
+          {
+            "start": {
+              "x": 643.999982939826,
+              "y": 2121.999943786197
+            },
+            "end": {
+              "x": 672.9999821715885,
+              "y": 2121.999943786197
+            }
+          },
+          {
+            "start": {
+              "x": 672.9999821715885,
+              "y": 2121.999943786197
+            },
+            "end": {
+              "x": 672.9999821715885,
+              "y": 2247.999940448337
+            }
+          },
+          {
+            "start": {
+              "x": 672.9999821715885,
+              "y": 2247.999940448337
+            },
+            "end": {
+              "x": 672.9999821715885,
+              "y": 2250.9999403688644
+            }
+          },
+          {
+            "start": {
+              "x": 672.9999821715885,
+              "y": 2260.9999401039545
+            },
+            "end": {
+              "x": 672.9999821715885,
+              "y": 2283.9999394946626
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 677.9999820391337,
+            "y": 2273.9999397595725
+          },
+          {
+            "x": 672.9999821715885,
+            "y": 2283.9999394946626
+          },
+          {
+            "x": 667.9999823040432,
+            "y": 2273.9999397595725
+          }
+        ],
+        "start": {
+          "x": 345.9999908341302,
+          "y": 2107.9999441570703
+        },
+        "end": {
+          "x": 672.9999821715885,
+          "y": 2283.9999394946626
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 640.999983019299,
+              "y": 2107.9999441570703
+            },
+            "end": {
+              "x": 640.999983019299,
+              "y": 2113.9999439981248
+            }
+          },
+          {
+            "start": {
+              "x": 640.999983019299,
+              "y": 2113.9999439981248
+            },
+            "end": {
+              "x": 640.999983019299,
+              "y": 2116.9999439186518
+            }
+          },
+          {
+            "start": {
+              "x": 640.999983019299,
+              "y": 2126.9999436537423
+            },
+            "end": {
+              "x": 640.999983019299,
+              "y": 2255.9999402364097
+            }
+          },
+          {
+            "start": {
+              "x": 640.999983019299,
+              "y": 2255.9999402364097
+            },
+            "end": {
+              "x": 666.9999823305342,
+              "y": 2255.9999402364097
+            }
+          },
+          {
+            "start": {
+              "x": 666.9999823305342,
+              "y": 2255.9999402364097
+            },
+            "end": {
+              "x": 669.9999822510613,
+              "y": 2255.9999402364097
+            }
+          },
+          {
+            "start": {
+              "x": 669.9999822510613,
+              "y": 2255.9999402364097
+            },
+            "end": {
+              "x": 672.9999821715885,
+              "y": 2255.9999402364097
+            }
+          },
+          {
+            "start": {
+              "x": 672.9999821715885,
+              "y": 2255.9999402364097
+            },
+            "end": {
+              "x": 675.9999820921156,
+              "y": 2255.9999402364097
+            }
+          },
+          {
+            "start": {
+              "x": 675.9999820921156,
+              "y": 2255.9999402364097
+            },
+            "end": {
+              "x": 696.9999815358055,
+              "y": 2255.9999402364097
+            }
+          },
+          {
+            "start": {
+              "x": 696.9999815358055,
+              "y": 2255.9999402364097
+            },
+            "end": {
+              "x": 696.9999815358055,
+              "y": 2283.9999394946626
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 701.9999814033508,
+            "y": 2273.9999397595725
+          },
+          {
+            "x": 696.9999815358055,
+            "y": 2283.9999394946626
+          },
+          {
+            "x": 691.9999816682604,
+            "y": 2273.9999397595725
+          }
+        ],
+        "start": {
+          "x": 640.999983019299,
+          "y": 2107.9999441570703
+        },
+        "end": {
+          "x": 696.9999815358055,
+          "y": 2283.9999394946626
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "id": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 1130.4999700519772,
+              "y": 966.9999743832482
+            },
+            "end": {
+              "x": 1130.4999700519772,
+              "y": 2241.999940607283
+            }
+          },
+          {
+            "start": {
+              "x": 1130.4999700519772,
+              "y": 2241.999940607283
+            },
+            "end": {
+              "x": 720.9999809000227,
+              "y": 2241.999940607283
+            }
+          },
+          {
+            "start": {
+              "x": 720.9999809000227,
+              "y": 2241.999940607283
+            },
+            "end": {
+              "x": 720.9999809000227,
+              "y": 2283.9999394946626
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 725.999980767568,
+            "y": 2273.9999397595725
+          },
+          {
+            "x": 720.9999809000227,
+            "y": 2283.9999394946626
+          },
+          {
+            "x": 715.9999810324774,
+            "y": 2273.9999397595725
+          }
+        ],
+        "start": {
+          "x": 1130.4999700519772,
+          "y": 966.9999743832482
+        },
+        "end": {
+          "x": 720.9999809000227,
+          "y": 2283.9999394946626
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "id": "[\"connector\",\"a\",\"fanout\",\"second\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 481.499987244606,
+              "y": 1081.9999713367886
+            },
+            "end": {
+              "x": 481.499987244606,
+              "y": 1095.9999709659153
+            }
+          },
+          {
+            "start": {
+              "x": 481.499987244606,
+              "y": 1095.9999709659153
+            },
+            "end": {
+              "x": 328.9999912844764,
+              "y": 1095.9999709659153
+            }
+          },
+          {
+            "start": {
+              "x": 328.9999912844764,
+              "y": 1095.9999709659153
+            },
+            "end": {
+              "x": 328.9999912844764,
+              "y": 1193.9999683698018
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 333.9999911520216,
+            "y": 1183.9999686347114
+          },
+          {
+            "x": 328.9999912844764,
+            "y": 1193.9999683698018
+          },
+          {
+            "x": 323.99999141693115,
+            "y": 1183.9999686347114
+          }
+        ],
+        "start": {
+          "x": 481.499987244606,
+          "y": 1081.9999713367886
+        },
+        "end": {
+          "x": 328.9999912844764,
+          "y": 1193.9999683698018
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "id": "[\"connector\",\"a\",\"gather\",\"second\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 328.9999912844764,
+              "y": 1397.9999629656475
+            },
+            "end": {
+              "x": 328.9999912844764,
+              "y": 1411.999962594774
+            }
+          },
+          {
+            "start": {
+              "x": 328.9999912844764,
+              "y": 1411.999962594774
+            },
+            "end": {
+              "x": 481.499987244606,
+              "y": 1411.999962594774
+            }
+          },
+          {
+            "start": {
+              "x": 481.499987244606,
+              "y": 1411.999962594774
+            },
+            "end": {
+              "x": 481.499987244606,
+              "y": 1487.9999605814617
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 486.49998711215125,
+            "y": 1477.999960846371
+          },
+          {
+            "x": 481.499987244606,
+            "y": 1487.9999605814617
+          },
+          {
+            "x": 476.4999873770608,
+            "y": 1477.999960846371
+          }
+        ],
+        "start": {
+          "x": 328.9999912844764,
+          "y": 1397.9999629656475
+        },
+        "end": {
+          "x": 481.499987244606,
+          "y": 1487.9999605814617
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "id": "[\"connector\",\"a\",\"fanout\",\"first\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 505.4999866088231,
+              "y": 1081.9999713367886
+            },
+            "end": {
+              "x": 505.4999866088231,
+              "y": 1109.999970595042
+            }
+          },
+          {
+            "start": {
+              "x": 505.4999866088231,
+              "y": 1109.999970595042
+            },
+            "end": {
+              "x": 657.9999825689528,
+              "y": 1109.999970595042
+            }
+          },
+          {
+            "start": {
+              "x": 657.9999825689528,
+              "y": 1109.999970595042
+            },
+            "end": {
+              "x": 657.9999825689528,
+              "y": 1193.9999683698018
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 662.999982436498,
+            "y": 1183.9999686347114
+          },
+          {
+            "x": 657.9999825689528,
+            "y": 1193.9999683698018
+          },
+          {
+            "x": 652.9999827014075,
+            "y": 1183.9999686347114
+          }
+        ],
+        "start": {
+          "x": 505.4999866088231,
+          "y": 1081.9999713367886
+        },
+        "end": {
+          "x": 657.9999825689528,
+          "y": 1193.9999683698018
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "id": "[\"connector\",\"a\",\"gather\",\"first\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "segments": [
+          {
+            "start": {
+              "x": 657.9999825689528,
+              "y": 1397.9999629656475
+            },
+            "end": {
+              "x": 657.9999825689528,
+              "y": 1411.999962594774
+            }
+          },
+          {
+            "start": {
+              "x": 657.9999825689528,
+              "y": 1411.999962594774
+            },
+            "end": {
+              "x": 505.4999866088231,
+              "y": 1411.999962594774
+            }
+          },
+          {
+            "start": {
+              "x": 505.4999866088231,
+              "y": 1411.999962594774
+            },
+            "end": {
+              "x": 505.4999866088231,
+              "y": 1487.9999605814617
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "3px, 3px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 510.49998647636835,
+            "y": 1477.999960846371
+          },
+          {
+            "x": 505.4999866088231,
+            "y": 1487.9999605814617
+          },
+          {
+            "x": 500.4999867412779,
+            "y": 1477.999960846371
+          }
+        ],
+        "start": {
+          "x": 657.9999825689528,
+          "y": 1397.9999629656475
+        },
+        "end": {
+          "x": 505.4999866088231,
+          "y": 1487.9999605814617
+        },
+        "hasArrow": true,
+        "strokePx": 1.9999999470180936
+      }
+    ],
+    "groupCrossings": [
+      {
+        "point": {
+          "x": 673,
+          "y": 2256
+        },
+        "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "underGapVisible": true,
+        "overContinuous": true
+      },
+      {
+        "point": {
+          "x": 641,
+          "y": 2122
+        },
+        "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "underGapVisible": true,
+        "overContinuous": true
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "kind": "overview",
+      "path": "overview.png",
+      "sha256": "5599b293d5e1007a98b2b9f24b028f00f1f02116d287fe6d14f5371d105161c0",
+      "region": {
+        "x": 0,
+        "y": 0,
+        "w": 1394,
+        "h": 2944
+      },
+      "scale": 0.6793478260869565
+    },
+    {
+      "kind": "tile",
+      "path": "tile-000.png",
+      "sha256": "12b3173bc9e40f9ea7036a5e432d6fc370c5998a0d4a709aebc422940a72e995",
+      "region": {
+        "x": 0,
+        "y": 0,
+        "w": 1394,
+        "h": 1111.111111111111
+      },
+      "scale": 0.9
+    },
+    {
+      "kind": "tile",
+      "path": "tile-001.png",
+      "sha256": "e5957b7f6fe7f45cd6fbd942877f9e397ea250debe9341a2f96657d98add6edc",
+      "region": {
+        "x": 0,
+        "y": 944.4444444444445,
+        "w": 1394,
+        "h": 1111.111111111111
+      },
+      "scale": 0.9
+    },
+    {
+      "kind": "tile",
+      "path": "tile-002.png",
+      "sha256": "ca775f930c43c551416fe0e177e9bdd6cbbb907abcd451b4a567a04f97d07046",
+      "region": {
+        "x": 0,
+        "y": 1832.888888888889,
+        "w": 1394,
+        "h": 1111.111111111111
+      },
+      "scale": 0.9
+    }
+  ],
+  "renderedAt": "2026-10-20T13:15:05.039133Z"
+}

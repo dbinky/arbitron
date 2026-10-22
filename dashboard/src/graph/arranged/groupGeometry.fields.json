@@ -1,0 +1,9 @@
+{
+  "groupText": { "required": ["box", "key", "lines", "style", "text"], "optional": [] },
+  "groupElement": { "required": ["box", "groupNodeId", "id", "role", "texts"], "optional": ["overlayBox", "taskKey"] },
+  "groupLane": { "required": ["box", "groupNodeId", "nodeIds", "taskKey"], "optional": [] },
+  "groupConnector": { "required": ["groupNodeId", "id", "kind", "points", "sourceAttach", "sourceElementId", "targetAttach", "targetElementId", "taskKey"], "optional": [] },
+  "groupCrossing": { "required": ["over", "point", "under"], "optional": [] },
+  "attachment": { "required": ["nodeId", "point", "side"], "optional": ["elementId"] },
+  "geometry": { "required": ["canvas", "contract", "crossings", "edges", "format", "nodes", "options"], "optional": ["groupConnectors", "groupCrossings", "groupElements", "groupLanes"] }
+}

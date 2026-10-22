@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,6 +35,16 @@ func TestGroupAuthoringE2E_SharedEditPromptMustBeVisibleToEveryRunner(t *testing
   {"id":"done","type":"transform","entrypoint":true,"config":{"operations":[{"variable":"ok","operation":"set","value":true}]}},
   {"id":"failed","type":"transform","config":{"operations":[{"variable":"ok","operation":"set","value":false}]}}
  ],"edges":[]}`), 0o600))
+	// A folder written straight to disk after boot has no registry identity, and
+	// revision-stamped writes resolve their target through the registry. Run the
+	// same reconciliation boot runs so the shared workflow is addressable.
+	// The stack's deliberately invalid fixtures are reported, never registered.
+	if err := ds.workflowSvc.BackfillRegistry(ctx); err != nil {
+		require.ErrorIs(t, err, workflow.ErrGroupInvalid)
+	}
+	// A real shared workflow is published; revision-stamped shared edits verify
+	// that publication record.
+	require.NoError(t, ds.publishedRepo.Upsert(ctx, "shared-pf", localDefaultUser, "shared-pf", workflow.VisibilityPublic, ""))
 	require.NoError(t, os.MkdirAll(privateDir(workspaceDir, "shared-pf"), 0o700))
 	before, err := os.ReadFile(defPath)
 	require.NoError(t, err)

@@ -47,6 +47,9 @@ func (s *Service) requireAdmin(ctx context.Context) error {
 //     leaves the old folder, the new folder, and a moved registry all diverging.
 //     Finally the old folder is removed.
 func (s *Service) Rename(ctx context.Context, name, newName string) error {
+	if s.stamper != nil {
+		return s.renameRevision(ctx, name, newName)
+	}
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}

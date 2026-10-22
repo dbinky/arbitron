@@ -1,0 +1,46 @@
+# Paired Integration Reviews — Workflow Auto-Arrangement, reviewed parallel groups
+
+Each row joins distinct behaviours in `docs/reference/focus-areas.md` across shared
+state, a wire contract or ordering built in different tasks. Each BREAK can survive
+isolated tests. One approval covers both directions; there are no reverse or duplicate
+area-pair rows. Trace to the observable sink, then show the BREAK is caught by a test
+or guard at `file:symbol`. This phase runs after the single-system reviews.
+
+**Budget:** 4 areas, 5 seams; 2 × 4 + 5 = **13** minimum passes ≤ **175**. No deferrals.
+
+## Paired Integration Reviews
+
+| # | Paired Review | Seam | Risk | Status |
+|---|---|---|---|---|
+| 1 | Area 2 (captured review) ↔ Area 1 (stored read truth) | SHARED: persisted `StoredResult` v2 arrays, verdict and review evidence. P3T18's `review_geometry.go:ReviewRequest.ValidateGeometry` trusts captured `WorkflowGroups`; the pre-branch Reader and P3T16 `geometry.go:Compatible` reconstruct ownership from the authorized manifest. Reader assumes the review verdict includes static ink and runtime probes; the reviewer assumes its exact digest and ownership survive storage. TRACE: Service save → Worker → Coordinator → Reviewer → `worker.go:ProcessRevision` → SQLite → `reader.go:Reader.View` → both authorized layout queries (`TestLayoutGroups_ReviewerAndStoreTruth`). BREAK: review passes captured ownership but the Reader rejects manifest ownership and never displays it, or a stored pass loses required group/probe evidence yet is served as reviewed. `coordinator.go:HasRenderedEvidence` checks the envelope, not raw probe coverage; trace that trust boundary rather than expecting Reader to rerun the reviewer | high | [x] |
+| 2 | Area 4 (measured arrangement) ↔ Area 2 (captured review) | SHARED: text metrics and blocking findings between P3T16 sizing and P3T17/P3T18 capture/review. `BrowserRenderer.Measure` → `MeasureSurface` feeds node sizing and `group_blocks.go:measureGroupBlocks`; `RenderSurface` Range bounds and `reviewer_checks.go:checkText` judge those boxes at 1.5px containment. Arrangement assumes measured wrapping matches drawing; review assumes `refine.go:Refine` can change a fixable candidate. TRACE: save the long auto-wrapped mixed-script group body label from `surface_groups_test.go:capturedGroupRequest` → real Measure → Arrange → Render → Review → Refine through `Coordinator.Run` for up to five attempts. Include combined live-row reservations and probe containment on this measured-box contract. BREAK: isolated sizing and capture tests pass but every integrated attempt clips and the workflow never reaches passed review. `TestReadabilityReviewer_GroupActualWrapOverflowFailsClosed` proves one failed attempt only; convergence remains unproved (G1) | high | [x] |
+| 3 | Area 2 (captured review) ↔ Area 3 (live route scene) | SHARED: P3T17/P3T18's reviewed drawing/runtime contract and P3T19's route-only live inputs, CSS, tile namespace and selection. Review probes synthesize states from `WorkflowGroups`; live routes get `aggregateState.ts:buildGroupLive` from engine panels. The review side assumes routes preserve approved geometry and finite overlay rows; routes assume the probes cover engine-emitted values. TRACE: engine `graph_state_groups.go` → `buildGroupLive` → `ExecutionView.tsx:GraphView` root/child tiles → `composeArrangedTiles` → `buildArrangedFlow` → `ReviewedGroupElement:GroupOverlay`; compare the same revision's capture with both embedded routes and inverse-translated child geometry (`TestLayoutGroupSurfaces_WorkflowAndInstanceParity`, `TestLayoutGroupSurfaces_RealGroupedChildTilesAndIndependentOutcome`). BREAK: an unprobed engine state/count renders `unsupported group overlay` or spills a reserved row; or route CSS, qualified IDs, translation or selection changes a box, route, label, marker or paint order from the approved capture. Empty winner is omitted by `buildGroupLive` and `GroupOverlay`, so it is not itself an unsupported-value example | high | [x] |
+| 4 | Area 1 (stored read/retry truth) ↔ Area 3 (live route scene) | SHARED: `LayoutView` v2 geometry/ownership/status/generations and `RetryAck`. The server read/retry producer predates P3T19; P3T16 supplied the Go/TS validators consumed by the new route decision. Server assumes available compatible geometry and generation fences are honored; the client assumes authorized snapshot identity and retry acknowledgements agree with displayed generations. TRACE: `query.go:QueryService.InstanceLayout` / `RetryInstance` → HTTP → `useInstanceLayoutTiles.ts:load` / `retryCurrent` → `ArrangedGraph.tsx:ArrangedGraph` / `validate.ts:resolveDisplayGeometry` → per-tile DOM and `LayoutStatusPanel`; also trace WorkflowReview's joined view. BREAK: server-reviewed geometry silently becomes fallback under a reviewed badge; client accepts incompatible attachment/ownership; a stale terminal read stops polling after retry; a valid ack is rejected by the strict generation check; or an unavailable child retains another revision's geometry. Check the shared `groupGeometry.v2.json` plus real root/child retry and stale-read cases, not only hook fixtures | med | [x] |
+| 5 | Area 4 (candidate scoring) ↔ Area 1 (persisted best across retries) | SHARED: persisted `StoredResult.Score` and result-generation ordering. P3T16 changed `coordinator.go:Coordinator.Run` / `unreviewedScore` to count real plus synthetic crossings via `group_geometry.go:CrossingCount`; pre-branch `worker.go:ProcessRevision` / `storedBetter` compare that score after storage on a later retry. Scoring assumes all components survive JSON; retention assumes the stored total still ranks complete candidates with the same evidence class. TRACE: produce two grouped candidates with equal evidence class, verdict, blocking/advisory counts and real crossings but different mixed crossings → Coordinator scores → Worker → real SQLite → Retry → `storedBetter` → Reader's selected `resultGeneration` and geometry. BREAK: crossing cost is dropped or the wrong generation is compared, so a geometrically worse retry replaces the best, or a better one is discarded, while both individual scoring and ordinary retention tests stay green. `TestCoordinator_GroupCrossingsAffectBestScore` stops at a one-attempt score; `TestWorker_GroupRetainedAfterLaterErrorsAndWorseRetry` uses a render error, so neither alone proves this comparison | med | [x] |
+
+## No seam
+
+### Inside one behaviour
+
+- **Static evidence ↔ runtime probes (now Area 2):** `RenderSurface.tsx:runRenderJob` shares baseline collection, probe comparisons and restore-before-capture ordering; `ReadabilityReviewer.Review` yields one verdict. Both lenses retain these checks.
+- **Child tiles ↔ live route drawing (now Area 3):** `ExecutionView.tsx:GraphView` constructs the same live tiles used for placement, selection and follow; the same P3T19 task built both. Both lenses retain the checks.
+- **Area 3 ↔ engine context redaction:** `nestedGraphs.ts:nestedContexts` is the authorized-context filter feeding the route, already traced to no GET/no ID/no link in Area 3's failure lens, not a separate client behaviour.
+- **Area 1 ↔ revision stamper:** `revision_stamper.go:retained` handles incompatible v1 `DisplayedLayout` as part of Area 1's named migration/save check.
+- **Area 4 ↔ workflow task-key validation:** Unicode keys remain the policy escalation W1; valid ASCII keys plus Unicode display strings stay in Area 4's folded-in sizing check.
+
+### Duplicate seams consolidated
+
+- **Seed row 6, captured drawing ↔ live drawing:** merged into row 3 after combining static/probe review and child/live routes; the route-only props/CSS/translation BREAK remains, with one approval for Area 2 ↔ Area 3.
+- **Seed row 5, stored truth ↔ child polling:** merged into row 4 after combining child/live routes; RetryAck ordering and unavailable-child checks remain, with one approval for Area 1 ↔ Area 3.
+
+### Covered by a retained seam
+
+- **Area 4 ↔ Area 3:** they do share v2 geometry; the seed's “no direct shared state” rationale was incorrect. Row 4 covers validator/ownership agreement and row 3 covers actual route projection, including every translated child field. There is no additional BREAK beyond those checks.
+- **Area 4 ↔ runtime probes (now Area 2):** measured OverlayBox rows and actual probe containment are included in row 2; a blocking integrated probe is not proof that isolated producer/consumer tests would catch a mismatch.
+- **Area 1 ↔ runtime probes (now Area 2):** persisted findings/verdict trust is included in row 1; there is no separately stored probe contract.
+- **Area 4 ↔ Area 1 validation call:** the same `validateGroupGeometry` gate is a folded-in check, not a separate validation seam. The independently persisted cross-generation score comparison does qualify and is now row 5.
+- **Area 2 ↔ child placement (now Area 3):** captured geometry reaches tiles through stored results; capture-to-route parity belongs to row 3 and status/retry transport to row 4.
+
+### Genuinely unrelated
+
+- **Server probe scheduling ↔ child GET scheduling:** no shared queue or ordering; Area 2's offline probe loop does not schedule Area 3's bounded HTTP requests. Their rendered output is already covered by row 3.

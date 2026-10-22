@@ -3,9 +3,13 @@ package samples
 
 import (
 	"context"
+	"errors"
 
 	"github.com/arbitron/arbitron/domain/workflow"
 )
+
+// ErrMalformedSample distinguishes invalid sample content from an unavailable source.
+var ErrMalformedSample = errors.New("samples: malformed sample")
 
 // SampleSource reads the on-disk sample workflow source (the install
 // hierarchy's samples/ directory).
@@ -15,7 +19,8 @@ type SampleSource interface {
 	// not an error.
 	List(ctx context.Context) ([]string, error)
 	// Read returns the parsed manifest and the supporting files (relative path
-	// -> content) for the named sample.
+	// -> content) for the named sample. Invalid content wraps ErrMalformedSample;
+	// infrastructure errors are returned without that marker and abort seeding.
 	Read(ctx context.Context, name string) (*workflow.Workflow, map[string][]byte, error)
 }
 

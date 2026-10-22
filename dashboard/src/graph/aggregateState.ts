@@ -293,7 +293,7 @@ export type GraphSelection =
   | { kind: 'node'; rfId: string; nodeId: string; instanceId: string | null }
   | { kind: 'group'; rfId: string; nodeId: string; instanceId: string | null }
 
-const GROUP_TYPES = new Set(['groupHeader', 'groupFooter', 'groupTaskCard'])
+const GROUP_TYPES = new Set(['groupHeader', 'groupFooter', 'groupTaskCard', 'groupLane'])
 
 /**
  * Selection of a clicked React Flow node. Header, footer and task cards select

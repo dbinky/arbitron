@@ -20,7 +20,10 @@ import (
 func metadataGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Group Test", "GIT_AUTHOR_EMAIL=group@example.test", "GIT_COMMITTER_NAME=Group Test", "GIT_COMMITTER_EMAIL=group@example.test")
+	// No background auto-gc/maintenance (as adapter/git/runner.go): newer git
+	// detaches it after a commit and its objects/maintenance.lock races the
+	// snapshot, which rightly refuses a locked repository.
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=gc.auto", "GIT_CONFIG_VALUE_0=0", "GIT_CONFIG_KEY_1=maintenance.auto", "GIT_CONFIG_VALUE_1=false", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Group Test", "GIT_AUTHOR_EMAIL=group@example.test", "GIT_COMMITTER_NAME=Group Test", "GIT_COMMITTER_EMAIL=group@example.test")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
 	return strings.TrimSpace(string(out))

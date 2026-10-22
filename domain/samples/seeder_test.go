@@ -20,12 +20,13 @@ import (
 
 type fakeSource struct {
 	names   []string
+	listErr error
 	wf      map[string]*workflow.Workflow
 	files   map[string]map[string][]byte
 	readErr map[string]error
 }
 
-func (f *fakeSource) List(context.Context) ([]string, error) { return f.names, nil }
+func (f *fakeSource) List(context.Context) ([]string, error) { return f.names, f.listErr }
 func (f *fakeSource) Read(_ context.Context, name string) (*workflow.Workflow, map[string][]byte, error) {
 	if err := f.readErr[name]; err != nil {
 		return nil, nil, err
@@ -81,9 +82,6 @@ func (r *fakeRepo) ListFiles(context.Context, workflow.Scope, string) ([]string,
 }
 func (r *fakeRepo) Exists(_ context.Context, _ workflow.Scope, name string) (bool, error) {
 	return r.exists[name], nil
-}
-func (r *fakeRepo) SaveNodePositions(context.Context, workflow.Scope, string, map[string]workflow.NodePosition) error {
-	return nil
 }
 func (r *fakeRepo) CopyTree(context.Context, workflow.Scope, string, workflow.Scope, string, bool) error {
 	return nil
@@ -203,7 +201,7 @@ func TestSeed_MalformedIsSkippedNotRecorded(t *testing.T) {
 	src := &fakeSource{
 		names:   []string{"bad", "pr-review"},
 		wf:      map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}},
-		readErr: map[string]error{"bad": context.DeadlineExceeded},
+		readErr: map[string]error{"bad": samples.ErrMalformedSample},
 	}
 	repo := &fakeRepo{}
 	pub := &fakePublished{}
@@ -223,12 +221,8 @@ func TestSeed_MalformedIsSkippedNotRecorded(t *testing.T) {
 	}
 }
 
-// Crash-then-rerun: a prior boot created the shared dir and published it, then
-// was killed before recording the ledger. On rerun Create returns
-// ErrAlreadyExists; because the sample already exists in shared AND is published
-// by the bootstrap owner, seedOne treats it as a resume (success), re-writes the
-// file tree idempotently, and the ledger is recorded so the next boot skips it.
-func TestSeed_CrashThenRerun_ResumesWhenOwnedByBootstrap(t *testing.T) {
+// Publisher ownership alone is not proof that this tree is an interrupted seed.
+func TestSeed_CrashThenRerun_RejectsUnprovenBootstrapTree(t *testing.T) {
 	owner := uuid.New()
 	src := &fakeSource{
 		names: []string{"pr-review"},
@@ -243,24 +237,16 @@ func TestSeed_CrashThenRerun_ResumesWhenOwnedByBootstrap(t *testing.T) {
 	led := &fakeLedger{}
 	s := samples.NewSeeder(src, repo, pub, led, owner, discardLogger())
 
-	if err := s.Seed(context.Background()); err != nil {
-		t.Fatalf("Seed (resume): %v", err)
+	if err := s.Seed(context.Background()); err == nil {
+		t.Fatal("expected unproven-tree collision")
 	}
-	// The file tree is re-written idempotently to heal any partial prior write.
-	if len(repo.files) != 1 || repo.files[0].rel != "manager.md" {
-		t.Errorf("files (resume) = %+v, want manager.md re-written", repo.files)
-	}
-	// The sample is recorded as seeded so subsequent boots skip it.
-	if len(led.recorded) != 1 || led.recorded[0] != "pr-review" {
-		t.Errorf("recorded = %v, want [pr-review]", led.recorded)
+	if len(repo.files) != 0 || len(led.recorded) != 0 {
+		t.Fatal("unproven tree must not be rewritten or recorded")
 	}
 }
 
-// Crash-then-rerun where the prior boot's partial WriteFile left an orphaned
-// shared dir owned by the bootstrap user: the resume path re-writes the files
-// successfully and completes. (Drives the previously-untestable WriteFile path
-// via writeFileErr being unset on the resume run.)
-func TestSeed_CrashThenRerun_HealsPartialWrite(t *testing.T) {
+// Partial trees must be settled from durable evidence, never blindly healed.
+func TestSeed_CrashThenRerun_RejectsUnprovenPartialWrite(t *testing.T) {
 	owner := uuid.New()
 	src := &fakeSource{
 		names: []string{"pr-review"},
@@ -275,14 +261,11 @@ func TestSeed_CrashThenRerun_HealsPartialWrite(t *testing.T) {
 	led := &fakeLedger{}
 	s := samples.NewSeeder(src, repo, pub, led, owner, discardLogger())
 
-	if err := s.Seed(context.Background()); err != nil {
-		t.Fatalf("Seed (heal): %v", err)
+	if err := s.Seed(context.Background()); err == nil {
+		t.Fatal("expected partial-tree collision")
 	}
-	if len(repo.files) != 2 {
-		t.Errorf("files (heal) = %d, want 2 re-written", len(repo.files))
-	}
-	if len(led.recorded) != 1 {
-		t.Errorf("recorded = %v, want [pr-review]", led.recorded)
+	if len(repo.files) != 0 || len(led.recorded) != 0 {
+		t.Fatal("partial tree must not be adopted")
 	}
 }
 
@@ -328,6 +311,10 @@ func TestSeed_PublishFailureRollsBackAndAborts(t *testing.T) {
 	if len(led.recorded) != 0 {
 		t.Errorf("must not record a sample whose publication failed; recorded=%v", led.recorded)
 	}
+}
+
+func (r *fakeRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	return workflow.ErrNotFound
 }
 
 // An unwired seeder must never accept a group, even when the config is valid.

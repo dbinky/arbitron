@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -15,9 +16,29 @@ const flatStoreMarker = ".flatstore_migrated"
 // reservedRoots are top-level workspace dirs that are NOT flat workflows and
 // must never be moved.
 var reservedRoots = map[string]bool{
-	"users":     true,
-	"shared":    true,
-	"instances": true,
+	"users":                    true,
+	"shared":                   true,
+	"instances":                true,
+	".arbitron-locks":          true,
+	".arbitron-layout-journal": true,
+	".arbitron-tree-commits":   true,
+}
+
+func flatStoreArtifact(name string) bool {
+	if reservedRoots[name] {
+		return true
+	}
+	if !strings.HasPrefix(name, ".") {
+		return false
+	}
+	for _, marker := range []string{".tmp-", ".old-"} {
+		if i := strings.LastIndex(name, marker); i >= 0 {
+			if _, err := uuid.Parse(name[i+len(marker):]); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // migrateFlatStore relocates pre-existing top-level workflow folders under
@@ -48,7 +69,7 @@ func migrateFlatStore(basePath string, defaultUser uuid.UUID) error {
 	createdUserRoot := false
 
 	for _, e := range entries {
-		if !e.IsDir() || reservedRoots[e.Name()] {
+		if !e.IsDir() || flatStoreArtifact(e.Name()) {
 			continue
 		}
 		src := filepath.Join(basePath, e.Name())

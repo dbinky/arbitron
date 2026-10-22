@@ -1,4 +1,4 @@
-.PHONY: ui build test test-ui test-all dist samples-tarball install-samples release clean-dist test-release test-install
+.PHONY: ui check-ui-fresh build test test-go-fresh-ui test-ui test-all test-gate test-render test-dashboard-browser test-font-portability dist samples-tarball install-samples release clean-dist test-release test-install
 
 # Release version/build metadata. VERSION defaults to the current git tag with a
 # leading "v" stripped (tag v1.2.3 -> 1.2.3), falling back to the short SHA when
@@ -18,34 +18,84 @@ DIST_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 # by `arbitron version`.
 DIST_LDFLAGS = -s -w -buildid= -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
+# Install dashboard packages once per lockfile change. A real file target (not a
+# phony step) so `make -j` runs npm ci exactly once, before every Node consumer,
+# and skips it entirely when node_modules is already current. npm ci wipes
+# node_modules, so the stamp is written only after it succeeds.
+DASHBOARD_DEPS := dashboard/node_modules/.stamp
+$(DASHBOARD_DEPS): dashboard/package-lock.json dashboard/package.json
+	cd dashboard && npm ci
+	touch $@
+
 # Rebuild the dashboard and sync it into the embedded dir that the Go binary
 # serves (adapter/dashboard/dist, via //go:embed dist/*). Run this after
 # changing anything under dashboard/ so a host `go build`/`go run` serves the
 # current UI. The Docker image builds the dashboard itself, so this is only for
 # local (non-Docker) runs — but commit the refreshed adapter/dashboard/dist so
 # the checked-in artifact does not drift.
-ui:
-	cd dashboard && npm ci && npm run build
+ui: $(DASHBOARD_DEPS)
+	cd dashboard && npm run build
 	rm -rf adapter/dashboard/dist
 	cp -r dashboard/dist adapter/dashboard/dist
+
+# The committed embedded dist must be exactly what `make ui` builds from source.
+# git status --porcelain also reports new untracked files (e.g. a freshly
+# fingerprinted chunk), which `git diff` alone would miss. Usable by CI directly.
+check-ui-fresh: ui
+	@stale="$$(git status --porcelain --untracked-files=all -- adapter/dashboard/dist)"; \
+	if [ -n "$$stale" ]; then \
+		echo "adapter/dashboard/dist is stale: run 'make ui' and commit the result:"; \
+		echo "$$stale"; \
+		exit 1; \
+	fi
 
 # Build the server binary (embeds whatever is in adapter/dashboard/dist).
 build:
 	CGO_ENABLED=0 go build -o arbitron ./cmd/arbitron
 
-# Run the Go test suite (the project's primary gate). Go-only — it does NOT
-# cover the dashboard (Phase 3) surface; use `test-all` for the full gate.
+# Run the Go test suite (the project's primary gate). Go-only: no Node and no
+# UI rebuild — it embeds the committed adapter/dashboard/dist. Use `test-all`
+# for the full gate.
 test:
+	go test ./...
+
+# test-all's Go run: starts only after the embedded dist has been rebuilt and
+# proven fresh, so `make -j test-all` never compiles a half-copied dist.
+test-go-fresh-ui: check-ui-fresh
 	go test ./...
 
 # Run the dashboard test suite: TypeScript type-check + Vitest. Not part of
 # `test`; kept separate because it needs Node, not Go.
-test-ui:
+test-ui: $(DASHBOARD_DEPS)
 	cd dashboard && npx tsc --noEmit && npx vitest run
 
-# Full Definition-of-Done gate: the Go suite AND the dashboard suite. "Full
-# test suite green" means this target passes, not just `test`.
-test-all: test test-ui
+# Full gate: fresh embedded UI, Go, dashboard, and browser-required rendered review.
+# CI runs test-gate on every change and test-font-portability (Docker) in its own
+# job when its inputs change; together they are exactly test-all.
+test-all: test-gate test-font-portability
+
+test-gate: check-ui-fresh test-go-fresh-ui test-ui test-render test-dashboard-browser
+
+# Browser-only dashboard scripts: shared font classes, wrap widths and per-graph
+# marker namespaces in real Chrome. A missing browser is a failure, not a skip.
+test-dashboard-browser: $(DASHBOARD_DEPS)
+	cd dashboard && ARBITRON_REQUIRE_BROWSER=1 npm run test:arranged-browser
+
+# Bundled fonts must measure and render identically under different system-font
+# inventories; the proof runs inside the shipped image, so build it first.
+# CI builds the image itself with a layer cache and passes FONT_IMAGE_BUILD=true.
+FONT_IMAGE_BUILD ?= docker build -t arbitron:layout-render .
+test-font-portability: $(DASHBOARD_DEPS)
+	$(FONT_IMAGE_BUILD)
+	cd dashboard && npm run test:font-portability
+
+# Browser-required adapter and production-root suites. Rebuild render.html first;
+# a missing Chrome/Chromium is a failure, never a skipped release verification.
+# Plain `go test ./...` skips every real-browser test, so this is their only run:
+# both packages whole, never name-filtered.
+# One test: ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron/ -run '^TestName$' -count=1
+test-render: ui
+	ARBITRON_REQUIRE_BROWSER=1 go test ./adapter/renderreview/ ./cmd/arbitron/ -count=1 -timeout 90m
 
 # Package the bundled sample workflows into a release tarball alongside the
 # binaries, so the installer can fetch + verify + extract them.

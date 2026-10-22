@@ -41,7 +41,7 @@ const EMPTY_EXECUTION_STATES: Record<string, NodeExecutionState> = {}
 const EMPTY_GROUP_LIVE: Record<string, GroupLiveSummary> = {}
 const EMPTY_NODE_CONTEXTS: Record<string, NodeContextInfo> = {}
 
-interface UseGraphLayoutInput {
+export interface UseGraphLayoutInput {
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
   executionStates?: Record<string, NodeExecutionState>
@@ -55,27 +55,37 @@ interface UseGraphLayoutInput {
   groupLive?: Record<string, GroupLiveSummary>
   /** Owning-instance info keyed by definition node id (absent in static views). */
   nodeContexts?: Record<string, NodeContextInfo>
+  /** Complete finite fallback positions; otherwise manifest positions/dagre apply. */
+  positions?: Record<string, { x: number; y: number }>
 }
 
-interface UseGraphLayoutOutput {
+export interface UseGraphLayoutOutput {
   rfNodes: Node[]
   rfEdges: Edge[]
-  needsAutoSave: boolean
+}
+
+function hasXY(p: { x: number; y: number } | null | undefined): p is { x: number; y: number } {
+  return p != null && Number.isFinite(p.x) && Number.isFinite(p.y)
 }
 
 const PRESENTATION_EDGE_STYLE = { stroke: '#5b6b8c', strokeDasharray: '4 4' }
 
-export function useGraphLayout({
+export function useGraphLayout(input: UseGraphLayoutInput): UseGraphLayoutOutput {
+  const { nodes, edges, executionStates, groups, groupLive, nodeContexts, positions } = input
+  return useMemo(() => computeGraphLayout(input), [nodes, edges, executionStates, groups, groupLive, nodeContexts, positions])
+}
+
+export function computeGraphLayout({
   nodes,
   edges,
   executionStates = EMPTY_EXECUTION_STATES,
   groups = null,
   groupLive = EMPTY_GROUP_LIVE,
   nodeContexts = EMPTY_NODE_CONTEXTS,
+  positions,
 }: UseGraphLayoutInput): UseGraphLayoutOutput {
-  return useMemo(() => {
     if (nodes.length === 0) {
-      return { rfNodes: [], rfEdges: [], needsAutoSave: false }
+      return { rfNodes: [], rfEdges: [] }
     }
 
     const plan: GroupLayoutPlan | null =
@@ -94,23 +104,24 @@ export function useGraphLayout({
       : edges
     const detection = detectLoops(layoutEdges)
 
-    // All-or-nothing rule: use stored positions only when every node has one.
-    const allHavePositions = nodes.every(
-      (n) => n.position != null && n.position.x != null && n.position.y != null,
-    )
-
-    let needsAutoSave = false
+    // All-or-nothing rule: use supplied fallback positions, else manifest
+    // positions, only when every node has a finite one.
+    const positionsComplete = positions != null && nodes.every((n) => hasXY(positions[n.id]))
+    const allHavePositions = nodes.every((n) => hasXY(n.position))
     let positionMap: Record<string, { x: number; y: number }>
 
-    if (allHavePositions) {
+    if (positionsComplete) {
+      positionMap = {}
+      for (const n of nodes) positionMap[n.id] = { ...positions[n.id] }
+      if (activePlan) placeGroupsFromStoredPositions(activePlan, positionMap)
+    } else if (allHavePositions) {
       positionMap = {}
       for (const n of nodes) {
         positionMap[n.id] = { x: n.position!.x, y: n.position!.y }
       }
       if (activePlan) placeGroupsFromStoredPositions(activePlan, positionMap)
     } else {
-      // Run dagre for the entire graph.
-      needsAutoSave = true
+      // Display-only dagre layout; never persisted.
       const g = new dagre.graphlib.Graph({ compound: true })
       g.setDefaultEdgeLabel(() => ({}))
       g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 })
@@ -369,7 +380,5 @@ export function useGraphLayout({
     return {
       rfNodes: [...groupContainers, ...containerNodes, ...rfNodes, ...groupNodes],
       rfEdges,
-      needsAutoSave,
     }
-  }, [nodes, edges, executionStates, groups, groupLive, nodeContexts])
 }

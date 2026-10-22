@@ -60,8 +60,28 @@
   background: var(--text-dim);
 }
 
+.tileScene {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.tileRail {
+  width: 240px;
+  flex-shrink: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.tileRail section {
+  padding: 8px;
+}
+
 .graphContainer {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   position: relative;
 }

@@ -140,7 +140,7 @@ func TestSubtreeStreamE2E_VisibilityRevocationAndRestorationOnOneSocket(t *testi
 	child := ssSeed(t, ds, &root, instance.StateRunning)
 	// Supply a non-owner identity at the HTTP boundary, leaving the real
 	// routerDeps, Engine authorization, repositories and bridge intact.
-	deps := ds.routerDeps()
+	deps := ds.routerDeps(nil, nil, nil, nil)
 	deps.Auth = nil
 	router := adapthttp.NewRouterFromDeps(deps)
 	viewer := identity.Identity{UserID: uuid.New(), Role: identity.RoleUser}
@@ -188,7 +188,7 @@ func TestSubtreeStreamE2E_ConflictPathsReauthorizeTheTaskOnOneSocket(t *testing.
 		Tasks: []instance.GroupTask{{Key: "hidden", Kind: instance.GroupTaskKindWorkflow, Origin: "private-workflow", ChildInstanceID: child}},
 	}
 	require.NoError(t, ds.groupRunRepo.CreateWithTasks(context.Background(), run))
-	deps := ds.routerDeps()
+	deps := ds.routerDeps(nil, nil, nil, nil)
 	deps.Auth = nil
 	router := adapthttp.NewRouterFromDeps(deps)
 	viewer := identity.Identity{UserID: uuid.New(), Role: identity.RoleUser}

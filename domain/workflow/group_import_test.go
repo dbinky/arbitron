@@ -179,6 +179,8 @@ func TestServiceGroup_ImportsAcceptSourcePromptAndAdvisories(t *testing.T) {
 	}
 }
 
+var importInfrastructure = map[string]bool{".arbitron-locks": true, ".arbitron-layout-journal": true, ".arbitron-tree-commits": true}
+
 func importTree(t *testing.T, root string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -189,6 +191,12 @@ func importTree(t *testing.T, root string) map[string]string {
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
+		}
+		// The repository's reserved infrastructure (per-name flock files, the
+		// layout journal, tree commits) is not workflow content: taking a name
+		// lock creates an empty lock file even when the import is then refused.
+		if d.IsDir() && importInfrastructure[d.Name()] {
+			return filepath.SkipDir
 		}
 		if d.IsDir() {
 			out[rel] = "directory"

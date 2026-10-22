@@ -2,5 +2,5 @@ package dashboard
 
 import "io/fs"
 
-// AssetsForTest exports assets() for use by external tests.
-func AssetsForTest() fs.FS { return assets() }
+// AssetsForTest exports the embedded dist FS for the existing handler tests.
+func AssetsForTest() fs.FS { return Assets() }

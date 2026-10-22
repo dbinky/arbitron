@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/arbitron/arbitron/domain/samples"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -72,12 +73,12 @@ func (s *SampleSource) Read(_ context.Context, name string) (*workflow.Workflow,
 	}
 	var wf workflow.Workflow
 	if err := json.Unmarshal(manifest, &wf); err != nil {
-		return nil, nil, fmt.Errorf("parsing manifest for %q: %w", name, err)
+		return nil, nil, fmt.Errorf("%w: parsing manifest for %q: %w", samples.ErrMalformedSample, name, err)
 	}
 	// The on-disk directory name is authoritative; a manifest whose name diverges
 	// is malformed (skip-as-malformed) so identity can never silently disagree.
 	if wf.Name != name {
-		return nil, nil, fmt.Errorf("manifest name %q does not match sample directory %q", wf.Name, name)
+		return nil, nil, fmt.Errorf("%w: manifest name %q does not match sample directory %q", samples.ErrMalformedSample, wf.Name, name)
 	}
 	files := map[string][]byte{}
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {

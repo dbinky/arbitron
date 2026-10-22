@@ -10,9 +10,9 @@ import (
 //go:embed dist/*
 var distFS embed.FS
 
-// assets returns the embedded dist/ sub-filesystem. Callers can use fs.ReadDir
-// to discover the actual (content-hashed) asset filenames at runtime.
-func assets() fs.FS {
+// Assets returns the embedded dashboard SPA and deterministic render surface.
+// Content-hashed assets and bundled fonts are available in the same filesystem.
+func Assets() fs.FS {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic("failed to create sub filesystem: " + err.Error())
@@ -24,10 +24,7 @@ func assets() fs.FS {
 // Static assets under /assets/ are served with immutable cache headers.
 // All other paths fall back to index.html for client-side routing.
 func Handler() http.Handler {
-	sub, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		panic("failed to create sub filesystem: " + err.Error())
-	}
+	sub := Assets()
 
 	fileServer := http.FileServer(http.FS(sub))
 

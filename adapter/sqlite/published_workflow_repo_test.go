@@ -13,6 +13,163 @@ import (
 // defaultUserID is the seeded local admin from migration 001.
 var defaultUserID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
+func TestRevisionPublicationCommit(t *testing.T) {
+	ctx := context.Background()
+	db := setupTestDB(t)
+	r := NewPublishedWorkflowRepo(db.DB)
+	pub := workflow.Publication{Revision: "new-token", WorkflowID: uuid.New(), Publisher: defaultUserID, SourceName: "source", Visibility: workflow.VisibilityDepartment, Department: "engineering"}
+	require.NoError(t, r.Upsert(ctx, "wf", defaultUserID, "legacy", workflow.VisibilityPublic, ""))
+	legacy, ok, err := r.PublicationOf(ctx, "wf")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Empty(t, legacy.Revision)
+	assert.Equal(t, uuid.Nil, legacy.WorkflowID)
+	require.NoError(t, r.CommitPublication(ctx, "wf", pub))
+	got, ok, err := r.PublicationOf(ctx, "wf")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, pub, got)
+	var token, id string
+	require.NoError(t, db.DB.QueryRow(`SELECT saved_revision,workflow_id FROM published_workflows WHERE name='wf'`).Scan(&token, &id))
+	assert.Equal(t, pub.Revision, token)
+	assert.Equal(t, pub.WorkflowID.String(), id)
+	row, ok, err := r.Get(ctx, "wf")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, pub.Revision, row.Revision)
+	assert.Equal(t, pub.WorkflowID, row.WorkflowID)
+	list, err := r.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, *row, list[0])
+	require.NoError(t, r.Upsert(ctx, "wf", defaultUserID, "source", workflow.VisibilityPublic, ""))
+	got, ok, err = r.PublicationOf(ctx, "wf")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, pub.Revision, got.Revision)
+	assert.Equal(t, pub.WorkflowID, got.WorkflowID)
+	for _, bad := range []workflow.Publication{{Publisher: defaultUserID, Visibility: workflow.VisibilityPublic}, {Revision: "bad", Publisher: uuid.New(), Visibility: workflow.VisibilityPublic}, {Revision: "bad", Publisher: defaultUserID, Visibility: workflow.VisibilityPrivate}} {
+		require.Error(t, r.CommitPublication(ctx, "wf", bad))
+		unchanged, _, err := r.PublicationOf(ctx, "wf")
+		require.NoError(t, err)
+		assert.Equal(t, got, unchanged)
+	}
+	local := pub
+	local.WorkflowID = uuid.Nil
+	local.Revision = "local"
+	require.NoError(t, r.CommitPublication(ctx, "local", local))
+	value, _, err := r.PublicationOf(ctx, "local")
+	require.NoError(t, err)
+	assert.Equal(t, local, value)
+	_, err = db.DB.Exec(`CREATE TRIGGER reject_proof BEFORE UPDATE OF saved_revision ON published_workflows BEGIN SELECT RAISE(ABORT,'injected proof failure'); END`)
+	require.NoError(t, err)
+	changed := pub
+	changed.Revision = "newer"
+	changed.WorkflowID = uuid.New()
+	require.Error(t, r.CommitPublication(ctx, "wf", changed))
+	unchanged, _, err := r.PublicationOf(ctx, "wf")
+	require.NoError(t, err)
+	assert.Equal(t, got, unchanged)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(t, r.CommitPublication(cancelled, "wf", pub), context.Canceled)
+	require.NoError(t, db.DB.Close())
+	require.Error(t, r.CommitPublication(ctx, "wf", pub))
+	_, _, err = r.PublicationOf(ctx, "wf")
+	require.Error(t, err)
+}
+
+func TestRevisionPublicationRename(t *testing.T) {
+	for _, scenario := range []string{"success", "registry conflict", "publication conflict", "sql failure", "wrong id", "wrong source", "wrong publisher", "missing publication", "private", "nil id", "missing identity", "missing revision", "invalid visibility", "unlinked source", "cancelled"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			db := setupTestDB(t)
+			pubs := NewPublishedWorkflowRepo(db.DB)
+			reg := NewWorkflowIdentityRepo(db.DB)
+			id := uuid.New()
+			pub := workflow.Publication{Revision: "old-token", WorkflowID: id, Publisher: defaultUserID, SourceName: "source", Visibility: workflow.VisibilityDepartment, Department: "engineering"}
+			entry := workflow.RegistryEntry{ID: id, Name: "old", Scope: workflow.ScopeShared}
+			if scenario == "private" {
+				entry.Scope = workflow.ScopePrivate
+				entry.OwnerID = defaultUserID
+			}
+			require.NoError(t, reg.Register(ctx, entry))
+			require.NoError(t, pubs.CommitPublication(ctx, "old", pub))
+			next := pub
+			next.Revision = "new-token"
+			switch scenario {
+			case "registry conflict":
+				require.NoError(t, reg.Register(ctx, workflow.RegistryEntry{ID: uuid.New(), Name: "new", Scope: workflow.ScopeShared}))
+			case "publication conflict":
+				require.NoError(t, pubs.Upsert(ctx, "new", defaultUserID, "occupied", workflow.VisibilityPublic, ""))
+			case "sql failure":
+				_, err := db.DB.Exec(`CREATE TRIGGER reject_rename BEFORE UPDATE OF name ON published_workflows BEGIN SELECT RAISE(ABORT,'injected rename failure'); END`)
+				require.NoError(t, err)
+			case "wrong id":
+				next.WorkflowID = uuid.New()
+			case "wrong source":
+				next.SourceName = "different"
+			case "wrong publisher":
+				next.Publisher = uuid.New()
+			case "missing publication":
+				require.NoError(t, pubs.Delete(ctx, "old"))
+			case "private":
+			case "nil id":
+				id = uuid.Nil
+				next.WorkflowID = uuid.Nil
+			case "missing identity":
+				require.NoError(t, reg.Delete(ctx, id))
+			case "missing revision":
+				next.Revision = ""
+			case "invalid visibility":
+				next.Visibility = workflow.VisibilityPrivate
+			case "unlinked source":
+				_, err := db.DB.Exec(`UPDATE published_workflows SET workflow_id=NULL WHERE name='old'`)
+				require.NoError(t, err)
+			}
+			before, hadPub, err := pubs.PublicationOf(ctx, "old")
+			require.NoError(t, err)
+			target, hadTarget, err := pubs.PublicationOf(ctx, "new")
+			require.NoError(t, err)
+			renameCtx := ctx
+			if scenario == "cancelled" {
+				var cancel context.CancelFunc
+				renameCtx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			err = pubs.RenamePublication(renameCtx, id, "old", "new", next)
+			if scenario == "success" {
+				require.NoError(t, err)
+				name, err := reg.ResolveName(ctx, id)
+				require.NoError(t, err)
+				assert.Equal(t, "new", name)
+				got, ok, err := pubs.PublicationOf(ctx, "new")
+				require.NoError(t, err)
+				require.True(t, ok)
+				assert.Equal(t, next, got)
+				_, ok, err = pubs.PublicationOf(ctx, "old")
+				require.NoError(t, err)
+				assert.False(t, ok)
+			} else {
+				require.Error(t, err)
+				if scenario != "missing identity" {
+					name, err := reg.ResolveName(ctx, entry.ID)
+					require.NoError(t, err)
+					assert.Equal(t, "old", name)
+				}
+				got, ok, err := pubs.PublicationOf(ctx, "old")
+				require.NoError(t, err)
+				assert.Equal(t, hadPub, ok)
+				assert.Equal(t, before, got)
+				got, ok, err = pubs.PublicationOf(ctx, "new")
+				require.NoError(t, err)
+				assert.Equal(t, hadTarget, ok)
+				assert.Equal(t, target, got)
+			}
+		})
+	}
+}
+
 // --- Happy path ---
 
 func TestPublishedWorkflowRepo_UpsertThenPublisherOf(t *testing.T) {

@@ -24,15 +24,22 @@ type PublishRequest struct {
 	// invoked once the idempotency decision is made and must be safe to re-run
 	// on the overwrite/resume path (it is called with overwrite=true then).
 	WriteTree func(ctx context.Context, overwrite bool) error
-	// Rollback compensates a FRESH publish whose record step failed by removing
-	// the just-written tree. It is never called on the overwrite/resume path.
+	// Rollback restores a stamped publish's prior tree for both fresh and
+	// overwrite failures. Legacy callers compensate only a fresh publish.
 	Rollback func(ctx context.Context) error
+	// PreparedPublication returns the exact identity/revision stamped by WriteTree.
+	// Stamped callers must provide it and a reversible tree rollback.
+	PreparedPublication func() (Publication, error)
 }
 
 // WriteAndRecord is the single owner of the publish-into-shared invariant: a
 // shared workflow tree and its published_workflows row must be written together;
 // if recording the publication fails on a FRESH publish, the just-written tree
 // is rolled back so no orphaned, unattributed shared copy is left behind.
+//
+// With PreparedPublication it requires revision-capable storage before writing,
+// commits exact proof after the staged write and restores BOTH fresh and overwrite
+// trees on proof failure. The Upsert behavior below is only for legacy callers.
 //
 // It also owns the idempotency/re-entrancy decision: a name already published by
 // the same publisher is an overwrite (a re-publish or a crash-interrupted seed
@@ -45,6 +52,15 @@ type PublishRequest struct {
 func WriteAndRecord(ctx context.Context, store PublishedStore, req PublishRequest) error {
 	if store == nil {
 		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
+	}
+
+	var proofs RevisionPublicationStore
+	if req.PreparedPublication != nil {
+		var ok bool
+		proofs, ok = store.(RevisionPublicationStore)
+		if !ok || req.Rollback == nil {
+			return ErrMutationMisconfigured
+		}
 	}
 
 	// Publisher-only-overwrite / resume decision.
@@ -63,7 +79,22 @@ func WriteAndRecord(ctx context.Context, store PublishedStore, req PublishReques
 	if err := req.WriteTree(ctx, overwrite); err != nil {
 		return err
 	}
-	// Record the publication after the tree is in place (write-then-record).
+	if proofs != nil {
+		publication, err := req.PreparedPublication()
+		if err == nil && (!validRevision(publication.Revision) || publication.WorkflowID == uuid.Nil) {
+			err = fmt.Errorf("workflow: missing prepared publication proof")
+		}
+		if err == nil {
+			err = proofs.CommitPublication(ctx, req.PublishedName, publication)
+		}
+		if err != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postcommitTimeout)
+			defer cancel()
+			return errors.Join(fmt.Errorf("recording publication for %q: %w", req.PublishedName, err), req.rollback(rollbackCtx))
+		}
+		return nil
+	}
+	// Legacy isolated callers have no revision proof or durable backup.
 	if err := store.Upsert(ctx, req.PublishedName, req.Publisher, req.SourceName, req.Visibility, req.Department); err != nil {
 		if !overwrite {
 			// FRESH path: compensate by deleting the just-written tree. The
@@ -84,7 +115,7 @@ func WriteAndRecord(ctx context.Context, store PublishedStore, req PublishReques
 	return nil
 }
 
-// rollback invokes the request's compensating delete (no-op when unset).
+// rollback invokes the compensating tree restore (or legacy fresh-tree delete).
 func (r PublishRequest) rollback(ctx context.Context) error {
 	if r.Rollback == nil {
 		return nil

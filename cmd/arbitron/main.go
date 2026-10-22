@@ -230,6 +230,9 @@ func newMCPCmd() *cobra.Command {
 // Both the HTTP serve command and the standalone MCP command reuse this struct
 // so that initialisation logic is not duplicated.
 type domainStack struct {
+	layout              *layoutStack
+	closeOnce           sync.Once
+	background          sync.WaitGroup
 	cfg                 *config.Config
 	settings            *config.SettingsStore
 	logger              *slog.Logger
@@ -277,6 +280,7 @@ type domainStack struct {
 	deviceSvc    *identity.DeviceCodeService
 	provisioner  *instance.Provisioner
 	userRepo     instance.UserRepository
+	groupCfg     identity.GroupConfig
 	userSvc      *instance.UserService
 	dashboardSvc *domaindashboard.Service
 	authMW       *adapthttp.AuthMiddleware
@@ -306,10 +310,16 @@ type domainStack struct {
 	subtreeEvents *engine.SubtreeEventBridge
 }
 
-// Close tears down the domain stack in the correct order: engine drains first,
-// then the scheduler stops, then tracing flushes, then the database closes,
-// and finally the log sink is closed.
+// Close stops producers and joins background work before closing renderer, DB
+// and logging resources. It also handles partially constructed stacks.
 func (ds *domainStack) Close(ctx context.Context) {
+	if ds == nil {
+		return
+	}
+	ds.closeOnce.Do(func() { ds.close(ctx) })
+}
+
+func (ds *domainStack) close(ctx context.Context) {
 	// Stop the schedule evaluator FIRST (org-readiness Phase 3): no new scheduled
 	// triggers must be created once shutdown begins, so it stops before the engine
 	// drains in-flight instances.
@@ -319,19 +329,11 @@ func (ds *domainStack) Close(ctx context.Context) {
 	if ds.scheduleEval != nil {
 		ds.scheduleEval.Stop()
 	}
-	if ds.eng != nil {
-		ds.eng.Shutdown()
-	}
 	if ds.schedulerCancel != nil {
 		ds.schedulerCancel()
 	}
 	if ds.scheduler != nil {
 		ds.scheduler.Stop()
-	}
-	if ds.tracingShutdown != nil {
-		if err := ds.tracingShutdown(ctx); err != nil {
-			ds.logger.Error("tracing shutdown error", "error", err)
-		}
 	}
 	// Stop the org-mode session sweep before closing the DB it writes to.
 	if ds.sweepCancel != nil {
@@ -345,11 +347,32 @@ func (ds *domainStack) Close(ctx context.Context) {
 	if ds.groupSweepCancel != nil {
 		ds.groupSweepCancel()
 	}
-	waitRecoveryWorkers(ds.recoveryWG, ds.groupWatchDone, recoveryShutdownTimeout, ds.logger)
+	recoveryLogger := ds.logger
+	if recoveryLogger == nil {
+		recoveryLogger = slog.Default()
+	}
+	waitRecoveryWorkers(ds.recoveryWG, ds.groupWatchDone, recoveryShutdownTimeout, recoveryLogger)
+	ds.background.Wait()
 	// Stop the bearer last-used flusher's owned goroutine, draining any pending
 	// touches synchronously before the DB closes.
 	if ds.authMW != nil {
 		ds.authMW.Stop()
+	}
+	if ds.queueMgr != nil {
+		ds.queueMgr.Stop()
+	}
+	if ds.eng != nil {
+		ds.eng.Shutdown()
+	}
+	ds.layout.stop()
+	if ds.tracingShutdown != nil {
+		if err := ds.tracingShutdown(ctx); err != nil {
+			logger := ds.logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Error("tracing shutdown error", "error", err)
+		}
 	}
 	if ds.db != nil {
 		ds.db.Close()
@@ -360,8 +383,9 @@ func (ds *domainStack) Close(ctx context.Context) {
 }
 
 // mcpDeps builds the MCP adapter Deps from the shared domain stack.
+// Assign Layouts only for a non-nil query, avoiding a typed-nil interface.
 func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
-	return &adaptmcp.Deps{
+	deps := &adaptmcp.Deps{
 		Engine:              ds.eng,
 		Workflows:           ds.workflowRepo,
 		WorkflowSvc:         ds.workflowSvc,
@@ -389,6 +413,58 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Logger:              ds.logger,
 		BackendHealth:       ds.backendHealth,
 	}
+	if q := ds.layoutQuery(); q != nil {
+		deps.Layouts = q
+	}
+	return deps
+}
+
+// routerDeps supplies the same domain services to runServe and real-router tests.
+// Assign Layouts only for a non-nil query, avoiding a typed-nil interface.
+func (ds *domainStack) routerDeps(mcpHandler http.Handler, dashHandler http.Handler, notifHandler *adapthttp.NotificationHandler, webhookHandler *adapthttp.WebhookHandler) adapthttp.RouterDeps {
+	deps := adapthttp.RouterDeps{
+		Service:             ds.eng,
+		Workflows:           ds.workflowRepo,
+		WorkflowSvc:         ds.workflowSvc,
+		Instances:           ds.instanceRepo,
+		NodeExecs:           ds.nodeExecRepo,
+		Snapshots:           ds.snapshotRepo,
+		Dismissals:          ds.dismissalRepo,
+		DismissalUsers:      ds.userRepo,
+		FileReader:          ds.fileReader,
+		EventBus:            ds.bus,
+		Config:              ds.cfg,
+		Settings:            ds.settings,
+		QueueManager:        ds.queueMgr,
+		QueueRepo:           ds.queueRepo,
+		DashboardHandler:    dashHandler,
+		NotifHandler:        notifHandler,
+		ConversationHandler: ds.conversationHandler,
+		WebhookHandler:      webhookHandler,
+		MCPHandler:          mcpHandler,
+		ProfileChecker:      ds.profileChecker,
+		ConnChecker:         ds.connChecker,
+		Auth:                ds.authMW,
+		AuthHandler:         ds.authHandler,
+		Tokens:              ds.tokenSvc,
+		DeviceCodes:         ds.deviceSvc,
+		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
+		Users:               ds.userSvc,
+		DashboardStats:      ds.dashboardSvc,
+		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
+		BackendHealth:       ds.backendHealth,
+	}
+	if q := ds.layoutQuery(); q != nil {
+		deps.Layouts = q
+	}
+	// Avoid registering a route with a typed-nil service interface.
+	if ds.graphState != nil {
+		deps.GraphState = ds.graphState
+	}
+	if ds.subtreeEvents != nil {
+		deps.SubtreeEvents = ds.subtreeEvents
+	}
+	return deps
 }
 
 // newOutboundHTTPClient builds the shared outbound HTTP client threaded into
@@ -430,47 +506,6 @@ func canonicalWorkspacePath(p string) (string, error) {
 	return resolved, nil
 }
 
-// routerDeps assembles the domain-backed dependencies used by runServe and
-// composition-root tests. Per-process handlers are layered on by runServe.
-func (ds *domainStack) routerDeps() adapthttp.RouterDeps {
-	deps := adapthttp.RouterDeps{
-		Service:             ds.eng,
-		Workflows:           ds.workflowRepo,
-		WorkflowSvc:         ds.workflowSvc,
-		Instances:           ds.instanceRepo,
-		NodeExecs:           ds.nodeExecRepo,
-		Snapshots:           ds.snapshotRepo,
-		Dismissals:          ds.dismissalRepo,
-		DismissalUsers:      ds.userRepo,
-		FileReader:          ds.fileReader,
-		EventBus:            ds.bus,
-		Config:              ds.cfg,
-		Settings:            ds.settings,
-		QueueManager:        ds.queueMgr,
-		QueueRepo:           ds.queueRepo,
-		ConversationHandler: ds.conversationHandler,
-		ProfileChecker:      ds.profileChecker,
-		ConnChecker:         ds.connChecker,
-		Auth:                ds.authMW,
-		AuthHandler:         ds.authHandler,
-		Tokens:              ds.tokenSvc,
-		DeviceCodes:         ds.deviceSvc,
-		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
-		Users:               ds.userSvc,
-		DashboardStats:      ds.dashboardSvc,
-		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
-		BackendHealth:       ds.backendHealth,
-	}
-	// Avoid registering a route with a typed-nil service interface.
-	if ds.graphState != nil {
-		deps.GraphState = ds.graphState
-	}
-	if ds.subtreeEvents != nil {
-		deps.SubtreeEvents = ds.subtreeEvents
-	}
-	return deps
-}
-
 // initDomain performs all shared initialisation: configuration, logging,
 // database, adapters, engine, queue manager, notifications, tracing, and
 // crash recovery. The returned domainStack must be closed by the caller.
@@ -488,20 +523,29 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("setting up logging: %w", err)
 	}
 
+	ds := &domainStack{cfg: cfg, logger: logger, logCloser: logCloser}
+	initialized := false
+	defer func() {
+		if !initialized {
+			ds.Close(context.Background())
+		}
+	}()
+	for _, warning := range cfg.LoadWarnings {
+		logger.Warn(warning)
+	}
+
 	// 3. Open SQLite database.
 	logger.Info("opening database", "path", cfg.Database.Path)
 	db, err := adaptsqlite.Open(cfg.Database.Path)
 	if err != nil {
-		logCloser.Close()
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+	ds.db = db
 	logger.Info("database connection established")
 
 	// 4. Run migrations.
 	logger.Info("running database migrations")
 	if err := adaptsqlite.RunMigrations(db); err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 	logger.Info("database migrations complete")
@@ -547,8 +591,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// serving a mis-scoped/duplicated department.
 	deptRenamer := adaptsqlite.NewDepartmentRenamer(db)
 	if err := identity.ReconcileMappings(context.Background(), groupCfg, deptRenamer, logger); err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("reconciling department mappings: %w", err)
 	}
 	logger.Info("department mapping reconcile complete")
@@ -570,8 +612,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 			GroupClaim:   cfg.Auth.RBAC.GroupClaim,
 		})
 		if oerr != nil {
-			db.Close()
-			logCloser.Close()
 			return nil, fmt.Errorf("initialising OIDC provider: %w", oerr)
 		}
 		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, provisioner, cfg.Auth.Session)
@@ -589,8 +629,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 			GroupClaim: cfg.Auth.RBAC.GroupClaim,
 		})
 		if eerr != nil {
-			db.Close()
-			logCloser.Close()
 			return nil, fmt.Errorf("initialising edge verifier: %w", eerr)
 		}
 		authMW = adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, edgeVerifier, provisioner, userRepo, groupCfg)
@@ -598,11 +636,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		authMW = adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
 	}
 
+	ds.authMW = authMW
 	// Canonicalize before constructing filesystem adapters and provider pins.
+	// The deferred cleanup closes the database and log on failure.
 	canonicalWS, err := canonicalWorkspacePath(cfg.Workspace.Path)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("workspace root: %w", err)
 	}
 	cfg.Workspace.Path = canonicalWS
@@ -616,13 +654,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// after the DB migrations seed the default user and before serving begins.
 	flatMigrateUser, err := userRepo.GetDefaultUser(context.Background())
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("resolving default user for flat-store migration: %w", err)
 	}
 	if err := migrateFlatStore(cfg.Workspace.Path, flatMigrateUser); err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("flat-store migration: %w", err)
 	}
 	logger.Info("flat-store migration complete", "defaultUser", flatMigrateUser)
@@ -630,9 +664,26 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
 	// Service uses to tag shared list entries with their publisher.
 	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
+	// One identity authority supplies Service, Seeder and durable commit proof.
+	identityRepo := adaptsqlite.NewWorkflowIdentityRepo(db)
+	ls, err := newLayoutStack(cfg, db, workflowRepo, publishedRepo, identityRepo, logger)
+	if err != nil {
+		return nil, fmt.Errorf("constructing layout stack: %w", err)
+	}
+	ds.layout = ls
+	// Raw reads of workflow.json/layout.json settle through the repository's read settler.
+	fileReader.SetSettledRepository(workflowRepo)
+	// Decide old mutations before the first seed, backfill or external graph read.
+	// Only systemic journal failures abort boot; see settleBeforeBoot.
+	if settlementErr := settleBeforeBoot(ls.commits, layoutSettlementTimeout, logger); settlementErr != nil {
+		return nil, fmt.Errorf("settling workflow mutations before boot: %w", settlementErr)
+	}
 	// Service resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
+	workflowSvc.SetRegistry(identityRepo)
+	workflowSvc.SetRevisionStamper(ls.stamper)
+	workflowSvc.SetMutationCoordinator(ls.mutations)
 	// The workflow-stats read path is gated by the service's visibility predicate
 	// (CanSeePublication / ownership); wire the instance repo behind that boundary
 	// so GET /workflows/{name}/stats cannot read across user/department scopes.
@@ -647,12 +698,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	auditSvc := audit.NewService(auditRepo)
 	auditSvc.SetLogger(logger)
 	workflowSvc.SetAudit(auditSvc)
-	// Workflow identity registry: stable per-workflow ids + global name uniqueness
-	// + name<->id resolution. The SQLite repo's UNIQUE(name) is the authority; the
-	// folder store stays name-keyed for the definition body (mirrors the audit
-	// wiring above — a sibling repo injected via a setter).
-	identityRepo := adaptsqlite.NewWorkflowIdentityRepo(db)
-	workflowSvc.SetRegistry(identityRepo)
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -662,8 +707,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// agent adapter carries the full tool scope.
 	wsRoot, err := filepath.Abs(cfg.Workspace.Path)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("resolving workspace path: %w", err)
 	}
 
@@ -682,8 +725,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 	capabilityRules, err := configadapter.LoadCapabilityRules(capabilitiesPath)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("loading capability rules: %w", err)
 	}
 
@@ -720,8 +761,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	masterKey, err := adaptcrypto.LoadMasterKey(logger)
 	if err != nil && !errors.Is(err, provider.ErrMasterKeyMissing) {
 		// An invalid key (bad base64 / wrong length) is a hard error.
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("loading master key: %w", err)
 	}
 	haveKey := masterKey != nil
@@ -730,8 +769,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if haveKey {
 		connCrypto, err = adaptcrypto.NewAESGCM(masterKey)
 		if err != nil {
-			db.Close()
-			logCloser.Close()
 			return nil, fmt.Errorf("building crypto: %w", err)
 		}
 	}
@@ -746,13 +783,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// Claude-only deployment (zero connections) boots with no master key.
 	connCount, err := connStore.Count(context.Background())
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("counting connections: %w", err)
 	}
 	if err := adaptcrypto.RequireMasterKeyIfConnections(haveKey, connCount); err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, err
 	}
 
@@ -776,8 +809,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	profileRepo := adaptsqlite.NewProfileRepo(db)
 	seeded, skipped, err := SeedProfiles(context.Background(), profileRepo, capabilityRules, domainProfiles)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("seeding profiles: %w", err)
 	}
 	if seeded > 0 || skipped > 0 {
@@ -789,8 +820,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// for that future wiring. Load it once before serving.
 	profileCache := providersadapter.NewProfileCache(profileRepo)
 	if err := profileCache.Load(context.Background()); err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("loading profile cache: %w", err)
 	}
 	profileResolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
@@ -807,11 +836,12 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	//
 	// Seeding is a non-essential convenience subsystem, so a seeding error is
 	// logged and tolerated rather than fatal — it must never wedge server boot.
-	// Combined with the seeder's re-entrancy, a crash-interrupted seed self-heals
-	// on the next boot instead of permanently failing with ErrAlreadyExists.
+	// Existing trees require exact interrupted-seed proof; publisher ownership
+	// alone never authorizes adopting or rewriting a same-name folder. It runs
+	// after the boot-time mutation settlement above.
 	switch {
 	case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
-		if err := seedSampleWorkflows(context.Background(), cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, flatMigrateUser, logger, profileChecker); err != nil {
+		if err := seedSampleWorkflows(context.Background(), cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, ds.layout.stamper, ds.layout.mutations, identityRepo, flatMigrateUser, logger, profileChecker); err != nil {
 			logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
 		} else {
 			logger.Info("sample workflow seeding complete")
@@ -963,11 +993,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		cfg.LLM.DefaultAgentBackend,
 	)
 
+	ds.eng = eng
+
 	// 11a. Wire the per-instance workspace manager.
 	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("workspace manager: %w", err)
 	}
 	eng.SetWorkspaceManager(wsMgr)
@@ -981,6 +1011,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 
 	// 12. Create the queue manager and wire it to the engine.
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
+	ds.queueMgr = queueMgr
 	eng.SetQueueManager(queueMgr)
 
 	// 12-pos. Wire the queue manager as the enricher's queue-position provider
@@ -1056,6 +1087,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
 	eng.SetDismissals(dismissalRepo)
 
+	// Shared authorized layout reads/retries use manifest and snapshot policies.
+	ls.attachQuery(workflowSvc, eng)
+
 	// 12b. Create the synchronized SettingsStore that owns the runtime-mutable
 	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
 	// Teams notifier so all three route reads/writes through one mutex.
@@ -1107,16 +1141,12 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	groupRunRepo := adaptsqlite.NewGroupRunRepo(db)
 	groupWS, err := filesystem.NewGroupWorkspace(cfg.Workspace.Path)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("group workspace: %w", err)
 	}
 	// File groups use Git snapshots and staging; results-only groups keep the
 	// filesystem workspace so they never require a Git process.
 	workingArea, err := gitarea.NewWorkingArea(cfg.Workspace.Path)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("group working area: %w", err)
 	}
 	groupCoord := engine.NewGroupCoordinator(groupRunRepo, instanceRepo, queueRepo, eng, identityResolver, bus, queueMgr)
@@ -1255,8 +1285,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		SetGroupResolution(instance.GroupRunRepository, engine.GroupResolutionCompleter)
 	})
 	if !ok {
-		db.Close()
-		logCloser.Close()
 		return nil, errors.New("the conversation handler cannot host parallel-group conflict-resolution sessions")
 	}
 	groupSessions.SetGroupResolution(groupRunRepo, groupResolution)
@@ -1286,25 +1314,19 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
 	if err != nil {
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("setting up tracing: %w", err)
 	}
 
+	ds.tracingShutdown = tracingShutdown
+
 	// 13a. Start the timer scheduler so recovery can register timers.
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	ds.scheduler, ds.schedulerCancel = scheduler, schedulerCancel
 	scheduler.Start(schedulerCtx)
 
 	// 14. Recover any instances that were running when the process last crashed.
 	logger.Info("recovering crashed instances")
 	if err := eng.RecoverCrashedInstances(); err != nil {
-		schedulerCancel()
-		scheduler.Stop()
-		if tracingShutdown != nil {
-			_ = tracingShutdown(context.Background())
-		}
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
@@ -1367,44 +1389,28 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	orphanReconciler := engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng)
 	recoveryWG := &sync.WaitGroup{}
 	spawnSweepCtx, spawnSweepCancel := context.WithCancel(context.Background())
+	ds.spawnSweepCancel = spawnSweepCancel
+	ds.recoveryWG = recoveryWG
 	recoveryWG.Go(func() {
 		sweepSpawnReconcilers(spawnSweepCtx, spawnReconciler, orphanReconciler, spawnSweepInterval, logger)
 	})
 	groupSweepCtx, groupSweepCancel := context.WithCancel(context.Background())
+	ds.groupSweepCancel = groupSweepCancel
 	recoveryWG.Go(func() { sweepGroupReconciler(groupSweepCtx, groupCoord, groupSweepInterval, logger) })
 	recoveryWG.Go(func() { sweepGroupReconciler(groupSweepCtx, gatherReconciler, groupSweepInterval, logger) })
 	// Subscribe before returning: terminal events promptly abort/prune instead
-	// of waiting for the periodic sweep. Close cancels both sweep and watch,
-	// then joins them before closing the database.
-	groupWatchDone := gatherReconciler.Watch(groupSweepCtx)
+	// of waiting for the periodic sweep. Close (also the deferred init-failure
+	// cleanup) cancels both sweep and watch, then joins them before closing the
+	// database.
+	ds.groupWatchDone = gatherReconciler.Watch(groupSweepCtx)
 
 	// 14a. Recover pending timers and webhook endpoints from the database.
 	logger.Info("recovering pending timers")
 	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
-		spawnSweepCancel()
-		groupSweepCancel()
-		waitRecoveryWorkers(recoveryWG, groupWatchDone, recoveryShutdownTimeout, logger)
-		schedulerCancel()
-		scheduler.Stop()
-		if tracingShutdown != nil {
-			_ = tracingShutdown(context.Background())
-		}
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("recovering timers: %w", err)
 	}
 	logger.Info("recovering webhook endpoints")
 	if err := queueMgr.RecoverWebhooks(context.Background()); err != nil {
-		spawnSweepCancel()
-		groupSweepCancel()
-		waitRecoveryWorkers(recoveryWG, groupWatchDone, recoveryShutdownTimeout, logger)
-		schedulerCancel()
-		scheduler.Stop()
-		if tracingShutdown != nil {
-			_ = tracingShutdown(context.Background())
-		}
-		db.Close()
-		logCloser.Close()
 		return nil, fmt.Errorf("recovering webhooks: %w", err)
 	}
 
@@ -1417,6 +1423,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 	scheduleEvalCtx, scheduleEvalCancel := context.WithCancel(context.Background())
 	scheduleEval.Start(scheduleEvalCtx)
+	ls.start(logger)
 
 	// 14b. Start the org-mode session-expiry sweep (no-op in local mode), plus a
 	// device-code expiry sweep (device login is org-mode only).
@@ -1424,9 +1431,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if authMode == identity.ModeOrg {
 		var sweepCtx context.Context
 		sweepCtx, sweepCancel = context.WithCancel(context.Background())
-		go adaptsqlite.SweepExpiredSessions(sweepCtx, sessionRepo,
-			time.Duration(cfg.Auth.Session.TTLSeconds)*time.Second, logger)
-		go sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger)
+		ds.background.Go(func() {
+			adaptsqlite.SweepExpiredSessions(sweepCtx, sessionRepo,
+				time.Duration(cfg.Auth.Session.TTLSeconds)*time.Second, logger)
+		})
+		ds.background.Go(func() { sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger) })
 	}
 
 	// Shared backend-health component: ONE TTL-cached Checker, injected into both
@@ -1436,66 +1445,51 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// request-spanning lifetime.
 	backendHealthChecker := backendhealth.NewChecker(nil, 0, nil)
 
-	graphState := engine.NewGraphStateReader(eng, nodeExecRepo, groupRunRepo, instanceRepo)
+	ds.settings = settings
+	ds.workflowRepo = workflowRepo
+	ds.workflowSvc = workflowSvc
+	ds.auditSvc = auditSvc
+	ds.publishedRepo = publishedRepo
+	ds.instanceRepo = instanceRepo
+	ds.nodeExecRepo = nodeExecRepo
+	ds.snapshotRepo = snapshotRepo
+	ds.fileReader = fileReader
+	ds.bus = bus
+	ds.queueRepo = queueRepo
+	ds.scheduleEval = scheduleEval
+	ds.scheduleEvalCancel = scheduleEvalCancel
+	ds.scheduleSvc = scheduleSvc
+	ds.webhookRegistry = webhookRegistry
+	ds.notifRepo = notifRepo
+	ds.dismissalRepo = dismissalRepo
+	ds.conversationHandler = conversationHandler
+	ds.profileChecker = profileChecker
+	ds.connChecker = connChecker
+	ds.connStore = connStore
+	ds.profileSvc = profileSvc
+	ds.connSvc = connSvc
+	ds.capabilityRules = capabilityRules
+	ds.sessionRepo = sessionRepo
+	ds.tokenRepo = tokenRepo
+	ds.tokenSvc = tokenSvc
+	ds.deviceRepo = deviceRepo
+	ds.deviceSvc = deviceSvc
+	ds.provisioner = provisioner
+	ds.userRepo = userRepo
+	ds.groupCfg = groupCfg
+	ds.userSvc = userSvc
+	ds.dashboardSvc = dashboardSvc
+	ds.authHandler = authHandler
+	ds.sweepCancel = sweepCancel
+	ds.backendHealth = backendHealthChecker
+	ds.groupRunRepo = groupRunRepo
+	ds.graphState = engine.NewGraphStateReader(eng, nodeExecRepo, groupRunRepo, instanceRepo)
 	// Share a bounded ancestry cache; authorize every forwarded source anew.
 	subtreeEvents := engine.NewSubtreeEventBridge(bus, eng, instanceRepo)
 	subtreeEvents.SetGroupRuns(groupRunRepo)
-
-	return &domainStack{
-		cfg:                 cfg,
-		settings:            settings,
-		logger:              logger,
-		logCloser:           logCloser,
-		db:                  db,
-		eng:                 eng,
-		workflowRepo:        workflowRepo,
-		workflowSvc:         workflowSvc,
-		auditSvc:            auditSvc,
-		publishedRepo:       publishedRepo,
-		instanceRepo:        instanceRepo,
-		nodeExecRepo:        nodeExecRepo,
-		snapshotRepo:        snapshotRepo,
-		fileReader:          fileReader,
-		bus:                 bus,
-		queueMgr:            queueMgr,
-		queueRepo:           queueRepo,
-		scheduler:           scheduler,
-		schedulerCancel:     schedulerCancel,
-		spawnSweepCancel:    spawnSweepCancel,
-		groupSweepCancel:    groupSweepCancel,
-		recoveryWG:          recoveryWG,
-		groupWatchDone:      groupWatchDone,
-		groupRunRepo:        groupRunRepo,
-		scheduleEval:        scheduleEval,
-		scheduleEvalCancel:  scheduleEvalCancel,
-		scheduleSvc:         scheduleSvc,
-		webhookRegistry:     webhookRegistry,
-		notifRepo:           notifRepo,
-		dismissalRepo:       dismissalRepo,
-		conversationHandler: conversationHandler,
-		profileChecker:      profileChecker,
-		connChecker:         connChecker,
-		connStore:           connStore,
-		profileSvc:          profileSvc,
-		connSvc:             connSvc,
-		capabilityRules:     capabilityRules,
-		tracingShutdown:     tracingShutdown,
-		sessionRepo:         sessionRepo,
-		tokenRepo:           tokenRepo,
-		tokenSvc:            tokenSvc,
-		deviceRepo:          deviceRepo,
-		deviceSvc:           deviceSvc,
-		provisioner:         provisioner,
-		userRepo:            userRepo,
-		userSvc:             userSvc,
-		dashboardSvc:        dashboardSvc,
-		authMW:              authMW,
-		authHandler:         authHandler,
-		sweepCancel:         sweepCancel,
-		backendHealth:       backendHealthChecker,
-		graphState:          graphState,
-		subtreeEvents:       subtreeEvents,
-	}, nil
+	ds.subtreeEvents = subtreeEvents
+	initialized = true
+	return ds, nil
 }
 
 func runServe(cmd *cobra.Command, _ []string) error {
@@ -1522,12 +1516,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	webhookHandler := adapthttp.NewWebhookHandler(
 		ds.webhookRegistry, ds.instanceRepo, ds.nodeExecRepo, ds.scheduler, ds.queueRepo, ds.queueMgr,
 	)
-	deps := ds.routerDeps()
-	deps.DashboardHandler = dashHandler
-	deps.NotifHandler = notifHandler
-	deps.WebhookHandler = webhookHandler
-	deps.MCPHandler = mcpSrv.HTTPHandler()
-	router := adapthttp.NewRouterFromDeps(deps)
+	router := adapthttp.NewRouterFromDeps(ds.routerDeps(mcpSrv.HTTPHandler(), dashHandler, notifHandler, webhookHandler))
 
 	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(ds.logger)(router)
@@ -1565,6 +1554,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// 17. Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(shutdownCh)
+	shutdownCtx, shutdownCancel := context.WithCancel(ctx)
 
 	// Optionally start MCP stdio server alongside the HTTP server.
 	// HTTP MCP is always available at /mcp; --mcp-stdio adds the stdio transport.
@@ -1573,9 +1564,17 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	mcpStdio, _ := cmd.Flags().GetBool("mcp-stdio")
 	if mcpStdio {
+		mcpDone := make(chan struct{})
+		defer func() { mcpCancel(); <-mcpDone }()
 		go func() {
+			defer close(mcpDone)
 			ds.logger.Info("MCP stdio server starting (alongside HTTP)")
-			if err := mcpSrv.ServeStdio(mcpCtx); err != nil && mcpCtx.Err() == nil {
+			stdioCtx, err := ds.stdioContext(mcpCtx)
+			if err != nil {
+				ds.logger.Error("MCP stdio identity unavailable", "error", err)
+				return
+			}
+			if err := mcpSrv.ServeStdio(stdioCtx); err != nil && mcpCtx.Err() == nil {
 				ds.logger.Error("MCP stdio server error", "error", err)
 			}
 		}()
@@ -1584,11 +1583,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// Translate the OS signal into a stop channel for the serve loop, and cancel
 	// the MCP stdio context when shutdown begins so it stops accepting requests.
 	stop := make(chan struct{})
+	shutdownDone := make(chan struct{})
+	defer func() { shutdownCancel(); <-shutdownDone }()
 	go func() {
+		defer close(shutdownDone)
 		select {
 		case sig := <-shutdownCh:
 			ds.logger.Info("shutdown signal received", "signal", sig)
-		case <-ctx.Done():
+		case <-shutdownCtx.Done():
 		}
 		mcpCancel()
 		close(stop)
@@ -1632,12 +1634,12 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
 	adaptmcp.RegisterAllTools(mcpSrv)
 
-	// NOTE (Phase 6 scope): the stdio MCP transport is NOT behind the HTTP auth
-	// middleware. Phase 1 auth covers the HTTP surfaces (REST, /mcp HTTP, WS);
-	// the stdio transport is operator-local (a process the operator launched),
-	// so stdio-MCP identity is deferred.
+	stdioCtx, err := ds.stdioContext(ctx)
+	if err != nil {
+		return err
+	}
 	ds.logger.Info("MCP stdio server starting")
-	return mcpSrv.ServeStdio(ctx)
+	return mcpSrv.ServeStdio(stdioCtx)
 }
 
 // scheduleCanTrigger adapts the published-workflow lookup into the

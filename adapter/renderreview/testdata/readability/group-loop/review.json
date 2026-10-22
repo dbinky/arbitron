@@ -1,0 +1,110 @@
+{
+  "rendered": true,
+  "findings": [
+    {
+      "criterion": "crossings",
+      "severity": "advisory",
+      "source": "review",
+      "evidence": "3 crossing(s) remain in the rendered layout"
+    }
+  ],
+  "evidence": {
+    "geometryDigest": "a9d34b79117f9171e782b640bc93ab593b8f172465277d3df6c33506a9d1c7c0",
+    "rendererVersion": "arranged-renderer/2",
+    "contract": {
+      "version": "arranged-renderer/2",
+      "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+      "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+      "nodeLabelFontPx": 13,
+      "nodeLabelWeight": 600,
+      "nodeTypeFontPx": 10,
+      "nodeTypeWeight": 700,
+      "edgeLabelFontPx": 11,
+      "edgeLabelWeight": 500,
+      "lineHeight": 1.35,
+      "nodePaddingX": 12,
+      "nodePaddingY": 8,
+      "nodeBorderPx": 2,
+      "nodeTypeBarPx": 4,
+      "nodeTextGapPx": 2,
+      "nodeMinWidth": 180,
+      "nodeTextMaxWidth": 240,
+      "edgeLabelPaddingX": 6,
+      "edgeLabelPaddingY": 3,
+      "edgeLabelMaxWidth": 160,
+      "strokePx": 2,
+      "arrowPx": 10,
+      "crossingTreatment": "gap",
+      "crossingGapPx": 10,
+      "forwardColor": "#8a8ab0",
+      "loopReturnColor": "#7c8cf5",
+      "loopReturnDash": "6 4",
+      "practicalZoom": 0.9,
+      "minReadableTextPx": 9,
+      "minContrastRatio": 4.5,
+      "minClearancePx": 4,
+      "groupPaddingPx": 32,
+      "groupTaskGapPx": 24,
+      "groupRowGapPx": 48,
+      "groupMinWidth": 200,
+      "groupHeaderMinHeight": 80,
+      "groupFooterMinHeight": 80,
+      "groupTaskMinHeight": 96,
+      "groupConnectorDash": "3 3"
+    },
+    "fontsReady": true,
+    "zoom": 0.9,
+    "tiles": 3,
+    "artifacts": [
+      {
+        "kind": "overview",
+        "path": "overview.png",
+        "sha256": "58c9204a8da68de8e6f224c80c4ff5edfc45d3692726df6ca0032848fe0e47e9",
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 1278,
+          "h": 2677
+        },
+        "scale": 0.7471049682480388
+      },
+      {
+        "kind": "tile",
+        "path": "tile-000.png",
+        "sha256": "a9403b9bb35164e22193b1f6d711ecb3a3f209ad67fc355f139a9f046a200ec5",
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 1278,
+          "h": 1111.111111111111
+        },
+        "scale": 0.9
+      },
+      {
+        "kind": "tile",
+        "path": "tile-001.png",
+        "sha256": "0c40e4b978c0b2608d85e76f4003ca052d966faa71153c31bfddde7eef8c2f33",
+        "region": {
+          "x": 0,
+          "y": 944.4444444444445,
+          "w": 1278,
+          "h": 1111.111111111111
+        },
+        "scale": 0.9
+      },
+      {
+        "kind": "tile",
+        "path": "tile-002.png",
+        "sha256": "e9f455fa105df9aa64eba3fca39e117f049f7bee23ccd216472bcef4bb57fc0e",
+        "region": {
+          "x": 0,
+          "y": 1565.888888888889,
+          "w": 1278,
+          "h": 1111.111111111111
+        },
+        "scale": 0.9
+      }
+    ],
+    "reviewedAt": "2026-10-20T13:15:16.845202Z"
+  }
+}

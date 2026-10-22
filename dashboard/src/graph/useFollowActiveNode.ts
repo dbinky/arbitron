@@ -58,23 +58,19 @@ export function useFollowActiveNode(
   const prevBoundsRef = useRef<FollowBounds | null>(null)
 
   useEffect(() => {
-    // Only auto-pan for a running instance with an anchor. A completed/stopped
-    // instance must not pan on a late anchor change (trailing trace/layout
-    // update); `following` stays user-controllable for the running case.
-    if (!anchor || !isRunning) return
     const prev = prevAnchorRef.current
-    // First time we see any anchor: record it, do not animate.
-    if (prev === null) {
-      prevAnchorRef.current = anchor
-      prevBoundsRef.current = bounds
-      return
-    }
-    // Unchanged target: nothing to do.
-    if (prev.x === anchor.x && prev.y === anchor.y && sameBounds(prevBoundsRef.current, bounds)) return
-
+    const prevBounds = prevBoundsRef.current
+    // Explicit Recenter always uses the latest displayed target (box and
+    // bounds), even after the run finishes or while the user has paused
+    // following. A missing anchor clears it.
     prevAnchorRef.current = anchor
-    prevBoundsRef.current = bounds
-    if (!following) return
+    prevBoundsRef.current = anchor ? bounds : null
+    // Auto-pan only for a running instance whose target actually changed. The
+    // first anchor is recorded without animating (mount-centering in GraphView
+    // handles the initial view); a completed/stopped instance never pans on a
+    // late anchor change.
+    if (!anchor || !prev || !isRunning || !following) return
+    if (prev.x === anchor.x && prev.y === anchor.y && sameBounds(prevBounds, bounds)) return
 
     const duration = prefersReducedMotion() ? 0 : FOLLOW_DURATION_MS
     if (bounds) {

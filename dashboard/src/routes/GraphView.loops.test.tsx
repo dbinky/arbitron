@@ -1,44 +1,188 @@
-import { render } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+// Real @xyflow/react (no module mock): asserts the DOM that GraphView actually
+// renders through the shared ArrangedGraph. Arranged mode must draw loop
+// returns as routed paths (data-edge-kind="loop_return"), visually distinct
+// from forward edges; the legacy fallback (no geometry) keeps loop containers
+// and the LoopBackEdge.
+import { render, act } from '@testing-library/react'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { ReactFlowProvider } from '@xyflow/react'
 import type { Instance, NodeExecution } from '../api/types'
 import type { WorkflowDefinition } from '../graph/types'
-
-const captured: {
-  nodes?: Array<{ type?: string }>
-  edges?: Array<{ type?: string }>
-  edgeTypes?: Record<string, unknown>
-  nodeTypes?: Record<string, unknown>
-  fitView?: unknown
-} = {}
-
-vi.mock('@xyflow/react', () => ({
-  ReactFlow: (props: {
-    nodes: Array<{ type?: string }>
-    edges: Array<{ type?: string }>
-    edgeTypes?: Record<string, unknown>
-    nodeTypes?: Record<string, unknown>
-    fitView?: unknown
-  }) => {
-    captured.nodes = props.nodes
-    captured.edges = props.edges
-    captured.edgeTypes = props.edgeTypes
-    captured.nodeTypes = props.nodeTypes
-    captured.fitView = props.fitView
-    return <div data-testid="rf" />
-  },
-  ReactFlowProvider: ({ children }: { children: React.ReactNode }) => children,
-  Background: () => null,
-  Controls: () => null,
-  MarkerType: { ArrowClosed: 'arrowclosed' },
-  useNodes: () => [],
-  useReactFlow: () => ({
-    flowToScreenPosition: (p: unknown) => p,
-    setCenter: () => {},
-    getZoom: () => 1,
-  }),
-}))
+import type { LayoutView } from '../graph/arranged/types'
+import { fixtureView, fixtureWorkflow } from '../graph/arranged/testFixtures'
+// Controllable unit font boundary. The real asset/face/coverage producer is exercised
+// by P3T5/P3T14. Success requires nonempty actual text and the exact bundled contract;
+// tests replace this method with a rejection/deferred promise for font sink cases.
+const fontBoundary = vi.hoisted(() => ({ load: vi.fn(async (_doc: Document, texts: readonly string[], contract: {version: string; fontFamily: string}) => {
+  if (!texts.length || !texts.every(t => typeof t === 'string') || contract.version !== 'arranged-renderer/2' || contract.fontFamily !== 'Inter, Noto Sans SC, Noto Emoji') throw new Error('invalid font request')
+  return { fontsReady: true, fontFamilyResolved: true }
+}) }))
+vi.mock('../graph/arranged/fonts', () => ({ ensureBundledTextFonts: fontBoundary.load }))
 
 import { GraphView } from './ExecutionView'
+
+const saved: { ro?: unknown; dm?: unknown; ow?: PropertyDescriptor; oh?: PropertyDescriptor; bbox?: unknown } = {}
+
+beforeAll(() => {
+  const g = globalThis as unknown as { ResizeObserver?: unknown; DOMMatrixReadOnly?: unknown }
+  saved.ro = g.ResizeObserver
+  saved.dm = g.DOMMatrixReadOnly
+  saved.ow = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+  saved.oh = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+  saved.bbox = (SVGElement.prototype as unknown as { getBBox?: unknown }).getBBox
+
+  class StubResizeObserver {
+    private cb: ResizeObserverCallback
+    constructor(cb: ResizeObserverCallback) {
+      this.cb = cb
+    }
+    observe(el: Element) {
+      setTimeout(() => this.cb([{ target: el } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver), 0)
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  class StubDOMMatrix {
+    m22: number
+    constructor(transform?: string) {
+      const m = /scale\(([\d.]+)\)/.exec(transform ?? '')
+      this.m22 = m ? Number(m[1]) : 1
+    }
+  }
+  g.ResizeObserver = StubResizeObserver
+  // Legacy smoothstep edge labels (fallback mode) measure themselves with getBBox.
+  ;(SVGElement.prototype as unknown as { getBBox: () => DOMRect }).getBBox = () =>
+    ({ x: 0, y: 0, width: 10, height: 10 }) as DOMRect
+  g.DOMMatrixReadOnly = StubDOMMatrix
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() {
+      return parseFloat((this as HTMLElement).style.width) || 10
+    },
+  })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get() {
+      return parseFloat((this as HTMLElement).style.height) || 10
+    },
+  })
+})
+
+afterAll(() => {
+  const g = globalThis as unknown as { ResizeObserver?: unknown; DOMMatrixReadOnly?: unknown }
+  g.ResizeObserver = saved.ro
+  g.DOMMatrixReadOnly = saved.dm
+  ;(SVGElement.prototype as unknown as { getBBox?: unknown }).getBBox = saved.bbox
+  if (saved.ow) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', saved.ow)
+  else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth
+  if (saved.oh) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', saved.oh)
+  else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight
+})
+
+async function mount(
+  def: WorkflowDefinition,
+  layoutView: LayoutView | null,
+  instance: Instance | null = null,
+  trace: NodeExecution[] = [],
+) {
+  const utils = render(
+    <div style={{ width: 800, height: 600 }}>
+      <ReactFlowProvider>
+        <GraphView
+          instance={instance}
+          workflowDef={def}
+          trace={trace}
+          layoutView={layoutView}
+          onNodeClick={() => {}}
+          selectedNodeId={null}
+        />
+      </ReactFlowProvider>
+    </div>,
+  )
+  // Let the stubbed ResizeObserver callbacks run so React Flow measures nodes and mounts edges.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20))
+  })
+  if (layoutView?.geometry) await act(async () => { await Promise.resolve(); await new Promise(r => setTimeout(r, 0)) })
+  return utils
+}
+
+const runningAtB = { state: 'running', currentNodeId: 'b' } as unknown as Instance
+const traceADone: NodeExecution[] = [
+  { id: 'e-a', instanceId: 'i', nodeId: 'a', attempt: 1, status: 'succeeded', startedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z' } as NodeExecution,
+]
+
+const arrangedNode = (container: HTMLElement, id: string) =>
+  container.querySelector(`[data-arranged-node="${id}"]`) as HTMLElement
+
+describe('GraphView — arranged loop returns (routed-edge DOM contract)', () => {
+  it('draws one routed path per manifest edge and marks the loop return distinctly', async () => {
+    const { container } = await mount(fixtureWorkflow(), fixtureView())
+    const kinds = [0, 1, 2].map((i) =>
+      container.querySelector(`path[data-edge-path="${i}"]`)!.getAttribute('data-edge-kind'),
+    )
+    expect(kinds).toEqual(['forward', 'forward', 'loop_return'])
+
+    const loop = container.querySelector('path[data-edge-path="2"]') as SVGPathElement
+    const forward = container.querySelector('path[data-edge-path="1"]') as SVGPathElement
+    expect(loop.style.strokeDasharray).toBe('6 4')
+    expect(loop.style.stroke).toBe('rgb(124, 140, 245)') // #7c8cf5
+    expect(forward.style.strokeDasharray).toBe('')
+    expect(forward.style.stroke).toBe('rgb(138, 138, 176)') // #8a8ab0
+    // The persisted route is drawn exactly, with its own arrowhead.
+    expect(loop.getAttribute('d')).toBe('M 130,312 L 130,330 L 268,330 L 268,116 L 140,116 L 140,140')
+    expect(loop.getAttribute('marker-end')).toMatch(/-arranged-arrow-2\)$/)
+  })
+
+  it('draws the loop-return label at its payload label box', async () => {
+    await mount(fixtureWorkflow(), fixtureView())
+    const again = document.querySelector('[data-edge-label="2"]') as HTMLElement
+    expect(again.textContent).toBe('again')
+    expect(again.style.transform).toBe('translate(274px, 220px)')
+  })
+
+  it('uses no xyflow auto-routing and no loop container that the reviewed geometry does not include', async () => {
+    const { container } = await mount(fixtureWorkflow(), fixtureView())
+    expect(container.querySelectorAll('.react-flow__edge-routedEdge')).toHaveLength(3)
+    expect(container.querySelector('.react-flow__edge-smoothstep')).toBeNull()
+    expect(container.querySelector('.react-flow__edge-loopBackEdge')).toBeNull()
+    expect(container.querySelector('.react-flow__node-loopContainer')).toBeNull()
+  })
+
+  it('running-state styling never changes the rendered node boxes', async () => {
+    const { container } = await mount(fixtureWorkflow(), fixtureView(), runningAtB, traceADone)
+    const b = arrangedNode(container, 'b')
+    expect(b.getAttribute('data-state')).toBe('running')
+    expect([b.style.width, b.style.height]).toEqual(['200px', '70px'])
+    const a = arrangedNode(container, 'a')
+    expect(a.getAttribute('data-state')).toBe('completed')
+    expect([a.style.width, a.style.height]).toEqual(['180px', '52px'])
+    const c = arrangedNode(container, 'c')
+    expect(c.getAttribute('data-state')).toBe('pending')
+    expect([c.style.width, c.style.height]).toEqual(['180px', '52px'])
+  })
+
+  it('animates the active edge without changing its route or arrowhead', async () => {
+    const { container } = await mount(fixtureWorkflow(), fixtureView(), runningAtB, traceADone)
+    // Edge 1 (b → c) leaves the running node b.
+    expect(container.querySelector('[data-edge-overlay="1"]')).not.toBeNull()
+    expect(container.querySelector('[data-edge-overlay="0"]')).toBeNull()
+    const main = container.querySelector('path[data-edge-path="1"]') as SVGPathElement
+    expect(main.getAttribute('d')).toBe('M 140,210 L 140,235 L 130,235 L 130,260')
+    expect(main.getAttribute('marker-end')).toMatch(/-arranged-arrow-1\)$/)
+  })
+
+  it('renders no node as draggable', async () => {
+    const { container } = await mount(fixtureWorkflow(), fixtureView(), runningAtB, traceADone)
+    const wrappers = [...container.querySelectorAll('.react-flow__node')]
+    expect(wrappers).toHaveLength(3)
+    expect(wrappers.some((w) => w.classList.contains('draggable'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Legacy fallback (no geometry: pre-feature snapshot or layout not yet ready).
+// ---------------------------------------------------------------------------
 
 const loopWorkflow: WorkflowDefinition = {
   name: 'wf',
@@ -61,11 +205,10 @@ const unlabeledLoopWorkflow: WorkflowDefinition = {
   edges: [
     { source: 'a', target: 'b' },
     { source: 'b', target: 'c' },
-    { source: 'c', target: 'b' },  // no label — container should fall back to "Loop"
+    { source: 'c', target: 'b' },
   ],
 }
 
-// Two back-edges producing nested loops: inner (d→c, depth=1) inside outer (e→b, depth=0).
 const nestedLoopWorkflow: WorkflowDefinition = {
   name: 'wf',
   description: '',
@@ -95,94 +238,34 @@ const loopless: WorkflowDefinition = {
   ],
 }
 
-const renderView = (def: WorkflowDefinition) =>
-  render(
-    <GraphView
-      instance={null as unknown as Instance}
-      workflowDef={def}
-      trace={[] as NodeExecution[]}
-      onNodeClick={() => {}}
-      selectedNodeId={null}
-    />,
-  )
-
-describe('GraphView — loop rendering integration', () => {
-  it('renders a loopContainer node and a loopBackEdge for a looping workflow', () => {
-    renderView(loopWorkflow)
-    expect(captured.nodes!.some((n) => n.type === 'loopContainer')).toBe(true)
-    expect(captured.edges!.some((e) => e.type === 'loopBackEdge')).toBe(true)
+describe('GraphView — legacy fallback loop rendering', () => {
+  it('renders a loop container and a loopBackEdge for a looping workflow without geometry', async () => {
+    const { container } = await mount(loopWorkflow, null)
+    expect(container.querySelector('[data-arranged-canvas="true"]')!.getAttribute('data-layout-mode')).toBe('fallback')
+    expect(container.querySelectorAll('.react-flow__node-loopContainer')).toHaveLength(1)
+    expect(container.querySelectorAll('.react-flow__edge-loopBackEdge')).toHaveLength(1)
   })
 
-  it('renders neither for a loopless workflow', () => {
-    renderView(loopless)
-    expect(captured.nodes!.some((n) => n.type === 'loopContainer')).toBe(false)
-    expect(captured.edges!.every((e) => e.type === 'smoothstep')).toBe(true)
+  it('renders neither for a loopless workflow', async () => {
+    const { container } = await mount(loopless, null)
+    expect(container.querySelector('.react-flow__node-loopContainer')).toBeNull()
+    expect(container.querySelector('.react-flow__edge-loopBackEdge')).toBeNull()
+    expect(container.querySelectorAll('.react-flow__edge-smoothstep')).toHaveLength(2)
   })
 
-  // Domain end-to-end: the back-edge label in the WorkflowDefinition must flow
-  // through detection → loopContainerLabel → useGraphLayout → ReactFlow node data.
-  // Verifying the label content here pins the full propagation chain.
-  it('container label reflects the back-edge label from the workflow definition', () => {
-    renderView(loopWorkflow)
-    const container = captured.nodes!.find((n) => n.type === 'loopContainer') as
-      | { data?: { label?: string } }
-      | undefined
-    expect(container?.data?.label).toBe('Loop until tests pass')
+  it('labels the container from the back-edge label in the snapshot', async () => {
+    const { container } = await mount(loopWorkflow, null)
+    expect(container.querySelector('.react-flow__node-loopContainer')!.textContent).toBe('Loop until tests pass')
   })
 
-  it('container falls back to "Loop" when the back-edge carries no label', () => {
-    renderView(unlabeledLoopWorkflow)
-    const container = captured.nodes!.find((n) => n.type === 'loopContainer') as
-      | { data?: { label?: string } }
-      | undefined
-    expect(container?.data?.label).toBe('Loop')
+  it('falls back to "Loop" when the back-edge carries no label', async () => {
+    const { container } = await mount(unlabeledLoopWorkflow, null)
+    expect(container.querySelector('.react-flow__node-loopContainer')!.textContent).toBe('Loop')
   })
 
-  // Domain end-to-end nesting: a workflow with two nested back-edges must produce two
-  // containers where the inner carries depth=1 and the outer depth=0. The depth value
-  // drives both the visual inset and z-index ordering for the "nested containers" spec.
-  it('renders two containers for a workflow with nested loops', () => {
-    renderView(nestedLoopWorkflow)
-    const containers = captured.nodes!.filter((n) => n.type === 'loopContainer')
-    expect(containers).toHaveLength(2)
-  })
-
-  it('inner container has depth=1 and outer has depth=0 for nested loops', () => {
-    renderView(nestedLoopWorkflow)
-    type ContainerNode = { data?: { label?: string; depth?: number } }
-    const containers = captured.nodes!.filter((n) => n.type === 'loopContainer') as ContainerNode[]
-    const inner = containers.find((c) => c.data?.label === 'Loop until inner done')
-    const outer = containers.find((c) => c.data?.label === 'Loop until outer done')
-    expect(inner?.data?.depth).toBe(1)
-    expect(outer?.data?.depth).toBe(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Seam: Phase 1 (edgeTypes + nodeTypes) coexists with Phase 2 (manual setCenter
-// zoom/follow). These tests verify that GraphView passes the custom renderer maps
-// to ReactFlow regardless of the follow/viewport logic, and that fitView is
-// absent (Phase 2 uses setCenter for manual zoom control, not ReactFlow's auto-fit).
-// ---------------------------------------------------------------------------
-
-describe('GraphView — Phase 1 + Phase 2 coexistence', () => {
-  it('passes edgeTypes containing loopBackEdge to ReactFlow for a loop workflow', () => {
-    renderView(loopWorkflow)
-    expect(captured.edgeTypes).toBeDefined()
-    expect('loopBackEdge' in (captured.edgeTypes ?? {})).toBe(true)
-  })
-
-  it('passes nodeTypes containing loopContainer to ReactFlow for a loop workflow', () => {
-    renderView(loopWorkflow)
-    expect(captured.nodeTypes).toBeDefined()
-    expect('loopContainer' in (captured.nodeTypes ?? {})).toBe(true)
-  })
-
-  // Phase 2 spec: viewport is set via setCenter(…, { zoom: DEFAULT_ZOOM }), not
-  // ReactFlow's fitView. A fitView prop would re-fit the viewport to all nodes on
-  // every render, overriding the manual follow behavior and the fixed 0.9 zoom.
-  it('does not pass fitView to ReactFlow (viewport managed by setCenter, not auto-fit)', () => {
-    renderView(loopWorkflow)
-    expect(captured.fitView).toBeFalsy()
+  it('renders two labelled containers for nested loops', async () => {
+    const { container } = await mount(nestedLoopWorkflow, null)
+    const labels = [...container.querySelectorAll('.react-flow__node-loopContainer')].map((n) => n.textContent).sort()
+    expect(labels).toEqual(['Loop until inner done', 'Loop until outer done'])
   })
 })

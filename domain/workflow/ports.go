@@ -12,7 +12,6 @@ import (
 type Repository interface {
 	Load(ctx context.Context, scope Scope, name string) (*Workflow, error)
 	List(ctx context.Context, scope Scope) ([]WorkflowSummary, error)
-	SaveNodePositions(ctx context.Context, scope Scope, name string, positions map[string]NodePosition) error
 
 	// Write operations for workflow CRUD.
 	Create(ctx context.Context, scope Scope, name string, wf *Workflow) error
@@ -32,6 +31,11 @@ type Repository interface {
 	// already exists unless overwrite is true, in which case it replaces dst
 	// atomically. It fails with ErrNotFound if the source does not exist.
 	CopyTree(ctx context.Context, src Scope, srcName string, dst Scope, dstName string, overwrite bool) error
+
+	// CopyTreeStamped sets the final name and stamps the staged manifest before
+	// exposing any destination bytes. Callback errors leave the destination intact.
+	// The caller holds source and destination mutation locks for the operation.
+	CopyTreeStamped(ctx context.Context, src Scope, srcName string, dst Scope, dstName string, overwrite bool, stamp func(*Workflow) error) error
 }
 
 // ReferenceBackfiller is the port the one-time BackfillReferences uses to attach

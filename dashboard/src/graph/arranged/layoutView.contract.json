@@ -1,0 +1,45 @@
+{
+  "view": {
+    "required": [
+      "attemptLimit",
+      "attemptsUsed",
+      "available",
+      "displayStatus",
+      "findings",
+      "jobGeneration",
+      "provenance",
+      "resultGeneration",
+      "retryEligible",
+      "savedRevision",
+      "unreviewed"
+    ],
+    "optional": [
+      "availabilityError",
+      "contract",
+      "evidence",
+      "failureReason",
+      "failureStage",
+      "geometry",
+      "groups",
+      "retained",
+      "stage",
+      "state"
+    ]
+  },
+  "retryAck": {
+    "required": ["displayStatus", "jobGeneration", "savedRevision", "state"],
+    "optional": []
+  },
+  "displayStatus": [
+    "arranging",
+    "complete",
+    "failed",
+    "legacy",
+    "needs_attention",
+    "pending",
+    "rendering",
+    "reviewing",
+    "unavailable"
+  ],
+  "provenance": ["arranged", "legacy", "retained_geometry", "retained_positions"]
+}

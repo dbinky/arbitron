@@ -88,7 +88,7 @@ func TestSubtreeStreamE2E_ResolverReauthorizesAllContributorsAndHistory(t *testi
 	conversation.(interface {
 		SetGroupResolution(instance.GroupRunRepository, engine.GroupResolutionCompleter)
 	}).SetGroupResolution(ds.groupRunRepo, bridge)
-	deps := ds.routerDeps()
+	deps := ds.routerDeps(nil, nil, nil, nil)
 	deps.Auth = nil
 	deps.ConversationHandler = conversation
 	router := adapthttp.NewRouterFromDeps(deps)

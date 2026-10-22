@@ -1,0 +1,50 @@
+[
+  {
+    "form": "branches",
+    "completionRule": "all_succeed",
+    "unfinishedBehavior": "wait_for_remaining",
+    "gatherMode": "results",
+    "workflow": "検証 ✅",
+    "caption": "Parallel branches · all succeed",
+    "footerNotStarted": "not started",
+    "rule": "All succeed",
+    "unfinished": "wait for remaining",
+    "gather": "results"
+  },
+  {
+    "form": "workflows",
+    "completionRule": "first_success",
+    "unfinishedBehavior": "cancel_unfinished",
+    "gatherMode": "results_and_files",
+    "workflow": "Café — 检查 ✅",
+    "caption": "Parallel workflows · first success",
+    "footerNotStarted": "not started",
+    "rule": "First success",
+    "unfinished": "cancel unfinished",
+    "gather": "results + files"
+  },
+  {
+    "form": "branches",
+    "completionRule": "first_success",
+    "unfinishedBehavior": "finish_independently",
+    "gatherMode": "results",
+    "workflow": "検証 ✅",
+    "caption": "Parallel branches · first success",
+    "footerNotStarted": "not started",
+    "rule": "First success",
+    "unfinished": "finish independently",
+    "gather": "results"
+  },
+  {
+    "form": "workflows",
+    "completionRule": "all_succeed",
+    "unfinishedBehavior": "cancel_unfinished",
+    "gatherMode": "results",
+    "workflow": "同じ子",
+    "caption": "Parallel workflows · all succeed",
+    "footerNotStarted": "not started",
+    "rule": "All succeed",
+    "unfinished": "cancel unfinished",
+    "gather": "results"
+  }
+]

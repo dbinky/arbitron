@@ -83,18 +83,6 @@ func TestService_WriteFileShared_Admin_Succeeds(t *testing.T) {
 	require.NoError(t, svc.WriteFile(adminCtx, "shared-wf", "notes.md", []byte("x")))
 }
 
-// TestService_SaveNodePositionsShared_Admin_Succeeds verifies the admin-shared
-// write path also covers SaveNodePositions.
-func TestService_SaveNodePositionsShared_Admin_Succeeds(t *testing.T) {
-	svc, _, _, _ := sharedEditSvc(t)
-	adminCtx := ctxWith(uuid.New(), true)
-
-	err := svc.SaveNodePositions(adminCtx, "shared-wf", map[string]workflow.NodePosition{
-		"n1": {X: 1, Y: 2},
-	})
-	require.NoError(t, err)
-}
-
 // --- Edge: a private workflow of the admin is unaffected by the shared branch ---
 
 // TestService_EditShared_Admin_PrefersPrivate verifies that when the admin has

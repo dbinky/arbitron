@@ -213,9 +213,6 @@ func (baseRepo) Load(_ context.Context, _ workflow.Scope, _ string) (*workflow.W
 func (baseRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	return nil, nil
 }
-func (baseRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
-	return workflow.ErrNotFound
-}
 func (baseRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return nil
 }
@@ -261,4 +258,8 @@ func (r *fakeFilesRepo) ListFiles(_ context.Context, s workflow.Scope, name stri
 		return f, nil
 	}
 	return nil, workflow.ErrNotFound
+}
+
+func (r baseRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	return workflow.ErrNotFound
 }

@@ -1,26 +1,9 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps, Node } from '@xyflow/react'
-import type { NodeType } from '../../api/types'
 import type { NodeExecutionState } from '../types'
 import styles from './ArbitronNode.module.css'
-
-/**
- * Accent colors keyed by workflow node type. `satisfies` rejects a key that is
- * not a known NodeType (a typo); any type without an entry — including one the
- * backend adds later — falls back to the default grey below.
- */
-const typeColors: Record<string, string> = {
-  llm_call: '#7c8cf5',
-  script: '#e67e22',
-  tool_call: '#1abc9c',
-  conditional: '#f39c12',
-  transform: '#9b59b6',
-  timer_delay: '#00bcd4',
-  webhook_wait: '#e91e63',
-  spawn_workflow: '#2ecc71',
-  parallel_group: '#3498db',
-} satisfies Partial<Record<NodeType, string>>
+import { typeAccent } from './typeColors'
 
 const stateNodeClass: Record<NodeExecutionState, string> = {
   completed: styles.stateCompleted,
@@ -52,6 +35,7 @@ export interface ArbitronNodeData {
   label: string
   nodeType: string
   executionState: NodeExecutionState
+  layoutInstanceId?: string
   /** Owning instance; null for unlaunched or hidden work. */
   instanceId?: string | null
   independent?: boolean
@@ -62,7 +46,7 @@ export interface ArbitronNodeData {
 type ArbitronNodeType = Node<ArbitronNodeData, 'arbitronNode'>
 
 function ArbitronNode({ data, selected }: NodeProps<ArbitronNodeType>) {
-  const accentColor = typeColors[data.nodeType] ?? '#888888'
+  const accentColor = typeAccent(data.nodeType)
   const execState = data.executionState ?? 'pending'
   const nodeClasses = [
     styles.node,
@@ -72,7 +56,7 @@ function ArbitronNode({ data, selected }: NodeProps<ArbitronNodeType>) {
   ].filter(Boolean).join(' ')
 
   return (
-    <div className={nodeClasses} data-state={execState}>
+    <div className={nodeClasses} data-state={execState} data-layout-instance={data.layoutInstanceId} data-layout-mode="fallback">
       <Handle type="target" position={Position.Top} />
       <div className={styles.typeBar} style={{ background: accentColor }} />
       <div className={styles.content}>

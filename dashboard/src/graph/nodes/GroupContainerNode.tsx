@@ -10,6 +10,7 @@ import type {
 } from '../groupLayout'
 import { gatherText, progressText, ruleText, stateText, unfinishedText, waitingReasonText } from '../groupText'
 import styles from './GroupContainerNode.module.css'
+import ReviewedGroupElement from '../arranged/ReviewedGroupElement'
 
 const STATUS_CLASS: Record<string, string> = {
   not_started: styles.statusPending,
@@ -32,8 +33,9 @@ type GroupContainerNodeType = Node<GroupContainerData, 'groupContainer'>
 
 /** Non-interactive box around a group's header, bodies/task cards and footer. */
 function GroupContainerNode({ data }: NodeProps<GroupContainerNodeType>) {
+  if (data.reviewed) return <ReviewedGroupElement data={data.reviewed} />
   return (
-    <div className={`${styles.container} ${data.form === 'workflows' ? styles.containerWorkflows : ''}`}>
+    <div className={`${styles.container} ${data.form === 'workflows' ? styles.containerWorkflows : ''}`} data-layout-instance={data.layoutInstanceId} data-layout-mode="fallback">
       <span className={styles.containerLabel}>{data.label}</span>
     </div>
   )
@@ -43,8 +45,9 @@ type GroupHeaderNodeType = Node<GroupEndpointData, 'groupHeader'>
 
 /** Fan-out header: the group's entry point; task edges leave it. */
 function GroupHeaderNodeImpl({ data, selected }: NodeProps<GroupHeaderNodeType>) {
+  if (data.reviewed) return <ReviewedGroupElement data={data.reviewed} selected={selected} />
   return (
-    <div className={`${styles.endpoint} ${selected ? styles.selected : ''}`} data-testid={`group-header-${data.definitionNodeId}`}>
+    <div className={`${styles.endpoint} ${selected ? styles.selected : ''}`} data-testid={`group-header-${data.definitionNodeId}`} data-layout-instance={data.layoutInstanceId} data-layout-mode="fallback">
       <Handle type="target" position={Position.Top} />
       <div className={styles.typeLabel}>parallel group · fan-out</div>
       <div className={styles.title}>{data.label}</div>
@@ -60,9 +63,10 @@ type GroupFooterNodeType = Node<GroupEndpointData, 'groupFooter'>
 
 /** Gather footer: rule, progress, winner and file/resolution activity; success/failure leave it. */
 function GroupFooterNodeImpl({ data, selected }: NodeProps<GroupFooterNodeType>) {
+  if (data.reviewed) return <ReviewedGroupElement data={data.reviewed} selected={selected} />
   const live = data.live
   return (
-    <div className={`${styles.endpoint} ${styles.footer} ${selected ? styles.selected : ''}`} data-testid={`group-footer-${data.definitionNodeId}`}>
+    <div className={`${styles.endpoint} ${styles.footer} ${selected ? styles.selected : ''}`} data-testid={`group-footer-${data.definitionNodeId}`} data-layout-instance={data.layoutInstanceId} data-layout-mode="fallback">
       <Handle type="target" position={Position.Top} />
       <div className={styles.typeLabel}>gather · {ruleText(data.completionRule)}</div>
       <div className={styles.meta}>
@@ -100,6 +104,7 @@ type GroupTaskCardNodeType = Node<GroupTaskCardData, 'groupTaskCard'>
  * A redacted task shows a generic hidden dependency and no identifiers.
  */
 function GroupTaskCardNodeImpl({ data, selected }: NodeProps<GroupTaskCardNodeType>) {
+  if (data.reviewed) return <ReviewedGroupElement data={data.reviewed} selected={selected} />
   const live = data.live
   const hidden = live?.redacted === true
   const classes = [
@@ -109,7 +114,7 @@ function GroupTaskCardNodeImpl({ data, selected }: NodeProps<GroupTaskCardNodeTy
     selected ? styles.selected : '',
   ].filter(Boolean).join(' ')
   return (
-    <div className={classes} data-testid={`group-task-${data.definitionNodeId}-${data.taskKey}`}>
+    <div className={classes} data-testid={`group-task-${data.definitionNodeId}-${data.taskKey}`} data-layout-instance={data.layoutInstanceId} data-layout-mode="fallback">
       <Handle type="target" position={Position.Top} />
       <div className={styles.typeLabel}>task {data.index + 1} · {data.taskKey}</div>
       {hidden ? (
@@ -149,6 +154,9 @@ function GroupTaskCardNodeImpl({ data, selected }: NodeProps<GroupTaskCardNodeTy
   )
 }
 
+export const GroupLaneNode = memo(function GroupLaneNode({ data }: NodeProps<GroupContainerNodeType>) {
+  return data.reviewed ? <ReviewedGroupElement data={data.reviewed} /> : null
+})
 export const GroupHeaderNode = memo(GroupHeaderNodeImpl)
 export const GroupFooterNode = memo(GroupFooterNodeImpl)
 export const GroupTaskCardNode = memo(GroupTaskCardNodeImpl)

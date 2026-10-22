@@ -52,18 +52,11 @@ func (s *Service) backfillScope(ctx context.Context, scope Scope) error {
 	}
 	var rejected []error
 	for _, sum := range summaries {
-		// If a registry row already exists for this name, it is already reconciled.
-		if _, err := s.registry.ResolveID(ctx, sum.Name); err == nil {
-			continue
-		} else if !errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("backfill: resolving %q: %w", sum.Name, err)
-		}
-
-		wf, err := s.repo.Load(ctx, scope, sum.Name)
-		if err != nil {
+		// Validate a stored group before the lock: a workflows-form group reads
+		// its children's input contracts, which a held lock set cannot widen to.
+		if wf, err := s.repo.Load(ctx, scope, sum.Name); err != nil {
 			return fmt.Errorf("backfill: loading %q: %w", sum.Name, err)
-		}
-		if err := s.rejectStoredGroupImport(ctx, wf, scope, sum.Name, sum.Name); err != nil {
+		} else if err := s.rejectStoredGroupImport(ctx, wf, scope, sum.Name, sum.Name); err != nil {
 			validationErr := fmt.Errorf("backfill: validating %q: %w", sum.Name, err)
 			if errors.Is(err, ErrGroupInvalid) {
 				rejected = append(rejected, validationErr)
@@ -71,29 +64,44 @@ func (s *Service) backfillScope(ctx context.Context, scope Scope) error {
 			}
 			return validationErr
 		}
-		if wf.ID == uuid.Nil {
-			wf.ID = uuid.New()
-		}
-		if err := s.registry.Register(ctx, RegistryEntry{
-			ID:      wf.ID,
-			Name:    sum.Name,
-			Scope:   scope.Kind,
-			OwnerID: scope.OwnerID,
-		}); err != nil {
-			// A concurrent backfill/load may have just claimed the name; that is the
-			// reconciled state, so treat it as done rather than an error.
-			if errors.Is(err, ErrAlreadyExists) {
-				continue
+		target := MutationTarget{Scope: scope, Name: sum.Name}
+		if err := s.withMutations(ctx, []MutationTarget{target}, func(ctx context.Context) error {
+			if err := s.settle(ctx, target); err != nil {
+				return err
 			}
-			return fmt.Errorf("backfill: registering %q: %w", sum.Name, err)
-		}
-		// Persist the (possibly newly allocated) id back into the folder so the
-		// definition body and the registry agree and the id is stable.
-		if err := s.repo.Update(ctx, scope, sum.Name, wf); err != nil {
-			return fmt.Errorf("backfill: persisting id for %q: %w", sum.Name, err)
+			return s.backfillOne(ctx, scope, sum.Name)
+		}); err != nil {
+			return err
 		}
 	}
 	return errors.Join(rejected...)
+}
+
+// Read/modify/write all happen under the same authoring lock, preserving a newer
+// Presentation even if the catalog listing preceded an authoring save.
+func (s *Service) backfillOne(ctx context.Context, scope Scope, name string) error {
+	if _, err := s.registry.ResolveID(ctx, name); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("backfill: resolving %q: %w", name, err)
+	}
+	wf, err := s.repo.Load(ctx, scope, name)
+	if err != nil {
+		return fmt.Errorf("backfill: loading %q: %w", name, err)
+	}
+	if wf.ID == uuid.Nil {
+		wf.ID = uuid.New()
+	}
+	if err := s.registry.Register(ctx, RegistryEntry{ID: wf.ID, Name: name, Scope: scope.Kind, OwnerID: scope.OwnerID}); err != nil {
+		if errors.Is(err, ErrAlreadyExists) {
+			return nil
+		}
+		return fmt.Errorf("backfill: registering %q: %w", name, err)
+	}
+	if err := s.repo.Update(ctx, scope, name, wf); err != nil {
+		return fmt.Errorf("backfill: persisting id for %q: %w", name, err)
+	}
+	return nil
 }
 
 // scopeName labels a scope for diagnostics.

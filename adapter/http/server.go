@@ -130,6 +130,9 @@ type RouterDeps struct {
 	// outlives any single request and the probe forks at most once per TTL. Nil
 	// omits the backends list (legacy/tests).
 	BackendHealth BackendHealthChecker
+	// Layouts supplies authorized revision-scoped status/retry and the instance layout block.
+	// Routes remain registered when nil, reporting explicit unavailability.
+	Layouts LayoutQueryService
 	// GraphState enables GET /instances/{id}/graph-state when non-nil.
 	GraphState GraphStateService
 	// SubtreeEvents enables ?subtree=1 only when GraphState is also set.
@@ -206,6 +209,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
+	instHandler.SetLayouts(d.Layouts)
+	layoutHandler := NewLayoutHandler(d.Layouts)
 	if d.GraphState != nil {
 		instHandler.SetGraphState(d.GraphState)
 	}
@@ -290,7 +295,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Post("/{name}/publish", wfHandler.Publish)
 			r.Put("/{name}/visibility", wfHandler.SetVisibility)
 			r.Post("/{name}/copy", wfHandler.Copy)
-			r.Put("/{name}/layout", wfHandler.SaveLayout)
+			r.Get("/{name}/layout", layoutHandler.GetWorkflowLayout)
+			r.Post("/{name}/layout/retry", layoutHandler.RetryWorkflowLayout)
 			r.Get("/{name}/stats", wfHandler.Stats)
 			r.Get("/{name}/files", wfHandler.ListFiles)
 			r.Get("/{name}/files/*", wfHandler.ReadFile)
@@ -356,6 +362,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
 			r.Get("/{id}/interventions", instHandler.GetInterventions)
+			r.Get("/{id}/layout", layoutHandler.GetInstanceLayout)
+			r.Post("/{id}/layout/retry", layoutHandler.RetryInstanceLayout)
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
 			if interactiveHandler != nil {
 				r.Post("/{id}/interact/end", interactiveHandler.EndSession)

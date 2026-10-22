@@ -1,3 +1,5 @@
+import type { LayoutView } from '../graph/arranged/types'
+
 /** Lifecycle state of a workflow instance. */
 export type InstanceState =
   | 'queued'
@@ -100,6 +102,8 @@ export interface EnrichedInstanceSummary extends InstanceSummary {
 export interface Instance {
   id: string
   ownerId: string
+  /** Run department, used with the caller's led departments for intervention controls. */
+  department?: string
   workflowName: string
   state: InstanceState
   priority: Priority
@@ -119,6 +123,8 @@ export interface Instance {
   interactiveActive: boolean
   /** The node ID of the interactive node waiting for input, or null. */
   interactiveNodeId: string | null
+  /** Arrangement status and best/fallback geometry for the snapshot revision. */
+  layout?: LayoutView
 }
 
 /**

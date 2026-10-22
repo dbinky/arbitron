@@ -162,6 +162,108 @@ describe('api.schedules.list', () => {
   })
 })
 
+describe('api layout endpoints', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function respond(url: string, body: unknown, expectedInit?: RequestInit) {
+    const fetcher = vi.fn(async (actualURL: string, init?: RequestInit) => {
+      expect(actualURL).toBe(url)
+      expect(init).toEqual(expectedInit)
+      return { ok: true, json: async () => body } as Response
+    })
+    vi.stubGlobal('fetch', fetcher)
+    return fetcher
+  }
+
+  it('GETs the workflow wire LayoutView verbatim, including findings and generations', async () => {
+    const wire = {
+      savedRevision: 'rev-9', jobGeneration: 3, resultGeneration: 2,
+      displayStatus: 'needs_attention', attemptsUsed: 5, attemptLimit: 5,
+      findings: [{ criterion: 'text_clipped', severity: 'blocking', source: 'review', evidence: 'label clipped' }],
+      provenance: 'arranged', unreviewed: false, retryEligible: true, available: true,
+    }
+    respond('/api/v1/workflows/pr-review/layout', wire)
+    const view = await api.workflows.getLayout('pr-review')
+    expect(view).toBe(wire)
+    expect(view.savedRevision).toBe('rev-9')
+    expect(view.jobGeneration).toBe(3)
+    expect(view.resultGeneration).toBe(2)
+    expect(view.displayStatus).toBe('needs_attention')
+    expect(view.retryEligible).toBe(true)
+    expect(view.findings?.[0].criterion).toBe('text_clipped')
+  })
+
+  it('POSTs the expected workflow revision and returns the acknowledgement', async () => {
+    const wire = { savedRevision: 'rev-9', jobGeneration: 4, state: 'pending', displayStatus: 'pending' }
+    respond('/api/v1/workflows/pr-review/layout/retry', wire, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 'rev-9' }),
+    })
+    expect(await api.workflows.retryLayout('pr-review', 'rev-9')).toEqual(wire)
+  })
+
+  it('GETs the instance snapshot layout', async () => {
+    respond('/api/v1/instances/inst-1/layout', { savedRevision: 'rev-1', displayStatus: 'pending' })
+    const view = await api.instances.getLayout('inst-1')
+    expect(view.savedRevision).toBe('rev-1')
+    expect(view.displayStatus).toBe('pending')
+  })
+
+  it('POSTs the snapshot revision for instance retry', async () => {
+    const wire = { savedRevision: 'rev-1', jobGeneration: 2, state: 'pending', displayStatus: 'pending' }
+    respond('/api/v1/instances/inst-1/layout/retry', wire, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 'rev-1' }),
+    })
+    expect(await api.instances.retryLayout('inst-1', 'rev-1')).toEqual(wire)
+  })
+
+  it('surfaces Instance.layout and WorkflowDefinition.presentation from raw JSON', async () => {
+    respond('/api/v1/instances/inst-1', { id: 'inst-1', layout: { savedRevision: 'rev-1', displayStatus: 'complete' } })
+    expect((await api.instances.get('inst-1')).layout?.savedRevision).toBe('rev-1')
+    respond('/api/v1/workflows/wf', { name: 'wf', nodes: [], edges: [], presentation: { revision: 'rev-1', reason: 'update' } })
+    expect((await api.workflows.get('wf')).presentation?.revision).toBe('rev-1')
+  })
+
+  it('propagates fetch failures instead of fabricating a layout', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    await expect(api.instances.getLayout('inst-1')).rejects.toThrow('offline')
+  })
+
+  it.each([
+    [{ error: 'layout: expected revision is not current', code: 'CONFLICT', message: 'legacy' }, 'layout: expected revision is not current'],
+    [{ message: 'legacy' }, 'legacy'],
+    [{ error: '', message: 'legacy' }, 'legacy'],
+    [{ error: 123, message: 'legacy' }, 'legacy'],
+    [{ error: {}, message: [] }, 'Conflict'],
+    [{}, 'Conflict'], [null, 'Conflict'], ['', 'Conflict'],
+    [{ error: '   ', message: '' }, 'Conflict'],
+  ])('prefers the server error, then legacy message, then statusText (%j)', async (body, expected) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, statusText: 'Conflict', json: async () => body }))
+    await expect(api.workflows.retryLayout('pr-review', 'rev-old')).rejects.toThrow(`API 409: ${expected}`)
+  })
+
+  it('falls back to statusText for non-JSON error bodies', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 502, statusText: 'Bad Gateway', json: async () => { throw new SyntaxError('not JSON') } }))
+    await expect(api.instances.getLayout('inst-1')).rejects.toThrow('API 502: Bad Gateway')
+  })
+
+  it('reports the sanitized status-store error on 503', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable', json: async () => ({ error: 'internal server error', code: 'UNAVAILABLE' }) }))
+    await expect(api.instances.getLayout('inst-1')).rejects.toThrow('API 503: internal server error')
+  })
+})
+
+describe('api.workflows — manual layout writes removed', () => {
+  it('no longer exposes saveLayout', () => {
+    expect('saveLayout' in api.workflows).toBe(false)
+  })
+
+  it('exposes only read, trigger, stats, group-layout and arrangement-status methods for workflows', () => {
+    expect(Object.keys(api.workflows).sort()).toEqual(['get', 'getLayout', 'getStats', 'groupLayout', 'list', 'retryLayout', 'trigger'])
+  })
+})
+
 describe('api.instances.graphState', () => {
   afterEach(() => vi.restoreAllMocks())
 

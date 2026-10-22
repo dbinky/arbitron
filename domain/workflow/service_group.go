@@ -1,7 +1,9 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -275,17 +277,51 @@ func (s *Service) ValidateGroupImport(ctx context.Context, wf *Workflow, files F
 // private shadow or a not-yet-created destination. Also check the destination
 // name: a rename/copy must not introduce a direct self-run.
 func (s *Service) rejectCopiedGroups(ctx context.Context, scope Scope, name, destName string) error {
-	if err := ctx.Err(); err != nil {
-		return err
+	_, err := s.precheckCopiedGroupImport(ctx, scope, name, destName)
+	return err
+}
+
+// checkedGroupImport binds pre-lock validation to the definition used under
+// the final source lock. Compare the entire manifest, including legacy inputs
+// with no saved revision and definitions that did not yet contain any groups.
+type checkedGroupImport struct {
+	scope    Scope
+	manifest []byte
+}
+
+func (c checkedGroupImport) check(scope Scope, wf *Workflow) error {
+	if wf == nil || scope != c.scope {
+		return ErrMutationPending
 	}
-	wf, err := s.repo.Load(ctx, scope, name)
+	manifest, err := json.Marshal(wf)
 	if err != nil {
 		return err
 	}
-	if wf == nil {
-		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	if !bytes.Equal(c.manifest, manifest) {
+		return ErrMutationPending
 	}
-	return s.rejectStoredGroupImport(ctx, wf, scope, name, destName)
+	return nil
+}
+
+func (s *Service) precheckCopiedGroupImport(ctx context.Context, scope Scope, name, destName string) (checkedGroupImport, error) {
+	if err := ctx.Err(); err != nil {
+		return checkedGroupImport{}, err
+	}
+	wf, err := s.repo.Load(ctx, scope, name)
+	if err != nil {
+		return checkedGroupImport{}, err
+	}
+	if wf == nil {
+		return checkedGroupImport{}, fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	manifest, err := json.Marshal(wf)
+	if err != nil {
+		return checkedGroupImport{}, err
+	}
+	if err := s.rejectStoredGroupImport(ctx, wf, scope, name, destName); err != nil {
+		return checkedGroupImport{}, err
+	}
+	return checkedGroupImport{scope: scope, manifest: manifest}, nil
 }
 
 func (s *Service) rejectStoredGroupImport(ctx context.Context, wf *Workflow, scope Scope, name, destName string) error {

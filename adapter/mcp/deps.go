@@ -11,6 +11,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/layout"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/schedule"
@@ -39,6 +40,15 @@ type EngineService interface {
 	Retry(ctx context.Context, instanceID uuid.UUID, variableEdits map[string]any) error
 	Rerun(ctx context.Context, instanceID uuid.UUID) (uuid.UUID, error)
 	SetPriority(ctx context.Context, id uuid.UUID, priority string) error
+}
+
+// LayoutQueryService is the authorised, revision-scoped layout query/retry port.
+// HTTP and MCP use the same production QueryService.
+type LayoutQueryService interface {
+	WorkflowLayout(ctx context.Context, name string) (layout.View, error)
+	InstanceLayout(ctx context.Context, id uuid.UUID) (layout.View, error)
+	RetryWorkflow(ctx context.Context, name, expectedRevision string) (layout.RetryAck, error)
+	RetryInstance(ctx context.Context, id uuid.UUID, expectedRevision string) (layout.RetryAck, error)
 }
 
 // QueueManagerPort defines the subset of queue.Manager that the MCP adapter
@@ -141,4 +151,6 @@ type Deps struct {
 	// outlives any single call and the probe forks at most once per TTL. Nil omits
 	// the backends list (legacy/tests).
 	BackendHealth BackendHealthChecker
+	// Layouts powers arrangement summaries and retry tools. Nil reports explicit unavailability.
+	Layouts LayoutQueryService
 }

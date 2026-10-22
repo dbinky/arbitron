@@ -1,2183 +1,911 @@
-# Gaps Identified — Workflow Spawn Node
+# Gaps Identified — Workflow Auto-Arrangement
 
-Concrete findings from the seeding sweep of
-`64768283d2c32b64023801103c7aab2f5ea538d3..HEAD`. Each was found by grepping the
-whole repo for the symbol and checking for a **production** (non-`*_test.go`,
-non-`*.test.ts`) constructor or caller.
+**Rules:**
+- Each record is at most ten lines. Name it with a `file:symbol`.
+- Closed items move under `## Closed` with a one-line note (commit plus the test or guard that closes it).
+- The open list is what a pass reads. Do not append multi-page histories.
+- An unfed or no-op production path is never "acceptable". It is a gap to fix, or an explicit escalation recorded here.
+- Out-of-scope items go under `- [ ] **G20 (Area 3, Review 2 hardening, non-blocking)** — `domain/workflow/service_revision_test.go:TestServiceRevisionOperationFailureBoundaries` injects settle/record/write/receipt/enqueue/remove but not `PrepareTreeCommit` ("backup") for Publish; only `TestServiceRevisionSharedFailureRestoresBeforeAbandon` covers backup, via Update. Approver's throwaway probe (`repo.fail["backup"]` on fresh and overwrite Publish) passed: error returned, no request, no journal entry, no pending commit, proof unchanged, prior tree intact. Persist that probe as a `backup` boundary case for publish/copy/duplicate.
 
-Tick a box only when the gap is closed in code with a test that would fail if the
-production input were nil/empty. An unfed production path is a gap to **fix or
-escalate** — never a tolerated no-op.
+## Won't Fix` with the reason.
 
----
+Gap IDs are referenced from `docs/reference/focus-areas.md` and `docs/reference/paired-reviews.md`. Keep IDs stable when closing.
 
 ## Open
 
-- [ ] **Confirm the awaited-spawn wait is invisible to the timer recovery sweep.**
-  `executeWait` transitions the parent with `instances.UpdateState(ctx, id,
-  StateWaiting)` and the comment claims `waiting_until` stays NULL so
-  `RecoverTimers` cannot pick it up (`domain/engine/executor_spawn.go:159-163`).
-  Verify against the actual `UpdateState` implementation and the
-  `ListWaitingWithTimer` predicate in `adapter/sqlite/instance_repo.go` that a
-  spawn-waiting parent is genuinely excluded — an untested claim in a comment is
-  not a guarantee, and a false positive here would fail a parent that is waiting
-  correctly.
+### Paired 19 — independent approval of 9878b0b (2026-10-18): APPROVED
+- Only paired:19 examined/ticked; SHARED edge ordinals, route points, crossing roles/gaps, label boxes and renderer contract traced in both directions. No seam defect found.
+- 10→8: `domain/layout/route.go:findCrossings` assigns horizontal Over/vertical Under; `domain/layout/coordinator.go:Coordinator.Run` passes the validated candidate through `NewRenderRequest` → `adapter/renderreview/browser.go:renderJobDocument` → `dashboard/src/render/RenderSurface.tsx:runRenderJob` → `ArrangedGraph` → `buildArrangedFlow.ts:buildArrangedFlow` → `RoutedEdge.tsx:RoutedEdge`. Gaps/overs and DOM path identity use ordinals; persisted route and label boxes are drawn directly.
+- 8→10: `dashboard/src/render/report.ts:collectCrossings` checks the under hole/banks and continuous horizontal over ink; `adapter/renderreview/reviewer_checks.go:checkCrossings` checks exact roles/location and blocks missing ink. Its `expectedSegments`/`checkEdges` mirror `dashboard/src/graph/arranged/routedPath.ts:buildRoutedPath`, including dash restarts; `reviewer_capture.go:checkCapture` also checks captured pixels.
+- Ordering/validation: `arrange.go:Arrange` validates each candidate before selection; `coordinator.go:Coordinator.Run` validates before rendering and combines preflight/review blockers before Passed. `geometry.go:Geometry.Validate`/`interiorOnRoute` and `validate.ts:validateGeometry`/`interiorOnRoute` agree on occurrence identity, text/boxes, crossing orientation and zero margin/sweeps. `RenderSurface.tsx:runRenderJob` and both dashboard routes use `ArrangedGraph`/`validate.ts:resolveDisplayGeometry` before drawing.
+- BREAK independently red/green: temporary Vite transforms make `dashboard/src/graph/arranged/crossingSeam.test.tsx:goArrangedSamples` fail on TS role swap (47/4 under ink), dropped over dash restarts (34/6 over ink), and collapsing crossing records by unordered pair (47/4 under ink). A temporary Go compiler overlay swapping `route.go:findCrossings` roles fails at Arrange's proper-intersection guard. All four exit 1; unmodified seam rerun exits 0. No tracked production/test source was changed.
+- Near-bend tolerance boundary is caught by `domain/layout/preflight.go:crossingNearBend`/`checkCrossings` and cannot pass `Coordinator.Run` with that blocker; `TestCrossingNearBend` and `TestExpectedSegments_DashRestartsMirrorTheRenderer` pass. G10 remains the existing [ESCALATION] on conflicting plan wording; implemented Go/TS zero-option parity is covered on both sides.
+- Fresh exit-0 verification: `npx vitest run src/graph/arranged` (313/313); `npx vitest run src/render --maxWorkers=1` (85/85); `npx tsc --noEmit`; `go build ./...`; `ARBITRON_REQUIRE_BROWSER=1 go test ./domain/layout ./adapter/renderreview -count=1` (8.970s/273.366s), including the real-Chrome feature-pipeline coordinator, dashed crossings and expected-segments mirror. Supplied measurement fields were unresolved placeholders; affected suites were measured directly, with no full-repository branch-point comparison claimed.
 
-- [x] **Verify the cascade produces an intervention record for every descendant,
-  scoped to the storage-failure case only.** `cascadeCancel` routes through
-  `cancelAuthorized`, which calls `recordIntervention`; the "one intervention
-  row per cancelled run across a deep tree" claim and the "authorization
-  failure partway down the tree does not silently orphan the rest of the
-  traversal" claim were already covered (the latter fixed in a prior pass —
-  see `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch` under
-  Fixed). What remained unverified: `cascadeCancel`'s own `ListActiveChildren`
-  failure (a storage error listing one branch,
-  `TestCancelCascade_StorageFailureStillReportsSuccess`) only asserted the
-  PARENT stays cancelled — it never asserted whether a SIBLING branch's
-  intervention records are still written, i.e. whether one branch's storage
-  error silently truncates unrelated branches' audit trail too. Added
-  `TestCancelCascade_StorageFailureOnOneBranchDoesNotTruncateSiblingBranch`
-  (`domain/engine/cancel_cascade_test.go`), which links a parent to two
-  branches — `branchA` (whose OWN `ListActiveChildren` call fails) and
-  `branchB` (with its own live grandchild) — and asserts all four instances
-  (parent, branchA, branchB, grandchildB) end `StateCancelled` and all four
-  get intervention records (`c.interventions.count() == 4`). Confirmed this is
-  not a live bug: Go's call-stack semantics already scope the failure
-  correctly (the failing recursive call for `branchA` simply returns after
-  logging, which cannot affect the OUTER loop iterating over the parent's
-  other children) — moving the test's `for` loop to `break` instead of
-  `continue` on any error, or otherwise trying to construct a code path where
-  branchA's failure reaches branchB, was not possible without restructuring
-  the function into something no longer resembling straightforward recursion;
-  this matches the shape of several other "review 2: independent
-  re-verification found no live gap" entries below (areas 17, 18) where the
-  fix is closing a testing gap rather than a code change. While re-deriving
-  this branch's coverage, found a SEPARATE, more significant gap — the
-  "already-terminal child still descends into active grandchildren" branch is
-  entirely untested (logged above under Open, not fixed here to keep this pass
-  to one issue). This does not close review 1 approval for area 22: the newly
-  found gap above must close first.
+### Paired 18 — independent approval of d6f92f8 (2026-10-18): APPROVED
+- Only paired:18 examined/ticked; SHARED journal destination, captured Presentation/Manifest and SQLite destination traced in both directions; G41 closed.
+- 4→6: `adapter/filesystem/revision_journal.go:RevisionJournal.Relocate` changes only Scope/Name; `requestDigest` excludes those fields, preserving receipt validity and captured bytes. `domain/layout/query.go:committedEnvelope` accepts only JournalCommitted; `QueryService.retry` uses its envelope, otherwise the immutable snapshot locator. Prepared/no-journal cases pass.
+- 6→4: `domain/layout/query.go:QueryService.RetryInstance` locks snapshot plus committed destination, revalidates under lock and retries at most three times before conflict/no insert. `domain/workflow/service_revision_move.go:withIdentityMutation` holds the same source/target locks through `finishRelocation`; recovery also uses them at `domain/workflow/commit_source.go:CommitSource.resolveRelocation`. `adapter/sqlite/layout_repo.go:LayoutRepo.Retry`/`LayoutRepo.Relocate` preserve Manifest.
+- Production: `cmd/arbitron/layout_wiring.go:newLayoutStack`/`layoutStack.attachQuery` and `cmd/arbitron/main.go:initDomain` feed the same filesystem coordinator, journal, requester and SQLite store into retry, transfer, settlement and worker. `domain/layout/worker.go:Worker.publish` uses row destination and exact generation/destination fences through `adapter/filesystem/layout_cache.go:LayoutCache.PublishCache`.
+- BREAK: `cmd/arbitron/layout_relocation_retry_test.go:TestLayoutE2E_HistoricalRetryInsertSerializesWithTransfer` passes with real locks/store/journal/cache: transfer waits while insertion pauses, then row/worker publication reach the new owner with exact captured bytes and no recreated old folder. Serial relocated-envelope and transfer probes also pass (focused root selection 44.220s).
+- Independent red/green: substituting only parent query.go via a temporary Go overlay makes both `domain/layout/query_retry_test.go:TestQueryService_RetryInstance_RevalidatesRelocationUnderLock` and `TestQueryService_RetryInstance_UnsettledRelocationConflicts` fail; unmodified full domain/layout suite passes. No tracked code changed for the probe.
+- Measurement fields were unresolved placeholders. Fresh exit-0 checks: `go test ./domain/layout/... ./domain/workflow/... ./adapter/filesystem/... ./adapter/sqlite/... -count=1 -timeout=5m`; focused root tests with ARBITRON_REQUIRE_BROWSER=1; `go build ./...`; `go vet ./domain/layout/... ./cmd/arbitron`.
+- Broader root selection `go test ./cmd/arbitron -run 'TestLayoutE2E_|Query|Relocat' -count=1 -timeout=5m` exits 1 (156.901s) only for existing G24 (`TestLayoutE2E_NilCopiedIDStillRequests`, nil-ID assertion at line 146); the identical test also exits 1 with parent query.go overlaid. No measured new failure/build break; full-repository or branch-point comparison not claimed. No new gap found.
 
-- [ ] **A dismissed child stays counted in `ChildCount` but disappears from its
-  parent's expanded row list, with no way to bring it back into view.**
-  `ChildCountsByParents` (`adapter/sqlite/instance_repo.go:592-611`) has no
-  concept of per-user dismissal — its `WHERE` clause is built purely from
-  `childVisibilityClause` (owner/department/public), matching the deliberate
-  domain/view split documented at `adapter/http/instance_handler.go:225`
-  ("dismissed" is HTTP/view state, intentionally not part of the domain
-  model). But `List`'s dismissed-set subtraction
-  (`adapter/http/instance_handler.go:444-457`, `isDismissed && !includeDismissed`
-  → `continue`) applies unconditionally, including when `filters.ParentScope ==
-  ParentScopeChildren`. The dashboard's only child-fetch call,
-  `useRunHierarchy.toggle` (`dashboard/src/hooks/useRunHierarchy.ts:66`,
-  `api.instances.list({ parent: id })`), never passes `includeDismissed`, so it
-  gets the default `false`. Net effect: a parent's expander can read
-  "2 children" (from `ChildCount`, dismissal-blind) while expanding shows only
-  1 row (the dismissed sibling silently subtracted) — and there is no
-  dashboard affordance to pass `includeDismissed=true` for a single expanded
-  level, so that child is permanently invisible via the hierarchy view once
-  dismissed (e.g. by a "Dismiss All" on an unrelated top-level sweep that
-  happened to catch it). Neither the spec nor any of the five phase designs
-  mention dismissal at all, so there is no documented intended behaviour to
-  wire against — this needs a product decision (e.g. "child fetches always
-  imply `includeDismissed=true`", or "a dismissed child should also be
-  subtracted from `ChildCount`") before it can be closed as a fix rather than
-  a guess. Found while closing area 24 review 1; the fix, if any, belongs to
-  area 27 (hook) or area 23/8 (count query), not area 24 itself — REST's own
-  `List`/`ListEnriched` wiring for the `parent` selector is otherwise correct
-  and this does not block area 24's own approval.
+- [ ] **G37 [ESCALATION] (Area 12 Review 2, approval requirements)** — The G8 part is done (paired:16: `ArrangedGraph.tsx` "Reload reviewed fonts" in both routes, real-browser failure→recovery). Remaining: the G10 zero-option ruling and G38 below.
+  `validate.ts:validateGeometry` and `domain/layout/geometry.go:validateGeometryOptions` already agree on nonnegative margin/search sweeps; G10 still needs the conflicting positive-only plan requirement explicitly superseded or both validators/callers changed together. The required-browser needs_attention fixture must also reach its intended terminal state (G38). No missing fixture dependency prevents G36's permission fix; remaining work is that recovery behavior and an authoritative zero-option contract decision. Do not repeat the wiring review.
 
-- [ ] **Three defensive branches in `OnChildTerminal` have no known reachable
-  production caller and are untested.** Found while closing area 19 review 2
-  (`domain/engine/spawn_wake.go`): `go tool cover` shows the `ctx == nil`
-  guard (line 36-38), the `!child.State.IsTerminal()` "called too early" guard
-  (line 49-51, doc comment: "the real terminal write will call again"), and the
-  parent-`instances.Get` error branch (line 53-56) all at 0 hits. All four
-  production call sites (`run()`'s completion, `failInstance`,
-  `cancelAuthorized`, `resumeFromWebhookWait`) already write the child's
-  terminal state before calling the wake and always pass a live context, so
-  none of these three branches is reachable today — not a live bug, but an
-  unverified defensive-code claim, the same shape of gap this loop has fixed
-  repeatedly elsewhere (most recently the `SetQueued`-failure branch in this
-  same review). Low priority relative to the `SetQueued` fix since none is
-  reachable by a real caller; pick up if area 19 needs further passes or if a
-  future caller starts invoking `OnChildTerminal` before its terminal write.
+- [ ] **G38 (Area 12 Review 2, required-browser evidence; non-blocking — approver saw 4/4 passes on 9e3d8cc, so treat as a possible flake)** — `cmd/arbitron/layout_surfaces_e2e_test.go:TestLayoutSurfaces_NeedsAttentionShowsFindingsNotReviewed` failed at line 538: terminal state was `failed`, expected `needs_attention`; stage/reason were not printed by that assertion, so the cause and baseline relationship remain unverified.
+  Exact completed command: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestLayoutSurfaces_(NeedsAttentionShowsFindingsNotReviewed|HTTPRecoveryRetainsGraphAndBacksOff)$' -count=1 -timeout=3m` exited 1 (105.367s); HTTPRecovery completed without failure. The run finished before attempted cancellation. Reproduce while preserving terminal failure-stage/reason/artifacts and establish the real needs_attention DOM scenario; do not count this pair as green or assume the failure is pre-existing.
 
-- [ ] **`EnrichedInstanceSummary.FailedNodeID` is declared twice — once
-  promoted from the embedded `InstanceSummary` (tagged `failedNodeId,omitempty`),
-  once again directly on `EnrichedInstanceSummary` itself (no tag) — so Go's
-  shallower-field-wins rule silently drops the promoted, tagged field from ANY
-  direct `encoding/json` marshal of the struct and marshals only the untagged
-  one under the bare key `"FailedNodeID"`.** Found while closing area 25 review 1
-  (`domain/instance/instance.go:177` vs `:208`), while confirming the sibling
-  fields referenced by the `ChildCount`/MCP-field-names gap (now fixed, see
-  Fixed section) really do share one untagged convention. Pre-existing —
-  present unchanged at the branch point, `ChildCount` did not introduce it — so
-  out of scope for this feature's own fix, but worth a decision: MCP's
-  `MarshalResult(enriched)` (`adapter/mcp/tools_instance.go:139`) marshals
-  `EnrichedInstanceSummary` directly, so an MCP client asking for the failed
-  node ID would need to read `"FailedNodeID"`, not `"failedNodeId"` — inconsistent
-  with every other tagged field on the same embedded type it hides. REST is
-  unaffected (it maps through `enrichedSummaryDTO`, never marshals the domain
-  struct directly). No test currently pins which key wins; a future rename of
-  either declaration could silently flip client-visible behaviour.
+### Paired 17 — independent approval of bf63f3a (2026-10-18): APPROVED
+- Only paired:17 ticked; SHARED seed journal, registry claim and ledger traced in both directions. No seam defect found; G31/G32 remain separate.
+- 9→1: `domain/samples/seeder_revision.go:seedRevision` holds the destination lock through `domain/workflow/revision_stamper.go:EnsureStamped`, which settles before Load and accepts only exact committed journal input or `domain/layout/requester.go:Requester.AcknowledgedArrangement` (real SQLite row); publication owner/source/ID/revision are rechecked before resume.
+- 1→9: `domain/workflow/revision_stamper.go:Stamp` records input before Register/PrepareTreeCommit; `domain/workflow/commit_source.go:settlePrepared` rolls back before `releaseSeedClaim` deletes only the matching abandoned shared unowned ID, preserving surviving trees/publications and recovery evidence on errors. `domain/samples/seeder_revision.go:recordSeed` calls Committed before ledger.Record; `domain/layout/worker.go:recover` removes journal input only after acknowledgement.
+- Production wiring: `cmd/arbitron/main.go:initDomain` settles before seeding and supplies the real stamper/mutations/identity repo; `cmd/arbitron/layout_wiring.go:newLayoutStack` shares the real journal, repository, publications and requester with settlement and the worker.
+- BREAK: `cmd/arbitron/sample_seed_durable_test.go:TestSeedSampleWorkflows_KillAndRecover` passes all eight real process-kill/restart stages, asserting one ledger line/row, original committed revision or fresh reseed, no abandoned arrangement and no seeding-failed boot log. LedgerOnlyFailureResumesAfterRecovery also passes both cleanup paths.
+- Independent temporary Go overlays: disabling acknowledged resume makes before-ledger exit 1; neutralising releaseSeedClaim makes pre-proof restart cases exit 1, at the new boot assertion. Overlays never changed tracked code; unmodified eight-stage rerun exits 0 (2.993s).
+- Supplied measurement placeholders were unresolved, so checks were run independently: `go build ./...`; full `go test ./domain/samples ./domain/workflow ./domain/layout -count=1 -timeout=3m`; and `go test ./cmd/arbitron -run '^(TestSeedSampleWorkflows|TestLayoutE2E_SeedThroughRootAndRestart$|TestLayoutE2E_SeedDoesNotAdoptForeignOrphan$|TestLayoutE2E_PreSeedUndecidedSettlementAbortsBoot$)' -count=1 -timeout=3m` all exit 0 (root selection 35.287s). No full-repository suite/baseline comparison claimed.
 
----
+### Paired 17 — Area 9 sample seeding ↔ Area 1 settlement (refiner pass, 2026-10-18)
+- A→B (seeder assumes settlement): `seeder_revision.go:seedRevision` holds the destination lock and calls `revision_stamper.go:EnsureStamped`, which runs `Settler.Settle` before `Load`, so per-destination ordering is structural (not just `main.go:initDomain` boot settlement before the seed switch). Resume only on an exact committed journal entry or `requester.go:AcknowledgedArrangement` (G4); ErrNotFound → fresh seed; any other error aborts the run and `initDomain` logs "sample workflow seeding failed; continuing boot without samples".
+- B→A (settlement assumes seeder): `Stamp` (journal) precedes `Registry.Register` and `PrepareTreeCommit`, so every claim has evidence; `commit_source.go:settlePrepared` → `releaseSeedClaim` frees only the exact shared unowned ID with no tree/publication (G5). A post-proof `MarkCommitted`/enqueue failure in `recordSeed` still records the ledger; the worker's `recover` sweep rolls it forward (`TestSeedSampleWorkflows_LiveDurableRecovery`).
+- Gap fixed: `cmd/arbitron/sample_seed_durable_test.go:TestSeedSampleWorkflows_KillAndRecover` restarted with `ARBITRON_SAMPLES_SEED=false`, so the row's TRACE (restart `initDomain` → settle → `seedRevision`) never ran for the eight kill stages. The committed stages even asserted an *absent* ledger. It now restarts with seeding on and asserts: no "seeding failed" boot log, one ledger line, one row, committed revision kept/terminal, abandoned revision never arranged and a fresh ID/revision reseeded.
+- Mutations (reverted): disabling the ack branch in `EnsureStamped` → `before-ledger` FAILS (the old test passed it); neutralising `releaseSeedClaim` → `identity`/`partial-tree`/`before-proof` FAIL.
+- Ran: `go test ./cmd/arbitron -run '^(TestSeedSampleWorkflows|TestLayoutE2E_SeedThroughRootAndRestart$|TestLayoutE2E_SeedDoesNotAdoptForeignOrphan$|TestLayoutE2E_PreSeedUndecidedSettlementAbortsBoot$)' -count=1` ok (34.9s); `go test ./domain/workflow ./domain/samples -run Seed` ok. Production wiring: `main.go:initDomain` passes `ls.stamper`/`ls.mutations`/`identityRepo` (non-nil). G31/G32 stay open separately. No production diff.
+Recommend: approve paired:17 — both directions shown; the BREAK (interrupted sample neither resumed nor reseeded, boot silent) is now caught at the real root for all eight kill stages.
 
-## Fixed
+### Paired 16 — independent approval of 79ea253 (2026-10-18): APPROVED
+- Only paired:16 ticked. Client→server TRACE: `dashboard/src/routes/WorkflowReview.tsx:ReviewPage` and `ExecutionView.tsx:InstanceArrangement` call `client.ts:retryLayout` with the joined revision; `adapter/http/layout_handler.go:RetryWorkflowLayout` / `RetryInstanceLayout` reach the production `layoutStack.attachQuery` service. `domain/layout/query.go:QueryService.retry` returns the accepted generation after `adapter/sqlite/layout_repo.go:LayoutRepo.Retry` atomically increments it; `requester.go:Requester.retry` notifies the worker.
+- Server→client TRACE: `domain/layout/reader.go:Reader.View` supplies `retryEligible`; `LayoutStatusPanel.tsx:showRetry` consumes it plus the specified outage override. `WorkflowReview.tsx:canRetryLayout` matches `workflow/layout_access.go:Service.AuthorizeLayoutRetry`; `ExecutionView.tsx:InstanceArrangement` matches `engine/authz.go:canIntervene` (owner/admin/run-department lead), with identity and permission route cases green. Valid passed results remain rejected by `requester.go:Requester.retry`.
+- Stale-terminal BREAK: `useLayoutStatus.ts:retryCurrent` rejects foreign/non-increasing acknowledgements and installs `minimums` plus `applied = ++seq` before `load`; `load` rejects earlier requests and lower job/result generations while scheduling another poll. `useLayoutStatus.test.ts:installs RetryAck before refetch; stale terminal reads cannot drop geometry or stop polling` and the pre-ack request/route cases pass.
+- G8 BREAK: `ArrangedGraph.tsx:fontsFailed` offers a page reload after failed fonts for valid geometry in both live routes; its loading return and fixed-viewport guard exclude premature/render-surface controls. Both route G8 tests require fallback, no server Retry, reload invocation and no reviewed badge. Independent mutation `fontsFailed = false` made all three recovery cases fail (exit 1); restored source passed 3/3 (exit 0), with no production diff remaining.
+- Supplied verify-tests fields were unresolved placeholders, so measured directly: `npx tsc --noEmit` exit 0; focused Vitest arranged components, both routes, useLayoutStatus and RenderSurface with `--maxWorkers=1` passed 414/414; `go test ./domain/layout ./adapter/http ./domain/workflow ./domain/engine -run 'Retry|Layout|ViewContract' -count=1 -timeout=3m` exit 0. This is affected-scope verification, not a full branch-point suite comparison.
+- Required-browser command `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestLayoutSurfaces_(MissingBundledSubsetRetainsFallback|RenderFailureRetainsFallbackAndRetry|ClientValidationAndAPIReachDOM)$' -count=1 -timeout=4m` exited 0 (38.654s). `layout_component_surfaces_test.go:TestLayoutSurfaces_MissingBundledSubsetRetainsFallback` proves actual bundled-font failure → user click → fresh page → reviewed geometry, unchanged server generation and no server Retry. No new gap found; G10/G38 remain separate.
 
-- [x] **The `typeColors` accent map in `ArbitronNode` — including the new
-  `spawn_workflow: '#2ecc71'` entry — had no test at all, for any node type.**
-  Focus area 30 (dashboard graph accent for `spawn_workflow`), review 1.
-  `dashboard/src/graph/nodes/ArbitronNode.tsx:8-17` is a plain
-  `Record<string, string>` read at render (`typeColors[data.nodeType] ??
-  '#888888'`) and applied to both the `typeBar` background and the
-  `typeLabel` text color — but `ArbitronNode.test.tsx` only asserted handle
-  geometry, never the accent. Confirmed by temporarily deleting the
-  `spawn_workflow` entry: the entire dashboard suite (`npx vitest run`) stayed
-  green, proving a typo'd or removed key for the type this feature introduced
-  would silently degrade every `spawn_workflow` node in the graph editor to
-  the generic grey fallback, with nothing to catch it. Added two tests: one
-  asserting `nodeType: 'spawn_workflow'` renders the type bar/label in
-  `rgb(46, 204, 113)` (`#2ecc71`) with the label text `'spawn workflow'`, and
-  one asserting an unmapped node type falls back to `rgb(136, 136, 136)`
-  (`#888888`) rather than crashing or rendering an unstyled bar — this also
-  covers the pre-existing fallback branch, which was equally untested.
-  Confirmed the first test fails for the right reason
-  (`expected 'rgb(136, 136, 136)' to be 'rgb(46, 204, 113)'`) with the
-  `spawn_workflow` entry temporarily removed, then confirmed it passes with
-  the entry restored (`git diff --stat` on `ArbitronNode.tsx` is empty — no
-  production change needed). Independently verified the review's second claim
-  — "no editor-side port rendering is required" for the node's `success`/
-  `failure` ports — by reading `useGraphLayout.ts:173-186`: edge labels are
-  already derived generically from `e.label ?? e.output` for every node type
-  (this is how the pre-existing `conditional` node's branch ports are
-  labeled too), so `spawn_workflow`'s ports need no node-side handle
-  special-casing; `ArbitronNode` exposes only the fixed top/bottom handles
-  for every type (already covered by the existing handles test), and grepped
-  the whole `dashboard/src/graph` tree for any per-node-type handle or port
-  logic — found none, confirming the claim rather than taking it on faith.
-  Also confirmed `nodeTypes` (which registers `ArbitronNode`) is wired into
-  real routes, not just tests (`grep` found `WorkflowReview.tsx` and
-  `ExecutionView.tsx` as the two production call sites, alongside the mock in
-  `GraphView.loops.test.tsx`). Ran the full `go test ./...`,
-  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
-  recorded baseline (the one pre-existing `adapter/config` failure is
-  unchanged; dashboard typecheck at 0 errors; vitest 478 passed, 0 failed, up
-  from 476 with this pass's two new tests). This closes review 1 approval for
-  area 30; review 2 remains open — did not attempt to prove the fallback
-  color choice or bar/label pairing beyond what's tested here, left for
-  review 2 to independently re-derive.
+### Paired 16 — Area 6 retry ↔ Area 12 dashboard views (refiner pass, 2026-10-18)
+- A→B (client assumes server): `useLayoutStatus.ts:retryCurrent` posts the displayed `savedRevision` and rejects an ack for another revision or with `jobGeneration <= displayed` (`query.go:retry` returns `rec.JobGeneration` after a bump, or ≥1 for a missing-row request). It stores `minimums` and sets `applied = ++seq`, so `load` drops a stale terminal GET (`jobGeneration < minimum`), keeps polling, and only stops at a non-`ACTIVE_STATUSES` view of the new generation. `useLayoutStatus.test.ts` covers the stale terminal read after RetryAck.
+- B→A (server assumes client): `LayoutStatusPanel.tsx:showRetry` = `canRetry && (retryEligible || error || available===false)`, so `Reader.View.retryEligible` decides; store outage shows Retry by Area 6 R2.4 design. Permission mirrors: `WorkflowReview.tsx:canRetryLayout`, `ExecutionView.tsx:InstanceArrangement canRetry` (approved in single:12/review2).
+- FIXED G8: on a passed row, a client font failure showed fallback with no recovery action. Server policy stays unchanged (still no Retry). New `ArrangedGraph.tsx:fontsFailed` shows "Reload reviewed fonts" when valid geometry's fonts failed. It is not shown on the fixed render canvas, while loading, or when there is no geometry. Click → `window.location.reload()`. The reason: a CSS FontFace that errored stays errored in that document, so only a fresh page/font epoch recovers.
+- Tests: `ArrangedGraph.test.tsx` (2 new) and the G8 cases in `WorkflowReview.test.tsx` and `ExecutionView.layout.test.tsx` (no Retry, reload fires, never "Layout reviewed"). All 3 go red with `fontsFailed = false`. `TestLayoutSurfaces_MissingBundledSubsetRetainsFallback` now recovers by clicking the action instead of re-navigating. Results: 3/3 pass; with the button disabled and the dist rebuilt it goes red (hung before the click was bounded to 30s).
+- Ran: `npx tsc --noEmit`; Vitest `src/graph/arranged src/routes/{WorkflowReview,ExecutionView.layout} src/hooks/useLayoutStatus src/render/RenderSurface`: 414/414 on 3 of 4 runs. The first run had 1 unidentified failure, not reproduced; treat it as G28-style timing. Required-browser `TestLayoutSurfaces_(MissingBundledSubset…|RenderFailureRetainsFallbackAndRetry|ClientValidationAndAPIReachDOM)` ok (44.5s). `adapter/dashboard/dist` rebuilt.
+Recommend: approve paired:16 — A→B: RetryAck minimum/epoch fence keeps polling past stale terminal reads (`useLayoutStatus.ts:retryCurrent`/`load`, hook test). B→A: Retry visibility follows `retryEligible` and the permission mirrors. G8 BREAK now caught: both routes offer the font reload with no server Retry, and real-browser failure→recovery turns red when the action is removed.
 
-- [x] **`HierarchyRows` nested one `<tbody>` inside another every time a row
-  was expanded, an HTML-invalid structure React itself flags as a hydration
-  hazard.** Focus area 29 (dashboard hierarchy rendering), review 2.
-  `dashboard/src/components/HierarchyRows.tsx` wrapped each row's own markup
-  (`QueueTableRow` + optional detail/loading/error rows + a recursive
-  `<HierarchyRows>` call for its expanded children) in a `<tbody key=
-  {inst.id}>`. `QueueSection.tsx` never wrapped its `<HierarchyRows>` call in
-  a `<tbody>` of its own, so the top level worked by accident (each root row's
-  `<tbody>` sat directly under `<table>`, a valid position) — but the
-  recursive call for an EXPANDED row's children placed the child's `<tbody>`
-  INSIDE the parent's own `<tbody>`, which `isTagValidWithParent` in React's
-  `validateDOMNesting` rejects (`tbody`'s only valid children are `tr`/
-  `style`/`script`/`template`). Confirmed by spying on `console.error` while
-  expanding a row in `HierarchyRows.test.tsx`'s harness: React logged "In
-  HTML, `<tbody>` cannot be a child of `<tbody>`... This will cause a
-  hydration error" on every expansion, and NO existing test (across
-  `HierarchyRows.test.tsx`, `QueueTableRow.test.tsx`, `QueueSection.test.tsx`)
-  ever spied on `console.error`, so this was invisible to the whole suite
-  despite firing on nearly every hierarchy-expansion test that already
-  existed. This is not merely a lint nit: browsers only auto-correct invalid
-  table nesting when PARSING HTML text (network response or `innerHTML`); a
-  tree built via the DOM API (which is what React does) is not reparsed or
-  fixed up, so a real user's browser renders the exact malformed tree
-  constructed here, with no guarantee every engine's anonymous
-  table-box-generation degrades gracefully for a recursively-nested
-  row-group, and the SPA would additionally be unhydratable if this
-  component were ever rendered server-side. Added `'expanding a row to show
-  its children does not nest one <tbody> inside another'`
-  (`HierarchyRows.test.tsx`), which spies on `console.error` and asserts no
-  call contains "cannot be a child of"; confirmed it fails for the right
-  reason (the exact React nesting-violation message) against the pre-fix
-  code, then confirmed it passes against the fix. Also updated the test
-  harness itself to wrap `<HierarchyRows>` in a `<tbody>` (matching
-  `QueueSection`'s real usage) rather than placing it bare under `<table>`,
-  since a bare-`<tr>`-under-`<table>` structure is its own distinct nesting
-  violation that would have made the fixed code look broken in the harness
-  even though `QueueSection` no longer has that problem. Fixed by giving each
-  row's own grouping a plain `Fragment` (keyed, no DOM node of its own)
-  instead of a `<tbody>`, and moving the single owning `<tbody>` up to
-  `QueueSection`'s call site — so the table now has exactly one `<tbody>`
-  no matter how many hierarchy levels are expanded, matching a normal flat
-  table's structure. Independently re-verified the rest of area 29's
-  checklist from source rather than trusting review 1's write-up:
-  `QueueTableRow`'s `aria-expanded`/`aria-label` toggle-state tracking,
-  `stopPropagation`, `depth`-driven indent, and childless-row spacer are all
-  still backed by the four tests review 1 added and are unaffected by this
-  fix (`git diff` on `QueueTableRow.tsx` is empty this pass); `HierarchyRows`
-  recursion/depth passthrough and `QueueSection`'s delegation to it for the
-  detail row it replaced are still covered by the existing nesting/depth and
-  detail-panel/refresh-invalidation tests; re-confirmed by grep that
-  `HierarchyRows` is constructed only by itself (recursion) and
-  `QueueSection`, `QueueTableRow` only by `HierarchyRows`, and `QueueSection`
-  only by the real `QueueView.tsx` route (four call sites, unchanged from
-  review 1). Ran the full `go test ./...`, `npx tsc --noEmit`, and `npx
-  vitest run`: no new failures beyond the recorded baseline (the one
-  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at
-  0 errors; vitest 476 passed, 0 failed, up from 475 with this pass's one new
-  test). This closes review 2 approval for area 29 — both approvals for area
-  29 are now recorded.
+### Paired 14 — independent approval of 9fd0e5a/4876cda (2026-10-18): APPROVED
+- Only paired:14 ticked. SHARED: `dashboard/src/graph/arranged/buildArrangedFlow.ts:buildArrangedFlow` registers the same `ArrangedNode`/`RoutedEdge` used by `ArrangedGraph` in `RenderSurface.tsx:RenderSurface`, `WorkflowReview.tsx:ReviewPage` and `ExecutionView.tsx:GraphView`; persisted boxes, routes, gaps, labels and contract feed those leaves without layout recomputation.
+- Review→views TRACE: `cmd/arbitron/layout_wiring.go:newLayoutRenderReviewer` supplies the shared embedded assets; `domain/layout/coordinator.go:Coordinator.Run` binds revision/attempt/digest/contract before pass; `domain/layout/reader.go:Reader.View` reads that result generation. `layout_surfaces_e2e_test.go:surfaceWorkflowAndInstanceParity` independently matches its digest to both HTTP views and each route's actual DOM.
+- Views→review TRACE: `ExecutionView.tsx:GraphView` supplies runtime states/selection to the shared leaves. `RenderSurface.tsx:runRenderJob` probes all states, animation phases and combined running/selected before capture readiness; `adapter/renderreview/reviewer_checks.go:checkStates` blocks changed geometry/markers or unreadable text. Both entries import `styles/theme.css`; xyflow CSS is imported by `ArrangedGraph` itself and leaf CSS is scoped.
+- BREAK guards: `ArrangedGraph.tsx:fontKey`/`fontState` fences exact-geometry font readiness before arranged rendering; `fonts.ts:ensureBundledTextFonts` verifies contract, subset hashes and loaded faces; both routes forward display issues to `LayoutStatusPanel`. `ArrangedGraph.tsx:graphInstanceId` and `RoutedEdge.tsx:markerId` namespace arrows per mount. No seam defect found; existing G8 font-recovery and G9 container issues remain separate.
+- Fresh verification (supplied verify-tests fields were placeholders): `make ui`, `go test ./... -run '^$' -count=1 -timeout=5m`, TypeScript and Vitest `src/render src/graph/arranged src/routes/WorkflowReview.test.tsx src/routes/ExecutionView.layout.test.tsx --maxWorkers=1` all exit 0 (455/455 tests). This is compilation plus focused coverage, not a full-suite baseline comparison.
+- Required-browser parity command: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestLayoutSurfaces_(FeaturePipeline|PRReview)WorkflowAndInstanceUseReviewedGeometry$' -count=1 -timeout=5m -v` passed before mutation (60.685s) and after restoration (28.127s); both samples matched both routes, including crossings, dashed returns and labels.
+- Independent sensitivity: temporarily set `graph/constants.ts:DEFAULT_ZOOM` to 1 and rebuilt embedded assets; the new FeaturePipeline test exited 1 at `layout_surfaces_e2e_test.go:surfaceAssertGeometry` line 310, expected 0.9 versus actual 1. Restored source/assets and reran green; only approval docs remain changed. Deriving zoom from `contract.json` remains non-blocking hardening.
 
-- [x] **`QueueTableRow`'s hierarchy-toggle `e.stopPropagation()` — the exact
-  mechanism that keeps expanding/collapsing a row's children from ALSO
-  navigating away to that row's detail view — was completely untested.**
-  Focus area 29 (dashboard hierarchy rendering), review 1.
-  `dashboard/src/components/QueueTableRow.tsx`'s `<tr onClick={() =>
-  navigate(...)}>` wraps the whole row, so the toggle button added by this
-  feature (`git diff` against the branch point shows the entire tree-cell
-  block — toggle, spacer, `depth`/`hierarchyExpanded`/`onToggleHierarchy`
-  props — was newly added, while `QueueTableRow.test.tsx` was left
-  byte-for-byte unchanged) needs its own `stopPropagation()` or every
-  expand/collapse click would also fire the row's navigate. Confirmed by
-  grep that NO test file in the whole dashboard suite ever mocks
-  `useNavigate` — the existing `'navigates to /instances/{id} on row click'`
-  test called `fireEvent.click` but asserted nothing, so a regression
-  deleting the `stopPropagation()` call, or one that broke any of
-  `aria-expanded`, the toggle/spacer split, or the `depth`-driven indent, would
-  ship undetected; none of those items had a *direct* `QueueTableRow`-level
-  test, only indirect coverage through `HierarchyRows.test.tsx`'s
-  real-hook harness (which never checks navigation was suppressed either).
-  Added a `useNavigate` mock (`vi.hoisted` + `vi.mock('react-router-dom', ...)`)
-  to `QueueTableRow.test.tsx` and four new tests: clicking the toggle calls
-  `onToggleHierarchy` and never `navigate` (the stopPropagation proof),
-  `aria-expanded`/label track `hierarchyExpanded`, a childless row renders the
-  aligning spacer (`aria-hidden` span) instead of a toggle, and `depth`
-  scales the tree-cell's `paddingLeft` (`depth * 16px`); also strengthened the
-  pre-existing empty "navigates on row click" test to assert
-  `navigateMock` was actually called with the right path, since the new
-  stopPropagation test's contrast depends on row-click navigation being a
-  proven, not assumed, baseline behaviour. Confirmed the stopPropagation
-  test fails for the right reason (`navigateMock` called with
-  `/instances/i1`) when the `e.stopPropagation()` line is temporarily
-  removed, then confirmed it passes with the line restored (`git diff --stat`
-  on `QueueTableRow.tsx` is empty — no production change needed).
-  Independently verified the rest of area 29's checklist from source:
-  `HierarchyRows`'s recursion/depth passthrough and `QueueSection`'s
-  delegation to it for the detail row it used to render inline
-  (`git diff` against the branch point shows the `sorted.map` +
-  inline `<QueueTableRow>`/detail-`<tr>` block replaced by a single
-  `<HierarchyRows rows={roots} ... renderDetail={...} />` call) are both
-  already covered by existing tests (`HierarchyRows.test.tsx`'s nesting/depth
-  cases, `QueueSection.test.tsx`'s detail-panel expand/collapse and
-  refresh-signal invalidation cases); grepped all non-test JSX call sites and
-  confirmed `HierarchyRows` is constructed only by itself (recursion) and
-  `QueueSection`, `QueueTableRow` only by `HierarchyRows`, and `QueueSection`
-  only by the real `QueueView.tsx` route (four call sites, each fed a real
-  `refreshedAt` counter and real API-derived `instances`, not hardcoded data).
-  Ran the full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no
-  new failures beyond the recorded baseline (the one pre-existing
-  `adapter/config` failure is unchanged; dashboard typecheck at 0 errors;
-  vitest 475 passed, 0 failed, up from 471 with this pass's four new tests).
-  This closes review 1 approval for area 29; review 2 remains open.
+### Paired 14 — Area 8 rendered review ↔ Area 12 dashboard views (refiner pass, 2026-10-18)
+- Shared code: `RenderSurface.tsx:RenderSurface`, `WorkflowReview.tsx` and `ExecutionView.tsx` all mount the same `ArrangedGraph` → `buildArrangedFlow` → `ArrangedNode`/`RoutedEdge`. `ArrangedGraph.tsx` imports `@xyflow/react/dist/style.css` itself, and both `render/main.tsx` and `main.tsx` import `styles/theme.css`, so neither side can miss them. CSS modules are scoped; the only `:global` is `.react-flow__handle`. Markers are namespaced per mount by `useId` (`graphInstanceId`).
+- A→B: the routes assume they draw what was reviewed with the same fonts. `ArrangedGraph.tsx:fontKey`/`fontState` keeps fallback mode until `ensureBundledTextFonts` resolves for this revision's exact geometry, so system fallback fonts never draw an "arranged" graph.
+- B→A: the reviewer assumes the routes open at `contract.practicalZoom`. The routes use a separate constant, `graph/constants.ts:DEFAULT_ZOOM` (0.9), and the render surface uses `geo.contract.practicalZoom`. That coupling is enforced only by the real-browser zoom assertion in `layout_surfaces_e2e_test.go:surfaceAssertGeometry`. Mutation `DEFAULT_ZOOM = 1`, rebuilt into the embedded dist: the FeaturePipeline test failed at `:310` ("0.9 and 1"); after restore it passed. Non-blocking hardening: derive `DEFAULT_ZOOM` from `contract.json`.
+- Fix: P3T14 Step 1 kept only the pr-review slice while G7 was open. Added `TestLayoutSurfaces_FeaturePipelineWorkflowAndInstanceUseReviewedGeometry` (shared `surfaceWorkflowAndInstanceParity`). Through the real `initDomain`, HTTP authoring, `Engine` snapshot, SQLite, `BrowserRenderer` and `ReadabilityReviewer`, it compares both routes' DOM against the passed generation: every gap-split, dash-restarted route, marker and branch label. It also asserts that crossings and loop returns are present.
+- Ran `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run 'TestLayoutSurfaces_(FeaturePipeline|PRReview)WorkflowAndInstanceUseReviewedGeometry' -count=1`: both PASS (12.7s, 15.5s).
+- Recommend: approve paired:14 — A→B: `ArrangedGraph.tsx:fontKey` font fence; shared `ArrangedGraph`/CSS/theme imports on both entries. B→A: zoom, box, route, marker and label parity at the real DOM sink for pr-review and feature-pipeline. The mutation `DEFAULT_ZOOM = 1` turns it red.
 
-- [x] **`isOnCycle`'s "detects a cycle of any length" claim was proven only up
-  to length 2.** Focus area 28 (dashboard section-aware top-level rule),
-  review 2. `dashboard/src/components/topLevelRows.ts`'s `isOnCycle` walks the
-  full parent chain via a `seen` set specifically to generalize beyond the
-  original self-referential (length-1) special case — the fix's own commit
-  message says "Generalized the guard... subsuming the single-node
-  self-referential case" — but the only cycle tests that existed
-  (`topLevelRows.test.ts`) covered length 1 (self-reference) and length 2
-  (mutual pair). A regression that replaced the general walk with a
-  direct/one-hop-back check (which would still satisfy both existing tests)
-  would silently reintroduce the original bug for any 3-or-more-node cycle.
-  Added `'a three-instance cycle does not erase any row'`, asserting
-  `topLevelRows([r('a','b'), r('b','c'), r('c','a')])` keeps all three rows in
-  order; confirmed it fails for the right reason (`expected [] to deeply equal
-  ['a','b','c']`) against a naive length-2-only `isOnCycle` stand-in, then
-  confirmed it passes against the real code (`git diff --stat` on
-  `topLevelRows.ts` is empty — no production change needed). Independently
-  re-verified the rest of area 28's checklist from source rather than trusting
-  review 1's write-up: `topLevelRows` has exactly one production call site
-  (`QueueSection.tsx:158`, grepped for all non-test references), fed by
-  `instances` props (`active`/`pending`/`failed`/`completed`) that are real
-  API-derived state slices in `QueueView.tsx`, not hardcoded or test-only
-  data; `EnrichedInstanceSummary.parentInstanceId` (`dashboard/src/api/types.ts:66`)
-  is the only field read, matching area 26's wire-format verification. Ran the
-  full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new
-  failures beyond the recorded baseline (the one pre-existing `adapter/config`
-  failure is unchanged; dashboard typecheck at 0 errors; vitest 471 passed, 0
-  failed, up from 470 with this pass's one new test). This closes review 2
-  approval for area 28 — both approvals for area 28 are now recorded.
+### Paired 6 — independent approval of 68c72ad (2026-10-18): APPROVED
+- Only paired:6 reviewed/ticked; SHARED is job/result generation fencing, retained best and cache settlement across Area 6 retry ↔ Area 7 completion/publication.
+- Retry→worker TRACE: `domain/layout/query.go:QueryService.retry` → `domain/layout/requester.go:Requester.retry` → `adapter/sqlite/layout_repo.go:LayoutRepo.Retry` preserves the result pointer, increments job_generation and clears cache_generation; `domain/layout/worker.go:Worker.processRevision` claims that generation and retains a valid better prior via `storedBetter`.
+- Worker→retry: `domain/layout/worker.go:Worker.publish` skips active rows and checks job/result/destination inside the cache lock before writing; `adapter/sqlite/layout_repo.go:LayoutRepo.MarkCached` repeats all fences. `domain/layout/reader.go:Reader.cachedFallback` requires readable row fences; total outage stays unavailable/unreviewed (`reader_test.go:TestReaderUnavailableCacheIsNeverReviewedPass`).
+- BREAK caught: `adapter/sqlite/layout_repo.go:LayoutRepo.persist` fences inside the transaction before inserting results/updating best; `LayoutRepo.Progress` fences its UPDATE. `layout_repo_test.go:TestLayoutIndependentClaims` checks stale Progress/Complete/Checkpoint leave the winner unchanged; `TestLayoutPeerCacheSettlement`, `worker_cache_test.go:TestWorkerCacheGenerationAndSettlementRaces` and `worker_cache_integration_test.go:TestWorkerCacheCrossProcessFence` cover stale settlement and filesystem writes.
+- G40 independently confirmed: an overlay restoring the old ReplaceBest expression makes `domain/layout/worker_missing_result_test.go:TestWorker_RetryReplacesInvalidatedPriorPass` exit 1 with “stored result contains blocking findings”; unchanged HEAD exits 0 and settles/publishes generation 2. No production source was edited.
+- Production wiring: `cmd/arbitron/layout_wiring.go:newLayoutStack` shares one SQLite store/requester/cache with Worker and Reader and installs `Worker.Notify`; `layoutStack.attachQuery` feeds that requester to QueryService. The mutation lock in `adapter/filesystem/layout_cache.go:LayoutCache.PublishCache` encloses settlement, currency check, callback fence and file write.
+- Fresh checks all exit 0: `go build ./...`; `go test ./domain/layout/... -count=1`; `go test ./adapter/sqlite -run Layout -count=1`; focused `-race` worker/retry/cache/reader/SQLite checks; `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass$' -count=1 -timeout=3m`. Supplied verify placeholders were unexpanded, so these are independent measurements.
+- No new gap found. The HTTP fixture ends at generation-2 rendering; final repair/publication is covered by the new worker regression, with real SQLite/filesystem generation races covered separately.
 
-- [x] **`topLevelRows` erased every row of a corrupt multi-node parent-link
-  cycle, not just a self-referential one.** Focus area 28 (dashboard
-  section-aware top-level rule), review 1.
-  `dashboard/src/components/topLevelRows.ts`'s pre-fix implementation only
-  special-cased a length-1 cycle (`r.parentInstanceId === r.id`, per the
-  existing self-referential test) — but the domain layer already treats
-  longer spawn-link cycles as a real corrupt-data possibility worth guarding
-  against (`domain/engine/cancel_cascade_test.go`'s
-  `TestCancelCascade_MutualLinkCycleHaltsTraversal`, using an `unfiltered`
-  fake to simulate a hand-edited/corrupt link row), and a normal
-  `Engine.Spawn` can never itself produce a cycle since a child instance is
-  always newly created after its parent (so only DB corruption/manual editing
-  can produce one). Since each row has exactly one `parentInstanceId`, a
-  length-2+ cycle (A's parent is B, B's parent is A) has every member's
-  IMMEDIATE parent present in the same section, so the naive per-row check
-  suppressed both — unlike the guarded self-loop case, there is no member
-  outside the cycle left to expand and reveal the rest, so the whole cycle
-  silently vanished from the section with no way to bring it back into view.
-  Added `'a mutual two-instance cycle does not erase either row'`
-  (`dashboard/src/components/topLevelRows.test.ts`), asserting
-  `topLevelRows([r('a','b'), r('b','a')])` keeps both rows; confirmed it
-  fails for the right reason (`expected [] to deeply equal ['a', 'b']`)
-  against the pre-fix code, then confirmed it passes against the fix.
-  Generalized the guard: `isOnCycle(id)` walks the parent chain (through rows
-  present in the section) from `id`, returning true only if it loops back to
-  `id` itself (subsuming the single-node self-referential case, which now
-  needs no special-casing) — a row whose chain instead escapes to an absent
-  parent, or wanders into a DIFFERENT cycle that never revisits `id`, is
-  still suppressed exactly as before. Manually traced (not re-tested, since
-  the existing suite already exercises it) that a normal multi-level chain
-  (parent → child → grandchild, no cycle) is unaffected: `isOnCycle` returns
-  false for the grandchild once the walk reaches the parent's own empty
-  `parentInstanceId`, so the base "immediate parent present" suppression rule
-  still applies unchanged. Ran the full `go test ./...`,
-  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
-  recorded baseline (the one pre-existing `adapter/config` failure is
-  unchanged; dashboard typecheck at 0 errors; vitest 470 passed, 0 failed, up
-  from 469 with this pass's one new test). Independently confirmed
-  `topLevelRows` has exactly one production call site
-  (`QueueSection.tsx:158`, grepped for all non-test references), fed real
-  `instances` prop data flowing from `QueueView`'s API-backed state, not a
-  hardcoded or test-only value. This closes review 1 approval for area 28;
-  review 2 remains open.
+### Paired 7 — independent approval of 72c084d (2026-10-18): APPROVED
+- SHARED/TRACE: MutationCoordinator destination locks, private-first resolution and expectedRevision; only paired:7 reviewed/ticked.
+- Retry→save: `domain/layout/query.go:QueryService.RetryWorkflow` locks both `domain/workflow/layout_access.go:Service.LayoutRetryTargets` candidates, reauthorizes inside the lock, rejects changed scope, then `QueryService.retry` checks the freshly loaded revision. `domain/layout/requester.go:Requester.retry` also binds the row destination; `adapter/sqlite/layout_repo.go:LayoutRepo.Retry` updates only that revision's job generation/state, never the manifest.
+- Save→retry: `domain/workflow/service_revision.go:Service.updateRevision` holds the same private/shared keys through reload, stamp, write and commit; `Service.createRevision` holds the private key. `adapter/filesystem/workflow_operations.go:WorkflowRepo.Create`/`Update` reuse ownership; `adapter/filesystem/manifest_lock.go:WorkflowRepo.WithMutations` sorts fixed keys and holds OS flock locks until the callback completes, serializing independent processes.
+- Production: `cmd/arbitron/main.go:initDomain` creates one workflowRepo, supplies it to `cmd/arbitron/layout_wiring.go:newLayoutStack`, installs its coordinator/stamper on workflowSvc, then `layoutStack.attachQuery` passes that same coordinator and service to QueryService.
+- BREAK: `cmd/arbitron/layout_query_concurrency_test.go:TestLayoutQueryE2E_RetryCrossProcessSaveFence` passed all four cases: save-first conflicts without a bump, retry-first blocks the peer writer and preserves distinct revisions, private-shadow conflicts even with an unchanged token, shared-only bumps successfully. G2 is closed; the row's old lock-expansion clause is obsolete.
+- Independent sensitivity: compiler overlays removing the scope guard, using the pre-lock manifest, and locking only the resolved destination each exited 1 in `domain/layout/query_test.go:TestQueryService_RetryWorkflow_PrivateShadowSameToken_Conflict`, `TestQueryService_RetryWorkflowConcurrentSave`, and `TestQueryService_RetryWorkflow_LocksEveryResolutionCandidate`, respectively. Production bytes were untouched; original tests pass.
+- Verification: supplied measurement placeholders were unresolved. Fresh exit-0 checks: `go build ./...`; full `go test ./domain/layout ./domain/workflow ./adapter/filesystem ./adapter/sqlite -count=1 -timeout=3m`; the cross-process test above. Full cmd/arbitron suite not claimed; existing G24 remains separate. No new gap found.
 
-- [x] **A double-toggle fired before the first fetch settled broke the
-  "one request per level" contract, and silently re-expanded instead of
-  collapsing.** Focus area 27 (dashboard run-hierarchy state hook), review 2.
-  `toggle` (`dashboard/src/hooks/useRunHierarchy.ts`) read the closed-over
-  `expanded[id]`/`levels[id]` from the CURRENT RENDER's state to decide
-  whether to collapse, skip (cache hit), or fetch. Two `toggle(id)` calls
-  fired back to back — a real double-click on the row's expander, or any
-  caller invoking it twice before React re-renders — both closed over the
-  SAME pre-update snapshot (`expanded[id]` still `false`, `levels[id]` still
-  `undefined`), so both slipped past the "already expanded" and "already
-  fetching/cached" guards: two concurrent `api.instances.list` calls fired for
-  one logical toggle, and the row ended up expanded (last write wins `true`)
-  instead of collapsing back — a real double-click should behave like flipping
-  a checkbox twice, not fire two requests and stay open. Added `'two toggles
-  fired before the first fetch settles issue only one request'`
-  (`dashboard/src/hooks/useRunHierarchy.test.ts`), which calls
-  `toggle('p1')` twice inside one `act` before resolving the mocked fetch and
-  asserts `listMock` was called exactly once and the row ends collapsed;
-  confirmed it failed for the right reason against the pre-fix code
-  (`expected "vi.fn()" to be called 1 times, but got 2 times`), then confirmed
-  it passes against the fix. Fixed by mirroring `expanded`/`levels` into a
-  `useRef` updated SYNCHRONOUSLY inside each functional `setState` call (not on
-  the next render), and having `toggle` read the ref instead of the
-  closed-over state for its collapse/cache-hit decisions — the second call now
-  sees the first call's effect immediately and correctly collapses without
-  fetching. Independently re-verified the rest of area 27's checklist left
-  open by review 1: one-request-per-level lazy fetch (now also covered under
-  the racy case above, plus the existing `'collapsing hides the children
-  without refetching...'` and `'recursive expansion...'` tests for the
-  non-racy case), per-row error confinement
-  (`'confines an expansion failure to its own row'`, keyed by a `Record<string,
-  Level>` so rows cannot cross-contaminate by construction), error levels not
-  cached (`'a retry after a failed expansion refetches'`); confirmed
-  `useRunHierarchy` is still constructed at exactly one production call site
-  (`QueueSection.tsx:75`, grepped for all non-test references) and every
-  member of its returned `RunHierarchy` interface — `isExpanded`, `childrenOf`,
-  `isLoading`, `errorOf`, `toggle`, `invalidate` — is read by real production
-  code (`HierarchyRows.tsx` reads the first five, `QueueSection.tsx` wires
-  `invalidate` to `refreshSignal`), not merely exercised by a test. Ran the
-  full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new
-  failures beyond the recorded baseline (the one pre-existing `adapter/config`
-  failure is unchanged; dashboard typecheck at 0 errors; vitest 469 passed, 0
-  failed, up from 468 with this pass's one new test). This closes review 2
-  approval for area 27 — both approvals for area 27 are now recorded.
+### Paired 7 — Area 6 retry ↔ Area 2 Create/Update save (refiner pass, 2026-10-18)
+- Retry→save: `domain/layout/query.go:RetryWorkflow` locks `workflow.Service.LayoutRetryTargets` (private+shared), then re-runs `AuthorizeLayoutRetry` and rejects a changed scope before `retry` → `checkExpected` on the locked reload. Save→retry: `service_revision.go:updateRevision` locks the same pair; `createRevision` and `WorkflowRepo.Create` lock the private key, so they serialize with the retry. Retry never writes the manifest; `Requester.retry` bumps only `rev` against the expected destination.
+- Wired: `main.go:538` one `workflowRepo` → `newLayoutStack` (`layout_wiring.go:116` `mutations: repo`) → `main.go:598` `SetMutationCoordinator(ls.mutations)` and `main.go:974` `attachQuery(workflowSvc, eng)` → `NewQueryService(..., ls.mutations)`. One OS-level flock coordinator on both sides. G2 is closed, so the row's "shared retry fails lock expansion" clause is obsolete.
+- Mutation evidence: retrying the pre-lock `wf` → red `RetryCrossProcessSaveFence/save-first` + `TestQueryService_RetryWorkflowConcurrentSave`. Locking only the resolved target → red `/private-shadow`, `/shared-only` + `TestQueryService_RetryWorkflow_LocksEveryResolutionCandidate`. Dropping `resolved != scope` → red only in the cross-process e2e. Added `query_test.go:TestQueryService_RetryWorkflow_PrivateShadowSameToken_Conflict` (red under that mutation) to pin it in the fast suite.
+- Recommend: approve paired:7.
 
-- [x] **`useRunHierarchy.invalidate` had no production caller.** Focus area 27
-  (dashboard run-hierarchy state hook), review 1.
-  `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate`, documented as
-  "used on a full refetch", but the only reference outside the hook was
-  `dashboard/src/hooks/useRunHierarchy.test.ts:161` — `QueueSection.tsx` called
-  `useRunHierarchy()` and never called `invalidate`, so every expanded level
-  stayed cached forever: a child that completed, failed, or was cancelled kept
-  rendering its pre-refetch state until the user collapsed and re-expanded it by
-  hand, and a newly spawned child never appeared under an already-open parent.
-  Wired it to the top-level refetch that already exists: `QueueView.tsx` now
-  tracks a `refreshedAt` counter, incremented only on `fetchAll`'s SUCCESS path
-  (not on the in-place `NODE_PATCH_EVENTS` row patch, which doesn't touch
-  `instances`' identity in a way that means "the list was truly refetched," and
-  not on a failed fetch, which leaves the existing rows and thus their children
-  still valid), and passes it to every `<QueueSection refreshSignal={...}>`.
-  `QueueSection` runs `useEffect(() => invalidate(), [refreshSignal,
-  invalidate])` — `invalidate`'s identity is stable (the hook's own
-  `useCallback` has an empty dep array), so this fires exactly once per real
-  bump, not once per render. Added
-  `'a refreshSignal bump collapses an expanded row and drops its stale cached
-  children'` (`dashboard/src/components/QueueSection.test.tsx`): expands a row,
-  confirms the (mocked) child renders, bumps `refreshSignal` via `rerender`, and
-  asserts the child is gone and the row is collapsed again; confirmed it fails
-  for the right reason (stale `Child Run` cell still present) when the effect
-  body is neutered to `if (false) invalidate()`, then confirmed it passes
-  against the real code. Added a sibling test asserting an unchanged
-  `refreshSignal` leaves an expanded row untouched, so the fix doesn't collapse
-  rows on every unrelated re-render. Did not attempt a finer-grained "re-fetch
-  only open levels while preserving expansion" — `invalidate`'s own contract
-  (tested at `useRunHierarchy.test.ts:156`) is "drop cache AND collapse," and
-  building a different, softer behavior would be inventing functionality no
-  design document asked for; this pass wires the existing, already-specified
-  behavior to a real caller. Ran `go test ./...`, `npx tsc --noEmit`, and
-  `npx vitest run`: no new failures beyond the recorded baseline (the one
-  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at 0
-  errors; vitest 468 passed, 0 failed, up from 466 with this pass's two new
-  tests). This closes review 1 approval for area 27; review 2 remains open, and
-  the rest of area 27's checklist (one-request-per-level lazy fetch, per-row
-  error confinement, error levels not cached) was not independently
-  re-verified this pass — left for review 2.
+### Paired 6 — Area 6 retry ↔ Area 7 worker completion and publication (refiner pass, 2026-10-18)
+- FIXED (G40): `worker.go:processRevision` ranked gen 2 against the prior best with `storedBetter` alone. After `requester.go:retry` invalidated a pass with evidence intact (blocking findings, or an old contract whose evidence still binds), an equal-score valid gen-2 pass did not replace it: the row went back to `passed` pointing at the rejected result, and `publish` failed forever ("stored result contains blocking findings"). Now a passed prior with a `passProblem` is replaced.
+- Red before / green after: `worker_missing_result_test.go:TestWorker_RetryReplacesInvalidatedPriorPass` (rejected prior served by a Store wrapper; asserts state passed, result_generation = retry generation, cache settled and published). A geometry-tamper variant was green before the fix because it broke evidence (prior unreviewed), so it would not have caught this.
+- Retry→worker: `layout_repo.go:Retry` only from terminal/superseded-unpassed rows; bumps job_generation, keeps result_generation/verdict and clears cache_generation. `persist` fences `job_generation=?` for Complete and Checkpoint, and `Progress` does the same (`layout_repo_test.go:212-214`). `publish` returns early while pending (no settle), and its locked callback and `MarkCached` recheck job/result generations and destination (`TestLayoutPeerCacheSettlement`, `worker_cache_test.go:TestWorkerCacheGenerationAndSettlementRaces`).
+- Worker→retry: `Reader.cachedFallback` rejects a cache whose job/result generations differ from a readable row (`reader_outage_test.go:TestReaderResultOutageUsesOnlyMatchingCacheFence`); on a full outage it serves geometry only as `Unreviewed` with an AvailabilityError.
+- Wired: `layout_wiring.go:122` one requester, `:145` worker with that requester/store/cache, `:149` `SetNotifier(ls.worker.Notify)`; the only production `Store.Retry` caller is `requester.go:238`.
+- Non-blocking: `cmd/arbitron/layout_http_truth_test.go:TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` stops at gen-2 rendering and never drives gen 2 to a terminal state.
+- Recommend: approve paired:6.
 
-- [x] **`ListInstancesParams.parent`'s own doc comment documents three wire
-  values (omit, `'roots'`, an instance UUID), matching
-  `domain/instance/spawn_link.go`'s `ParseParentScope`, but only "omit" and "a
-  UUID" were ever exercised by a client-level test.** Focus area 26 (dashboard
-  API client & hierarchy types), review 2. Confirmed by grep that no dashboard
-  production code ever calls `api.instances.list({ parent: 'roots' })` — the
-  dashboard fetches unfiltered by state (`QueueView.tsx`) and computes
-  top-level rows client-side via `topLevelRows.ts` instead of asking the
-  server for the `roots` scope (a deliberate design already covered by the "No
-  seam" rationale for 24/25 × 27/28/29), so this is not a live bug, just an
-  untested corner of the documented client vocabulary. Added `'list sends the
-  literal roots scope verbatim'` (`dashboard/src/api/client.test.ts`),
-  asserting `list({ parent: 'roots' })` produces a URL containing
-  `parent=roots`; confirmed it fails for the right reason (`expected:
-  "parent=roots", actual: "/api/v1/instances"`) when the truthy check is
-  temporarily changed to exclude `'roots'`, then confirmed it passes against
-  the real code (`git diff --stat` on `client.ts` is empty — no production
-  change needed). Independently re-verified the rest of area 26's checklist
-  from source rather than trusting review 1's write-up: `enrichedSummaryDTO`'s
-  `parentInstanceId`/`childCount` JSON tags (`adapter/http/instance_handler.go:188,258`)
-  still match `types.ts` exactly; real production callers of the hierarchy
-  fields are confirmed by grep (`HierarchyRows.tsx:58` reads `childCount`,
-  `topLevelRows.ts:24` reads `parentInstanceId`, `useRunHierarchy.ts:68` calls
-  `list({ parent: id })` with a real instance id) — not merely present in
-  types with no reader. Ran the full `go test ./...`, `npx tsc --noEmit`, and
-  `npx vitest run`: no new failures beyond the recorded baseline (the one
-  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at 0
-  errors; vitest 466 passed, 0 failed, up from 465 with this pass's one new
-  test). This closes review 2 approval for area 26 — both approvals for area
-  26 are now recorded.
+### Paired 5 — independent approval of ced00e5 (2026-10-18): APPROVED
+- SHARED/TRACE: stable-ID `RelocationIntent`, endpoint locks and the rename's nested `Stamp` → `Settle`; only paired:5 reviewed/ticked.
+- Rename→settlement: `domain/workflow/service_revision_move.go:withIdentityMutation` settles both endpoints under fixed locks before `renameRevision` durably begins relocation; its sole `withOwnRelocation` call marks only the destination-stamping context. `domain/workflow/revision_stamper.go:RevisionStamper.Stamp` settles that destination before recording the immutable input and before `adapter/filesystem/workflow_repo.go:WorkflowRepo.copyTreeLocked` exposes the staged tree.
+- Settlement→rename: `domain/workflow/commit_source.go:CommitSource.Settle` exempts only the matching intent ID; `CommitSource.resolveRelocation` owns both endpoint locks, resolves registry authority and validates the winning workflow ID before history relocation/deletion. `adapter/sqlite/published_workflow_repo.go:PublishedWorkflowRepo.RenamePublication` commits identity and exact publication proof together.
+- Production trace: `cmd/arbitron/layout_wiring.go:newLayoutStack` feeds the real registry/requester into CommitSource, installs it as repository read settler and stamper settler, and feeds it to the worker. `cmd/arbitron/main.go:initDomain` settles before seeding/traffic; `domain/layout/worker.go:Worker.dispatch` → `Worker.recover` repeats recovery every sweep. `adapter/filesystem/workflow_operations.go:WorkflowRepo.Load` settles external reads before loading bytes.
+- BREAK: independently ran `domain/workflow/commit_source_test.go:TestCommitSource_CrashedRenameRecoversByRegistryAuthority` (private/shared × before/after identity commit): both names refuse reads while intent survives; recovery retains only the registry winner and exact revision/publication, never arranges the losing prepared rename, and removes shared backups. Existing `TestCommitSource_OwnRelocationIntentIsExempt` also checks a foreign intent remains blocked.
+- Sensitivity: three temporary Go compiler overlays independently made all four crash cases fail: ignore all intents (read assertion), disable own-intent exemption (crash boundary never reached), invert target authority (recovery/winner assertion). No production file changed.
+- Verification: unresolved measurement placeholders replaced by fresh exit-0 runs: `go build ./...`; full `go test ./domain/workflow ./adapter/filesystem ./adapter/sqlite -count=1 -timeout=5m`; full `go test ./domain/layout -count=1 -timeout=5m`; targeted cmd/arbitron private/shared composition-root rename, repository unresolved-relocation and HTTP/MCP pending-relocation read/save tests. No new defect found; sibling gaps remain separate.
 
-- [x] **`EnrichedInstanceSummary.parentInstanceId`/`.childCount`'s wire-format
-  field names were proven only by TS-constructed object literals, never by an
-  actual JSON round trip.** Focus area 26 (dashboard API client & hierarchy
-  types), review 1. `dashboard/src/api/client.ts`'s `list()` is a pure
-  passthrough (`return request(...)`, itself just `res.json()` cast to `T`
-  with no runtime validation), so a field-name mismatch between
-  `dashboard/src/api/types.ts` and the server's actual JSON keys (the same
-  shape of gap already found and fixed for MCP's `ChildCount`/`FailedNodeID`
-  in area 25) would compile fine and only surface as `undefined` at runtime —
-  TypeScript cannot catch it because the cast is unchecked. Confirmed by
-  reading every existing test that touches these fields
-  (`client.test.ts`, `HierarchyRows.test.tsx`, `useRunHierarchy.test.ts`,
-  `topLevelRows.test.ts`): all of them build fixtures through a typed `row()`
-  helper or a direct TS object literal, which would still compile even if
-  someone renamed the field in `types.ts` (every call site would just get
-  renamed too) — none of them prove the CLIENT decodes the SERVER's actual
-  string keys (`parentInstanceId`, `childCount`, confirmed matching
-  `adapter/http/instance_handler.go`'s `enrichedSummaryDTO` JSON tags by
-  source comparison) rather than some other convention. Added `'list surfaces
-  parentInstanceId and childCount from a raw wire-format response verbatim'`
-  (`dashboard/src/api/client.test.ts`), which mocks `fetch` to return a raw,
-  hand-typed JSON object using literal string keys (not the `row()` helper)
-  and asserts `api.instances.list()` surfaces `parentInstanceId`/`childCount`
-  from it; confirmed it fails for the right reason (`expected: "p1", actual:
-  undefined`) when the mock's key is temporarily typo'd to
-  `parentInstanceID`, then confirmed it passes with the correct key restored.
-  Independently verified the rest of area 26's checklist from source: `parent`
-  is appended as `?parent=` only when truthy (`client.ts:99`, covered by the
-  existing `'list narrows by parent...'` test); the SAME `roots`/UUID wire
-  vocabulary is documented consistently in `ListInstancesParams.parent`'s
-  comment and `domain/instance/spawn_link.go`'s `ParseParentScope`. Ran the
-  full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new
-  failures beyond the recorded baseline (the one pre-existing `adapter/config`
-  failure is unchanged; dashboard typecheck at 0 errors; vitest 465 passed, 0
-  failed, up from 464 with this pass's one new test). This closes review 1
-  approval for area 26; review 2 remains open.
+### Paired 5 — Area 4 rename and relocation ↔ Area 1 settlement (refiner pass, 2026-10-18)
+- Gap found: no test crashed a real `Service.Rename` mid-flight and recovered it. Relocation tests (`TestCommitSource_RelocationAuthority`, `…UndecidedPreservesEvidence`) use `CopyTree` with no rename Stamp, prepared target entry or shared tree backup. Added `domain/workflow/commit_source_test.go:TestCommitSource_CrashedRenameRecoversByRegistryAuthority` (real filesystem journal + SQLite; private/shared × crash before/after the identity commit in `registry.Rename` / `RenamePublication`; panic skips `rollbackMove` and `committed`).
+- It asserts that after the crash the intent and the rename's own prepared `SaveReasonRename` entry survive and both endpoints return `ErrMutationPending`. `CommittedRequests` then ends the intent and keeps only the registry winner with its exact revision. Shared cases check the publication row, and no backup is left. Before the commit the rename revision is never arranged; after it, that exact manifest is committed under `renamed`.
+- Rename→settlement: `service_revision_move.go:renameRevision` passes `withOwnRelocation(intent.ID)` only into the `Stamp` callback (grep: one call site). `Stamp` settles only its target (`revision_stamper.go:159,234`), so the exemption can't leak to another destination. `withIdentityMutation` holds both endpoint locks throughout.
+- Settlement→rename: `commit_source.go:Settle` skips only the matching intent ID; `resolveRelocation` decides by `Registry.ResolveName`/`Resolve` under both locks and validates the winner before deleting. Shared roll-forward relies on `publication.Revision = req.Revision` being set before `RenamePublication`, and the shared/after-identity case proves it.
+- Mutations (reverted, each turns all 4 subtests red): Settle ignores every intent (the half-moved tree becomes readable); own-intent exemption off (G1 regresses); `targetWins` inverted.
+- Wired: `layout_wiring.go:123` CommitSource (`Relocator: ls.requester`, `Registry`), `:127` sole `SetReadSettler`, `:128` stamper `Settler: ls.commits`; `CommittedRequests` runs at boot (`main.go:567`) and in every worker sweep (`worker.go:410` `recover`), so a peer's crashed rename resolves without a restart.
+- Recommend: approve paired:5.
 
-- [x] **MCP `instance_list`'s `enriched == nil` → `[]` normalisation
-  (`adapter/mcp/tools_instance.go:136-138`) had a test with the right name and
-  the right assertion, but the wrong sink — it didn't actually exercise the
-  handler's own guard.** Focus area 25 (MCP `instance_list` parent selector),
-  review 2. `go tool cover` on the `adapter/mcp` suite showed
-  `instanceListHandler` at 95%, with lines 136-138 (the `if enriched == nil {
-  enriched = []instance.EnrichedInstanceSummary{} }` block) at 0 hits, despite
-  an existing test titled `"nil repo result produces JSON array not null"`
-  (`tools_instance_test.go`) that asserts exactly the behaviour this guard is
-  for. Root cause: that test sets the *repo's* `listFn` to return `nil, nil`
-  and uses the DEFAULT `stubEngine{}` (no `listEnrichedFn`), whose own
-  `ListEnriched` delegates through `ListInstances` and rebuilds the result
-  with `make([]instance.EnrichedInstanceSummary, len(summaries))` — which is a
-  non-nil empty slice even when `len(summaries) == 0`. So `enriched` returned
-  to the handler was never actually `nil` in that test; the assertion passed
-  because the STUB, not the handler, already produced `"[]"`. Confirmed by
-  temporarily deleting the handler's own normalisation block entirely: the
-  full `adapter/mcp` package (all pre-existing tests, this one included) still
-  passed, proving the code path this test claimed to cover has no test that
-  can fail if it regresses — the same "asserts an intermediate hop instead of
-  the sink" shape RALPH.md calls out by name. A regression that returned a raw
-  `nil` from a real caller of `Engine.ListEnriched` — plausible, since
-  `Engine.ListEnriched` delegates to `e.enricher.Enrich` when an enricher is
-  wired, and nothing here pins that path's own nil-handling either — would
-  have shipped an MCP client a literal JSON `null` instead of `[]`, breaking
-  any client that iterates the result without a null-check. Added a sibling
-  subtest, `"nil Engine.ListEnriched result produces JSON array not null"`,
-  that sets `listEnrichedFn` directly to return `nil, nil`, bypassing the
-  stub's own reconstruction and forcing the handler's guard to be what turns
-  it into `"[]"`; confirmed it fails for the right reason (`actual: "null"`)
-  with the guard temporarily removed, then confirmed it passes with the real
-  code restored. `go tool cover` afterward shows `instanceListHandler` at
-  100%. Independently re-verified the rest of area 25's checklist from source
-  rather than trusting review 1's write-up: the `parent` string arg and
-  description are unchanged and present (`tools_instance.go:28-30`); the SAME
-  `instance.ParseParentScope` decoder is still the only decode path (grepped);
-  a malformed selector still returns a tool error
-  (`TestMCPInstanceList_MalformedParentIsAnError`); happy
-  (`_RootsOnly`, `_ChildrenOfAParent`), success (`_NoParentArgDoesNoNarrowing`,
-  `_ParentComposesWithStateArg`), failure (`_MalformedParentIsAnError`), and
-  edge (`_UnknownParentReturnsEmpty`) coverage all still present and green in
-  `tools_instance_parent_test.go`; `TestMCPRestParity_InstanceListParentFilter`
-  still proves MCP/REST parity for the `roots` scope; composition-root wiring
-  re-confirmed at BOTH real call sites (`cmd/arbitron/main.go:1178` HTTP-mounted
-  MCP server and `main.go:1320` stdio transport), both built from the same
-  `ds.mcpDeps()` carrying the real `ds.eng`, not a stub. Ran the full
-  `go test ./...`, `npx tsc --noEmit`, and `npx vitest run` (vitest unaffected,
-  not re-run for this Go-only change but already green from step 2 of this
-  pass): no new failures beyond the recorded baseline (the one pre-existing
-  `adapter/config` failure is unchanged; dashboard typecheck at 0 errors;
-  vitest 464 passed, 0 failed as of this pass's pre-check). This closes review
-  2 approval for area 25 — both approvals for area 25 are now recorded.
+### Paired 4 — independent approval of fe5d90a (2026-10-18): APPROVED
+- SHARED: private-save journal input/receipt and saved token; admin shared Update also shares the durable tree backup and exact publication proof. Only paired:4 reviewed/ticked.
+- Save→settlement: `domain/workflow/service_revision.go:createRevision` / `updateRevision` hold destination locks and call `revision_stamper.go:Stamp` (settle, stamp, durable Record) before repository visibility; shared Update calls `PrepareTreeCommit` before `repo.Update`, then `CommitPublication`, then the receipt. `adapter/filesystem/workflow_repo.go:update` preserves the stamped ID/revision; `durable.go:durableFiles.write` syncs bytes before rename and the directory afterward.
+- Settlement→save: `domain/workflow/commit_source.go:settlePrepared` requires visible revision + WorkflowID and `exactPublication` for shared saves; it marks the receipt before backup cleanup, restores unproven trees before quarantine, and preserves undecided evidence with `ErrMutationPending` when rollback is unavailable. `service_revision.go:updateRevision` settles before reloading the prior workflow; `adapter/filesystem/workflow_operations.go:Load` skips recursive settlement only for a live owned lock.
+- Production TRACE: `cmd/arbitron/main.go:initDomain` supplies the same repo/publication store to Service and `layout_wiring.go:newLayoutStack`; the latter installs the sole production read settler and passes it to the stamper. HTTP/MCP Create/Update feed that Service; boot settlement precedes worker start/traffic.
+- BREAK independently checked with three temporary mutations, all reverted: removing saved-revision visibility makes `cmd/arbitron/layout_restart_recovery_test.go:TestLayoutE2E_RestartSettlesThenWorkerRecovers/private/prepare` exit 1 (missing quarantine reason); disabling roll-forward makes `private/visible` fail boot and `edit/after-proof` miss its durable row; finishing the shared Update backup immediately after prepare makes `edit/before-proof` fail boot. All seven restart cases pass again after restoration; tracked production code is unchanged.
+- Fresh exit-0 checks: `go build ./...`; `go test ./... -run '^$' -count=1 -timeout=5m`; full `go test -count=1 -timeout=5m ./domain/workflow ./adapter/filesystem ./adapter/sqlite`; cmd selections covering RestartSettlesThenWorkerRecovers, KillAndImmediatePeerRead, HTTP ImmediatePeerCrashRead, MCP ImmediatePeerCrashReadAndSave, and `layout_repository_boundary_test.go:TestLayoutRepository_StagedPublicationReadBoundaries`.
+- Measurement placeholders were unresolved, so checks were run independently; no full-suite baseline comparison is claimed. Crash fixtures intentionally lack Chrome and verify durable save/settlement provenance. No new seam defect found; existing sibling gaps remain separate.
 
-- [x] **`ChildCount`'s MCP field name was undocumented-by-test and the
-  REST/MCP divergence unexamined.** Focus area 25 (MCP `instance_list` parent
-  selector), review 1. `adapter/mcp/tools_instance.go:139` returns
-  `MarshalResult(enriched)` over `[]instance.EnrichedInstanceSummary` directly.
-  `EnrichedInstanceSummary.ChildCount` (`domain/instance/instance.go:213`) has
-  no JSON tag, so it marshals as `"ChildCount"` while REST's
-  `enrichedSummaryDTO` (`adapter/http/instance_handler.go:258`) emits
-  `"childCount"`. Read the rest of `EnrichedInstanceSummary`
-  (`RunName`, `Submitter`, `FriendlyStep`, `Model`, `Backend`, `RetryCount`,
-  `QueuePosition`, `FailedNodeID`) and confirmed via `git diff` against the
-  branch point that NONE of the struct's own fields carry JSON tags — this is
-  a pre-existing, deliberate convention (`parity_test.go`'s own comment: "MCP
-  marshals the domain struct with PascalCase keys; REST maps to a ... DTO"),
-  not a new asymmetry `ChildCount` introduced. So the divergence is consistent,
-  not a bug — but no test proved `ChildCount` actually reaches the MCP surface
-  at all, under any key. Extended `TestInstanceList_ReturnsEnrichedFields`
-  (`adapter/mcp/tools_instance_test.go`) to set `ChildCount: 3` on the stub
-  enriched row, decode the MCP response body, and assert
-  `rows[0]["ChildCount"] == 3` (a real decode, not a substring match); confirmed
-  it fails for the right reason (`expected: 3, actual: 0`) with `ChildCount: 3`
-  temporarily removed from the fixture, then confirmed it passes with it
-  restored. Independently re-verified the rest of area 25's checklist from
-  source: the `parent` string arg and its description are present
-  (`tools_instance.go:28-30`); the SAME `instance.ParseParentScope` decoder
-  REST uses is called (grepped both call sites); a malformed selector returns a
-  tool error, covered for three malformed inputs
-  (`TestMCPInstanceList_MalformedParentIsAnError`); the parent selector itself
-  has happy (`_RootsOnly`, `_ChildrenOfAParent`), success
-  (`_NoParentArgDoesNoNarrowing`, `_ParentComposesWithStateArg`), failure/error
-  (`_MalformedParentIsAnError`), and edge (`_UnknownParentReturnsEmpty`)
-  coverage in `tools_instance_parent_test.go`, and its fake
-  (`parityInstanceRepo` in `parity_test.go`) genuinely honours `ParentScope`/
-  `ParentInstanceID` rather than ignoring them; composition-root wiring
-  confirmed real — `cmd/arbitron/main.go:1178` constructs
-  `adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())` then
-  `RegisterAllTools(mcpSrv)` → `RegisterInstanceTools`, and `mcpDeps()`
-  (`main.go:244-246`) passes the real `ds.eng`, not a stub. While confirming
-  the untagged-fields claim, found a separate, pre-existing gap — a duplicate
-  `FailedNodeID` declaration that shadows the embedded, tagged one for direct
-  JSON marshaling — logged above under Open rather than fixed here (out of
-  scope: present unchanged since the branch point, not introduced by
-  `ChildCount`). Ran the full `go test ./...`, `npx tsc --noEmit`, and
-  `npx vitest run`: no new failures beyond the recorded baseline (the one
-  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at 0
-  errors; vitest 464 passed, 0 failed). This closes review 1 approval for area
-  25; review 2 remains open.
+### Paired 4 — Area 2 Create/Update save ↔ Area 1 settlement (refiner pass, 2026-10-18)
+- Added `private/prepare`, `edit/before-proof`, `edit/after-proof` to `cmd/arbitron/layout_restart_recovery_test.go:TestLayoutE2E_RestartSettlesThenWorkerRecovers` (`edit` = admin shared `Service.Update` in `layout_recovery_test.go:TestLayoutE2E_CrashProcess`; before this pass no crash test covered shared Update's tree backup). No live root survives; a fresh `initDomain` decides. Not-committed cases now also assert the quarantine `reason.txt` (`not-committed` / `publish-not-recorded`).
+- Save→settlement: `service_revision.go:updateRevision` stamps (`Stamp` settles, then `Journal.Record`) before `repo.Update`; shared adds `PrepareTreeCommit` before the rename and `CommitPublication` after it. `WorkflowRepo.update` writes `wf` unchanged, so the visible ID/revision equal `req.WorkflowID`/`req.Revision`. The save's own `isUnwritten` Load runs inside its lock (`workflow_operations.go:Load` `internal`), so it never settles its own prepared entry.
+- Settlement→save: `commit_source.go:settlePrepared` rolls forward only if `SavedRevision()==r.Revision`, `wf.ID==r.WorkflowID` and (shared) `exactPublication`; otherwise it restores the backup and quarantines. A visible unproven tree with no backup returns `ErrMutationPending`; it is not quarantined.
+- Mutations (reverted): `visible := err == nil` → `private/prepare` red (invisible save arranged); `if false && proven…` → `private/visible`, `shared/after-proof`, `edit/after-proof` red (committed save quarantined); finishing the shared Update backup right after Prepare → `edit/before-proof` red.
+- Wired: `layout_wiring.go:newLayoutStack` (:123 `NewCommitSource`, :127 only production `SetReadSettler`, :128 stamper with `Settler: ls.commits`); `main.go:597` only Service `SetRevisionStamper`. Sibling crash tests (KillAndImmediatePeerRead, HTTP/MCP peer crash, StagedPublicationReadBoundaries) pass.
+- Recommend: approve paired:4.
 
-- [x] **`400 INVALID_PARENT`'s specific error CODE was never pinned by a test —
-  only the HTTP status.** Focus area 24 (REST list parent selector & hierarchy
-  DTO), review 2. `adapter/http/instance_handler.go:411-414` documents and
-  implements a specific error code (`WriteError(w, http.StatusBadRequest,
-  "INVALID_PARENT", perr.Error())`) so a caller can distinguish a malformed
-  `parent` selector from any other `400` on the endpoint — but
-  `TestInstanceListREST_MalformedParentIsRejected`
-  (`adapter/http/instance_list_parent_test.go`, added when review 1 closed)
-  only asserted `w.Code == http.StatusBadRequest`, never decoded the JSON body
-  to check the `code` field. Confirmed by hand: changing the code string to
-  `"BAD_REQUEST"` left every existing test in the package green. A regression
-  that changed or genericized the code (the same shape of gap fixed repeatedly
-  elsewhere in this loop — a documented, specific claim proven only by its
-  coarser side effect) would ship undetected. Updated the test to decode
-  `adapthttp.ErrorResponse` from the response body and assert
-  `body.Code == "INVALID_PARENT"` for all four malformed inputs; confirmed it
-  fails for the right reason (`expected: "INVALID_PARENT", actual:
-  "BAD_REQUEST"`) against the neutered code, then confirmed it passes against
-  the real code. Independently re-verified the rest of area 24's checklist
-  from source rather than trusting review 1's write-up: composition-root
-  wiring re-confirmed (`cmd/arbitron/main.go:1188`, `Service: ds.eng` — the
-  real `*engine.Engine` — passed to `adapthttp.NewRouterFromDeps`, which
-  constructs `NewInstanceHandler` at `adapter/http/server.go:203` with all four
-  real repository/service deps, no `nil`/stub); re-traced the
-  narrowing-never-widening security contract end to end — `Engine.ListEnriched`
-  (`domain/engine/engine.go:544-557`) always overwrites
-  `OwnerID`/`Departments`/`IncludePublic` from the service-set
-  `listConstraint`, never from caller input, while leaving
-  `filters.ParentScope`/`.ParentInstanceID` (set only by the handler) untouched
-  — and `InstanceRepo.List` (`adapter/sqlite/instance_repo.go:204-215`) ANDs
-  the parent-scope clause onto the visibility disjunction rather than OR-ing it
-  in, so a caller cannot use `parent=` to see a run outside their own
-  visibility scope; `summaryDTO.ParentInstanceID`/`enrichedSummaryDTO.ChildCount`
-  mappings and their `omitempty` JSON tags are exercised by
-  `TestInstanceListREST_ChildrenOfAParent`/`_RootRowOmitsParentInstanceID`/
-  `_ChildCountIsSurfaced`; `List` is still the sole caller of `ListEnriched`
-  (unchanged since review 1). `go tool cover` over the full `adapter/http`
-  suite shows `List` at 98.1% and `toEnrichedSummaryDTO`/`toEnrichedResponse`
-  at 100%, matching review 1's own figures with no regression. Ran the full
-  `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new failures
-  beyond the recorded baseline (the one pre-existing `adapter/config` failure
-  is unchanged; dashboard typecheck at 0 errors; vitest 464 passed, 0 failed,
-  unaffected by this Go-only change). This closes review 2 approval for area
-  24 — both approvals for area 24 are now recorded.
+### Paired 2 — independent approval review of d524299 (2026-10-18): APPROVED
+- Settlement→worker: `domain/workflow/commit_source.go:CommittedRequests` settles destinations under `WithMutations` and returns only `JournalCommitted`; `settlePrepared` requires matching visible revision/ID and `exactPublication`, otherwise restores the tree before quarantine. `adapter/filesystem/revision_journal.go:entries` exposes only digest-matched durable receipts as committed.
+- Worker→settlement: `domain/layout/worker.go:recover` calls `Requester.RequestArrangement` before `Journal.Remove`, retaining evidence on error; `domain/layout/requester.go:requestArrangement` acknowledges the immutable SQLite row via `adapter/sqlite/layout_repo.go:Request`, rejecting conflicting input.
+- Cache seam: `adapter/filesystem/layout_cache.go:PublishCache` holds the save repository's destination mutation lock while `current` settles, then compares revision/identity before writing. `domain/layout/worker.go:publish` rechecks row generations/destination in the fenced callback; rollback restores prior cache bytes through `adapter/filesystem/tree_commit.go:RollbackTreeCommit`.
+- Production wiring: `cmd/arbitron/layout_wiring.go:newLayoutStack` shares repo, journal, commit source, requester and cache with the worker. `cmd/arbitron/main.go:initDomain` aborts on boot settlement error and orders settlement before seed, backfill and `ls.start`; `worker.go:dispatch` recovers on its initial sweep and every poll.
+- Independent mutation overlays: disabling sweep recovery fails both committed cases of `cmd/arbitron/layout_restart_recovery_test.go:TestLayoutE2E_RestartSettlesThenWorkerRecovers`; accepting unproven publication fails shared/before-proof. Early journal removal fails three outage/conflict tests in `domain/layout/worker_recovery_test.go`; skipping cache settlement fails `TestLayoutCache_EnvelopeAndReadSettlement` and `TestCommitProtocol_PeerCrash/visible`. Unmodified focused rerun exits 0 across all three packages.
+- Supplied measurement fields were unresolved; measured directly: `go build ./...` exits 0. `go test ./cmd/arbitron ./domain/layout ./domain/workflow ./adapter/filesystem -count=1 -timeout=15m` exits 1: domain/layout (4.284s), domain/workflow (18.885s), filesystem (14.770s) pass; cmd/arbitron (517.324s) fails only G24, `layout_availability_test.go:TestLayoutE2E_NilCopiedIDStillRequests` at line 146.
+- G24 is pre-existing: that exact test also exits 1 at line 146 in a clean `git archive HEAD^` snapshot (038bd50); no new suite regression or build break observed, and no full baseline-suite comparison claimed. Existing G15/G11 and other sibling gaps remain separate. Only paired:2 ticked; no new seam gap found.
 
-- [x] **Area 23 (batched child counts on enriched rows), review 2: independent
-  re-verification found no live gap.** Re-derived every checklist item from
-  source rather than trusting review 1's write-up. `go tool cover` (running
-  `TestEnricherChildCount`-prefixed tests) confirms `batchChildCounts` and
-  `SetSpawnLinks` are both at 100% statement coverage. Confirmed `Enrich` is
-  the ONLY production call site of `batchChildCounts`/the enricher's
-  `ChildVisibility` construction (grepped for `.Enrich(` across the whole
-  repo — `domain/engine/engine.go:572` is the sole non-test caller, invoked
-  from `ListEnriched` with the identical `ctx` that already authorized the
-  page via its own `listConstraint(ctx)` call), so the "same listConstraint
-  that authorized the page" claim holds by construction — both calls derive
-  from the same immutable `ctx` within one request, not from a value threaded
-  between them, so they cannot diverge. Confirmed `countingSpawnLinks`
-  (`domain/engine/enricher_child_count_test.go`) genuinely honours the
-  `ChildVisibility` argument rather than ignoring it (already noted by review
-  1, re-checked here), so the non-disclosure test
-  (`TestEnricherChildCount_InvisibleChildrenReportZero`) is unfailable-if-broken
-  by construction. Re-verified the composition-root wiring
-  (`cmd/arbitron/main.go:798`,
-  `instanceEnricher.SetSpawnLinks(instanceRepo)`) independently by temporarily
-  commenting out that line and re-running review 1's own
-  `TestEnricherChildCountE2E_ParentReportsRealChildCountThroughCompositionRoot`
-  (`cmd/arbitron/enricher_child_count_e2e_test.go`): confirmed it fails for the
-  right reason (`ChildCount` 0 instead of 1) with the wiring removed, then
-  confirmed it passes again once restored (`main.go` has no net diff after
-  this pass — `git diff --stat` is empty). Confirmed all five scenario
-  categories are present and each is a genuine (not over-mocked) test: happy
-  (`TestEnricherChildCount_StampsCountsOnRows`), success/batching
-  (`_OneBatchedCallPerPage`, `_PassesTheCallersServiceSetVisibility`,
-  `_AdminVisibilityIsUnconstrained`, `_InvisibleChildrenReportZero`),
-  failure/degradation (`_QueryFailureDegradesTheRowNotThePage`), and edge
-  (`_NoRepositoryWiredReportsZero`, `_EmptyPageTouchesNoRepository`,
-  `_NoIdentitySkipsCounting` — the last two proving the repository is never
-  touched without a real page or a real identity, matching the "never default
-  to unconstrained" contract). Ran the full `go test ./...`,
-  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
-  recorded baseline (the one pre-existing `adapter/config` failure is
-  unchanged; dashboard typecheck at 0 errors; vitest 464 passed, 0 failed).
-  This closes review 2 approval for area 23 — both approvals for area 23 are
-  now recorded.
+### Paired 2 — Area 1 settlement ↔ Area 7 worker recovery and publication (refiner pass, 2026-10-18)
+- Added `cmd/arbitron/layout_restart_recovery_test.go:TestLayoutE2E_RestartSettlesThenWorkerRecovers` (row TRACE exactly: kill child root at private/receipt, private/visible, shared/before-proof → close all roots → fresh `initDomain` → boot `CommittedRequests` → first `dispatch` sweep → `recover`; no Recover/Notify/Drain). Asserts row Manifest/Destination, no row for the prepared candidate, prior tree and restored-revision cache only, journal emptied after ack/quarantine. Passes; previous coverage used a still-live peer root plus an explicit `Recover` (`layout_recovery_test.go:TestLayoutE2E_KillAndImmediatePeerRead`).
+- Settlement→worker: `commit_source.go:CommittedRequests` returns only `JournalCommitted` after per-destination `Settle` under `WithMutations`; `settlePrepared` rolls forward only with `exactPublication` + matching ID. Mutation `proven || true` turns shared/before-proof red.
+- Worker→settlement: `worker.go:recover` calls `Journal.Remove` only after `RequestArrangement` returns nil. Removing the `dispatch` sweep's `recover` turns both committed restart cases red; moving Remove ahead of the request fails four `worker_recovery_test.go` tests (LiveStoreOutage, RemoveFailureKeepsEvidence, both Conflicting*).
+- Cache lock: `layout_cache.go:PublishCache` → `current` calls `readSettler.Settle` under the destination lock before the `SavedRevision` comparison; skipping it fails `commit_crash_test.go:TestCommitProtocol_PeerCrash/visible` and `layout_cache_test.go:TestLayoutCache_EnvelopeAndReadSettlement`. The only production layout.json writer is `PublishCache` (`grep LayoutCacheFile`).
+- Wiring: one `ls.journal`/`ls.commits`/`repo` feeds stamper, `SetReadSettler`, worker `Committed`/`Journal` and `NewLayoutCache` (`layout_wiring.go:newLayoutStack`); ordering `main.go:initDomain` boot settlement (:567) → seed (:582) → backfill (:622) → `ls.start` (:1224) is sequential code; boot aborts on settlement error.
+- Recommend: approve paired:2 — both BREAKs (prepared-only arranged / journal cleaned before row; uncommitted candidate cache over the restored revision) are caught by tests that go red under mutation, on the real composition root.
 
-- [x] **`instanceEnricher.SetSpawnLinks(instanceRepo)`'s composition-root wiring
-  had no test proving it through the real engine, unlike the identical seam
-  already proven for `eng.SetSpawnLinks` (area 16 review 2) and
-  `queueMgr.SetChildTerminalHook` (area 20).** Focus area 23 (batched child
-  counts on enriched rows), review 1. `domain/engine/enricher.go:105`
-  documents and implements a load-bearing no-op: `if e.spawnLinks == nil ...
-  return map[uuid.UUID]int{}` — every row would report `ChildCount` 0 and no
-  hierarchy expander would render. Every existing test in
-  `domain/engine/enricher_child_count_test.go` drives `batchChildCounts`
-  through a `countingSpawnLinks` fake the test itself constructs and injects
-  via `en.SetSpawnLinks(links)` — none of them prove `cmd/arbitron/main.go`
-  actually calls `instanceEnricher.SetSpawnLinks(instanceRepo)` before a real
-  list request reaches it, the same shape of gap this loop has fixed
-  repeatedly for other composition-root seams. Added
-  `TestEnricherChildCountE2E_ParentReportsRealChildCountThroughCompositionRoot`
-  (`cmd/arbitron/enricher_child_count_e2e_test.go`), which boots the real
-  composition root via `initDomain`, triggers a real `fire_and_forget` spawn
-  parent, waits for its real linked child to be persisted, then reads the
-  parent back through `Engine.ListEnriched` (the sink a dashboard request
-  would hit) and asserts `ChildCount == 1`; confirmed it fails for the right
-  reason (`ChildCount` 0) when `instanceEnricher.SetSpawnLinks(instanceRepo)`
-  is temporarily removed from `main.go`, then confirmed it passes again once
-  restored (`main.go` has no net changes this pass). Independently reviewed
-  the rest of area 23's checklist from source and found it already solid:
-  `batchChildCounts` is at 100% statement coverage
-  (`domain/engine/enricher_child_count_test.go` covers happy — counts
-  stamped on rows; success — one batched call per page, visibility passed is
-  the SAME service-set scope, admin unconstrained; failure/error — a query
-  failure degrades only the row, never the page; edge — no repo wired, empty
-  page touches no repository, no identity skips counting rather than
-  defaulting to unconstrained); the `countingSpawnLinks` fake honours the
-  `ChildVisibility` argument rather than ignoring it, so
-  `TestEnricherChildCount_InvisibleChildrenReportZero` is unfailable-if-broken
-  by construction, not by luck. Ran the full `go test ./...`,
-  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
-  recorded baseline (the one pre-existing `adapter/config` failure is
-  unchanged; dashboard typecheck and vitest both clean). This closes review 1
-  approval for area 23; review 2 remains open.
+### Paired 1 — independent approval review of 9bb80c3 (2026-10-18): APPROVED
+- Save→worker: `domain/workflow/service_revision.go:createRevision`/`updateRevision` hold the destination mutation lock and do not mutate the workflow after `revision_stamper.go:Stamp` captures it; `RevisionStamper.committed` records proof before requesting. `adapter/sqlite/layout_repo.go:Request` preserves one row and its original Manifest/AttemptLimit; `domain/layout/worker.go:processRevision` claims that row and decodes only its Manifest, checking the token before `Coordinator.Run` and fenced `LayoutRepo.Complete`.
+- Worker→save: `adapter/filesystem/layout_cache.go:PublishCache` checks SavedRevision under the same `WorkflowRepo.WithMutations` lock used by saves, before writing; `domain/layout/worker.go:publish` rechecks generation/destination and preserves late A's terminal history while B stays current. `TestWorkerProcessCapturedInput`, `TestWorkerCacheLateRevisionAndMissingDestination` and `TestLayoutCache_FencedSink` passed.
+- BREAK caught: `domain/layout/requester.go:sameManifest`/`sameJSON` preserve exact numbers; `requestArrangement` rejects different captures and `worker.go:recover` skips journal removal on that error. Both new large-integer tests fail against HEAD^ via a temporary Go overlay (exit 1, missing conflict error), then pass on HEAD (exit 0); equivalent `0.5`/`5e-1` and relocated replays remain accepted. G39 closure independently confirmed.
+- Production trace: HTTP PUT → `adapter/http/workflow_handler.go:Update` → stamped Service; `cmd/arbitron/main.go:initDomain` and `layout_wiring.go:newLayoutStack` share the requester/store/repository among save, worker and cache. SQLite revision primary key and atomic `LayoutRepo.Claim` prevent duplicate live jobs; process/token and completion-generation fences catch stale work.
+- Measurement fields were unresolved placeholders, treated as low confidence: `go build ./...` and `go test ./domain/layout/... ./domain/workflow ./adapter/sqlite ./adapter/filesystem -count=1` both exit 0. No full-suite baseline comparison claimed.
+- `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestLayoutE2E_(InitDomainAuthoring|SaveIsAsyncAndEngineSnapshotRetainsPendingRevision|NewSaveDoesNotSupersedeHistoricalWork|LiveEnqueueOutageRecoversByPoll)$' -count=1 -timeout=4m` passed (16.767s). Only paired:1 ticked; no new gap found.
 
-- [x] **A denied child cancellation in the cascade produced no assertion that
-  the audit trail stayed accurate.** Focus area 22 (cancel cascade), review 2.
-  `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch`
-  (`domain/engine/cancel_cascade_test.go`) already asserted the parent ends
-  `StateCancelled`, the child the actor cannot authorize (department-lead
-  check fails) is left `StateRunning`, and the grandchild past it is untouched
-  — but it never checked how many intervention records existed. Since
-  `cancelAuthorized` only calls `e.recordIntervention` on its success path
-  (`domain/engine/engine.go`), a denied child correctly produces none, so this
-  was safe in the real code — but nothing pinned it, and `recordIntervention`
-  being invoked before rather than after the authorization check, or on the
-  failure path by mistake, would have shipped a false audit record ("this
-  child was cancelled by X") for a child that was in fact left running,
-  silently corrupting the intervention trail an operator relies on to
-  understand what a cascade actually touched. Added
-  `assert.Equal(t, 1, c.interventions.count(), ...)` to the existing test,
-  asserting only the parent's own cancellation produced a record. Confirmed
-  it fails for the right reason (`expected: 1, actual: 2`) when a bogus
-  `e.recordIntervention(ctx, &instance.Instance{ID: childID},
-  instance.ActionCancel, nil)` call is temporarily injected into
-  `cascadeCancel`'s real-failure branch (`cancel_cascade.go:73-81`, the branch
-  reached when `cancelAuthorized` returns neither `nil` nor
-  `ErrCannotCancel`), then confirmed it passes again once the injected call is
-  reverted (`cancel_cascade.go` has no net changes this pass). Independently
-  re-verified the rest of area 22's checklist and found no other live gap:
-  `cascadeCancel` is at 100% branch coverage per `go tool cover -func`; the
-  `fakeSpawnLinks` test double's `ListActiveChildren` matches the real SQL
-  adapter's `state IN ('queued','running','waiting','paused')` filter
-  (`adapter/sqlite/instance_repo.go:649-674`); the owner-inheritance chain
-  (`TriggerWithDepartment` → `identity.WithIdentity`, `engine.go:395-480`)
-  confirmed as the reason cascade authorization by ownership always succeeds
-  while department-leadership can fail partway, since department is derived
-  per-child rather than inherited; `OnChildTerminal`
-  (`domain/engine/spawn_wake.go`) confirmed independent of `e.spawnLinks`: and
-  `cancelAuthorized`'s two uncovered `UpdateState`-failure branches confirmed
-  via `git show <branch-point>:domain/engine/engine.go` to be byte-identical
-  pre-existing code merely extracted into a new function name, not a gap
-  introduced by this feature, so correctly left alone. Ran the full
-  `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new failures
-  beyond the recorded baseline (the one pre-existing `adapter/config` failure
-  is unchanged; dashboard typecheck and vitest both clean). This closes review
-  2 approval for area 22.
+### Paired 1 — refiner pass on G39 (2026-10-18)
+- Fix: `domain/layout/requester.go:sameManifest` now decodes with `UseNumber` (`decodeExact`, rejects trailing data) and `sameJSON` compares numbers exactly via `big.Rat`; `reflect.DeepEqual` over float64 removed.
+- Red before fix, green after: `requester_test.go:TestRequesterRejectsConflictingLargeIntegerInput` (MaxTokens 2^53 vs 2^53+1 rejected; `0.5`↔`5e-1` still accepted) and `worker_recovery_test.go:TestWorkerRecoveryConflictingLargeIntegerKeepsJournal` (journal retained, first manifest authoritative).
+- `worker.go:recover` reaches the guard only through `Requester.RequestArrangement`; no other production manifest comparison (`grep -rn Manifest` over domain/layout, sqlite/filesystem adapters).
+- Ran `go test ./domain/layout/... ./domain/workflow ./adapter/sqlite ./adapter/filesystem -count=1` — all ok.
+- Recommend: approve paired:1 — A→B: Stamp→Request captures one immutable row (unchanged from prior pass evidence); B→A: PublishCache fences on SavedRevision under the mutation lock; the one-revision/two-inputs BREAK is now caught for label and >2^53 numeric conflicts in both live request and recovery.
 
-- [x] **`cascadeCancel`'s "already-terminal child still descends into its own
-  active grandchildren" branch was completely uncovered.** Focus area 22
-  (cancel cascade), review 1 (closes the last blocker deferred from the two
-  fixes below). `domain/engine/cancel_cascade.go:67-71` — when
-  `cancelAuthorized` on a child returns `ErrCannotCancel` (already terminal),
-  the code deliberately still calls `e.cascadeCancel(ctx, childID, visited)`
-  rather than `continue`-ing past it, with the comment "still descend, since a
-  terminal child may have active grandchildren of its own." `go tool cover`
-  over the full `TestCancelCascade`-prefixed suite showed this exact statement
-  at 0 hits, and deleting the recursive call entirely (replacing the branch
-  with a bare `continue`) still passed the entire suite. No existing fixture
-  linked an active child under an already-terminal instance. Consequence: a
-  regression that "simplified" this branch down to match every other failure
-  branch's `continue` would ship undetected, silently orphaning any active
-  descendant of an already-completed/failed/cancelled spawn-linked node —
-  plausible in practice, since a fire-and-forget child can go terminal (e.g.
-  complete) while its own fire-and-forget grandchild is still running. Added
-  `TestCancelCascade_AlreadyTerminalChildStillDescendsIntoActiveGrandchild`
-  (`domain/engine/cancel_cascade_test.go`), reusing the `unfiltered` fake
-  technique the visited-guard tests already established (needed here too:
-  the fake's own terminal-state filter would otherwise drop the terminal
-  child from `ListActiveChildren`'s result before the loop ever reached
-  `cancelAuthorized` on it, making the branch untestable through the fake at
-  all) to link parent→child(`StateCompleted`)→grandchild(`StateRunning`);
-  asserts the child is left untouched, the grandchild ends `StateCancelled`,
-  and the grandchild gets its own intervention record via
-  `interventions.ListByInstance`. Confirmed it fails for the right reason
-  (grandchild stays `StateRunning`, zero intervention records) when the
-  recursive `e.cascadeCancel(ctx, childID, visited)` call is temporarily
-  deleted (bare `continue` left in its place), then confirmed it passes
-  against the real code. With this fix, every remaining item on area 22's
-  checklist is now backed by a passing, meaningfully-failing test: the
-  visited-set guard and the department-scoped authorization-failure branch
-  (both fixed below), storage-failure partial-failure handling and its
-  sibling-branch audit-trail completeness (below), `ErrCannotCancel`-as-success
-  and both-spawn-modes-cascaded (pre-existing), parent-transitions-first
-  ordering (pre-existing), and the nil-`spawnLinks` no-op (pre-existing) —
-  plus the composition-root wiring (`eng.SetSpawnLinks(instanceRepo)`) already
-  proven end-to-end by area 16's
-  `TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoot`.
-  Ran the full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no
-  new failures beyond the recorded baseline (the one pre-existing
-  `adapter/config` failure is unchanged; dashboard typecheck and vitest both
-  clean). This closes review 1 approval for area 22; review 2 remains open.
+### Paired 1 — independent approval review of 8c13fc2 (2026-10-18): WITHHELD
+- Save→worker: `domain/workflow/revision_stamper.go:Stamp` captures after metadata stamping; `service_revision.go:createRevision`/`updateRevision` write without further workflow mutation. `adapter/sqlite/layout_repo.go:Request` preserves one immutable row per revision; `domain/layout/worker.go:processRevision` consumes that row's manifest and attempt limit.
+- Worker→save: `adapter/filesystem/layout_cache.go:PublishCache` compares the saved revision under the same `WithMutations` lock as saves, before writing; `domain/layout/worker.go:publish` leaves terminal history authoritative. `TestWorkerCacheLateRevisionAndMissingDestination` and `TestLayoutCache_FencedSink` passed.
+- Production: `cmd/arbitron/layout_wiring.go:newLayoutStack` shares requester/store/repository across stamper, worker and cache; `main.go:initDomain` injects that stamper and mutation coordinator into the Service used by both transports.
+- Verification fields were unresolved placeholders: ran `go build ./...` and `go test ./domain/layout/... ./domain/workflow ./domain/samples ./adapter/filesystem ./adapter/sqlite -count=1 -timeout=10m`, both exit 0. Seven selected `cmd/arbitron` authoring/async/history/recovery/HTTP/MCP tests passed with `ARBITRON_REQUIRE_BROWSER=1` (44.354s); no full-suite baseline comparison claimed.
+- Both new conflict tests fail with the guard removed through a temporary Go overlay; the original label-conflict fix is exercised. However, G39's numeric probe fails on unmodified HEAD: the exact same seam BREAK survives the new comparator. No box ticked; next pass needs lossless comparison plus requester/recovery coverage for the specified integers.
 
-- [x] **`cascadeCancel`'s visited-set cycle guard (`domain/engine/cancel_cascade.go:61-63`,
-  `if visited[childID] { continue }`) was never actually exercised by either
-  test that claimed to prove it.** Focus area 22 (cancel cascade), review 1
-  (continued from the authorization-branch fix below, deliberately deferred to
-  keep that pass to one issue). `TestCancelCascade_SelfReferentialLinkHaltsTraversal`
-  and `_MutualLinkCycleHaltsTraversal` both passed, but instrumenting the
-  already-visited branch showed it was hit ZERO times by either: `cancelAuthorized`
-  transitions each instance to `StateCancelled` (terminal) BEFORE the recursive
-  `cascadeCancel` call that would re-list it, and the fake's `ListActiveChildren`
-  filters out terminal instances — so a cycle "halted" because the terminal
-  filter had already dropped the node from the list, not because the `visited`
-  check ever fired. The map was PROVEN REDUNDANT by these two tests, not proven
-  load-bearing. Added an `unfiltered` field to `fakeSpawnLinks`
-  (`domain/engine/cancel_cascade_test.go`) that skips the terminal-state filter
-  in `ListActiveChildren`, simulating a corrupt/hand-edited link row that keeps
-  reporting an already-cancelled node as active, and two new tests —
-  `TestCancelCascade_VisitedGuardHaltsSelfReferentialCycleWithoutStateCoincidence`
-  and `_MutualCycleWithoutStateCoincidence` — that reuse the self-referential
-  and mutual-cycle fixtures with `unfiltered: true` and assert the exact
-  intervention count (1 and 2 respectively), which only holds if `cancelAuthorized`
-  is invoked exactly once per node; a second invocation (the guard failing to
-  halt) would still return `ErrCannotCancel` and keep recursing without ever
-  failing a looser "ends cancelled" assertion, so the exact count is what makes
-  the test meaningful. Confirmed both fail for the right reason — an unbounded
-  recursion that blows the goroutine stack rather than returning — when the
-  `visited[childID]` check is temporarily replaced with `false && visited[childID]`,
-  then confirmed both pass against the real code. This closes the guard
-  half of area 22's checklist; review 1 approval is still not recorded this
-  pass because the sibling gap below (intervention records for a storage-failure
-  sibling branch) remains open.
+### Paired 1 — Area 2 save ↔ Area 7 worker terminal record (refiner pass, 2026-10-18)
+- A→B: `revision_stamper.go:Stamp` marshals once; `service_revision.go:updateRevision`/`createRevision` do not touch `wf` between `Stamp` and `repo.Update`/`Create`; `TestLayoutE2E_InitDomainAuthoring` asserts on-disk manifest JSONEq row Manifest and one row per revision.
+- B→A: `worker.go:processRevision` arranges only `rec.Manifest` and fails a token mismatch; `worker.go:publish` + `layout_cache.go:PublishCache` (lock, `SavedRevision()==e.Revision`) return `ErrNotCurrent` for late A, then `MarkCached` settles A's history (`worker_cache_test.go:TestWorkerCacheLateRevisionAndMissingDestination`, `layout_cache_test.go:54`).
+- FIXED (G39): `requester.go:requestArrangement` acknowledged a re-Request whose bytes differed (`LayoutRepo.Request` `ON CONFLICT DO NOTHING`), so `worker.go:recover` removed that journal input silently. Now `ErrConflictingArrangementInput`; journal retained. Tests: `requester_test.go:TestRequesterRejectsConflictingInputForSameRevision` (red with guard disabled), `worker_recovery_test.go:TestWorkerRecoveryConflictingInputKeepsJournal`, SQLite `TestLayoutRequesterSQLiteSink` tightened.
+- Wiring: one `ls.requester` feeds stamper and worker recovery (`layout_wiring.go:122,128,145,149`); only stamped Service is `main.go:595-597` (G16 fallback remains non-blocking).
+- Recommend: approve paired:1 — exact-bytes capture A→B and late-A publication/history B→A verified at cited guards; the one-revision/two-inputs BREAK is now caught by G39's guard with tests red when disabled.
 
-- [x] **`cascadeCancel` recursed into a child's descendants even when that child
-  itself failed cancellation for a REAL reason (authorization denied, not-found,
-  storage error) — not just the benign already-terminal case.** Focus area 22
-  (cancel cascade), review 1. `domain/engine/cancel_cascade.go`'s pre-fix loop
-  called `e.cascadeCancel(ctx, childID, visited)` unconditionally after
-  `cancelAuthorized(ctx, childID)`, regardless of WHY it failed. The design's own
-  authorization claim ("children inherit the parent's owner, so an identity
-  authorized to intervene on the parent is authorized on every descendant") is
-  true for OwnerID but not for Department: `canIntervene` also grants department
-  LEADS, and a spawned child's `Department` is derived from that child's OWN
-  workflow publication (`resolvePublication`), not inherited from its parent —
-  so a department lead authorized on the parent can be genuinely UNauthorized on
-  a child scoped to a different department. `go tool cover` confirmed the
-  non-`ErrCannotCancel` branch (the `slog.Warn` at the old lines 67-70) was at 0
-  hits — no existing test drove `cancelAuthorized` to fail for any reason other
-  than the parent's own uncancellable state or a `ListActiveChildren` storage
-  error at the TOP of the cascade. Consequence: a department-lead actor
-  cancelling a parent whose child is scoped to a department they don't lead
-  would see that child correctly left running (authorization denied) — but the
-  cascade would still recurse into the unauthorized child's OWN children via the
-  same ctx identity, cancelling a grandchild whose department the actor DOES
-  lead. Result: a live, running node (the child) sandwiched between a cancelled
-  parent and a cancelled grandchild, with no operator-visible error beyond a
-  `slog.Warn` log line — exactly the "systematic authorization failure would be
-  invisible" shape already flagged in this file's Open section. Added
-  `cascadeFixture.runInDepartment` (`domain/engine/cancel_cascade_test.go`) and
-  `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch`, which drives a
-  department-lead actor (leads "eng", member of "eng"+"finance") through a
-  parent("eng")→child("finance")→grandchild("eng") chain and asserts the
-  authorization-denied child AND the otherwise-reachable grandchild both stay
-  `StateRunning`; confirmed it fails for the right reason (grandchild wrongly
-  reaches `StateCancelled`) against the pre-fix code, then confirmed it passes
-  after changing `cascadeCancel` to only recurse past a failed child when the
-  failure is `ErrCannotCancel` (already terminal — genuinely safe to still check
-  its own children), and to `continue` without descending for any other error.
-  Ran `go test ./domain/engine/...` (full `TestCancelCascade` suite plus the
-  whole package), `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no
-  new failures beyond the recorded baseline (the one pre-existing
-  `adapter/config` failure is unchanged; dashboard typecheck and vitest both
-  clean). While independently re-deriving the rest of area 22's checklist from
-  source, found the visited-set guard is currently proven redundant rather than
-  load-bearing by its own two "cycle" tests (logged separately above under
-  Open, not fixed here to keep this pass to one issue) — so review 1 approval
-  for area 22 is **not** recorded this pass; the checklist item "visited-set
-  guard" is not yet genuinely verified.
+### Area 12 — single:12/review2 APPROVED by independent approver (2026-10-18, on 9e3d8cc)
+- verify-tests placeholders were unrendered, so I treated confidence as low and ran the suites myself: `tsc --noEmit` clean; Vitest `src/routes src/hooks/useLayoutStatus.test.ts src/graph/arranged` passed 515/515; `go test ./domain/workflow ./domain/engine ./adapter/filesystem ./adapter/http` ok.
+- R2.1/R2.2: `ARBITRON_REQUIRE_BROWSER=1` `TestLayoutSurfaces_NeedsAttentionShowsFindingsNotReviewed` PASS (13.08s, then 3/3 more under `-count=3`); `TestLayoutSurfaces_HTTPRecoveryRetainsGraphAndBacksOff` PASS with measured backoff of 2.06s then 4.15s. G38 did not reproduce in 4 runs, so it is now a possible flake and does not block.
+- R2.3/R2.5: `useLayoutStatus.test.ts` covers A→B→A, a stale terminal read after RetryAck, unmount, focus and restart (in the passing run above).
+- R2.4: `ArrangedGraph.tsx:62` and `RenderSurface.tsx:80` both call `validate.ts:resolveDisplayGeometry`. `validate.ts:229-231` matches `geometry.go:405` on margin/sweeps ≥ 0. G8 is acknowledged in the check text, and G10 is a plan-text ruling (G37 [ESCALATION]). Neither one blocks.
+- R2.6: `ExecutionView.tsx:InstanceArrangement canRetry` gives the same result as `authz.go:canIntervene` (admin, owner, or `LeadsDepartment`; an empty department is omitted in JSON, so it's false). `WorkflowReview.tsx:canRetryLayout` was unchanged. The 7-identity table plus the loading and failed-identity tests pass.
+- Folded in: no production `SaveNodePositions|saveLayout|needsAutoSave`; the only `fitView` is `ArrangedGraph.tsx:186`.
 
-- [x] **`SpawnWaitReconciler.Reconcile`'s "one failure doesn't abandon the rest"
-  guarantee was proven only for a `Get` failure, never for the sibling
-  `SetQueued` failure.** Focus area 21 (startup spawn-wait reconciler),
-  review 2. `domain/engine/spawn_reconciler.go:83-87` documents and
-  implements a best-effort posture: log a `SetQueued` failure and `continue`
-  to the next candidate rather than aborting the sweep — but the only
-  existing test that exercises this branch,
-  `TestSpawnWaitReconciler_SetQueuedFailureIsLoggedNotFatal`, drives exactly
-  ONE candidate through it, so it cannot distinguish `continue` from a
-  regression that aborted the whole loop the moment any one write failed
-  (e.g. an early `return nil`). The sibling
-  `TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest` proves the
-  loop-continues shape, but only for the OTHER failure mode one line above
-  (`instances.Get` on a missing parent) — the same shape of gap this loop has
-  fixed repeatedly elsewhere (areas 19, 20): a shared best-effort contract
-  proven at one call site/failure-mode and silently assumed at a sibling one.
-  A regression here would silently strand every candidate queued after the
-  first uncooperative one on a real restart, each waiting until the NEXT
-  reconcile pass instead of being requeued immediately. Added a
-  `setQueuedErrFor map[uuid.UUID]error` field to `mockQueueRepo`
-  (`domain/engine/engine_test.go`, checked before the existing global
-  `setQueuedErr`) so a test can fail `SetQueued` for one specific candidate
-  while leaving a later one free to succeed, and added
-  `TestSpawnWaitReconciler_SetQueuedFailureForOneCandidateDoesNotAbandonTheRest`
-  (`domain/engine/spawn_reconciler_test.go`), asserting the failing
-  candidate's parent stays `waiting`, a later candidate is still `queued`,
-  and `NotifyCapacityFreed` still fires once for the one that succeeded;
-  confirmed it fails for the right reason (later candidate stuck `waiting`,
-  zero notifies) when the `continue` after the `SetQueued` error check is
-  temporarily replaced with `return nil`, then confirmed it passes against
-  the real code. Independently re-verified the rest of area 21's checklist
-  from source rather than trusting review 1's write-up: re-read
-  `cmd/arbitron/main.go:1032-1059` and confirmed the reconciler is still
-  constructed only at the real composition root, still run after
-  `RecoverCrashedInstances`, and its own error is still logged, not fatal;
-  confirmed `SpawnWaitCandidate.ChildState` is populated by
-  `ListWaitingOnTerminalChild`'s SQL (`adapter/sqlite/instance_repo.go:725-733`,
-  `WHERE ... c.state IN ('completed','failed','cancelled')`) but genuinely
-  unused inside `Reconcile` itself — not a gap, since the terminal-filtering
-  already happens at the query layer and terminal states never revert;
-  `go tool cover` over the `TestSpawnWaitReconciler`-prefixed suite shows
-  `Reconcile` at 95.7% (the sole remaining gap, the defensive `ctx == nil`
-  guard, has no known production caller and was already logged/left as a
-  residual, lower-priority item when review 1 closed — the identical shape
-  already accepted for `OnChildTerminal`'s own such guard in area 19). Ran
-  the full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run` suites:
-  no new failures beyond the recorded baseline (`domain/engine` passes; the
-  one pre-existing `adapter/config` failure is unchanged; dashboard
-  typecheck and vitest are both clean). This closes review 2 approval for
-  area 21 — both approvals for area 21 are now recorded.
+### Area 12 — single:12/review2 failure-lens pass (2026-10-18)
+- Arrival: `npx tsc --noEmit` and four focused Vitest files passed 122/122 before changes; the supplied missing-dependencies baseline did not recur.
+- R2.1–3/5: `LayoutStatusPanel.test.tsx` covers needs_attention/unfinished superseded; `useLayoutStatus.test.ts` covers same-revision outage retention, 30s backoff cap, A→B→A, stale terminal GET after RetryAck, unmount, focus and polling restart; both route specs cover revision mismatch/error/retry sinks.
+- R2.4: `ArrangedGraph.tsx:display` and `RenderSurface.tsx:runRenderJob` call `validate.ts:resolveDisplayGeometry`; malformed/empty/version payload and zero-option parity tests pass. G8/G10 remain the precise reservations (G37).
+- R2.6/G36: `ExecutionView.layout.test.tsx:offers instance layout Retry only with intervention permission` exercises the actual route/client/hook/panel/graph with HTTP identity/instance responses; four unauthorized identities plus delayed/failed identity failed before the fix. Owner/admin/run-lead cases post the displayed revision, and a server 403 retains geometry.
+- Production-input grep: `instance_handler.go:toInstanceResponse` already populates Department; `me_handler.go:Me` supplies userId/isAdmin/ledDepartments to `InstanceArrangement`. Removing identity or department data breaks eligible Retry cases. `rg 'SaveNodePositions|saveLayout|needsAutoSave'` over production dashboard/HTTP/workflow/filesystem returns no matches; `ArrangedGraph` still disables drag and fits only explicitly.
+- Verification: TypeScript plus nine focused Vitest files passed 356/356; `go test ./domain/engine -run 'TestCanIntervene_|TestSplit_' -count=1 -timeout=60s` passed; `make ui` passed and refreshed embedded assets. Required-browser HTTP recovery passed; the needs_attention test failed (G38), so there is no browser-pair success claim. No whole-suite or baseline-comparison claim.
+Recommend: no approval for single:12/review2 — G8 needs both-route client-font recovery, G10 needs an authoritative zero-option contract ruling, and the required-browser needs_attention fixture failed (G38); G37 records the remaining approval requirements.
 
-- [x] **`SpawnWaitReconciler.Reconcile`'s own `SetQueued` re-queue failure
-  branch was untested.** Focus area 21 (startup spawn-wait reconciler),
-  review 1. `domain/engine/spawn_reconciler.go:83-87` documents a best-effort
-  posture for each candidate — matching `Engine.OnChildTerminal`'s own
-  "best-effort/void" contract (area 19) — logging a `SetQueued` failure and
-  continuing to the next candidate rather than aborting the sweep. `go tool
-  cover` over the full `TestSpawnWaitReconciler`-prefixed suite showed this
-  branch (lines 83-86) at 0 hits: the existing
-  `TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest` exercises a
-  *different* failure mode (an unreadable parent via `instances.Get`), never a
-  `SetQueued` write failure. The same shape of gap fixed repeatedly elsewhere
-  in this loop (areas 19, 20): a shared best-effort contract proven at one
-  call site (`OnChildTerminal`'s own `SetQueued` failure test,
-  `spawn_wake_test.go`) and silently assumed at a sibling one one file away. A
-  regression that let a `SetQueued` error propagate up through `Reconcile`
-  (turning a per-candidate best-effort failure into a sweep-aborting one,
-  stranding every subsequent candidate) or that called `NotifyCapacityFreed`
-  regardless of the error (misleading the queue into thinking a parent that
-  was never actually re-queued had capacity freed) would have shipped
-  undetected. Added a `queueRepo *mockQueueRepo` field to `reconcilerFixture`
-  (`domain/engine/spawn_reconciler_test.go`) so the test can reach the same
-  `setQueuedErr` injection point `spawn_wake_test.go` already uses, and added
-  `TestSpawnWaitReconciler_SetQueuedFailureIsLoggedNotFatal`, asserting
-  `Reconcile` returns no error, the parent stays `StateWaiting` (not desynced
-  into `StateQueued` on a failed write), and `NotifyCapacityFreed` is never
-  called; confirmed it fails for the right reason (`NotifyCapacityFreed`
-  called once despite the injected error) when the error check is temporarily
-  replaced with a discarded `_ =`, then confirmed it passes against the real
-  code. `go tool cover` afterward shows `Reconcile` at 95.7% (the one
-  remaining uncovered branch, the defensive `ctx == nil` guard at lines
-  57-59, has no known production caller — `main.go:1057` always passes a live
-  `context.Background()` — the same low-priority, unreachable-by-production
-  shape already logged and left unfixed for `OnChildTerminal`'s identical
-  guard when area 19 was closed). Independently re-verified the rest of area
-  21's checklist from source: `NewSpawnWaitReconciler` is constructed only at
-  the real composition root (`cmd/arbitron/main.go:1056`, grepped for all
-  non-test call sites) with all four collaborators real, non-nil values (the
-  same `instanceRepo` value satisfies both the `SpawnWaitRepository` and
-  `InstanceRepository` parameters); `SetQueued` is called once per candidate
-  while `NotifyCapacityFreed` is called at most once per `Reconcile` call
-  (only when `requeued > 0`), confirmed intentional by
-  `TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce`'s
-  own assertion ("one notify per Reconcile call, not one per duplicate
-  candidate"); the query error is *returned* (not swallowed) so
-  `main.go:1057-1058` can log it without failing startup
-  (`TestSpawnWaitReconciler_QueryFailureIsReturnedNotPanicked`); and the
-  must-run-after-`RecoverCrashedInstances` ordering is proven both against
-  fakes (`TestSpawnWaitReconciler_ResumesParentOfACrashedChildAfterRecovery`)
-  and end-to-end through the real composition root at a real restart
-  (`cmd/arbitron/spawn_wait_e2e_test.go`'s
-  `TestSpawnWaitE2E_RestartReconcilesParentAfterCrash`, added when area 16
-  review 1 closed). The five scenario categories (happy, success, failure,
-  error, edge) are all present and now include a genuine best-effort-write
-  failure rather than only a load failure. This closes review 1 approval for
-  area 21; review 2 remains open.
+### Area 12 — single:12/review1 APPROVED by independent approver (2026-10-18, on 40e2dba)
+- R1.1: `cmd/arbitron/main.go:initDomain` calls `layoutStack.attachQuery(workflowSvc, eng)`; `domainStack.routerDeps` feeds `NewRouterFromDeps`'s layout handlers. `WorkflowReview.tsx:ReviewPage` / `ExecutionView.tsx:InstanceArrangement` use the real `client.ts:getLayout` and feed `LayoutStatusPanel` / `ArrangedGraph`.
+- R1.2: `ReviewPage` joins savedRevision and refetches each mismatched pair once (`WorkflowReview.test.tsx:manifest/layout revision join`); `InstanceArrangement` rejects foreign seeds/GET geometry and its Retry refreshes instead of posting a foreign token (`ExecutionView.layout.test.tsx:never draws or retries foreign GET geometry`).
+- R1.3/6: required-browser `layout_surfaces_e2e_test.go:TestLayoutSurfaces_CompletedInstanceRefreshesWithoutWebSocket` and `layout_client_acceptance_test.go:TestLayoutSurfaces_ClientValidationAndAPIReachDOM` pass through the real root, HTTP client and DOM, including completed-run polling and Retry reaching SQLite/new displayed geometry.
+- R1.4: `useLayoutStatus.ts:retryCurrent` posts displayed.savedRevision, installs RetryAck's minimum generation and fences earlier GETs before load; `useLayoutStatus.test.ts:installs RetryAck before refetch` passes.
+- R1.5/folded-in: `ArrangedGraph.tsx:nodeCenter` feeds payload centres to `useFollowActiveNode`; `CalloutConnector.tsx:computeGeometry` uses DOM bounds or measured/payload dimensions. Remaining NODE_WIDTH/HEIGHT uses are fallback/legacy layout. Dragging is disabled; only explicit fitView remains; both node renderers import `typeColors.ts:typeAccent`; production position-save symbol search is empty.
+- Happy/success/failure/error/edge coverage: required-browser PRReviewWorkflowAndInstanceUseReviewedGeometry, CompletedInstanceRefreshesWithoutWebSocket, RenderFailureRetainsFallbackAndRetry, HTTPRecoveryRetainsGraphAndBacksOff, NeedsAttentionShowsFindingsNotReviewed and ClientValidationAndAPIReachDOM all pass (189.253s; TestLayoutSurfaces_ prefix).
+- Sensitivity: a temporary Vite transform clearing `client.ts:workflows.getLayout` geometry makes `WorkflowReview.test.tsx:draws the nodes at the geometry returned by GET` exit 1; unmodified test exits 0. No repository production file changed. G8/G36 belong to Review 2, not this wiring approval.
+- Verification placeholders supplied no measurement: independently ran `go test ./... -run '^$' -count=1 -timeout=5m`, focused workflow/filesystem/HTTP layout-position tests, `npx tsc --noEmit`, seven area Vitest files (311/311), follow/callout tests (22/22), and the six required-browser tests above: all exit 0. HEAD and parent dashboard/domain/adapter/cmd trees are identical; no full-suite baseline comparison claimed. Ticked only Area 12 Review 1.
 
-- [x] **`OnTimerFired`'s own webhook-timeout `notifyChildTerminal` call had no
-  test that proves the wired hook actually fires.** Focus area 20
-  (queue-manager child-terminal hook), review 2. Found while closing area 20
-  review 1 (`domain/queue/manager.go:186-226`). `go tool cover` showed the
-  `m.notifyChildTerminal(ctx, instanceID)` statement at line 222 already at 1
-  hit — but only because the call executed with `m.childTerminal == nil` in
-  every existing `TestOnTimerFired_WebhookTimeout_*` test
-  (`domain/queue/manager_test.go`); none of them called
-  `m.SetChildTerminalHook(...)` first and asserted the hook was invoked with
-  the right instance ID, the way `TestRecoverWebhooks_TimedOut_WakesChildTerminalHook`
-  already did for the startup-recovery sibling path. Same shape of gap as the
-  `RecoverWebhooks` fix below: a shared correctness guarantee proven at one
-  call site and silently assumed at a sibling one — no known live bug (the
-  call is present and unconditional on the success path), but the LIVE path
-  (the one every real webhook timeout goes through) deserved its own dedicated
-  hook-invocation test independent of the startup-recovery one, not just
-  statement coverage that happened to pass through a nil hook. Added
-  `TestOnTimerFired_WebhookTimeout_InvokesChildTerminalHook`
-  (`domain/queue/manager_test.go`), wiring `m.SetChildTerminalHook(...)` before
-  driving `m.OnTimerFired(ctx, id, queue.TimerTypeWebhook)` and asserting the
-  hook fires exactly once with the timed-out instance's own ID, mirroring
-  `TestManager_SetChildTerminalHook_IsInvoked`'s assertion shape; confirmed it
-  fails for the right reason (hook never called, zero-value UUID) when the
-  `m.notifyChildTerminal(ctx, instanceID)` call is temporarily wrapped in
-  `if false { ... }`, then confirmed it passes against the real code.
-  Independently re-verified the rest of area 20's checklist from source:
-  `notifyChildTerminal` is nil-safe (`TestManager_ChildTerminalHook_IsNilSafe`
-  and the un-hooked webhook-timeout tests, which never panic), `domain/queue`
-  has no `arbitron/domain/engine` import (grepped the package directly), and
-  the hook is wired at the real composition root
-  (`cmd/arbitron/main.go:815`, `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)`,
-  already exercised end-to-end by area 16's `TestSpawnWaitE2E_*` suite). This
-  closes review 2 approval for area 20 — both approvals for area 20 are now
-  recorded.
+### Area 11 — single:11/review2 APPROVED by independent approver (2026-10-18, on af784b8)
+- verify-tests placeholders were unfilled (treated as low confidence); re-ran by hand: `go build ./...`, `go vet`, full `go test ./domain/layout` green.
+- R2.1/R2.4: `ARBITRON_REQUIRE_BROWSER=1` run of `TestLayoutSurfaces_MissingBundledSubsetRetainsFallback`, `TestLayoutSurfaces_RenderFailureRetainsFallbackAndRetry`, `TestLayoutSizing_RealBrowserSavedUnicodeMeasurementsReachView` (CJK+👩‍💻, width<=maxWidth, zero blocking findings) all PASS.
+- R2.2: `coordinator.go:Run` measure branch fails at StageRendering "measuring text:" before Arrange; Run_StageTimeout/LateNilError/MeasureFailure/ParentCancellation pass.
+- R2.3: mutation `measure.go:Measurements.Metric` missing-key → nil reddens TestMeasurements_Metric, TestSizing_MissingMeasurementIsAnError, TestArrange_Errors (+2); restored.
+- R2.5: vitest 56/56 (fonts.test.ts unsupported-sequence + Inter-substitution negatives); font-coverage 3/3; licenses identical in dist/public; lock pins SC 5.3.1, Emoji 5.3.2. W2 single-browser limit stands.
 
-- [x] **`RecoverWebhooks` failed a timed-out webhook child during startup
-  recovery without calling the child-terminal wake, unlike its live
-  equivalent.** Focus area 20 (queue-manager child-terminal hook), review 1.
-  Originally found while reviewing area 19 (child-terminal wake).
-  `domain/queue/manager.go:186-226`'s `OnTimerFired` (the LIVE webhook-timeout
-  path) does `SetFailed` then `m.notifyChildTerminal(ctx, instanceID)` with a
-  comment noting this is "the one terminal transition that happens outside
-  domain/engine." But `domain/queue/recovery.go:47-92`'s `RecoverWebhooks` (the
-  STARTUP recovery path, called after `spawnReconciler.Reconcile` in
-  `cmd/arbitron/main.go` — the reconciler has already run by the time this
-  failure happens) did the IDENTICAL `SetFailed` for a webhook instance whose
-  timeout expired during downtime, but never called `notifyChildTerminal` —
-  the same shape of gap this loop has fixed repeatedly for other
-  terminal-transition call sites (areas 19, 16): a shared correctness guarantee
-  proven at one call site and silently assumed at a sibling one. Consequence: a
-  `wait_for_child` parent whose child was mid-webhook-wait at the moment of a
-  crash, and whose webhook timeout had already passed during the downtime
-  window, would never have been woken — not by the reconciler (which ran
-  before this failure), not by this path (which didn't call the hook) — until
-  the NEXT process restart. Added
-  `TestRecoverWebhooks_TimedOut_WakesChildTerminalHook`
-  (`domain/queue/recovery_test.go`), which wires a `SetChildTerminalHook` on
-  the manager, drives `RecoverWebhooks` over a timed-out webhook instance, and
-  asserts the hook fires with that instance's ID; confirmed it fails for the
-  right reason (`[]uuid.UUID(nil)`, hook never invoked) against the
-  pre-fix code, then confirmed it passes after adding
-  `m.notifyChildTerminal(ctx, inst.ID)` to `RecoverWebhooks` right after the
-  `SetFailed` succeeds (only on the success path — a `SetFailed` failure still
-  logs and `continue`s without waking, matching `OnTimerFired`'s own
-  error-propagation shape). Confirmed the rest of area 20's checklist from
-  source: `SetChildTerminalHook`/`notifyChildTerminal` are nil-safe
-  (`TestManager_ChildTerminalHook_IsNilSafe`), `domain/queue` has no
-  `domain/engine` import (grepped the package), and the hook is wired at the
-  real composition root (`cmd/arbitron/main.go:815`,
-  `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)`, already verified
-  end-to-end by area 16's `TestSpawnWaitE2E_*` suite). Left one new,
-  lower-priority gap for review 2 (logged above under Open): the LIVE
-  `OnTimerFired` webhook-timeout path's own `notifyChildTerminal` call has
-  statement coverage but no test that wires a hook and asserts it fires — not
-  a live bug (the call is unconditional on the success path) but the same
-  shape of unverified-call-site gap just fixed here for its startup-recovery
-  sibling. This closes review 1 approval for area 20; review 2 remains open.
+### Area 11 — single:11/review2 failure-lens assessment (2026-10-18)
+- Arrival: targeted measurement/sizing/coordinator checks passed (0.853s); selected dashboard tests passed 56/56; required-browser missing-subset/saved-Unicode checks passed (68.615s). No arrival failure versus the supplied baseline; read every Area 11 Files entry and left approval boxes untouched.
+- R2.1: `adapter/renderreview/surface_boundary_test.go:TestBrowserRenderer_RealSurfaceRejectsMissingFontAndUnsupportedGlyph` rejects unsupported U+10FFFF; `cmd/arbitron/layout_component_surfaces_test.go:TestLayoutSurfaces_MissingBundledSubsetRetainsFallback` verifies actual DOM fallback/restoration. A test-only Go overlay of `layout_surfaces_e2e_test.go:TestLayoutSurfaces_RenderFailureRetainsFallbackAndRetry` enabled the real job browser, appended U+10FFFF to the saved label and asserted measuring-text/unsupported-scalar failure plus one attempt: passed (8.091s), including visible fallback and actual Retry advancing the same revision's generation. Production unchanged; G8's passed-row client font recovery belongs to Area 12.
+- R2.2: `coordinator.go:Run` rejects Measure errors/expired contexts before Arrange, at StageRendering with "measuring text:"; `TestRun_StageTimeout`, `LateNilErrorCannotPass`, `MeasureFailure`, `MeasurementsAreValidatedAtRenderStage`, `ParentCancellationReachesMeasureAndReview` and `StageContextsAreCancelledPromptly` pass with no partial candidate. Browser timeout, unavailable Chrome, cancellation/reuse and four concurrent isolated measurement-tab tests pass.
+- R2.3: `measure.go:Measurements.Metric` and `size.go:metricForText` reject absent/nonfinite/negative/inconsistent/zero-for-nonempty metrics; `TestSizing_MissingMeasurementIsAnError`, `RejectsMetricsDisagreeingWithTextAndStyle`, `ErrorDoesNotMutateInputs` and `TestMeasurements_MetricRejectsInvalidValues` pass, including nil production metrics failing at the box sink.
+- R2.4 / G35: `layout_sizing_e2e_test.go:TestLayoutSizing_RealBrowserSavedUnicodeMeasurementsReachView` now saves repeated CJK + 👩‍💻 in both node and branch labels; requires multiline metrics within both maxWidths, taller persisted boxes matching measured lines, zero blocking real clipping-review findings, exact Reader/cache geometry and unchanged manifest/old revision. Required-browser run passed (21.851s); no production behavior changed.
+- R2.5 / folded-in: `fonts.ts:ensureBundledTextFonts` verifies exact contract, asset hashes, family/weight/style/range and loaded faces before `MeasureSurface.tsx:runMeasureJob` emits readiness. `fonts.test.ts` negatives cover unsupported sequences, fallback-family substitution, missing subsets, absent FontFaceSet, rejected loads and byte drift; all selected UI tests pass. Both license trees match; lock/coverage pins SC 5.3.1 and Emoji 5.3.2; `node --test scripts/test-font-coverage.mjs` passes 3/3. W2 retains the stated second-browser limitation.
+- Fresh commands: `go test ./domain/layout -run '^Test(Measurements_|MeasureRequestFor_|Sizing_|NodeSizes_|EdgeLabelSizes_|Run_.*(Measure|Timeout|Late|Cancel))' -count=1 -timeout=2m`; explicit coordinator happy/success/budget/error/context selection (0.461s); required-browser renderreview selection (41.452s); `npx vitest run src/render/MeasureSurface.test.tsx src/render/job.test.ts src/graph/arranged/fonts.test.ts --maxWorkers=1` (56/56). All completed, exit 0; no whole suites run. Grepped Measure/key/font entry points; no new exported configuration or collaborator.
+Recommend: approve single:11/review2 — all five failure checks have passing targeted evidence; the permanent long-ZWJ fixture closes escalated G35, and the unsupported saved-label probe reaches truthful failure, fallback and Retry.
 
-- [x] **`OnChildTerminal`'s own `queueRepo.SetQueued` failure branch — the
-  function's documented "best-effort" contract — was untested.** Focus area 19
-  (child-terminal wake), review 2. `domain/engine/spawn_wake.go`'s own
-  docstring states the wake "is deliberately VOID and best-effort. A missed
-  wake is recovered by `SpawnWaitReconciler` at the next startup; a wake that
-  fails must never fail the terminal transition that triggered it." `go tool
-  cover` over the full `TestOnChildTerminal`/`TestRunCompletion`/
-  `TestResumeFromWebhookWaitTimeout`/`TestCancelCascade` suite showed
-  `spawn_wake.go` at only 77.3% statement coverage, with the `SetQueued` error
-  branch (lines 68-74: log-and-return, no `NotifyCapacityFreed`) at 0 hits —
-  the existing `mockQueueRepo` (`domain/engine/engine_test.go`) had no way to
-  inject a `SetQueued` error at all. A regression that let a `SetQueued` error
-  propagate up through `failInstance`/`cancelAuthorized`/the run loop's
-  completion path (turning a best-effort wake failure into a fatal one for the
-  terminal transition that triggered it), or that called
-  `NotifyCapacityFreed` regardless of the error (misleading the queue into
-  thinking a parent that was never actually re-queued had capacity freed up),
-  would have shipped undetected. Added a `setQueuedErr` field to
-  `mockQueueRepo` and `TestOnChildTerminal_SetQueuedFailureIsSurfacedNotFatal`
-  (`domain/engine/spawn_wake_test.go`), asserting the call does not panic, the
-  parent stays `StateWaiting` (not desynced into `StateQueued` on a failed
-  write), and `NotifyCapacityFreed` is never called; confirmed it fails for the
-  right reason (`NotifyCapacityFreed` called once despite the injected error)
-  when the error check is temporarily replaced with a discarded `_ =`, then
-  confirmed it passes against the real code. Independently re-verified the
-  rest of area 19's checklist from source rather than trusting review 1's
-  write-up: re-derived the three-part match's three conjuncts each from their
-  own dedicated tests; confirmed via `git diff` against the branch point that
-  exactly three run-loop `SetFailed` call sites (panic recovery, workflow-parse
-  failure, empty-current-node failure) were converted to `failInstance`, and
-  that `OnChildTerminal` calls were added at exactly four sites — the run-loop
-  completion path, `failInstance`, `cancelAuthorized` (newly extracted from
-  `Cancel` by this feature), and `resumeFromWebhookWait` (review 1's fix) — all
-  four are exercised by a real call through the public API rooted at
-  `Engine.Trigger`/`Engine.Cancel`/`Engine.Resume`, not just direct
-  `OnChildTerminal` calls: `cmd/arbitron/spawn_wait_e2e_test.go`'s
-  `TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess` (run-loop
-  completion), `_FailedChildRoutesParentThroughFailure` (a node failure driving
-  `failInstance` through `handleNodeError`), and
-  `_CancelledChildRoutesParentThroughFailure` (`ds.eng.Cancel` on the CHILD
-  directly, proving `cancelAuthorized`'s own call site, not just the cascade's)
-  all drive through the real composition root; `resumeFromWebhookWait`'s own
-  call site is proven through `Engine.Resume` in
-  `TestResumeFromWebhookWaitTimeout_InvokesTheChildTerminalWake`. Confirmed
-  `RecoverCrashedInstances` (`engine.go:1664`, unchanged by this feature per
-  `git diff`) deliberately does NOT call the wake — it runs before
-  `SpawnWaitReconciler.Reconcile` in the startup order (area 16/21), which is
-  the substitute wake for exactly this path, so its own waiting parents are
-  picked up by `ListWaitingOnTerminalChild` instead. Left the two remaining
-  untested defensive branches (`ctx == nil`, and the `!child.State.IsTerminal()`
-  "called too early" guard, and the parent-`Get`-error branch) unfixed: no
-  known production caller can reach them today (all four call sites already
-  write the terminal state before calling the wake), and the `ctx == nil`
-  branch mirrors the same never-tested defensive pattern already established
-  pre-feature in `Trigger`/`TriggerWithDepartment` (noted when closing area 13);
-  logged as a residual, lower-priority coverage gap rather than fixed in this
-  pass to keep the pass to one issue. This closes review 2 approval for area
-  19 — both approvals for area 19 are now recorded.
+### Area 10 — single:10/review2 APPROVED by independent approver (2026-10-18, on 83e5f87)
+- `go build ./...`, `go vet`, full `go test ./domain/layout -count=1` green; `-race -run '^Test(Arrange_|RouteCost_)'` green.
+- G34 re-verified by hand: mutation (a) `arrange.go:Arrange` → `!bestCost.less(cost)` reddens only `TestArrange_EqualRouteCostsKeepEarliestPrefix`; mutation (b) `route.go:routeCost.less` crossings-first reddens only `TestRouteCost_LessPrioritizesContactsThenCrossings`. Both restored; tree clean.
+- R2.1/2.2/2.3/2.5 spot-rerun green (`TestBuildGraph_Errors`, `TestArrange_Errors`, `TestArrange_ConcurrentCallsKeepInputsAndResultsIndependent`, `TestRefine_*`, `TestRun_EarlyExhaustionWhenNothingCanChange`, `TestRouteChannel_TransitColumnsBreakCyclesWithoutDroppingHops`).
+- Remaining Area 10 items are non-blocking: G10 (escalated folded-in ruling), G33 (R1 wording escalation).
 
-- [x] **`Engine.Resume`'s webhook-timeout-expired-while-paused branch failed an
-  instance without calling the child-terminal wake — a fourth terminal-transition
-  call site the area 19 checklist's "three engine call sites" claim missed.**
-  Focus area 19 (child-terminal wake), review 1. This pre-dates the spawn
-  feature (identical at the branch point,
-  `64768283d2c32b64023801103c7aab2f5ea538d3:domain/engine/engine.go:1314`) — the
-  feature converted the run loop's three internal `SetFailed` call sites to go
-  through the new `failInstance` helper (confirmed via `git diff` against the
-  branch point: panic recovery, workflow-parse failure, and empty-current-node
-  failure, all now `e.failInstance(...)`, each of which calls
-  `e.OnChildTerminal`) and added the call directly in `cancelAuthorized`, but
-  never touched `resumeFromWebhookWait`'s own `e.instances.SetFailed` at
-  `engine.go:1358` (reached via `Engine.Resume`, itself reachable in production
-  from both `adapter/mcp/tools_instance.go:218` and
-  `adapter/http/instance_handler.go:512`) — the exact shape of gap this loop
-  keeps finding: a shared correctness guarantee proven at some call sites and
-  silently assumed at a sibling one three call sites away. Consequence: a
-  `wait_for_child` child instance that is paused mid-webhook-wait and resumed
-  after its timeout has already expired is failed via this path, but its
-  waiting parent is never re-queued — it hangs until the next full-process
-  restart's `SpawnWaitReconciler` pass instead of resuming immediately, same as
-  every other terminal-transition gap this loop has fixed for this feature.
-  Added `TestResumeFromWebhookWaitTimeout_InvokesTheChildTerminalWake`
-  (`domain/engine/spawn_wake_test.go`), reusing the `wakeFixture` scaffold
-  with a `StatePaused` child carrying an expired `WebhookToken`/`WaitingUntil`,
-  driven through the real `Engine.Resume(bgAdmin(), ...)` entry point (not
-  `OnChildTerminal` called directly, unlike every other test in this file, so
-  it proves the wiring at the actual call site); confirmed it fails for the
-  right reason (parent stays `waiting` instead of `queued`) before the fix,
-  then passes after adding `e.OnChildTerminal(context.Background(), instanceID)`
-  to `resumeFromWebhookWait` right after the `SetFailed` succeeds, mirroring
-  the `failInstance`/`cancelAuthorized` pattern. Independently re-verified the
-  rest of area 19's checklist: the three-part match
-  (waiting ∧ `CurrentNodeID`==`ParentNodeID` ∧ mode==wait_for_child) and its
-  best-effort/void posture are unchanged and covered by the existing
-  `spawn_wake_test.go` suite; also closed two previously-open gaps this same
-  review touches — confirmed `instances.Get` and `queueRepo.SetQueued`
-  (`adapter/sqlite/instance_repo.go:132`, `adapter/sqlite/queue_repo.go:76`)
-  read no context value at all (no identity/tenant/tracing lookup), so
-  `OnChildTerminal`'s `context.Background()` calls drop nothing load-bearing;
-  and confirmed `TestOnChildTerminal_NodeMismatchDoesNotWake` genuinely
-  exercises the real match logic — `mockInstanceRepo.Get`
-  (`domain/engine/engine_test.go:124`) returns instances verbatim by ID with no
-  `ParentNodeID`-based filtering, so the node-mismatch guard is proven in
-  `OnChildTerminal` itself, not pre-filtered away by the fake. While reviewing
-  this area, found a related but out-of-scope gap in `domain/queue/recovery.go`
-  (area 20's file, not area 19's) — logged separately under Open rather than
-  fixed here, to keep this pass to one issue. This closes review 1 approval for
-  area 19; review 2 remains open.
+### Area 10 — single:10/review2 G34 convergence assessment (2026-10-18)
+- Arrival: targeted arranger/graph/geometry/preflight/refinement/contract checks passed (1.293s), with no arrival failure against the supplied baseline. Read every Area 10 Files entry; production and approval boxes unchanged.
+- R2.1–2: `graph_test.go:TestBuildGraph_Errors`, `arrange_test.go:TestArrange_Errors/RejectsMalformedInputWithoutMutation`, `geometry_test.go:TestGeometry_ValidateRejects/ValidateContractFields/ValidateOptionsFields` cover typed nil/empty/dangling/duplicate/nonfinite rejection; existing single/self/nested/intersecting-loop, multiple-entry/disconnected, parallel-occurrence and Unicode fixtures pass. `TestArrange_Errors` rejects empty production measurements with `ErrMissingMeasurement`.
+- R2.3: `arrange_concurrency_test.go:TestArrange_ConcurrentCallsKeepInputsAndResultsIndependent` verifies byte-identical geometry/digests, immutable shared inputs and independent result storage; `go test -race ./domain/layout -run '^Test(Arrange_|RouteCost_LessPrioritizesContactsThenCrossings)' -count=1 -timeout=2m` passes (4.053s).
+- R2.4: `route_test.go:TestRouteCost_LessPrioritizesContactsThenCrossings` pins literal priority expectations; `arrange_test.go:TestArrange_EqualRouteCostsKeepEarliestPrefix` uses five nodes and two distinct prefixes, each with 0 contacts/6 crossings, and requires prefix-0's digest. Independent Go overlays changing `route.go:routeCost.less` to crossings-first or `arrange.go:Arrange` to later-wins-ties each fail the respective new test (exit 1); unchanged production passes. `TestRouteChannel_TransitColumnsBreakCyclesWithoutDroppingHops` retains every cyclic-precedence hop.
+- R2.5: `refine_test.go:TestRefine_CapsEventuallyStopRefinement/UnfixableCriteriaProveInability/FeedsArrangementGeometry`, `coordinator_search_test.go:TestRun_SearchPlateauThenBetterPrefix` and `coordinator_regression_test.go:TestRun_CappedPolicyStopsButOptionsOnlyPlateauDoesNot` pass; selected timeout/late-nil/cancellation tests preserve truthful failure and prior-best state.
+- Final targeted domain selection covering R2.1–5, sample geometry and contract checks passes (1.802s). `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestRefine_RealBrowserSavedBranchClippingReachesSink$' -count=1 -timeout=2m` passes (13.280s): actual clipping drives larger next-attempt boxes through saved/view/cache sinks without manifest mutation. All runs completed; no whole suite run.
+- Folded-in: `contract_test.go:TestDefaultContract_MatchesDashboardContractJSON` and zero-policy round trips pass; `rg -n 'margin|crossingSweeps|zero'` across both validators/tests and P3T1 confirms existing G10. G10 remains escalated/non-blocking per the independent approver; G33 is the other lens's wording issue.
+Recommend: approve single:10/review2 — all five failure checks have targeted passing evidence, and both G34 mutations now fail permanent regressions at the comparator and returned-geometry sinks.
 
-- [x] **Area 18 (awaited-spawn resumption short-circuit), review 2: independent
-  re-verification found no live gap.** Re-derived every checklist item from
-  source rather than trusting review 1's write-up. `go tool cover` over
-  `TestSpawnResume`-prefixed tests shows `resumeFromLink` at 100% statement
-  coverage. Confirmed the LINK-not-node-exec-status key by reading
-  `FindChildBySpawnNode` (`adapter/sqlite/instance_repo.go:693-712`) and its
-  own suite, including `TestFindChildBySpawnNode_MultipleChildrenReturnsTheNewest`
-  — which specifically defeats same-second `created_at` collisions with a
-  `rowid DESC` tie-break and documents that dropping the tie-break "would
-  silently make the executor's resumption short-circuit key on the WRONG
-  child" — and confirmed the fake used in the executor's own suite,
-  `fakeSpawnWaits`, honours all three key parts (parent, node, mode) rather
-  than collapsing them, so the mis-wake/wrong-mode guards in
-  `TestSpawnResume_SecondSpawnNodeMatchedIndependently` and
-  `_FireAndForgetLinkDoesNotSatisfyAwaitedLookup` are unfailable-if-broken by
-  construction, not by luck. Confirmed the still-active path (no re-spawn, no
-  re-transition) is exercised for all four non-terminal `instance.State`
-  values (`TestSpawnResume_ActiveChildReturnsToWaitingWithoutSpawning`) and
-  terminal routing — including cancelled-routes-to-failure — is proven both
-  against fakes and end-to-end through the real composition root
-  (`cmd/arbitron/spawn_wait_e2e_test.go`'s
-  `TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess`,
-  `_FailedChildRoutesParentThroughFailure`,
-  `_CancelledChildRoutesParentThroughFailure`). Confirmed review 1's
-  `childState`-across-all-outcomes fix
-  (`TestSpawnResume_ChildStateReflectsExactLinkStateAcrossAllOutcomes`) is
-  exhaustive over all seven `instance.State` values, matching
-  `domain/instance/instance.go`'s complete enumeration — no state was left
-  untested. Verified `TestSpawnResume_BackEdgeRevisitRoutesFromPreviousChild`
-  is not a redundant duplicate of the Completed-routes-success case despite
-  identical assertions: per `AGENTS.md:88`, the resumption short-circuit
-  genuinely cannot distinguish a wake re-entry from a back-edge revisit — they
-  are the identical code path by design — so the test correctly pins that
-  documented limitation as tested behaviour rather than fabricating a
-  distinct mechanism that does not exist. Confirmed
-  `SpawnWorkflowExecutor`/`resumeFromLink` has no separate construction site
-  outside the composition root already verified in area 16. No code change
-  was needed; this closes review 2 approval for area 18 — both approvals for
-  area 18 are now recorded.
+- [ ] **G33 [ESCALATION] (Area 10, plan wording; non-blocking under mission rule 6)** — Should R1.5's requirement that feature-pipeline/ralph-loop end `needs_attention` be updated to `passed` after G7 closed? `cmd/arbitron/layout_arrange_e2e_test.go:TestLayoutArrange_RealBrowserSavedSamplesReachView` now requires both to pass; independent required-browser execution passes, with nonempty findings/score provenance separately verified by `layout_preflight_e2e_test.go:TestLayoutPreflight_RealBrowserSavedFindingsAndScoreReachView`. Set aside the obsolete failure-status clause; no production defect is needed to satisfy this review.
 
-- [x] **`resumeFromLink`'s "childState in the output" claim was pinned for only
-  one of seven possible link states.** Focus area 18 (awaited-spawn resumption
-  short-circuit), review 1. `domain/engine/executor_spawn.go:183-184` writes
-  `output["childState"] = string(link.ChildState)` unconditionally, BEFORE the
-  terminal/still-active branch — so every resumption, terminal or not, must
-  carry the child's exact state in its output. But
-  `TestSpawnResume_ResultCarriesChildOutcome`
-  (`domain/engine/executor_spawn_resume_test.go`) only asserted this for a
-  `Completed` child; the sibling routing tests
-  (`TestSpawnResume_FailedChildRoutesFailure`,
-  `_CancelledChildRoutesFailure`) asserted only `OutputPort`, and the
-  still-active edge-case test
-  (`TestSpawnResume_ActiveChildReturnsToWaitingWithoutSpawning`) never
-  inspected `res.Output` at all — the same shape of gap fixed repeatedly
-  elsewhere in this loop: a claim proven at one call site and silently assumed
-  at every sibling one. A regression that moved the `childState` write inside
-  the terminal branch, or hard-coded it only for the success path, would have
-  shipped undetected — leaving the trace silently missing "how the child
-  ended" for a failed/cancelled/still-waiting resumption, exactly the
-  self-explanatory-trace guarantee the field's own comment promises. Added
-  `TestSpawnResume_ChildStateReflectsExactLinkStateAcrossAllOutcomes`, which
-  drives `resumeWith` across all seven `instance.State` values and asserts
-  `out["childState"]` equals the exact state given every time; confirmed it
-  fails for the right reason (`childState` absent from every case) when the
-  `output["childState"] = ...` line is temporarily removed, then confirmed it
-  passes against the real code. Independently reviewed the rest of area 18's
-  checklist from source: `executeWait` keys resumption on
-  `FindChildBySpawnNode`'s link, never on node-execution status
-  (`TestSpawnResume_BackEdgeRevisitRoutesFromPreviousChild` pins this as
-  tested behaviour, not an assumption); the still-active branch correctly
-  covers all four non-terminal states with no re-spawn and no re-transition
-  (`TestSpawnResume_ActiveChildReturnsToWaitingWithoutSpawning`); terminal
-  routing sends `Completed` to success and both `Failed` and `Cancelled` to
-  the SAME failure port, matching the spec's no-separate-cancellation-path
-  requirement, and is proven at the sink by the real composition root in
-  `cmd/arbitron/spawn_wait_e2e_test.go` (`TestSpawnWaitE2E_*RoutesParentThrough*`),
-  not just through fakes; the link key includes both node id and mode
-  (`TestSpawnResume_SecondSpawnNodeMatchedIndependently`,
-  `_FireAndForgetLinkDoesNotSatisfyAwaitedLookup`); `instance.ChildLink{...}`
-  is constructed only by the real `InstanceRepo.FindChildBySpawnNode`
-  (`adapter/sqlite/instance_repo.go:711`), grepped for all non-test call
-  sites; and the "attempt=1 written twice" shape (once by `executeWait` on
-  suspend, once by `executeWithRetry` on a terminal resume) is inherited,
-  pre-existing behaviour shared by every other wait-style executor
-  (`WebhookWaitExecutor` does the identical thing), not a gap this feature
-  introduced. This closes review 1 approval for area 18; review 2 remains
-  open.
+### Area 10 — single:10/review2 failure-lens assessment (2026-10-18)
+- Arrival: targeted `domain/layout` arranger/graph/geometry/preflight/refinement/sample/contract selection passed (2.125s); no arrival failures against the supplied baseline. Read every Area 10 Files entry; no production or approval-box changes.
+- R2.1: `graph_test.go:TestBuildGraph_Errors`, `arrange_test.go:TestArrange_Errors/RejectsMalformedInputWithoutMutation`, and `geometry_test.go:TestGeometry_ValidateRejects/ValidateContractFields/ValidateOptionsFields` pass nil/empty, dangling/duplicate IDs, non-finite values and typed structural rejection without input mutation.
+- R2.2: `arrange_test.go:TestArrange_SingleNode`, `SelfLoopsStayOnTheRightSide`, `NestedLoopsGetDistinctLanes`, `StressOccurrencePortsAndLabels/intersecting_loops`, `MultipleEntrypointsAndDisconnectedComponents`, `IdenticalParallelEdgesNeverMerge` and `LongUnicodeLabelsGrowBoxes` pass (all names prefixed `TestArrange_`).
+- R2.3: added `arrange_concurrency_test.go:TestArrange_ConcurrentCallsKeepInputsAndResultsIndependent`: eight simultaneous calls share fixed graph/measurements/options, produce identical JSON/digests, preserve manifest/graph/index/measurement inputs and return independent node/route/label storage. `go test -race ./domain/layout -run '^TestArrange_ConcurrentCallsKeepInputsAndResultsIndependent$' -count=1 -timeout=2m` passes (1.589s). Temporary Go overlays clearing `arrange.go:Arrange`'s `m.Items` or mutating `g.Nodes[0].Text` each make this test fail (exit 1); production files never changed.
+- R2.4: `arrange.go:Arrange` visits prefixes in order and retains only strict `routeCost.less` improvements (contacts, then crossings), preserving earlier ties. `TestArrange_SearchPrefixesCompareCompleteRoutes`, `TestOrderLayers_ExhaustiveSmallGraphs` and `route_test.go:TestRouteChannel_TransitColumnsBreakCyclesWithoutDroppingHops` pass; transit columns retain every hop instead of dropping cyclic precedence constraints.
+- R2.5: `refine_test.go:TestRefine_CapsEventuallyStopRefinement/UnfixableCriteriaProveInability/FeedsArrangementGeometry` and `coordinator_regression_test.go:TestRun_CappedPolicyStopsButOptionsOnlyPlateauDoesNot` pass. `coordinator_search_test.go:TestRun_SearchPlateauThenBetterPrefix/VisualOnlyBranchClippingGrowsSinkBoxes` verify the next candidate and bounded search; timeout/late-nil/cancellation/partial-render failure tests retain truthful failure and best-candidate state.
+- Verification: final targeted Area 10 domain selection (including the named ordering, geometry, refinement and failure tests) passes (1.868s); `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestRefine_RealBrowserSavedBranchClippingReachesSink$' -count=1 -timeout=2m` passes (14.509s), with real clipping, larger next-attempt boxes, saved result/view/cache agreement and unchanged manifest bytes. No whole suites run.
+- Folded-in: `contract_test.go:TestDefaultContract_MatchesDashboardContractJSON` and the Go zero-policy round trip pass; `rg -n 'margin|crossingSweeps|zero'` on both validators/tests and P3T1 confirms G10's contradictory requirement. G33 belongs to Review 1 and is not a reason to withhold this lens. G10 now names the exact contract ruling and coordinated edits needed; no further speculative fix this escalated pass.
+Recommend: no approval for single:10/review2 — executable R2.1–5 checks pass, but folded-in G10 still needs the explicit nonnegative-versus-positive margin/sweeps contract ruling and corresponding plan or validator alignment.
 
-- [x] **Area 17 (spawn executor — wait-for-child suspension), review 2: independent
-  re-verification found no live gap.** Re-derived every checklist item from
-  source rather than trusting review 1's write-up. Confirmed via `go tool
-  cover` (running the full `TestSpawn`-prefixed suite) that `Execute`,
-  `executeFireAndForget`, `executeWait`, `resumeFromLink`, `prepareAndSpawn`,
-  `spawnOutput`, and `assertSpawnBranchPorts` are all at 100% statement
-  coverage (a `TestSpawnWait`-only run shows `executeWait` at 95.5% because the
-  `link != nil` short-circuit belongs to area 18's own tests, not this area's).
-  Re-confirmed the ordering invariant (enqueue → node-exec record →
-  `UpdateState(waiting)` → `NotifyCapacityFreed`) is proven twice: once as a
-  synchronous call-order assertion against fakes
-  (`TestSpawnWait_OrderingInvariant_SpawnThenRecordThenWaitingThenNotify`) and
-  once end-to-end against the REAL `queue.Manager` with `perusercap: 1` — a
-  config under which the test would hang if the ordering broke
-  (`cmd/arbitron/spawn_wait_e2e_test.go`'s `bootWaitStack`/
-  `TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess` and siblings).
-  Confirmed `assertSpawnBranchPorts` scopes edges by `edge.Source == nodeID`
-  (no cross-node false positives) and is checked BEFORE `prepareAndSpawn`
-  (`TestSpawnWait_MissingFailurePort_FailsBeforeCreatingChild`,
-  `_MissingSuccessPort_...`, `_ParentLoadForBranchPortCheck_...`, each
-  asserting zero preparer calls / zero spawned children). Confirmed
-  `NewSpawnWorkflowExecutor` is constructed only at the real composition root
-  (`cmd/arbitron/main.go:894`, grepped for all non-test call sites). Confirmed
-  `queue.Manager.NotifyCapacityFreed`'s own `_ context.Context` parameter (it
-  fires its evaluation via `context.Background()` in a goroutine) is
-  deliberate fire-and-forget behavior, not a dropped-argument bug, and the
-  test double (`mockQueueManager`) matches this shape rather than silently
-  diverging from it. No code change was needed; this closes review 2 approval
-  for area 17 — both approvals for area 17 are now recorded.
+### Area 9 — single:9/review2 failure-lens assessment (2026-10-18, G4 follow-up)
+- Arrival: `go test ./domain/samples ./domain/workflow -run '^(TestSeed|TestRevisionStamper|TestCommitSource_.*Seed)' -count=1 -timeout=2m` passed (1.789s/2.338s); no new arrival failures versus the supplied config/dashboard baseline.
+- R2.1: `cmd/arbitron/sample_seed_durable_test.go:TestSeedSampleWorkflows_LedgerOnlyFailureResumesAfterRecovery` failed on the original code at the absent ledger after restart in BOTH acknowledgement and worker-recovery cases; now passes after source corruption, with unchanged tree/ID/token/time/terminal row and exactly one ledger line through repeated real-root restarts.
+- Fix: `domain/workflow/revision_stamper.go:EnsureStamped` reconstructs only a missing seed journal input from an exact durable acknowledgement, comparing destination/ID/reason/time/full manifest/retained positions; it never replaces existing prepared or conflicting evidence. `domain/layout/requester.go:AcknowledgedArrangement` reads the real SQLite row, and `seeder_revision.go:seedRevision` still requires the exact owner/SourceName/WorkflowID/revision publication.
+- New boundary evidence: `revision_stamper_test.go:TestRevisionStamperAcknowledgedSeedResume` passes 16 cases, including empty/missing/wrong input, deadline propagation, failed journal/receipt writes, prepared evidence preservation, alias isolation and exclusion of non-seed saves. The new root test goes red without the durable acknowledgement producer.
+- R2.2–5: the root selection below passes exact claim compensation, eight process-kill stages, foreign/orphan rejection with a continuing-boot log, supporting-file failure/failed rollback, receipt/enqueue outages and two-process commit-once. Existing `TestSeedRevisionOnceAndResume` covers concurrent seeders; no new exported configuration.
+- Folded/edges: `TestSampleSourceReadErrorClassification`, `TestSeedRevisionMalformedVersusInfrastructure`, empty-source/nil-ID fresh-seed tests, `TestMigrateFlatStore_NeverStampsOrJournals` and `TestLayoutE2E_LegacyReadsAndBackfillNeverStamp` pass. G31 remains a non-blocking policy escalation per the prior independent assessment; production retains its explicit infrastructure-aborts-pass contract.
+- Verification: arrival command rerun passed (1.159s/2.096s); `go test ./domain/layout -run '^(TestRequester|TestWorkerRecovery)' -count=1 -timeout=2m` passed (1.043s); filesystem classification passed (0.570s); `go test ./cmd/arbitron -run '^(TestSeedSampleWorkflows|TestLayoutE2E_SeedThroughRootAndRestart$|TestLayoutE2E_SeedDoesNotAdoptForeignOrphan$|TestLayoutE2E_LegacyReadsAndBackfillNeverStamp$|TestMigrateFlatStore_|TestFlatStoreMigration)' -count=1 -timeout=2m` passed (34.204s).
+- Race verification: `go test -race ./domain/samples ./domain/workflow ./cmd/arbitron -run '^(TestSeedRevisionOnceAndResume|TestRevisionStamperAcknowledgedSeedResume|TestSeedSampleWorkflows_LedgerOnlyFailureResumesAfterRecovery)$' -count=1 -timeout=2m` passed (1.626s/1.563s/3.075s). `rg -n 'AcknowledgedArrangement|NewRequester|NewRevisionStamper'` confirms the secondary port is fed by the real requester at `cmd/arbitron/layout_wiring.go:newLayoutStack` (122/128). No whole suites run.
+Recommend: approve single:9/review2 — R2.1–5 have targeted failure/restart/race evidence; G4 is closed, G31 remains separately escalated and non-blocking. Approval boxes untouched.
 
-- [x] **`executeWait`'s own `instances.Get` failure (the load before
-  `assertSpawnBranchPorts`) was untested.** Focus area 17 (spawn executor —
-  wait-for-child suspension), review 1. `domain/engine/executor_spawn.go:117-120`
-  loads the parent to check its snapshot's branch ports BEFORE any child is
-  created — a distinct call site from `prepareAndSpawn`'s own `instances.Get`
-  (already covered by `TestSpawnExecutor_ParentInstanceLoadFailure_Errors` for
-  the fire-and-forget path). `go tool cover` over `TestSpawnWait`-prefixed
-  tests showed this branch (lines 118-120) at 0% hits: no existing test in
-  `executor_spawn_wait_test.go` set `f.instances.getErr`. Added
-  `TestSpawnWait_ParentLoadForBranchPortCheck_FailsBeforeCreatingChild`
-  (`domain/engine/executor_spawn_wait_test.go`), asserting the node errors, no
-  child is spawned, and the preparer is never called (the load failure must
-  precede any LLM cost); confirmed it fails for the right reason (nil-pointer
-  panic dereferencing `parent.WorkflowSnapshot`) when the error check is
-  temporarily replaced with `_ = err; if false { ... }`, then confirmed it
-  passes against the real code. `go tool cover` afterward shows the branch at
-  1 hit and `executeWait`'s own-scope statements at 95.5% (the remaining
-  uncovered branch, the `link != nil` resumption early-return, belongs to area
-  18, not this area). Also re-confirmed the rest of area 17's checklist: the
-  full first-execution path (happy/success), both missing-port failures, the
-  preparation and waiting-transition failures, and the node-exec-write failure
-  (fixed below) together cover all five scenario categories; the ordering
-  invariant is proven against a REAL `queue.Manager` (not a mock) by
-  `cmd/arbitron/spawn_wait_e2e_test.go`'s `bootWaitStack` fixture; and
-  `SpawnWorkflowExecutor` is constructed only at the real composition root
-  (`cmd/arbitron/main.go:894`), confirmed by grepping for
-  `NewSpawnWorkflowExecutor` outside `*_test.go`. This closes review 1
-  approval for area 17; review 2 remains open.
+- **Area 9 independent approval — single:9/review2 (2026-10-18, reviewed ebcfefa): APPROVED, R2.1–R2.5; only Review 2 ticked.** verify-tests fields were unrendered again, so I treated confidence as low and re-ran everything myself.
+  Runs: `go build ./...` + `go vet` (4 pkgs) ok; `go test ./domain/samples ./domain/workflow ./domain/layout` ok; `cmd/arbitron -run '^(TestSeedSampleWorkflows|TestLayoutE2E_Seed|…LegacyReadsAndBackfillNeverStamp$|TestMigrateFlatStore_|TestFlatStoreMigration)'` ok (34.1s); `-race` on the new stamper/root tests + `TwoProcessesCommitOnce` ok.
+  R2.1 met: `revision_stamper.go:EnsureStamped` restores the seed journal input only from `requester.go:AcknowledgedArrangement` (real SQLite row) when there is no journal input and every field matches. Wired: `layout_wiring.go:newLayoutStack` passes `ls.requester` (an unwrapped `*layout.Requester`) as `StamperDeps.Requester`.
+  Mutation: forcing the reader branch false makes `sample_seed_durable_test.go:TestSeedSampleWorkflows_LedgerOnlyFailureResumesAfterRecovery` FAIL in both subtests ("a committed seed must finish its ledger append on restart"). Restored, it passes.
+  R2.2–5: re-ran, still green (same evidence as the 03ff1d8 record below).
+  - [ ] **G32 (non-blocking, Area 9):** `EnsureStamped` finds the reader through the type assertion `s.deps.Requester.(AcknowledgedArrangementReader)`. Wrapping the requester in a decorator later would silently turn off seed ledger resume. Consider an explicit `StamperDeps.Acknowledged` field.
+  G31 is still [ESCALATION] and does not block.
 
-- [x] **`nodeExecs.Create`'s failure inside `executeWait` had no test, unlike
-  the identical failure mode already pinned for the sibling
-  `WebhookWaitExecutor`.** Focus area 17 (spawn executor — wait-for-child
-  suspension); review 1 remains open (see the `executeWait` `instances.Get` gap
-  above). `domain/engine/executor_spawn.go:146-157` writes the wait path's own
-  node-execution record — deliberately, since `executeWithRetry` skips one on
-  the wait path — as part of the load-bearing ordering this focus area exists
-  to check: `enqueue → node-exec record → UpdateState(waiting) →
-  NotifyCapacityFreed`. `go tool cover` over `TestSpawnWait`-prefixed tests
-  showed the `Create` error branch (lines 155-157) at 0% hits, while
-  `TestWebhookWaitExecutor_NodeExecCreateFails_ReturnsError`
-  (`executor_webhook_test.go`) already pins the identical shape one call away
-  in the sibling wait executor — the same gap already fixed repeatedly in this
-  loop: a behavior proven at one call site and silently assumed at a sibling
-  one. A regression that swallowed this error (e.g. logging instead of
-  returning) would leave the child running with the parent stuck in
-  `StateRunning` forever, since neither `UpdateState(waiting)` nor
-  `NotifyCapacityFreed` would ever run afterward — undetected by any existing
-  test. Added
-  `TestSpawnWait_NodeExecutionRecordWriteFails_ChildSurvivesAndParentNotSuspended`
-  (`domain/engine/executor_spawn_wait_test.go`), asserting the child is not
-  rolled back and the parent remains `StateRunning`; confirmed it fails for the
-  right reason (no error returned) when the `Create` error check is temporarily
-  replaced with a discarded `_ =`, then confirmed it passes against the real
-  code. Also confirmed via the same coverage run that the whole-of-instance
-  per-user-capacity deadlock guard this focus area names ("ordering invariant")
-  is already proven against the REAL `queue.Manager` — not just a mock — by
-  `cmd/arbitron/spawn_wait_e2e_test.go`'s `bootWaitStack` fixture, which sets
-  `perusercap: 1` specifically so the test would hang if the ordering broke;
-  this was not a gap.
+- **Area 9 independent approval — single:9/review2 (2026-10-18, reviewed 03ff1d8): WITHHELD on R2.1 only; no box ticked.** verify-tests fields were never filled in, so I re-ran: `go build ./...` ok; `go test ./domain/samples ./domain/workflow` ok; `cmd/arbitron -run 'TestSeedSampleWorkflows|TestLayoutE2E_Seed*|LegacyReadsAndBackfillNeverStamp|TestMigrateFlatStore'` ok (34.4s).
+  R2.2 met: `commit_source.go:releaseSeedClaim` (exact ID/name/shared/no-owner, tree and publication absent) + `seeder_revision.go:seedRevision` journal-before-Register; `commit_source_seed_test.go:TestCommitSource_AbandonedSeedReleasesOnlyItsClaim`/`SeedClaimErrorRetainsRecoveryInput`; `KillAndRecover/identity` reseeds with a fresh ID and revision. R2.3–5 met (`TestLayoutE2E_SeedDoesNotAdoptForeignOrphan` now asserts the boot log, `TestSeedSampleWorkflows_DurableSupportingFileRollback`).
+  R2.1 FAILS (G4, verified in code): `seeder_revision.go:recordSeed` calls `stamper.Committed`, which runs `Abandon`→`Journal.Remove`, before `ledger.Record`. If Record fails, the next `EnsureStamped` returns ErrNotFound, and the fresh path refuses the existing tree, so the sample is never recorded in the ledger. This is an engineering fix, not a ruling: e.g. on ErrNotFound, treat an exact owner/SourceName/WorkflowID publication whose Revision equals the tree's SavedRevision and has a `layout_revisions` row as proof of commit and append only the ledger.
+  To tick next time: a real filesystem/SQLite test that injects a `Ledger.Record` failure after Committed, restarts the root, and asserts one ledger line, an unchanged revision/ID and exactly one row. It must go red against the current code.
+  G31 (folded-in read-error policy) stays [ESCALATION] under rule 6 and is NOT grounds to withhold.
 
-- [x] **`eng.SetSpawnLinks(instanceRepo)`'s composition-root wiring for the
-  cancel cascade was verified only by reading `main.go`, never by a real
-  composition-root test.** Focus area 16 review 2. `cascadeCancel`
-  (`domain/engine/cancel_cascade.go:47-49`) documents and implements a
-  load-bearing no-op: `if e.spawnLinks == nil { return }` — cancelling a parent
-  silently leaves every active child running, exactly the shape of gap this
-  loop has fixed repeatedly for other composition-root seams (the reconciler
-  ordering fixed in review 1, above). Every existing `cascadeCancel` test
-  (`domain/engine/cancel_cascade_test.go`) drives the cascade through a fake
-  `SpawnLinkRepository` that the test itself constructs and injects — none of
-  them prove `cmd/arbitron/main.go` actually calls `eng.SetSpawnLinks(instanceRepo)`
-  before a real cancel reaches it. A regression that dropped, reordered past a
-  point where `instanceRepo` isn't yet constructed, or conditionally skipped
-  that one call in `main.go` would have shipped undetected: every child of a
-  cancelled run would keep executing with no operator-visible error. Added
-  `TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoot`
-  (`cmd/arbitron/spawn_wait_e2e_test.go`), which boots the real composition
-  root via `initDomain`, triggers a `wait_for_child` parent so it suspends in
-  `StateWaiting` (a cancellable state) with a still-`StateRunning` child, calls
-  `ds.eng.Cancel` on the PARENT, and asserts the child is cascaded into
-  `StateCancelled` too. Confirmed it fails for the right reason (child never
-  reaches `StateCancelled`, 40s timeout) when `eng.SetSpawnLinks(instanceRepo)`
-  is temporarily commented out in `main.go`, then confirmed it passes against
-  the real code. Independently re-verified area 16's other six checklist items
-  by re-reading `main.go` and re-deriving each claim from source rather than
-  trusting review 1's write-up: `instanceEnricher.SetSpawnLinks` (:798),
-  `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)` (:815), the single
-  `identityResolver` value (a stateless struct of interfaces/maps, so
-  pass-by-value to three call sites is equivalent to sharing one instance)
-  (:880, :900, :911, :924), `NewChildInputPreparer` fed real `providerFactory`/
-  `profileResolver` (:893), `executors[workflow.NodeTypeSpawnWorkflow]`
-  assigned after `engine.NewEngine` onto the SAME map the engine holds by
-  reference (confirmed the map is built at :744 and passed to `NewEngine` at
-  :757, so the later assignment at :894 is visible to the engine — the
-  identical pattern already used for `timer_delay`/`webhook_wait`), and the
-  reconciler ordering re-confirmed passing via
-  `TestSpawnWaitE2E_RestartReconcilesParentAfterCrash`. This closes review 2
-  approval for area 16; both approvals for area 16 are now recorded.
+- **Area 8 independent approval — single:8/review2 (2026-10-18, reviewed 2501039): APPROVED, R2.1–R2.6; only Review 2 ticked.** verify-tests signals were unrendered, so treated as low confidence and re-run by the approver.
+  Runs: `ARBITRON_REQUIRE_BROWSER=1 go test ./adapter/renderreview` ok (441.7s, whole package); `go test ./domain/layout` ok; `cmd/arbitron` `-run TestLayoutRender_RealSurfaceReportDefectsReachSavedResults|..._ReadabilityReviewerSavedEvidenceReachesSinks|..._MissingBrowserFailsVisiblyAndIsRetryable` ok (119.7s).
+  R2.3 mutation: replaced `browser.go:capture` deferred `os.RemoveAll(dir)` → `browser_boundary_test.go:TestBrowserRenderer_RealSurfaceCrashMidCapturePreservesReviewedEvidence` FAILS "unpublished partial capture survived"; restored, it passes.
+  R2.1 `coordinator_evidence_test.go`/`HasRenderedEvidence`; R2.2 `reviewer_checks_test.go:TestReadabilityReviewer_VisualOnlyDefectsBlock`; R2.5 `assets_test.go:TestAssetServer_BindsLoopbackOnly/JobIsOneShot/RejectsForeignHostAndWrites`; R2.6 `reviewer_checks.go:31` fonts-not-resolved block.
+  Remaining (not this lens): G9 container Chromium [ESCALATION]; G22/G30 browser-startup/timing flakes stay open, not reproduced here.
 
-- [x] **The startup ordering "`spawnReconciler.Reconcile` runs AFTER
-  `RecoverCrashedInstances`" was proven only through fakes, never through the
-  real composition root.** Focus area 16 review 1. `cmd/arbitron/main.go`
-  reads all six of area 16's checklist items correctly on inspection:
-  `instanceEnricher.SetSpawnLinks(instanceRepo)` (:798), `eng.SetSpawnLinks(instanceRepo)`
-  (:841), `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)` (:815), a single
-  `identityResolver` value constructed once (:880) and passed to the spawn
-  executor (:900), the schedule evaluator (:911), and the schedule runner
-  (:924), `NewChildInputPreparer` constructed and fed into the spawn executor
-  (:893-903), and `executors[workflow.NodeTypeSpawnWorkflow]` assigned AFTER
-  `engine.NewEngine` via the shared-map-reference pattern also used for
-  `timer_delay`/`webhook_wait` (:894, confirmed exercised end-to-end by
-  `TestSpawnE2E_FireAndForgetCreatesLinkedChildThroughCompositionRoot`,
-  `cmd/arbitron/spawn_e2e_test.go`). The one claim with no composition-root
-  test at all was the ordering comment at :1047 ("ORDERING IS SIGNIFICANT:
-  this runs AFTER RecoverCrashedInstances... so their parents resume through
-  the failure port in this same startup pass instead of hanging until the
-  next restart") — `domain/engine/spawn_reconciler_test.go`'s
-  `TestSpawnWaitReconciler_ResumesParentOfACrashedChildAfterRecovery` proves
-  the ordering DEPENDENCY (call `RecoverCrashedInstances` then `Reconcile` on
-  a shared fixture) but never proves `main.go` itself calls them in that
-  order at a real restart — a regression that reordered, dropped, or
-  conditionally skipped the reconciler call in `main.go` (the exact shape of
-  every prior composition-root gap this loop has fixed) would have shipped
-  undetected. Added `TestSpawnWaitE2E_RestartReconcilesParentAfterCrash`
-  (`cmd/arbitron/spawn_wait_e2e_test.go`), which boots the real composition
-  root via `initDomain`, triggers a `wait_for_child` parent, captures its
-  child mid-flight (still `StateRunning`, asleep), severs the database
-  out from under the live process to simulate a hard crash (no graceful
-  `Shutdown`/drain), then calls `initDomain` a SECOND time against the SAME
-  database file — the real restart path — and asserts the parent, which
-  nothing else in the system would ever wake, resumes through the failure
-  branch in this second boot. Confirmed it fails for the right reason (parent
-  never reaches `StateCompleted`, 40s timeout) when the reconciler call in
-  `main.go` is temporarily wrapped in `if false { ... }`, then confirmed it
-  passes against the real code. This closes review 1 approval for area 16;
-  review 2 remains open.
+### Area 8 — single:8/review2 failure-lens assessment (2026-10-18)
+- Arrival: browser-required `./adapter/renderreview` selection (asset server, queued cancellation/launch deadline, capture cancellation, between-call crash/relaunch, concurrent tabs, malformed reports, evidence identity/files and visual defects) passed (87.293s); `./domain/layout` evidence/stale-rendering/reviewer-error/late-return selection passed (1.154s). No arrival failure in these targets; supplied unrelated baseline failures untouched.
+- R2.1: `domain/layout/coordinator.go:HasRenderedEvidence/evidenceProblem` rejects nil/partial/digest/contract/scale/coverage evidence; `TestHasRenderedEvidence`, `TestRun_EvidenceMustMatchTheCandidate`, `TestRun_StaleRenderingCannotPassEvenWithTrustingReviewer`, `TestRun_ReviewerErrorNeverPasses`, `TestRun_LateNilErrorCannotPass` pass. `cmd/arbitron/layout_reviewer_e2e_test.go:TestLayoutRender_ReadabilityReviewerSavedEvidenceReachesSinks` verifies missing tile, hash mismatch and stale revision against real DOM/PNGs, SQLite and query sinks.
+- R2.2: `layout_surface_report_e2e_test.go:TestLayoutRender_RealSurfaceReportDefectsReachSavedResults` passes baseline and eight actual DOM/CSS defects through persisted findings; `reviewer_browser_test.go:TestReadabilityReviewer_RealBrowser_CatchesVisualOnlyClipping` proves clean geometry preflight cannot hide clipping; `TestReviewCapture_RequiresVisibleFeatures` rejects missing route/arrow/glyph ink and filled crossing gaps; merged-destination and missing-branch checks pass.
+- R2.3: new `browser_boundary_test.go:TestBrowserRenderer_RealSurfaceCrashMidCapturePreservesReviewedEvidence` passes (22.58s; final 18.740s): same-revision/attempt crash after overview, `StageRendering`, no review, partial directory removed, prior referenced bytes preserved, new browser/new paths and real reviewed recovery. A temporary Go overlay disabling only `browser.go:capture` cleanup FAILS at "unpublished partial capture survived" (14.26s); no production mutation retained. Existing capture-cancellation, launch-failure and surface-timeout tests pass. Initial fixture setup produced only four 128px tiles; 64px tiles provide the required multi-tile interruption window without changing deadlines/assertions.
+- R2.4/5: `browser_boundary_test.go:TestBrowserRenderer_CaptureIsImmutableAcrossRetry` passes simultaneous captures from two renderers over the same revision/attempt and preserves all earlier bytes; `browser_test.go:TestBrowserRenderer_ConcurrentCallsUseSeparateTabs` and `assets_test.go:TestAssetServer_*` pass. `ArrangedGraph.dom.test.tsx` proves same-ordinal marker namespaces survive peer unmount; `browser.go:runJob` owns a fresh tab/token per call and `assets.go:serveJob` atomically consumes GET under its mutex, checks exact loopback Host and rejects writes.
+- R2.6/folded checks: `surface_boundary_test.go:TestBrowserRenderer_RealSurfaceRejectsMissingFontAndUnsupportedGlyph` / `TestBrowserRenderer_RealSurfaceRejectsMissingRenderSubset` and `reviewer_checks_test.go:TestReadabilityReviewer_VisualOnlyDefectsBlock` pass; missing real font assets cannot yield review. `TestLayoutBuild_*` and `TestNewLayoutRenderReviewer_RealBrowserNoSandboxIsFed` pass. `rg -n 'BrowserNoSandbox|NewRenderRequest|NewReadabilityReviewer|NewBrowserRenderer' cmd/arbitron adapter/config domain/layout -g '*.go' -g '!**/*_test.go'` plus `adapter/config/loader.go:39` confirms existing real collaborators and sandbox=false default; no new exported collaborator/config. G9 remains open as the other lens's container packaging gap.
+- Final scoped verification: browser-required `./cmd/arbitron` render-report/reviewer-evidence/missing-browser/build/sandbox selection passed (144.156s); browser-required `./adapter/renderreview` concurrent-immutable/timeout/launch/font/capture/clipping selection passed (56.054s); normal new crash test passed again after the overlay control. `npx vitest run src/render/RenderSurface.test.tsx src/render/report.test.ts src/render/job.test.ts src/graph/arranged/ArrangedGraph.dom.test.tsx --maxWorkers=1` passed 67/67 (four files). `git diff --check` clean; no whole suites or dashboard rebuild claimed (no source changes).
+Recommend: approve single:8/review2 — all six failure checks have completed targeted evidence; the new real-Chrome mid-capture fixture fails when production cleanup is removed and passes with preserved prior evidence and rendering-stage failure/recovery. Approval boxes untouched.
 
-- [x] **`Engine.Spawn`'s inherited archived-workflow refusal was never exercised
-  through `Spawn` itself.** Focus area 15 review 2. `Engine.Spawn`
-  (`domain/engine/engine_spawn.go:52-69`) is deliberately thin: it derives a
-  context carrying the link and delegates entirely to `TriggerWithDepartment`,
-  whose docstring states every one of its behaviours — including refusing an
-  archived workflow (`engine.go:330-348`) — is "inherited rather than
-  reimplemented" so no owner-override refactor of the trigger path is needed.
-  Design Phase 3's own testing strategy lists "the child workflow is archived
-  → node fails" as a required **failure**-category case for the spawn path.
-  But every existing archived-refusal test
-  (`TestTrigger_Archived_Refused`/`_NotArchived_Succeeds`/
-  `_NotArchivedResolver_NeverBlocks`/`_IsArchivedError_FailsClosed`,
-  `domain/engine/engine_archived_trigger_test.go`) drives the check through
-  `Trigger`, never through `Spawn` — the exact shape of gap already fixed
-  repeatedly in this loop (areas 12, 13, 14): a shared helper's behavior
-  proven at one call site and silently assumed at a sibling one that reaches
-  it one line away through identical delegation. Confirmed today's code has
-  no live bug — `Spawn` inherits the check for free by construction — but an
-  untested inheritance claim is exactly the gap this loop exists to close,
-  and a future refactor that gave `Spawn` its own bypass of
-  `TriggerWithDepartment`, or reordered the archive check past instance
-  creation, would ship undetected. Added
-  `TestEngineSpawn_ArchivedChildWorkflow_Refused`
-  (`domain/engine/engine_spawn_test.go`), reusing the existing
-  `spawnerFixture`/`archiveResolver` fixtures, asserting `Spawn` returns
-  `workflow.ErrArchived` and creates no instance for an archived child
-  workflow; confirmed it fails for the right reason (`nil` error) when the
-  archived-check branch in `TriggerWithDepartment` is temporarily neutered
-  (`if false && e.resolver != nil`), then confirmed it passes against the
-  real code. Independently re-verified the rest of area 15's checklist:
-  `go tool cover` over `TestSpawn`-prefixed tests shows `Execute`,
-  `executeFireAndForget`, `prepareAndSpawn`, `spawnOutput`, and
-  `assertSpawnBranchPorts` at 100% statement coverage (the wait-mode branch
-  of `Execute` is covered by area 17/18's own `TestSpawnWait_*` suite, not
-  this scope); every design-phase-3 testing-strategy item (happy path, owner
-  inheritance + departments, priority inheritance, guidance read+substitute,
-  no-child-on-preparation-failure, invisible/missing child workflow,
-  identity-resolution failure with no fallback, instance-load failure, enqueue
-  failure surfaced, zero-declared-inputs edge case, unrecognized-snapshot-mode
-  edge case, department-less owner, retry-creates-second-child, and
-  grandchild-links-to-immediate-parent) is present and passing in
-  `executor_spawn_test.go`; the executor is constructed only at the real
-  composition root (`cmd/arbitron/main.go:894-903`) with all eight
-  collaborators real, non-nil, non-hardcoded values; and `ownerFromContext`'s
-  use for the parent's OWN guidance-template read (as opposed to the
-  reconstructed owner identity used for `ChildInputs`/`Spawn`) is the correct,
-  pre-existing pattern shared by every other file-reading executor
-  (`executor_llm.go`, `executor_agent.go`, `executor_interactive.go`), not a
-  gap. This closes review 2 approval for area 15; both approvals for area 15
-  are now recorded.
+- **Area 8 independent approval — single:8/review1 (2026-10-18, reviewed 3cb07f0): APPROVED, R1.1–R1.6; only Review 1 ticked.**
+  R1.1–2: `cmd/arbitron/layout_wiring.go:newLayoutStack` reaches the sole production `newLayoutRenderReviewer` factory with real embedded assets/config; `layout_render_wiring_test.go:TestNewLayoutRenderReviewer_InstallsTheBrowserAdapter` / `TestNewLayoutRenderReviewer_BrokenBuildFailsBoot` and `layout_render_e2e_test.go:TestLayoutRender_MissingBrowserFailsVisiblyAndIsRetryable` passed.
+  R1.3–4: `domain/layout/coordinator.go:Coordinator.Run` derives types from captured manifest nodes; `adapter/renderreview/browser.go:renderJobDocument` forwards them. `dashboard/src/render/RenderSurface.tsx:runRenderJob` uses the same ArrangedGraph imported by both routes, completes runtime probes, then publishes ready for capture.
+  R1.5: `adapter/renderreview/reviewer.go:loadArtifact` opens, hashes and PNG-decodes overview/tiles; `reviewer_capture.go:checkCapture` inspects their pixels; `domain/layout/coordinator.go:HasRenderedEvidence` / `tileUnionCovers` require complete zero-origin canvas coverage.
+  R1.6: `cmd/arbitron/layout_arrange_e2e_test.go:TestLayoutArrange_RealBrowserSavedSamplesReachView` passed with pr-review, feature-pipeline and ralph-loop REQUIRED to reach passed within five attempts, checking SQLite results, Reader, cache and artifact bytes. Real-browser coordinator acceptance tests also passed; review thresholds remain unchanged.
+  Five categories demonstrated: happy/success above; failure `cmd/arbitron/layout_surface_report_e2e_test.go:TestLayoutRender_RealSurfaceReportDefectsReachSavedResults`; error `adapter/renderreview/reviewer_test.go:TestReadabilityReviewer_UnreadableArtifactsAreAnError`; edge `browser_boundary_test.go:TestBrowserRenderer_LargeCanvasOverviewAndTiles` (all passed).
+  Load-bearing producer control: a throwaway Go overlay emptying `Coordinator.Run` node types made `TestLayoutRender_RealBrowserPRReview` exit 1 at rendering (missing/mismatched node type); the unmodified root selection exited 0. `cmd/arbitron/layout_render_ports_e2e_test.go:TestRenderPorts_RealBrowserSavedReportReachesSink` passed complete/omitted-report controls through real DOM/PNGs and persisted sinks (22.275s).
+  Fresh checks: browser-required root wiring/build/Render/Arrange/needs-attention selection exited 0 (326.640s); full `ARBITRON_REQUIRE_BROWSER=1 go test ./adapter/renderreview ./domain/layout -count=1 -timeout=15m` exited 0 (355.478s / 5.708s); `npx tsc --noEmit` and full serial Vitest passed (70 files, 1037 tests). Supplied measurement fields were unexpanded; no baseline comparison is claimed beyond this freshly green scope.
+  Folded checks: `adapter/dashboard/embed.go:Assets` embeds render.html; `cmd/arbitron/layout_build_test.go:TestLayoutBuild_MakeAllRequiresFreshAssetsAndBrowser` / `TestLayoutBuild_CIRequiresTheGate` passed; sandbox defaults false (`adapter/config/loader.go:defaults`) and `TestNewLayoutRenderReviewer_RealBrowserNoSandboxIsFed` passed both controls. Dockerfile still lacks Chromium (G9); container deployment remains separate from the demonstrated R1 paths.
 
-- [x] **`fakeChildSpawner.ChildInputs` ignored `ctx`, so no test proved the
-  executor passes the reconstructed OWNER identity — not the ambient caller
-  identity — into `ChildInputs`.** Focus area 15 review 1.
-  `domain/engine/executor_spawn.go:219-223` (`prepareAndSpawn`) builds
-  `childCtx := identity.WithIdentity(ctx, ownerIdentity)` and calls
-  `e.spawner.ChildInputs(childCtx, ...)` — and production's
-  `Engine.ChildInputs` (`domain/engine/engine_spawn.go:24-37`) genuinely
-  depends on that context: it derives the owner via `triggerOwner(ctx, ...)`
-  and gates the department-visibility read via
-  `e.sharedVisibilityFilter(ctx)`, exactly like the trigger path. But
-  `executor_spawn_test.go`'s `fakeChildSpawner.ChildInputs` had signature
-  `ChildInputs(_ context.Context, workflowName string)` — the identity
-  parameter was discarded outright — so a regression that passed the raw
-  incoming `ctx` (the caller's own identity, e.g. an intruder admin triggering
-  the parent) instead of `childCtx` to `spawner.ChildInputs` would have shipped
-  undetected: `TestSpawnExecutor_ChildOwnerIsParentOwnerNotAmbientIdentity`
-  only inspects the identity that reaches `Spawn`, never the one that reaches
-  `ChildInputs`, and no other test in the suite calls `ChildInputs` through the
-  executor with a distinguishable ambient identity. The consequence of such a
-  regression: a spawn node could silently read a DIFFERENT owner's
-  department-scoped child-workflow visibility than the one it will actually
-  spawn under, an existence-leak/authorization-narrowing bug in the same shape
-  already fixed repeatedly in this loop (areas 12, 13, 14) — a shared contract
-  proven at one call site (`Spawn`) and silently assumed at a sibling one
-  (`ChildInputs`) despite both being fed by the SAME `childCtx` value one line
-  apart. Extended `fakeChildSpawner` with an `inputsIdentity
-  []identity.Identity` field, recording `identity.FromContext(ctx)` on every
-  `ChildInputs` call (`domain/engine/executor_spawn_test.go`), and added
-  `TestSpawnExecutor_ChildInputsCallCarriesOwnerIdentityNotAmbient`, which runs
-  the executor with an intruder identity in the ambient context and asserts
-  `ChildInputs` was called with the PARENT OWNER's identity, not the
-  intruder's; confirmed it fails for the right reason (asserts the intruder's
-  id where the owner's was expected) when `childCtx` is temporarily replaced
-  with the raw `ctx` at the `ChildInputs` call site, then confirmed it passes
-  against the real code. Reviewed the rest of area 15's checklist
-  independently: `Execute`'s mode re-check against the snapshot is fully
-  covered (`TestSpawnExecutor_UnrecognizedSnapshotMode_Fails`,
-  `_EmptySnapshotMode_Fails`); `prepareAndSpawn`'s ordering (parent load →
-  identity → child inputs → guidance read+`variable.Resolve` → prepare →
-  spawn) is enforced by Go's own sequential control flow and pinned end-to-end
-  by the existing failure/error-category tests (a failure at any stage leaves
-  `spawner.spawned` empty); `go tool cover` shows
-  `executeFireAndForget`/`prepareAndSpawn`/`spawnOutput` at 100% statement
-  coverage; and the executor is constructed only at the real composition root
-  (`cmd/arbitron/main.go:894-903`) with no `nil`/hardcoded collaborator. This
-  closes review 1 approval for area 15; review 2 remains open.
+- **[ESCALATION] Area 8 scope question (2026-10-18) — RESOLVED:** R1.6 stayed in Area 8 and is now met (G7 closed; both complex samples pass through the real root).
+- **Area 8 independent approval — single:8/review1 (2026-10-18, reviewed e9464af): WITHHELD, R1.6.** No status box changed; HEAD adds only an escalation note, and the named complex-sample success path remains absent (G7).
+  R1.1–2: `cmd/arbitron/layout_wiring.go:newLayoutStack` installs the sole production factory `newLayoutRenderReviewer`, feeding embedded assets and config to the browser/reviewer; `TestNewLayoutRenderReviewer_*` and `layout_render_e2e_test.go:TestLayoutRender_MissingBrowserFailsVisiblyAndIsRetryable` pass.
+  R1.3–4: `domain/layout/coordinator.go:Coordinator.Run` derives raw types from `Job.Manifest`; `adapter/renderreview/browser.go:renderJobDocument` forwards them. `dashboard/src/render/RenderSurface.tsx:runRenderJob` probes runtime states before ready/capture and imports the same `ArrangedGraph` as both routes.
+  R1.5: PNG decoding is actually in `adapter/renderreview/reviewer.go:loadArtifact` (not reviewer_capture.go); `reviewer_capture.go:checkCapture` inspects pixels and `domain/layout/coordinator.go:HasRenderedEvidence` calls `tileUnionCovers` for the zero-origin canvas.
+  R1.6: fresh browser-required root command below exits 0 (129.887s), but `cmd/arbitron/layout_arrange_e2e_test.go:TestLayoutArrange_RealBrowserSavedSamplesReachView` permits `needs_attention`; both complex samples take that branch with limit 5. Feature-pipeline retains missing edge-49 branch ink, ambiguous labels 31/34 and crossings; ralph-loop retains crossings [37,20] and [37,38]. The green provenance test does not establish the required pass.
+  Command: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^(TestNewLayoutRenderReviewer_.*|TestLayoutBuild_.*|TestLayoutRender_RealBrowserPRReview|TestLayoutRender_MissingBrowserFailsVisiblyAndIsRetryable|TestLayoutArrange_RealBrowserSavedSamplesReachView)$' -count=1 -timeout=8m -v`.
+  Fresh passing input controls: `cmd/arbitron/layout_render_ports_e2e_test.go:TestRenderPorts_RealBrowserSavedReportReachesSink` (11.435s; genuine browser/reviewer, complete versus omitted report); targeted coordinator/provenance/evidence/request/tile/reviewer tests; `npx tsc --noEmit`; `npx vitest run src/render src/graph/arranged --maxWorkers=1` (382/382). Measurement placeholders supplied no baseline comparison; initial parallel dashboard timeout is recorded separately as G28.
+  Folded checks: embedded render.html present; `cmd/arbitron/layout_build_test.go:TestLayoutBuild_MakeAllRequiresFreshAssetsAndBrowser` / `TestLayoutBuild_CIRequiresTheGate` pass; sandbox defaults false (`adapter/config/loader.go:defaults`) and the real-browser flag control passes. `Dockerfile` still omits Chromium (G9); no container launch claim.
+  Next: fix routing/label placement and crossing presentation (`domain/layout/route.go`, `dashboard/src/graph/arranged/routedPath.ts:buildRoutedPath`), then demonstrate BOTH named samples reach `passed` within five attempts through the real root and persisted sinks, with unchanged review thresholds. This finite R1.6 gate, not exhaustion of a defect family or a Review 2 concern, is the withholding reason.
+- **Area 8 rescue pass — single:8/review1 (2026-10-18): G7 crossing half fixed; ralph-loop now passes.** Every failing crossing in both samples had a dashed loop return as one stroke (all forward/forward crossings passed). With the `6 4` dash, `report.ts:collectCrossings` could never see 11px of continuous over ink, and an under gap's banks fell in dash holes at some phases. Fix: `routedPath.ts:buildRoutedPath` restarts a loop return's dash (same-point `M`) one dash before each gap and in dash steps across each over crossing. `buildArrangedFlow.ts` feeds `overs` and `RoutedEdge.tsx` feeds the dash. `report.ts:strokeAt` and `reviewer_capture.go:checkCapture` reset phase at every subpath, and `reviewer_checks.go:expectedSegments` mirrors the policy. A headless Chrome probe confirmed a same-point `M` restarts the dash, and the pixel corridor check agrees. Thresholds are unchanged.
+  Red→green: `adapter/renderreview/reviewer_browser_test.go:TestReadabilityReviewer_RealBrowser_DashedLoopCrossings` (over: `OverContinuous:false`; under: `UnderGapVisible:false` before the fix) and `TestReadabilityReviewer_RealBrowser_RalphLoopPassesThroughTheCoordinator` (needs_attention after 5 before; passes now). Unit tests: `reviewer_checks_test.go:TestExpectedSegments_DashRestartsMirrorTheRenderer`, `routedPath.test.ts` `dashed restarts`, `RoutedEdge.test.tsx`, `buildArrangedFlow.test.ts`, `ArrangedGraph.test.tsx` (overs reach the leaf). Real-browser fixtures were regenerated (`ARBITRON_UPDATE_RENDER_FIXTURES=1`). `cmd/arbitron/layout_surfaces_e2e_test.go:surfacePath` now models the restarts. The dist was rebuilt with `npm run build` and the copy step from `make ui`, without `npm ci`.
+  Still open for R1.6: feature-pipeline remains `needs_attention` on three label findings in every attempt: edge 49 `branch text ink is absent from captured tiles`, and edge 31 / edge 34 `label is closer to edge 29 / 33`. These are label placement in `domain/layout/route.go:route` (the label box is anchored at `route.Points[0].X + LabelGap`), not crossings.
 
-- [x] **`sharedVisibilityFilter`'s error-propagation branch was only pinned
-  through `Trigger`, not through `ChildInputs`.** Focus area 14 review 2.
-  `sharedVisibilityFilter`'s docstring and review 1's fix establish that
-  `Trigger`/`TriggerWithDepartment` and `ChildInputs` must share the identical
-  gate so "a spawn node can never reach a workflow the same caller could not
-  trigger directly" — and area 13's prior passes already pinned the
-  not-found/CanSeePublication branches for `ChildInputs` via
-  `TestEngineChildInputs_DepartmentWorkflow_HiddenFromOutsider`/
-  `_AllowedForMember`. But the `PublicationOf` **error**-propagation branch
-  (`domain/engine/engine.go:290-292`, `return false, err`) was pinned only via
-  `TestEngine_Trigger_PublicationLookupError_FailsClosed`, which drives it
-  through `Trigger`. `ChildInputs` calls its OWN `e.sharedVisibilityFilter(ctx)`
-  at `domain/engine/engine_spawn.go:32` — same shared logic, a genuinely
-  distinct call site — and this is exactly the shape of gap already fixed
-  repeatedly in this loop (areas 12, 13): a shared helper's behavior proven at
-  one call site and silently assumed at a sibling one. A regression that
-  swallowed the `PublicationOf` error only along the `ChildInputs` path (e.g. a
-  future refactor that built ChildInputs its own ad hoc filter instead of
-  reusing `sharedVisibilityFilter`, or dropped the error check on just that
-  call site) would let a spawn node's child-workflow lookup silently treat a
-  lookup outage as "unpublished ⇒ open" instead of failing closed — undetected
-  by any existing test, since none drove a `PublicationOf` error through
-  `ChildInputs`. Added `TestEngineChildInputs_PublicationLookupError_FailsClosed`
-  (`domain/engine/engine_spawn_test.go`), mirroring
-  `TestEngine_Trigger_PublicationLookupError_FailsClosed`'s fixture shape but
-  calling `ChildInputs` instead of `Trigger`; confirmed it fails for the right
-  reason (no error returned) when the error branch is temporarily changed to
-  `return true, nil`, then confirmed it passes against the real code. Also
-  independently re-verified the rest of area 14's checklist by reading
-  `TriggerWithDepartment` end to end again: `WithSpawnLink` has exactly one
-  production caller (`Engine.Spawn`, `domain/engine/engine_spawn.go:63`), which
-  rejects an invalid link BEFORE ever writing it to context, so the
-  incomplete-link-ignored branch inside `TriggerWithDepartment` is a genuine
-  defensive guard (tested via `TestTrigger_PartialSpawnLinkIsNotStamped`) rather
-  than a load-bearing production path; confirmed via `go tool cover` that the
-  entire link-stamping block (`engine.go:448-457`) is fully exercised; traced
-  that the run-loop context (`runCtx` in `Engine.run`, derived fresh from
-  `context.Background()`) never carries a parent's `Origin` or `SpawnLink`
-  forward into a child's own node executions, so nested spawns cannot leak a
-  grandparent's link (confirmed by `TestEngineSpawn_GrandchildLinksToItsOwnParent`
-  plus direct code reading); and confirmed the single struct literal claim
-  still holds (`inst := &instance.Instance{...}` then one `Create` call, no
-  interim mutation). This closes review 2 approval for area 14; both approvals
-  for area 14 are now recorded.
+Recommend: no approval for area 8 — R1.6 still needs feature-pipeline to reach `passed`. ralph-loop now passes (`reviewer_browser_test.go:TestReadabilityReviewer_RealBrowser_RalphLoopPassesThroughTheCoordinator`), and every dashed-crossing finding is gone (`TestReadabilityReviewer_RealBrowser_DashedLoopCrossings` red→green). Feature-pipeline's three label findings (G7: edge 49 ink, labels 31/34) remain. R1.1–R1.5 are unchanged and their root tests pass.
 
-- [x] **`sharedVisibilityFilter`'s own error and not-found branches were never
-  exercised through the real closure.** Focus area 14 review 1.
-  `domain/engine/engine.go:282-298` is a pure code-move extraction of logic
-  that predates this feature (confirmed by diffing against
-  `64768283d2c32b64023801103c7aab2f5ea538d3:domain/engine/engine.go`, which
-  has the identical inline closure inside `TriggerWithDepartment`) — but the
-  extraction now makes this closure shared by `ChildInputs`, a NEW caller this
-  feature adds. Confirmed via `go test -coverprofile` over the whole
-  `domain/engine` suite that two of its three branches had 0 hits: the
-  `pubs.PublicationOf` error path (`return false, err`) and the not-found path
-  (`return true, nil // unpublished shared folder ⇒ open`) — every existing
-  test that exercises gating at all (`TestEngine_Trigger_DepartmentWorkflow_*`)
-  registers a `Publication` for the workflow name it triggers, so only the
-  `CanSeePublication` branch was ever reached. `workflow.LoadVisibleFiltered`'s
-  own suite tests a filter-returns-error contract generically with a fake
-  filter function, which is a different thing from the engine's actual
-  `PublicationOf`-backed closure ever being driven down either path. Traced the
-  consequence of each: `LoadVisibleFiltered` (`domain/workflow/resolve.go`)
-  propagates a filter error immediately (fail-closed, correct) and treats a
-  `false` result as "absent, try next scope" (never leaks existence) — so
-  today's behavior is correct, but a regression that swallowed the
-  `PublicationOf` error (fail-open) or inverted the not-found branch (hiding
-  every unpublished shared workflow, including newly-spawnable children) would
-  have shipped undetected on both the trigger AND the spawn path. Extended
-  `fakePubLookup` (`domain/engine/engine_trigger_visibility_test.go`) with an
-  `errs map[string]error` field, and added
-  `TestEngine_Trigger_UnpublishedSharedWorkflow_VisibleWithIdentity` (a shared
-  workflow with a configured publisher lookup but no publication row must
-  remain visible) and `TestEngine_Trigger_PublicationLookupError_FailsClosed`
-  (a lookup error must propagate, not be swallowed); confirmed each fails for
-  the right reason when its branch is temporarily neutered (not-found forced
-  to `false`; error forced to `true, nil`), then confirmed both pass against
-  the real code. Also reviewed the rest of area 14's checklist by reading
-  `TriggerWithDepartment` end to end: the spawn link is read from
-  `instance.SpawnLinkFromContext` and stamped into the SAME `Instance` struct
-  literal as `TriggerSource`/`ScheduleID` (lines 441-492, one literal, no
-  follow-up write — confirmed by `TestTrigger_StampsSpawnLinkAtConstruction`
-  and `TestTrigger_SpawnLinkAndOriginCoexist`); an incomplete link
-  (`SpawnLink.Valid()` false) is ignored wholesale, never partially persisted
-  (`TestTrigger_PartialSpawnLinkIsNotStamped`); and the four pre-existing
-  `TestEngine_Trigger_DepartmentWorkflow_*`/`_SystemTrigger_*` tests already
-  exercise the extracted helper through its one pre-existing caller
-  (`TriggerWithDepartment`), while area 13's prior pass added the equivalent
-  coverage for the new caller (`ChildInputs`) reusing the same scope-aware
-  fixtures — so the "unchanged for existing callers" claim is now backed by
-  passing tests on both callers, not just a code-identity argument. This
-  closes review 1 approval for area 14; review 2 remains open.
+- [ ] **G30 (Area 8, real-browser flake; non-blocking)** — one `TestReadabilityReviewer_RealBrowser_FeaturePipelinePassesThroughTheCoordinator` run (12.7s, immediately after the first dist rebuild) ended `needs_attention` with `no complete visible glyph ink` for nodes `done`/`done-blocked` at the canvas bottom. Four identical reruns, the root e2e and the full package passed. Suspect cold-Chrome/tile-capture timing near the bottom tile; no deterministic cause found. Do not loosen `reviewer_capture.go:textInk`.
+- [ ] **G28 (Area 8, dashboard test timing; non-blocking)** — `dashboard/src/render/report.test.ts:fontFamilyResolved` / `requires every bundled family and contract weight` exceeded Vitest's 5000ms timeout (6864ms) during `npx vitest run src/render src/graph/arranged` (381 passed, 1 failed). The exact isolated test passed unchanged (1.50s), and the full same selection with `--maxWorkers=1` passed 382/382. HEAD changes only this ledger, so this is not an introduced code regression. Investigate font-coverage fixture cost and runner contention; retain the family/weight assertions and default timeout.
+  Also seen 2026-10-18: `dashboard/src/graph/arranged/ArrangedGraph.test.tsx` `feeds exact geometry…` failed once in the full parallel `npx vitest run --maxWorkers=2`. It passed alone and in the immediate full rerun (1036/1036). It is the same contention class.
+- [ ] **G29 (engine test timing under full-suite load; non-blocking, unrelated to layout)** — `domain/engine:TestTimerDelay_FullFlow` failed once (5.07s) during `go test $(go list ./... | grep -v /cmd/arbitron$)`, then passed 3/3 alone (~0.6s). This branch's area 8 pass does not touch `domain/engine`. Investigate the wall-clock dependence under host load; do not loosen the delay assertions.
 
-- [x] **`Engine.ChildInputs`'s "not-found on invisible" claim was only tested
-  against a scope-agnostic mock.** Focus area 13 review 2.
-  `domain/engine/engine_spawn.go:32` calls `workflow.LoadVisibleFiltered` with
-  `e.sharedVisibilityFilter(ctx)` — the exact same department-visibility gate
-  `TriggerWithDepartment` uses, documented as shared so "a spawn node can never
-  reach a workflow the same caller could not trigger directly." But the only
-  existing coverage, `TestEngineChildInputs_ScopedToContextIdentity`
-  (`domain/engine/engine_spawn_test.go`), explicitly notes in its own comment
-  that "the mock workflow repo is scope-agnostic, so this asserts the CALL
-  SHAPE" — it cannot fail if the gate were dropped or bypassed, since the mock
-  `Load` ignores the `Scope` argument entirely and a private-scope hit always
-  succeeds before shared scope (and its filter) is ever consulted. This is the
-  same shape of gap already fixed three times in this loop (area 12's
-  Subject/Email derefs, area 9's fail-closed carve-out, area 8's zero-scope
-  branch): a shared helper's behavior is proven at one call site
-  (`TestEngine_Trigger_DepartmentWorkflow_HiddenFromOutsider`,
-  `domain/engine/engine_trigger_visibility_test.go`) and silently assumed at a
-  sibling one. A regression that passed `nil` instead of
-  `e.sharedVisibilityFilter(ctx)` into `ChildInputs`'s `LoadVisibleFiltered`
-  call would have let a spawn node resolve a department-restricted child
-  workflow from outside that department — undetected by any existing test.
-  Added `TestEngineChildInputs_DepartmentWorkflow_HiddenFromOutsider` and
-  `TestEngineChildInputs_DepartmentWorkflow_AllowedForMember`
-  (`domain/engine/engine_spawn_test.go`), reusing the existing scope-aware
-  `newTriggerHarness`/`fakePubLookup`/`ctxWithDept` fixtures from
-  `engine_trigger_scope_test.go`/`engine_trigger_visibility_test.go` — an
-  outsider gets `workflow.ErrNotFound` on a department-gated shared workflow,
-  a department member does not. Confirmed both fail for the right reason (no
-  error returned) when the filter argument is temporarily replaced with `nil`
-  in `engine_spawn.go`, then confirmed both pass against the real code.
-  Reviewed the rest of area 13 independently: `Engine.Spawn`'s link-validity
-  guard and thin-delegation shape are unchanged since review 1 and still
-  covered (`TestEngineSpawn_RejectsInvalidLinkBeforeCreating` and siblings);
-  `ChildSpawner`/`SpawnRequest` are still constructed only at the composition
-  root (`cmd/arbitron/main.go:894`, passing the concrete `*Engine` to
-  `NewSpawnWorkflowExecutor`); and the five-category bar (happy, success,
-  failure, error, edge) is now met for both methods with a genuine
-  invisibility case rather than a call-shape stand-in. This closes review 2
-  approval for area 13; both approvals for area 13 are now recorded.
+- **[ESCALATION] Area 7 / single:7/review2 convergence condition (2026-10-18)** — `domain/layout/coordinator_regression_test.go:TestRun_StageTimeout` needs a deterministic fixture that expires the chosen stage only after that stage/attempt is entered, while preserving earlier reviewed evidence. G11's 15ms fixture can expire in an earlier stage under load; another passing rerun cannot close it. This missing fixture, rather than an external dependency or product decision, must be supplied before R2.1 can be approved. R2.6's newly found identity-only cache-settlement hole is addressed in G27 below; this pass stops after that one fix.
 
-- [x] **`Engine.ChildInputs`'s default-user-unavailable fail-closed path was
-  untested.** Focus area 13 review 1. `domain/engine/engine_spawn.go:28-31`
-  calls the same `triggerOwner` helper `TriggerWithDepartment` uses, and
-  correctly returns an error rather than proceeding with a nil owner when a
-  system caller (no context identity) hits an unresolvable default user — but
-  this is `ChildInputs`'s OWN call to `triggerOwner`, and `go tool cover`
-  showed its `!ok` branch (lines 29-31) at 0% while the identical branch in
-  `Trigger`/`TriggerWithDepartment` is pinned by
-  `TestTrigger_DefaultUserUnavailable_FailsClosed`
-  (`engine_trigger_scope_test.go:183`) — the same shape of gap already fixed
-  twice in this loop (area 12's Subject/Email derefs, area 8's zero-scope
-  branch): a shared helper's behavior is proven at one call site and silently
-  assumed at a sibling one. A regression that dropped or inverted `ChildInputs`'s
-  own `!ok` check would have let a nil-owner query fall through to
-  `workflow.LoadVisibleFiltered` with `uuid.Nil`, silently reading the "private
-  to nobody" scope instead of failing the node — undetected by any existing
-  test, since the only production caller (`prepareAndSpawn`) always injects a
-  resolved identity before calling, so this is a latent defensive-branch gap
-  today, not a live bug, but the fail-closed contract is `ChildInputs`'s own
-  and deserves its own pin independent of `Trigger`'s. Added
-  `TestEngineChildInputs_DefaultUserUnavailable_FailsClosed`
-  (`domain/engine/engine_spawn_test.go`), which sets `f.userRepo.defaultUserErr`
-  and calls `ChildInputs` with a bare `context.Background()`, asserting the
-  "failed to resolve owner" error; confirmed it fails for the right reason (no
-  error returned) when the `!ok` check is temporarily replaced with a
-  discarded `_`, then confirmed it passes against the real code. Also reviewed
-  the rest of area 13 against the wired-and-fed criteria: `ChildSpawner` and
-  `SpawnRequest` are constructed only at the composition root
-  (`cmd/arbitron/main.go:894-903`, `eng` — the concrete `*Engine` — passed to
-  `NewSpawnWorkflowExecutor`), `Spawn`'s link-validity-before-creation guard
-  and thin-delegation shape are unchanged and already covered
-  (`TestEngineSpawn_RejectsInvalidLinkBeforeCreating` and siblings), and the
-  five-category bar (happy, success, failure, error, edge) is now met for both
-  methods — `ChildInputs`'s "not-found on invisible" half of the checklist
-  inherits `workflow.LoadVisibleFiltered`'s own pre-existing coverage in
-  `domain/workflow/resolve_test.go` (confirmed via `git show` against the
-  branch point that `LoadVisibleFiltered` predates this feature, so its own
-  test suite is not this feature's job to extend). The remaining uncovered
-  line (`if ctx == nil` in both `Spawn` and `ChildInputs`) mirrors an existing,
-  never-tested defensive pattern already present in `Trigger`/
-  `TriggerWithDepartment` pre-dating this feature — not a gap this feature
-  introduced. This closes review 1 approval for area 13; review 2 remains
-  open.
+- **Area 7 Review 2 failure-lens evidence (2026-10-18):** R2.1 budget/error/empty-input checks pass in `coordinator_test.go:TestRun_BudgetOneAndNonPositiveBudgets`, `TestRun_InvalidManifest`, and `worker_test.go:TestWorkerProcessBudgetsAndFailure`; G11 remains open despite a passing baseline `TestRun_StageTimeout` run.
+  R2.2–3: `worker_cancel_test.go:TestWorkerShutdownCheckpointsAndReclaims`, `TestWorkerDeadlineRetainsReviewedBest` and `worker_lease_test.go:TestWorkerLeaseLossCancelsAndFencesWrites` pass; `cmd/arbitron/layout_lifecycle_test.go:TestLayoutE2E_CloseCheckpointsAndNewProcessReclaims` verifies retained SQLite evidence and rejects stale completion after process restart.
+  R2.4: `worker_recovery_test.go:TestWorkerRecoveryOnlyProvenAndPartialErrors`, `TestWorkerRecoveryLiveStoreOutage`, `TestWorkerRecoveryRemoveFailureKeepsEvidence` and `worker_lifecycle_test.go:TestWorkerLifecycleConcurrencyAndOverflow` pass; row assertions retain captured manifest/limit, terminal geometry and journal input until acknowledgement.
+  R2.5–6: `worker_cache_test.go:TestWorkerCacheLateRevisionAndMissingDestination`, `TestWorkerCacheOwnershipMove`, `worker_cache_integration_test.go:TestWorkerCacheCrossProcessFence` and G27's red/green contract cover late revisions/generations/destinations; `TestServiceRevisionE2E_DeleteUnpublishRaceCache` passes all real-browser removal orderings. `rg -n 'MarkCached\(' domain adapter cmd --glob '*.go' --glob '!**/*_test.go' --glob '!domain/layout/layouttest/**'` identifies `worker.go:Worker.publish` as the production acknowledgement caller.
+  R2.7: `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult` reaches SQLite result → Reader geometry despite cache failure/deletion; `reader_test.go:TestReaderUnavailableCacheIsNeverReviewedPass` rejects wrong revision/contract/geometry/fences and never fabricates reviewed evidence.
+  Folded checks: `TestLayoutE2E_ConfigBudgetAndWarnings`, `TestLayoutE2E_ActualCommandsJoinOnContextAndEOF`, `adapter/filesystem/workflow_operation_test.go:TestWorkflowRepo_ReservedArtifacts` and `adapter/config/loader_layout_test.go:TestLoad_Layout*` pass; shutdown joins before renderer/DB closure, and reserved cache-file writes/deletes are denied.
+  Completed commands: `go test ./domain/layout -run 'Test(Run_|Worker|ReaderUnavailableCacheIsNeverReviewedPass)' -count=1 -timeout=2m`; `go test -race ./adapter/sqlite ./domain/layout -run 'Test(LayoutStoreContract|LayoutPeerCacheSettlement|LayoutResultTransactionRollback|LayoutIndependentClaims|MemStoreContract|WorkerCache)' -count=1 -timeout=2m` (both exit 0).
+  Completed commands: `go test ./adapter/filesystem -run 'Test(LayoutCache_|WorkflowRepo_ReservedArtifacts)' -count=1`; `go test ./adapter/config -run '^TestLoad_Layout' -count=1`; `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^(TestLayoutE2E_CloseCheckpointsAndNewProcessReclaims|TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult|TestServiceRevisionE2E_DeleteUnpublishRaceCache|TestLayoutE2E_ConfigBudgetAndWarnings|TestLayoutE2E_ActualCommandsJoinOnContextAndEOF)$' -count=1 -timeout=3m` (all exit 0; root 25.569s). No observed new failure; baseline W1/dashboard left untouched.
 
-- [x] **`userIdentityResolver.IdentityForUser`'s Subject/Email → `LedDepartments`
-  plumbing was untested.** Focus area 12 review 2.
-  `cmd/arbitron/main.go:1384-1391` duplicates `AuthMiddleware.enrich`'s
-  Subject/Email pointer-deref extraction (`adapter/http/auth_middleware.go:315-322`)
-  rather than sharing it — the type's own docstring calls this out as
-  deliberate, so "a scheduled fire, a spawned child run, and the same user's
-  interactive request all resolve to identical identities" — but every
-  existing `userIdentityResolver` test (`TestUserIdentityResolver_LocalDefaultUser`,
-  `_CarriesStoredDepartments`, `_UnknownUserErrors`,
-  `_ListDepartmentsErrorPropagates`) leaves `Subject`/`Email` nil on the stub
-  user, so the two `if u.Subject != nil` / `if u.Email != nil` branches were
-  only ever exercised on their false arm. The request-path copy of this exact
-  logic is thoroughly pinned (`TestAuthMiddleware_Enrich_SubjectLead_Match` and
-  siblings in `adapter/http/auth_middleware_test.go`), but the resolver's own
-  copy had no equivalent — a regression that dropped or swapped the two
-  derefs in `main.go` (breaking the documented cross-path identity-parity
-  guarantee for every scheduled fire and spawned child) would have shipped
-  undetected. Added
-  `TestUserIdentityResolver_SubjectAndEmailDriveLedDepartments`
-  (`cmd/arbitron/spawn_wiring_test.go`), which sets a matching `Subject`/`Email`
-  against a `GroupConfig.Leads` entry and asserts `LedDepartments` comes back
-  populated; confirmed it fails for the right reason (empty `LedDepartments`)
-  when the two derefs are temporarily blanked out in `main.go`, then confirmed
-  it passes against the real code. Also reviewed the rest of area 12's
-  checklist independently: the twin-port relationship still holds (the
-  compile-time assertion plus the real call sites at
-  `schedule.NewEvaluator`/`schedule.NewRunner` in `cmd/arbitron/main.go:907-926`
-  both require `userIdentityResolver` to satisfy `schedule.IdentityResolver`,
-  which only compiles if the twin stays structurally identical), the
-  schedule→neutral rename and the single shared composition-root value
-  (`cmd/arbitron/main.go:880`) still hold, and `groups` (`groupCfg`) is fed
-  from real parsed config (`cmd/arbitron/main.go:354`), the same value passed
-  to both auth middlewares — not a hardcoded or test-only value. This closes
-  review 2 approval for area 12; both approvals for area 12 are now recorded.
+Recommend: no approval for single:7/review2 — G11 still needs deterministic stage-timeout evidence in `domain/layout/coordinator_regression_test.go:TestRun_StageTimeout`; R2.6 identity-only cache settlement now has a failing-before/passing-after SQLite regression, and the other targeted failure gates passed.
 
-- [x] **`userIdentityResolver.IdentityForUser`'s `ListDepartments` failure path
-  was untested.** Focus area 12 review 1. `cmd/arbitron/main.go:1375-1383`
-  calls `r.users.GetByID` then `r.users.ListDepartments`, propagating an error
-  from either — but `cmd/arbitron/spawn_wiring_test.go`'s `stubUserRepo.
-  ListDepartments` had no way to return an error, so only the `GetByID` failure
-  path (`TestUserIdentityResolver_UnknownUserErrors`) was exercised; a
-  regression that silently swallowed a `ListDepartments` error (e.g. `depts,
-  _ := ...`) and built a departmentless identity from a real user's DB row
-  would have shipped undetected — the scheduler and spawn executor (the two
-  production callers, `domain/schedule/runner.go:79` and
-  `domain/engine/executor_spawn.go:215`) both already propagate whatever error
-  the resolver returns, so this was purely a gap in the resolver's own test
-  coverage, not a live bug. Also confirmed the other three parts of area 12's
-  checklist already hold: `IdentityResolver` is a structurally identical twin
-  of `schedule.IdentityResolver` (same method signature, redeclared per the
-  codebase's established cross-domain-edge practice); the type was already
-  renamed from schedule-specific to `userIdentityResolver` and ONE value is
-  constructed at `cmd/arbitron/main.go:880` and passed to the spawn executor
-  (`:900`), the schedule evaluator (`:911`), and the schedule run-now runner
-  (`:924`); and `TestUserIdentityResolver_LocalDefaultUser` already pins Phase
-  3's local-mode open question (`docs/designs/...-phase-3.md:214-217`) — the
-  local-mode default user resolves cleanly through the same `BuildIdentity`
-  the request path's `AuthMiddleware.enrich` uses, without needing a distinct
-  resolution path. Added
-  `TestUserIdentityResolver_ListDepartmentsErrorPropagates`
-  (`cmd/arbitron/spawn_wiring_test.go`), extending `stubUserRepo` with a
-  `deptErr` field; confirmed it fails for the right reason (no error returned)
-  when the `ListDepartments` error check is temporarily replaced with `depts,
-  _ := ...`, then confirmed it passes against the real code. This closes
-  review 1 approval for area 12; review 2 remains open.
+- [ ] **G21 (Area 4, sibling HTTP surface; non-blocking for numbered R1 checks)** — `adapter/http/server.go:NewRouterFromDeps` and `workflow_handler.go` expose Delete but no Rename, TransferOwnership or Unpublish handlers/routes; `adapter/mcp/tools_workflow.go:RegisterWorkflowTools` exposes all three. Area 4's Entry sentence overstates HTTP reachability. Add the intended authenticated HTTP operations and route tests, or align the Entry description with the supported MCP/service surface.
+- [ ] **G22 (Area 4/8, browser test startup flake; non-blocking)** — `cmd/arbitron/layout_service_revision_test.go:TestServiceRevisionE2E_DeleteUnpublishRaceCache` initially exited 1 because Chrome did not start within 30s (delete/cache-first); the identical unmodified rerun exited 0 with all four cases passing in 49.46s. Investigate `adapter/renderreview` browser startup/host contention; do not weaken history assertions. No deterministic regression established.
+- [ ] **G24 (Area 2/3, stale E2E assertion; pre-existing, not caused by single:4/review2)** — `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_NilCopiedIDStillRequests` asserts `uuid.Nil` for a copied workflow's ID (lines 146, 150), but G19's fix (`58e3a7b`, `service_revision_copy.go:copyRevision` assigns a fresh UUID) makes it non-nil. It fails identically with `commit_source.go` reverted to HEAD~1. Decide whether a copy of a nil-ID legacy source should get a fresh ID (then update the test to assert non-nil and request-by-revision) or stay nil. Also: `go test ./cmd/arbitron` takes about 11 minutes and exceeds the default 10m timeout; run it with `-timeout=40m`.
 
-- [x] **A present-but-null OPTIONAL child input was untested (distinct from the
-  already-tested absent case).** Focus area 11 review 2.
-  `domain/engine/child_input_contract.go`'s docstring enumerates exactly three
-  things `validateChildInputs` rejects — nil map, missing required, present-but-
-  null REQUIRED — implying a present-but-null OPTIONAL input is accepted and
-  passed through unchanged, but only the absent-optional case had a test
-  (`TestValidateChildInputs_AbsentOptionalIsFine`); the present-null-optional
-  shape (the model explicitly emitting `"dryRun": null` rather than omitting
-  the key) was unexercised. Traced the downstream consequence in
-  `Engine.TriggerWithDepartment` (`domain/engine/engine.go:377-393`): a
-  present-nil variable and an absent variable take the identical branch
-  (`!provided || val == nil`), so the child's own `Default` applies either way
-  — the two code paths (validateChildInputs's accept-and-pass-through, then
-  TriggerWithDepartment's present-nil-equals-absent) combine correctly today,
-  but nothing pinned it. Added
-  `TestValidateChildInputs_NullOptionalPassesThroughUnchanged`
-  (`domain/engine/child_input_contract_test.go`), asserting an optional input
-  present with an explicit `nil` satisfies the contract and the key survives
-  unchanged in the produced map; confirmed it fails for the right reason
-  (reports `dryRun` as a missing required input) when the `!f.Required`
-  short-circuit is temporarily removed from the required-fields loop, then
-  confirmed it passes against the real code. Reviewed the rest of area 11
-  against the wired-and-fed criteria: `childInputSchema`/`validateChildInputs`
-  are still called only from `Prepare` (confirmed unchanged since review 1),
-  `childInputPrompt`'s stability and `structuredOutputInstruction`'s JSON
-  marshaling (which sorts map keys, so the schema's property ordering was
-  never actually an instability risk despite living in a `map[string]any`) were
-  already covered by area 10's passes, and the five-category bar (happy,
-  success, failure, error, edge) was otherwise already met by the existing
-  suite. This closes review 2 approval for area 11.
+- [x] **G18 [ESCALATION → resolved by design] (Area 2, Review 2 check 2) — Resolve receipt-failure acknowledgement policy.** `domain/workflow/service_revision.go:Service.committed` discards the false result of `RevisionStamper.committed`; Create/Update return nil after `MarkCommitted` fails, with no receipt or rollback. This contradicts R2.2's literal success gate; design phase 2 §2 instead ties success to manifest commit and permits later settlement.
+  To tick this check, the contract owner must explicitly accept manifest/proof + durable prepare + blocked reads/mutations as success pending receipt repair, or require a surfaced receipt error/rollback and align Create/Update and their tests. Do not silently weaken the check or change save semantics on another pass.
+  `cmd/arbitron/layout_save_receipt_test.go:TestLayoutSaveReceiptFailureSurvivesOverwriteAndDelete` now reproduces real receipt-path I/O failure for Create/private Update/shared Update: nil return, no queued row, retained exact prepare/shared backup, blocked read/overwrite, then exact-once SQLite recovery after repair, overwrite and delete. No production behavior changed pending that decision.
 
-- [x] **`validateChildInputs`'s "no type coercion" invariant was untested.**
-  Focus area 11 review 1. `domain/engine/child_input_contract.go:84-86`
-  documents that a produced value is never type-checked or coerced against its
-  declared `InputField.Type` — "the trigger path is the single place input
-  semantics are enforced" — but traced `Engine.TriggerWithDepartment`
-  (`domain/engine/engine.go:375-405`) and confirmed the trigger path *also*
-  never checks `InputField.Type` against the supplied value; it only enforces
-  presence (`Required`) and the reserved-name guard via `SetInput`. So a
-  declared type is pure prompt guidance, never validated anywhere in the
-  engine, for spawn-produced values or ordinary manual triggers alike — this is
-  pre-existing behaviour the feature does not change, not a gap to fix. Also
-  reviewed `childInputSchema`/`childInputPrompt`/`validateChildInputs` as a unit
-  against the wired-and-fed criteria: all three are called only from `Prepare`
-  (`domain/engine/child_input_preparer.go:54-55,89`), which area 10 already
-  confirmed is constructed at the real composition root
-  (`NewChildInputPreparer` in `cmd/arbitron/main.go`) and fed real
-  `ChildInputRequest` values built from `node.Config`/`vars.Snapshot()` in
-  `executor_spawn.go`, never hardcoded; and confirmed the five-category bar
-  (happy, success, failure, error, edge) was already met by the existing
-  `child_input_contract_test.go` suite except for this one invariant. Added
-  `TestValidateChildInputs_TypeMismatchIsNeitherRejectedNorCoerced`
-  (`domain/engine/child_input_contract_test.go`), which produces a required
-  `number` input as a string and asserts both that the contract is satisfied
-  and that the value is passed through unchanged — pinning the documented
-  no-coercion behaviour so a future change cannot silently start rejecting or
-  mutating type-mismatched values without this test failing first. This closes
-  review 1 approval for area 11; review 2 remains open.
 
-- [x] **`LLMChildInputPreparer.Prepare` never set `WorkDir` on its preparation
-  `ChatRequest`.** Focus area 10 review 2. Compared `Prepare`
-  (`domain/engine/child_input_preparer.go`) against its sibling
-  `LLMCallExecutor.Execute` (`domain/engine/executor_llm.go`), which sets
-  `WorkDir: workDirStr` via the existing `WorkDirFromVars(vars)` helper
-  (`domain/engine/conventions.go`) — `Prepare`'s `ChatRequest` literal built the
-  same kind of tool-suppressed reasoning call but omitted `WorkDir` entirely,
-  so it always defaulted to `""`. Confirmed the production consequence by
-  reading `adapter/claudecli/chat_adapter.go` and `adapter/claudecli/provider.go`:
-  both `ChatAdapter.Chat` and `Provider.Chat` call `validateWorkDir(req.WorkDir)`
-  before doing anything else and hard-fail with `ErrWorkDirRequired` on an
-  empty `WorkDir` — a deliberate PR #8 security guard against a subprocess
-  inheriting the engine process's own cwd (which holds `arbitron.db`,
-  `config.yaml`, and other secrets) — and confirmed via
-  `TestFactory_ChatProviderFor_EmptyIsClaudeCLI`
-  (`adapter/provider/factory_test.go`) that claude-cli is the default backend
-  when a profile sets no `Backend`. So every spawn node with a claude-cli-backed
-  `model_profile` and at least one declared child input would fail at the
-  preparation call in production, on every run, with no way to configure
-  around it — a "wired-and-fed" gap (a production call site building a request
-  literal with a load-bearing field left at its zero value) that no existing
-  test caught, because `mockChatProvider` never inspects `WorkDir`. Fixed by
-  threading the parent's workspace end to end: added `WorkDir string` to
-  `ChildInputRequest` (`domain/engine/ports.go`), set `WorkDir: req.WorkDir` on
-  the `ChatRequest` in `Prepare` (`domain/engine/child_input_preparer.go`), and
-  populated it in `prepareAndSpawn` via the same `WorkDirFromVars(vars)` helper
-  `LLMCallExecutor` already uses (`domain/engine/executor_spawn.go`) — no new
-  functionality, only a missing wire-up between two already-existing pieces.
-  Added `TestChildInputPreparer_WorkDirReachesChatRequest`
-  (`domain/engine/child_input_preparer_test.go`), pinning that a `WorkDir` on
-  the incoming request reaches the outgoing `ChatRequest`, and
-  `TestSpawnExecutor_ParentWorkspaceReachesPreparerAsWorkDir`
-  (`domain/engine/executor_spawn_test.go`), pinning that a workspace set via the
-  reserved `workspace` variable on the executor's `VariableStore` reaches the
-  preparer's `ChildInputRequest.WorkDir`; confirmed both fail (unknown field /
-  undefined field) against the pre-fix code and pass against the fix. This
-  closes review 2 approval for area 10.
+- [x] **G2 (Area 6, row 7) — closed single:6/review1:** shared retry now locks the whole resolution set via `workflow.Service.LayoutRetryTargets` (`layout.WorkflowAccess`) before the locked re-authorisation; `TestLayoutQueryE2E_RetryCrossProcessSaveFence/shared-only` retries a shared workflow through the real filesystem lock and bumps the generation, `/private-shadow` now returns `ErrRevisionConflict`; unit: `TestQueryService_RetryWorkflow_LocksEveryResolutionCandidate`, `TestLayoutRetryTargets_PrivateThenSharedForCaller`.
+- [ ] **G31 [ESCALATION] (Area 9, Review 2 policy; non-blocking for Review 1)** — Should a non-malformed per-sample read error skip that sample or abort the seed run? Area 9's Folded-in text requires sample-only abort; `domain/samples/ports.go:SampleSource.Read` and `domain/samples/seeder.go:Seeder.Seed` explicitly abort the run for infrastructure errors.
+  `domain/samples/seeder_revision_test.go:TestSeedRevisionMalformedVersusInfrastructure` passes and distinguishes malformed continuation from infrastructure abort. Contract owner should choose the policy and align the plan or implementation/tests; production wiring is fed under either policy.
+- [ ] **G17 (Area 2/7, stdio hygiene, non-blocking for R1.5)** — `adapter/observability/logging.go:SetupLogging` writes a text handler to `os.Stdout`, so `arbitron mcp` / `serve --mcp-stdio` interleave log lines with JSON-RPC on the same stream. `cmd/arbitron/layout_e2e_test.go:runStdioSession` filters `{"jsonrpc"` lines to cope. Fix: route logs to stderr (or the file only) when a stdio transport owns stdout, then drop the filter.
+- [x] **G7 (Area 10, Area 8, row 19) — CLOSED 2026-10-18**: see `## Closed`.
+  - Review-1 pass 2026-10-18 (single:8): checks 1–5 verified by greps and a foreground run of `TestNewLayoutRenderReviewer_*`, `TestLayoutRender_RealBrowserPRReview`, `TestLayoutRender_MissingBrowserFailsVisiblyAndIsRetryable` and `TestLayoutBuild_*` (all pass, real Chrome). Check 6 success path still unmet: `layout_surfaces_e2e_test.go:TestLayoutSurfaces_NeedsAttentionShowsFindingsNotReviewed` asserts feature-pipeline ends `needs_attention`. G9 (no Chromium in Dockerfile) also still open. Neither is fixable by wiring.
+- [ ] **G9 [ESCALATION] (Area 8, container deployment) — The production image ships no Chromium.** `Dockerfile` has the sandbox and artifact ENV defaults but no Chromium package, so in a container every arrangement job ends `failed` at rendering (`cmd/arbitron/layout_wiring.go:newLayoutRenderReviewer` only warns). Pinned apk additions plus an image build, launch and runtime check are pending a healthy Docker daemon (independent check 2026-10-18 timed out after 10s). Infrastructure question: which Docker-capable runner should validate Chromium packaging and a real image capture? Set aside for this R1 approval; the absent-browser failure/retry path is verified. Plan phase-3-task-7 lines 745–832.
+- [ ] **G10 [ESCALATION] (Area 10 Review 2; shared validation in Area 12 Review 2 check 4) — Zero-option contract needs an authoritative ruling.** `domain/layout/geometry.go:validateGeometryOptions` and `dashboard/src/graph/arranged/validate.ts:validateGeometry` both accept zero margin/crossingSweeps; `geometry_test.go:TestGeometry_ValidVariantsAndRoundTrips/zero_policy_values` and `validate.test.ts:mirrors the server zero-margin/zero-search policy` require that parity.
+  To close this gap and remove this pass's remaining approval reservation: explicitly adopt nonnegative margin/sweeps and correct P3T1 Step 6 (lines 526–527 and its line-505 BLOCKED note), or require positive values and change BOTH validators, their regression fixtures and the zero-budget search callers together. No fixture or dependency is missing; the unresolved input is which contract governs. This pass preserves the implemented policy instead of silently choosing between contradictory requirements.
+- [ ] **G11 (Area 7) — `TestRun_StageTimeout` is flaky under load.** `domain/layout/coordinator_regression_test.go:TestRun_StageTimeout` uses a 15ms budget and failed reached, stage and attempt assertions in two `-race` runs under host load, then passed in isolation. Fix the test determinism (an injected clock or a blocking fake), not the production deadline. Plan phase-3-task-7 line 845.
+- [x] **G12 (Area 7) — `Store.Supersede` has no production producer.** (Closed as reserved lifecycle op; see decision below.) `grep -rn '\.Supersede('` outside tests finds no caller. `StateSuperseded` is reachable only from tests, but `Reader`, `Requester.Retry` and `Worker.processRevision` (`worker.go:193`) all branch on it. Design phase 2 §5 says explicit cancellation marks work superseded. Either wire the explicit-cancellation producer or remove the dead state and port method. Do not leave the branches untested-in-production.
+  - [x] **[ESCALATION] G12 (single:7/review1 check 4, 2026-10-18) — DECIDED option (b) on 2026-10-18 (unattended refiner call; approver may overrule):** contracts §6.12 and design phase 2 §5 keep Supersede as reserved; `focus-areas.md` Area 7 check 4 reworded to verify no implicit producer plus real-store coverage of consumer branches. Original entry: — decision needed, not code: contracts §6.12 (line ~1377) deliberately keeps `Store.Supersede` as an "explicit lifecycle operation" with no automatic producer, and the spec "permits cancellation but does not require it", so no cancel entry point (HTTP/MCP/service) exists. Re-verified `grep -rn '\.Supersede(' --include=*.go` outside tests: only `adapter/sqlite/layout_repo.go:361` (definition) and `domain/layout/store.go:120` (port). Review-1 check 4 (name the producer) therefore cannot pass. For the box to tick, someone must choose ONE: (a) add an authorised cancel path (service op + HTTP/MCP route) that calls `Supersede`, with a test through the real stack; or (b) amend focus-areas check 4 and the contract to declare Supersede reserved/test-only, accepting the dead `StateSuperseded` branches (`worker.go:193`, `reader.go:133,231,237,266`, `requester.go:125`). Other six wiring checks verified (see review note); targeted tests pass.
+  - **Independent single:7/review1 review of d22d9d5 (2026-10-18): withheld; no checkbox changed.** Check 4 fails: `domain/layout/store.go:Store.Supersede` has no production caller; `rg '\.Supersede\(' domain adapter cmd` excluding `*_test.go` AND `domain/layout/layouttest/**` returns no matches. That latter directory contains shared test-contract calls, not a live producer.
+    **[ESCALATION] G12 remains the sole unmet wiring check.** Contracts §6.12 permits explicit cancellation but supplies no entry point. Ruling requested: ship cancellation or explicitly revise criterion 4? For the existing criterion to pass, wire an authorised cancellation operation to `adapter/sqlite/layout_repo.go:LayoutRepo.Supersede` and demonstrate its terminal row through the real stack. Repeating the current escalation alone cannot satisfy it.
+    Checks 1–3 verified: `cmd/arbitron/main.go:initDomain` starts both commands; `domainStack.close` stops queue/engine before `layoutStack.stop`, which joins before renderer/DB close. `layout_wiring.go:newLayoutStack` feeds the real renderer/reviewer and configured budget through `Requester.requestArrangement`, `LayoutRepo.Request`, and `Worker.processRevision` using only captured manifest bytes.
+    Checks 5–7 verified: `LayoutRepo.persist` resets cache settlement, `PendingCache` selects it, `Worker.processRevision` publishes after Complete and `Worker.dispatch` repeats reconciliation. `LayoutCache.PublishCache` uses the mutation repo's settlement/lock and current token; `Worker.publish` rechecks generations/destination; `LayoutRepo.MarkCached` fences settlement. `Reader.cachedFallback` checks revision/contract/coverage/fences and keeps outage geometry unavailable/unreviewed.
+    Folded items verified: `adapter/config/loader.go:DefaultLayoutMaxAttempts`/normalization supply default 5 and minimum 1; `main.go:initDomain` logs LoadWarnings. `filesystem:reservedWorkflowFile`, `WorkflowRepo.writeFile`/`deleteFile`/`listFiles` guard/hide layout.json; `adapter/mcp/tools_workflow.go` feeds the same service/repo guard.
+    Fresh verification: full `go test ./domain/layout ./adapter/sqlite ./adapter/filesystem -count=1` passed (including `worker_cache_integration_test.go:TestWorkerCacheCrossProcessFence` and `worker_test.go:TestWorkerProcessBudgetsAndFailure/5`); `go test ./adapter/config -run '^TestLoad_Layout' -count=1` passed. Full config suite failed only its documented W1 sample-profile baseline test; HEAD changes ledger text only.
+    `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^(TestLayoutE2E_ActualCommandsJoinOnContextAndEOF|TestLayoutE2E_ConfigBudgetAndWarnings|TestCoordinator_RealBrowserBoundedBestReachesSink|TestLayoutRender_RealBrowserPRReview)$' -count=1 -timeout=8m -v` passed, without skips: real Chrome → SQLite → on-disk cache and both command shutdowns. The PRReview test asserts the default five-attempt limit at the sink.
+    Input-sensitivity probe: replacing only `Worker.processRevision`'s `json.Unmarshal(rec.Manifest, &wf)` input with nil made `worker_test.go:TestWorkerProcessCapturedInput` exit 1 (expected passed, actual failed); restoring the exact bytes made it exit 0. Browser bounded-best coverage also asserts captured manifest, revision, attempt and every workflow node type. G11 timeout-test hardening belongs to Review 2 and is not this verdict's basis.
+- [ ] **G13 (Area 8, Area 10) — `cmd/arbitron` tests approach Go's 10-minute default timeout.** `make test-all` hit the default 10m timeout in `cmd/arbitron/layout_preflight_e2e_test.go:TestLayoutPreflight_RealBrowserSavedFindingsAndScoreReachView/ralph-loop` with a real browser. The loop's `go test ./...` has the same per-package limit, so a slow host can turn the verify step into a timeout. Bound the real-browser sample runs (share one browser, cap attempts in fixtures) without skipping them. Plan phase-3-task-14 lines 447 and 458.
 
-- [x] **`childInputPrompt`'s sorted-key stability invariant was untested.**
-  Focus area 10 review 1. `domain/engine/child_input_preparer.go:148-150`
-  documents and implements a load-bearing invariant: both the declared-input
-  listing and the parent-context listing must render in SORTED key order, "so
-  the prompt is stable across runs" for provider-side caching and quiet trace
-  diffs — but no test asserted the order, and Go's randomized map iteration
-  means a regression that dropped the `sort.Strings`/`sort.Slice` calls would
-  produce a merely *flaky* prompt rather than a reliably-failing test, so it
-  could ship and pass CI by chance for a long time. Reviewed the full
-  `LLMChildInputPreparer`/`Prepare` implementation against Design Phase 2's
-  spec line by line (resolve → assertBindingKind → select → chat → parse
-  ordering, `structuredOutputInstruction` reuse, zero-input short-circuit,
-  `parseChildInputResponse`'s code-fence/prose/non-object handling,
-  `boundedExcerpt`, the fail-closed posture-guard-before-selection ordering)
-  and confirmed every item in the design's five-category testing strategy is
-  already covered, all real production wiring is fed from
-  `cmd/arbitron/main.go` (`providerFactory`, `profileResolver`, both real
-  adapters) and `executor_spawn.go` (`ChildInputRequest` built from
-  `node.Config`/`vars.Snapshot()`, never hardcoded), and every adapter treats
-  `ChatRequest.MaxTokens == 0` as "provider default" rather than "zero
-  tokens" — this was the one invariant in the design with zero test coverage.
-  Added `TestChildInputPreparer_PromptFieldsAndContextAreSortedForStability`
-  (`domain/engine/child_input_preparer_test.go`), which declares inputs and
-  parent-context keys in deliberately unsorted order and asserts their
-  appearance order in the rendered prompt is alphabetical; confirmed it fails
-  for the right reason (declaration order, not sorted) when the `sort.Slice`
-  call is temporarily removed, then confirmed it passes against the real
-  code. This closes review 1 approval for area 10.
+- [ ] **G15 (Area 1, durability hygiene — non-blocking after Review 2 approval)** — `adapter/filesystem/tree_commit.go:WorkflowRepo.RollbackTreeCommit` and `adapter/filesystem/workflow_repo.go:WorkflowRepo.copyTreeLocked` restore aside/backup with `os.Rename` after a failed staging rename, then return without syncing the parent directory. Successful writes, quarantine and finish do reach directory fsync. Make the compensation durable and fault-inject the staging-rename failure, asserting restore-rename then directory-sync ordering; this failure branch does not block Review 1.
 
-- [x] **`ChildInputRequest.ProfileAlias` may reach the resolver empty.**
-  Focus area 9 review 1. `validateModelProfiles` deliberately allows a spawn
-  node with **no** `model_profile` (`domain/workflow/validation.go:183-190`),
-  on the grounds that a zero-input child never makes a preparation call. But
-  `SpawnWorkflowExecutor.prepareAndSpawn` passes `node.Config.ModelProfile`
-  unconditionally, and `LLMChildInputPreparer.Prepare` only skips the call
-  when `len(req.Inputs) == 0`. Traced `provider.ProfileResolver.Resolve(ctx,
-  "")` for both the production resolver (`adapter/provider/dynamic.go:73`)
-  and its cache lookup (`adapter/provider/cache.go:92`): a miss on alias `""`
-  behaves identically to a miss on any other unknown alias — `ProfileCache.get`
-  is a plain map lookup keyed by `Profile.Alias`, and no code path ever
-  registers a profile under the empty alias — so `Resolve(ctx, "")` returns
-  `provider.ErrUnknownProfile` wrapped with `""`, not a silently-resolved
-  default binding. The author-time carve-out does fail closed at run time, as
-  the validation comment claims. Added
-  `TestChildInputPreparer_EmptyProfileAliasWithDeclaredInputs_FailsClosed`
-  (`domain/engine/child_input_preparer_errors_test.go`), which asserts a child
-  that declares inputs on a node with an empty `ProfileAlias` gets
-  `provider.ErrUnknownProfile` naming the node, the provider is never called,
-  and no partial map is returned — pinning the fail-closed behaviour so a
-  future resolver change cannot silently widen this into an unguarded path.
-  This closes review 1 approval for area 9.
-
-- [x] **`childVisibilityClause`'s `IncludePublic` disjunct was never exercised in
-  isolation.** Focus area 8 review 2. `adapter/sqlite/instance_repo.go:568-570`
-  adds `c.visibility = 'public'` to the disjunction when `vis.IncludePublic` is
-  set, but the only existing test that sets `IncludePublic`
-  (`TestChildCounts_ExcludesInvisibleChildren`) also sets an `OwnerID` that
-  already admits the one counted child via the `c.owner_id = ?` arm — so the
-  `IncludePublic` arm itself was never the reason a child was counted.
-  Confirmed by hand: replacing `if vis.IncludePublic` with `if false &&
-  vis.IncludePublic` left every test in `adapter/sqlite` green. A regression
-  that dropped or broke the disjunct (the same shape as the already-fixed
-  zero-scope branch) would have shipped silently, under-counting children and
-  hiding a hierarchy expander for a caller who should see a public child.
-  Added `TestChildCounts_IncludePublicAloneCountsPublicChildren`
-  (`adapter/sqlite/instance_spawn_queries_test.go`), which creates a public
-  child owned by a stranger with neither `OwnerID` nor `Departments` matching
-  and asserts it is counted purely under `IncludePublic`; confirmed it fails
-  for the right reason against the neutered branch, then passes against the
-  real code. Also reviewed the other three link-addressed queries
-  (`ListActiveChildren`, `FindChildBySpawnNode`, `ListWaitingOnTerminalChild`)
-  and the `ParentScope` clause in `List` against the five-category bar (happy,
-  success, failure, error, edge) — all four already have dedicated coverage
-  for every state/mode/tie-break/storage-failure case, and all four have a
-  confirmed production caller (`cancel_cascade.go`, `executor_spawn.go`,
-  `enricher.go`, `spawn_reconciler.go`) fed real data, not a fake or
-  hardcoded value; `ParentScope`/`ParentInstanceID` are fed from the shared
-  `instance.ParseParentScope` decoder at both the REST and MCP call sites.
-  This closes review 2 approval for area 8.
-
-- [x] **`childVisibilityClause`'s zero-scope fail-closed branch was untested.**
-  Focus area 8 review 1. `adapter/sqlite/instance_repo.go:579-581` documents and
-  implements a load-bearing security guard: when a caller's `ChildVisibility` is
-  not `Unconstrained` and carries no `OwnerID`, `Departments`, or
-  `IncludePublic` (the zero value), the disjunction is empty and the clause
-  must render `0=1` — count nothing — rather than falling through to an
-  unfiltered (fail-open) count. No test ever constructed a totally zero-value
-  `instance.ChildVisibility{}`: the existing invisible-children coverage
-  (`TestChildCounts_AllChildrenInvisibleIsAbsent`,
-  `TestChildCounts_ExcludesInvisibleChildren`) always sets `OwnerID`, which
-  takes the `"c.owner_id = ?"` disjunct arm, never the empty-`ors` arm this
-  gap is about. A regression flipping `0=1` to `1=1` (or dropping the guard)
-  would have shipped silently and leaked child-existence counts to a caller
-  with no authorized scope at all. Added
-  `TestChildCounts_ZeroScopeVisibilityFailsClosed`
-  (`adapter/sqlite/instance_spawn_queries_test.go`), which creates a *public*
-  child (visible under `IncludePublic` or an owner match, neither set here)
-  and asserts it is absent from the count under `instance.ChildVisibility{}`;
-  confirmed it fails for the right reason when the branch is temporarily
-  changed to `1=1`, then confirmed it passes against the real code. Also
-  traced the only production caller (`InstanceEnricher.batchChildCounts`,
-  `domain/engine/enricher.go:104-111`) and confirmed it already short-circuits
-  before ever constructing a zero-scope `ChildVisibility` (no identity on the
-  context skips the call entirely) — so this was a latent, not live, gap, but
-  the fail-closed contract is documented as the query layer's own invariant
-  and deserves its own coverage independent of today's one caller. This is
-  the "edge"/security-invariant category area 8 was missing — happy, success,
-  failure, and error were already covered for all four link-addressed queries
-  and the `ParentScope` clause via the existing extensive suite
-  (`instance_spawn_queries_test.go`, `instance_spawn_wait_test.go`,
-  `instance_repo_parent_scope_test.go`). Closes review 1 approval for area 8.
-
-- [x] **The generated-query staleness bug that hit `trigger_source`/`schedule_id`/
-  `workflow_id` recurred for migration 018's spawn-link columns.** Focus area 7
-  review 2. This exact codebase already has a documented failure mode
-  (`adapter/sqlite/instance_repo_stale_queries_test.go`'s pre-existing
-  provenance tests): four hand-frozen `sqlc`-generated query functions in
-  `adapter/sqlite/generated/*.sql.go` (`ListRunningInstances`, `NextEligible`,
-  `ListWaitingWithTimer`, `ListWaitingWithWebhook`) each embed a literal SELECT
-  column list and a matching `Scan(...)` call, and neither is regenerated in
-  this environment (no `sqlc` binary — `which sqlc` exits 127) when a
-  migration adds columns. Migration `018_instance_spawn_link` added
-  `parent_instance_id`/`parent_node_id`/`spawn_mode`, but none of the four
-  queries' SELECT lists or Scan calls were updated for them, and
-  `generated.Instance` (`adapter/sqlite/generated/models.go`) had no fields to
-  hold them either — so every instance returned by these four paths silently
-  reported a zero-value spawn link (`IsRoot() == true`, `SpawnMode == ""`)
-  regardless of what was actually stored, the identical silent-drop shape
-  already characterized for the three provenance fields. Traced all four call
-  sites (`Engine.RecoverCrashedInstances`, `Manager.Evaluate` via
-  `queueRepo.NextEligible`, `queue.RecoverTimers`/`RecoverWebhooks`) and
-  confirmed none has a LIVE bug today — each either re-fetches the instance
-  fresh via `Get` before touching spawn-link fields, or only reads fields the
-  missing columns don't affect — but left uncorrected this is a landmine for
-  the very next caller that reads `.ParentInstanceID`/`.SpawnMode` off one of
-  these four result sets. Fixed by adding the three `sql.NullString` fields to
-  `generated.Instance`, appending `parent_instance_id, parent_node_id,
-  spawn_mode` to the SELECT column list and `&i.ParentInstanceID,
-  &i.ParentNodeID, &i.SpawnMode` to the Scan call in all four generated
-  functions, and populating the domain conversion in `rowToInstance`
-  (`adapter/sqlite/instance_repo.go`) so any caller of the shared helper gets
-  the correct value rather than silently dropping it. Added four failing-first
-  characterization tests in `adapter/sqlite/instance_repo_stale_queries_test.go`
-  (`TestListRunning_PreservesSpawnLink`, `TestNextEligible_PreservesSpawnLink`,
-  `TestListWaitingWithTimer_PreservesSpawnLink`,
-  `TestListWaitingWithWebhook_PreservesSpawnLink`), each creating a real
-  parent+child pair via the production `InstanceRepo`/`QueueRepo` and driving
-  the real repo method, confirmed all four failed for the right reason before
-  the fix and passed after, with no regression in the pre-existing provenance
-  or spawn-link suites. This is the "error"/latent-defect category the area
-  was missing (the round-trip, partial-link, root, and pre-existing-row cases
-  were already covered by review 1) — closes review 2 approval for area 7.
-
-- [x] **The partial-link guard in `InstanceRepo.Create` was undocumented by any
-  test.** Focus area 7 review 1. `adapter/sqlite/instance_repo.go:80-88`
-  documents and implements a load-bearing guard — a caller supplying only SOME
-  of `ParentInstanceID`/`ParentNodeID`/`SpawnMode` must have all three written
-  as NULL, never a half-written link with a dangling `parent_instance_id` and
-  no `parent_node_id` (which the wake and resumption short-circuit could never
-  match, stranding the parent forever) — but no test exercised any of the three
-  partial-input shapes. Added
-  `TestInstanceRepo_PartialSpawnLinkNeverWritten`
-  (`adapter/sqlite/instance_spawn_link_test.go`), table-driven over "parent id
-  without node id", "node id without parent id", and "parent+node id without a
-  valid mode"; confirmed by hand that removing the guard (writing each
-  NullString unconditionally) makes two of the three subtests fail, proving the
-  test is load-bearing rather than vacuous. This is the "failure" category the
-  area was missing — happy/success/error/edge were already covered by the
-  round-trip, same-statement, not-found, and root/pre-existing-row tests. This
-  closes review 1 approval for area 7.
-
-- [x] **`ListWaitingOnTerminalChild`'s retry-produces-duplicate-candidates case
-  was untested.** Focus area 5 review 2. The reconciler's query JOINs every
-  terminal child of a waiting parent's current node
-  (`adapter/sqlite/instance_repo.go:725-733`), with no analogous tie-break to
-  `FindChildBySpawnNode`'s `ORDER BY ... LIMIT 1` — by design, since it answers
-  "is there a terminal child" rather than "which child answers", but that
-  means a node-level retry that leaves more than one terminal child for the
-  same (parent, node) key (the exact scenario the tie-break test above
-  exercises) surfaces as TWO `SpawnWaitCandidate` rows naming the same parent,
-  and no test verified either the SQL layer produced this shape or that
-  `SpawnWaitReconciler.Reconcile` tolerates it. Confirmed by hand that it is
-  harmless — the reconciler re-verifies `parent.State == waiting` against the
-  live row before each `SetQueued`, so the second candidate for an
-  already-requeued parent is skipped — but an untested "confirmed by hand" is
-  exactly the gap this loop exists to close. Added
-  `TestListWaitingOnTerminalChild_RetryLeavesOneRowPerTerminalChild`
-  (`adapter/sqlite/instance_spawn_wait_test.go`) pinning the two-row shape, and
-  `TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce`
-  (`domain/engine/spawn_reconciler_test.go`) asserting the parent is queued
-  and `NotifyCapacityFreed` fires exactly once despite the duplicate. Also
-  reviewed and confirmed as correct-by-design (not a gap): `SpawnWaitCandidate.
-  ChildState`, populated by the SQL adapter, has no production reader —
-  `SpawnWaitReconciler.Reconcile` only uses it to identify *that* a child is
-  terminal (already filtered by the WHERE clause), never *how*, because the
-  routing decision is deliberately deferred to `resumeFromLink`'s fresher
-  `FindChildBySpawnNode` read at resumption. This closes the "edge" category
-  gap for area 5 — review 2 approval.
-
-- [x] **`FindChildBySpawnNode`'s newest-child tie-break was untested.**
-  Focus area 5 review 1. `adapter/sqlite/instance_repo.go:690-697` documents
-  `ORDER BY created_at DESC, rowid DESC LIMIT 1` as deliberate: a node-level
-  retry can leave more than one child row for the same (parent, node, mode)
-  key, and the newest must answer. But `created_at` is `strftime('%Y-%m-%dT
-  %H:%M:%SZ')` — second resolution (migration `001_initial_schema.up.sql:8`)
-  — so two children created back-to-back in a retry (or in any fast test)
-  land on an identical timestamp; `rowid DESC` was the ONLY thing breaking the
-  tie, and no test exercised the multiple-children case at all. A regression
-  that dropped or reversed the tie-break would have shipped silently and made
-  the executor's resumption short-circuit (`FindChildBySpawnNode` is consulted
-  by area 18) key on the wrong child. Added
-  `TestFindChildBySpawnNode_MultipleChildrenReturnsTheNewest`
-  (`adapter/sqlite/instance_spawn_wait_test.go`), which creates a stale child
-  then a newest child under the same key and asserts the newest one answers;
-  confirmed it fails (returns the stale child) when the ordering is reversed
-  to `ASC, rowid ASC`, then confirmed the real ordering passes it. This closes
-  the "edge" category gap for area 5 — review 1 approval.
-
-- [x] **`assertBindingKind`'s unmapped-type no-op was only verified indirectly.**
-  Focus area 3 requires verifying that an UNMAPPED node type really would no-op
-  `assertBindingKind`, but the existing coverage
-  (`TestExpectedKindForNodeType_OtherMappingsUnchanged`) only called
-  `expectedKindForNodeType` directly, never `assertBindingKind` itself, so a
-  future change that made the wrapper ignore `ok` would have gone undetected.
-  Added `TestAssertBindingKind_UnmappedNodeType_NoOp`
-  (`domain/engine/kind_guard_spawn_test.go`), which calls `assertBindingKind`
-  with an unmapped type (`workflow.NodeTypeScript`) across chat, agent, and a
-  bogus `ProfileKind`, asserting `nil` every time — this is the review-2
-  approval for area 3.
-
-- [x] **`instance.Instance.IsRoot()` had no production caller.**
-  `domain/instance/instance.go:159` documents itself as "the ONE place the null
-  link means root convention is expressed, so read paths do not each re-derive
-  it" — but no production code called it. `domain/engine/spawn_wake.go:43`
-  (`Engine.OnChildTerminal`) independently re-derived the exact same convention
-  with a two-field nil check (`child.ParentInstanceID == nil ||
-  child.ParentNodeID == nil`) guarded by the comment "a root run has nobody to
-  wake" — literally `IsRoot()`'s definition, inline. The two-field check is
-  safe to collapse to `child.IsRoot()` because `ParentInstanceID` and
-  `ParentNodeID` are never set independently: `engine.go`'s trigger-path
-  stamping only writes either both or neither (gated on `SpawnLink.Valid()`),
-  and `adapter/sqlite`'s create/scan path persists and reads the three link
-  columns as a single NULL-together unit. Replaced the inline check with
-  `child.IsRoot()`, giving the method its first production caller; existing
-  coverage (`TestOnChildTerminal_RootRunIsANoOp`,
-  `TestInstanceNullLinksAreRoots`, `TestInstanceWithLinkIsNotRoot`) still
-  passes unchanged. The other two re-derivations named in the original
-  finding — the `ParentScopeRoots` SQL clause and the dashboard's
-  `topLevelRows` — are a different layer (a SQL predicate and a TypeScript
-  predicate over a JSON DTO) that cannot call a Go method, so they are not
-  candidates for this fix; `IsRoot()`'s scope is Go in-process read paths over
-  an already-loaded `Instance`.
 
 ## Won't Fix
 
-Out of scope for this feature. Recorded so the omission is a decision, not an
-oversight. **None of these is an unfed production path** — each is either
-explicitly a spec non-goal or pre-existing behaviour this change set did not
-touch.
+- **W1 — `adapter/config:TestSampleFeaturePipeline_ValidatesWithDefaultProfiles` fails at the branch point.** `samples/feature-pipeline` references unregistered model aliases (`assessor-sonnet5-high`, `interviewer-codex`, `coder-pi-sol-high`). This is the recorded baseline failure, reproduced on pre-branch archive `1a93d9e`. It is outside this feature's scope and must not be "fixed" by changing sample or profile policy here.
+- **W2 — Cross-browser font portability is unprovable in this environment.** P3T2 wants two browsers with independently controlled system-font inventories, and only one Chrome is installed. Coverage, shaping and hash checks pass. This is an environment limit, not a code path. Revisit only on a host with two browsers.
+- **W3 — The dashboard suite cannot run at the branch point.** `dashboard/node_modules` is not installed in the seeding environment (`tsc`/`vitest` fail with `ERR_MODULE_NOT_FOUND`), so there is no dashboard baseline. A pass that installs dependencies (`cd dashboard && npm ci`) may run the suite. A failure caused by missing modules is environmental, not a regression.
 
-- **Recursion / runaway limits on spawning.** The spec lists recursion limits and
-  loop prevention as explicit non-goals, and `AGENTS.md:85` records that the
-  engine has no general runaway guard. A workflow that spawns itself grows
-  instance count geometrically. Phase 3's design records this as a known, accepted
-  risk. Out of scope.
-- **Lifting the awaited-spawn loop-body restriction.** Phase 4's design states the
-  short-circuit cannot distinguish re-entry-after-wait from a back-edge revisit,
-  and explicitly does not attempt to lift the restriction — for either awaited
-  spawn nodes or interactive nodes, which carry the same restriction for the same
-  reason. Documented in `AGENTS.md` instead.
-- **Duplicate child on fire-and-forget node retry.** A node-level retry of a
-  fire-and-forget spawn re-invokes `Execute` and creates a second child. Phase 3
-  records this as intended and pinned by test, since the spec states
-  fire-and-forget child outcomes do not affect the parent. (The awaited path is
-  idempotent via the short-circuit.)
-- **Atomicity of the child's terminal write and the parent's wake.** Phase 4
-  defers this as a durability refinement: `SpawnWaitReconciler` makes
-  non-atomicity recoverable rather than fatal.
-- **A child left running when the parent fails at the spawn node.** Deliberate:
-  the child may already be executing side effects, and cancelling it from a
-  failing parent would layer a second failure on the first. Consistent with the
-  engine's existing choice to retain workspaces on failure.
-- **Hierarchy on the single-instance detail view.** Phase 5 covers the list view
-  only.
-- **Editor-side UI for spawn nodes** (node palette, per-type port rendering,
-  configuration form). `dashboard/src/graph` has no editor for any node type;
-  `conditional` has had named ports far longer and still renders through
-  `ArbitronNode`'s single source handle. Spawn nodes are authored in
-  `workflow.json` and policed by Phase 1 validation.
-- **Server-side depth limit on hierarchy expansion.** Expansion is user-driven,
-  one level per request; depth costs requests, not an unbounded query.
-- **Pre-existing baseline failure**
-  `adapter/config.TestSampleFeaturePipeline_ValidatesWithDefaultProfiles`. Present
-  at the branch point; not this feature's job. Must not block the loop, and must
-  not be "fixed" by weakening the sample-pipeline validation this feature extends.
+## Closed
+- G41 (paired:18) — closed by independent review of d6f92f8: `domain/layout/query.go:QueryService.RetryInstance` locks/revalidates the committed destination; `cmd/arbitron/layout_relocation_retry_test.go:TestLayoutE2E_HistoricalRetryInsertSerializesWithTransfer` proves ordered insertion/transfer and publication at the moved owner with captured bytes unchanged.
+- G8 (paired:16) — passed-row client font failure had no recovery; `ArrangedGraph.tsx:fontsFailed` "Reload reviewed fonts" starts a fresh font epoch in both routes; `TestLayoutSurfaces_MissingBundledSubsetRetainsFallback` clicks it to recover.
+- G40 (paired:6) — retry kept an invalidated prior pass over an equal-score valid gen-2 pass; `worker.go:processRevision` now replaces a passed prior with a `passProblem`; `TestWorker_RetryReplacesInvalidatedPriorPass`.
+- G39 (paired:1) — `requester.go:sameManifest` compared via float64; now exact `json.Number`/`big.Rat` comparison, covered by requester and recovery large-integer tests.
+
+- [x] **G36 (Area 12 Review 2)** — closed 2026-10-18 in this pass: `ExecutionView.tsx:InstanceArrangement` uses `/me` identity plus the existing instance owner/department response to mirror `engine.canIntervene`; `ExecutionView.layout.test.tsx:offers instance layout Retry only with intervention permission` covers owner/admin/run lead versus viewers/foreign leads, delayed/failed identity stays hidden, and server rejection still preserves the graph.
+
+- [x] **G35 [ESCALATION] (Area 11 Review 2 check 4) — RESOLVED in this pass:** approval required a permanent required-browser saved node AND branch fixture with repeated supported emoji ZWJ graphemes, wrapped within contract maxWidth, measured lines/heights reaching persisted boxes, and zero blocking actual rendered findings; `cmd/arbitron/layout_sizing_e2e_test.go:TestLayoutSizing_RealBrowserSavedUnicodeMeasurementsReachView` now supplies it and passes (21.851s). No external decision/dependency remains.
+
+- [x] **G34 (Area 10 Review 2 check 4)** — closed 2026-10-18: `route_test.go:TestRouteCost_LessPrioritizesContactsThenCrossings` and `arrange_test.go:TestArrange_EqualRouteCostsKeepEarliestPrefix` fail the approver's priority/tie mutations respectively, pass unchanged production, and pass under the race detector.
+- **[ESCALATION] Area 10 / single:10/review2 convergence — RESOLVED 2026-10-18:** approval required the two G34 fixtures to reject crossings-first priority at `route.go:routeCost.less` and later-wins-ties selection at `arrange.go:Arrange`; both fixtures now exist with red/green evidence, so no missing fixture or dependency remains. G10's separate ruling stays escalated/non-blocking per the independent approver.
+
+- [x] **G4 (Area 9, row 17)** — closed by this single:9/review2 commit: `revision_stamper.go:EnsureStamped` restores exact seed input from `requester.go:AcknowledgedArrangement`; `TestSeedSampleWorkflows_LedgerOnlyFailureResumesAfterRecovery` is red-then-green through both journal cleanup paths and repeated real-root restart, preserving one unchanged row and one ledger line.
+- **[ESCALATION] Area 9 / single:9/review2 convergence — RESOLVED:** approval required a ledger-only failure fixture surviving both enqueue acknowledgement and worker recovery with unchanged manifest/identity/revision/time, one row and one ledger line; `sample_seed_durable_test.go:TestSeedSampleWorkflows_LedgerOnlyFailureResumesAfterRecovery` now provides it. Durable SQLite acknowledgement supplies the immutable input after journal cleanup; no external receipt-retention dependency remains. G31 stays open separately.
+
+- [x] **G5 (Area 9, row 17)** — closed by this single:9/review2 commit: `seeder_revision.go:seedRevision` journals before claiming; `commit_source.go:releaseSeedClaim` compensates only the exact abandoned shared seed ID after rollback; real filesystem/SQLite claim/error tests and eight-stage `TestSeedSampleWorkflows_KillAndRecover` pass, including fresh reseeding after four pre-proof crashes.
+
+- **[ESCALATION resolved] Area 8 Review 2 convergence condition (2026-10-18):** the missing mid-capture Chrome-death fixture now exists at `adapter/renderreview/browser_boundary_test.go:TestBrowserRenderer_RealSurfaceCrashMidCapturePreservesReviewedEvidence`; rendering-stage failure, unpublished cleanup, referenced-byte preservation and relaunch pass; disabling `browser.go:capture` cleanup makes it fail at the surviving-directory assertion. G9 remains the separate container-runner dependency.
+
+- **G7 (Area 8/10) closed 2026-10-18 (single:8/review1):** feature-pipeline passes within five attempts (first attempt) through real Chrome and the root. Two causes. (1) `domain/layout/route.go:labelDrop` lowers a wide branch label so its centre stays nearer its own route than a route entering the source node's top (edges 31/34 vs 29/33); test `samples_geometry_test.go:TestSamples_BranchLabelsStayNearestTheirOwnRoute` red without it. (2) `dashboard/src/render/report.ts:foldLineRects` folds Chrome's hanging-space rect into its line; it was read as a blank glyph line, failing `textInk` for edge 49 (test `report.test.ts` "folds a wrapped line's trailing-space rect"). Acceptance: `reviewer_browser_test.go:TestReadabilityReviewer_RealBrowser_FeaturePipelinePassesThroughTheCoordinator`, and `layout_arrange_e2e_test.go:TestLayoutArrange_RealBrowserSavedSamplesReachView` now REQUIRES `passed` for feature-pipeline, pr-review and ralph-loop. Side effects: `reviewer_browser_test.go:CatchesVisualOnlyClipping` no longer asserts `Rendered=false` (it held only through the hanging-space bug; clipped glyphs are painted, the defect travels as blocking findings); `layout_surfaces_e2e_test.go:TestLayoutSurfaces_NeedsAttentionShowsFindingsNotReviewed` injects a blocking finding through `layoutRenderReviewerFactory` because no bundled or synthetic manifest fails a single attempt now. Dist rebuilt (`npm run build` + copy).
+
+- [x] **G27 (Area 7, Review 2 check 6)** — `adapter/sqlite/layout_repo.go:LayoutRepo.MarkCached` now compares nullable WorkflowID as well as locator/job/result fences; `domain/layout/layouttest/memstore.go:MarkCached` matches the full canonical destination. `layouttest/store_contract.go:RunStoreContract/cache settlement fences identity at unchanged locator` failed in SQLite and memory before the fix (stale acknowledgement returned nil and hid PendingCache), then passed for nil-to-ID and ID-to-ID changes, preserving the terminal row and immutable evidence until the current destination acknowledges.
+
+- **Independent approval (Area 7, single:7/review2, 11b4f0b, 2026-10-18) — TICKED Review 2 only.** Verify placeholders were unexpanded; measured by hand: `go build ./...` ok; `go test ./domain/layout/... ./adapter/sqlite ./adapter/filesystem` exit 0; `-race ./domain/layout -run TestWorker` x2 exit 0; five named `cmd/arbitron` root gates with ARBITRON_REQUIRE_BROWSER=1 exit 0 (32.5s).
+  R2.1 `coordinator.go:Run` `max(MaxAttempts,1)`; mutation `+1` reddened `TestRun_BudgetOneAndNonPositiveBudgets`, `TestRun_BudgetExhaustion…`, `TestWorkerProcessBudgetsAndFailure`. Stage/job timeouts: `TestRun_StageTimeout` passed 30x plain and 5x `-race`; `TestWorkerStageTimeouts`, `TestNewCoordinator_StageTimeoutDefaults`.
+  R2.2 `worker.go:storedBetter` mutation `return true` reddened `TestWorkerCacheOutageAndRetainedBestRetry`/`TestWorkerProcessBudgetsAndFailure`; checkpoints in `worker_cancel_test.go`. R2.3–4 `worker_lease_test.go`, `worker_recovery_test.go`, `TestLayoutE2E_CloseCheckpointsAndNewProcessReclaims` pass.
+  R2.5–7: G27 fix reverted → `TestLayoutStoreContract`/`TestMemStoreContract/cache_settlement_fences_identity…` red for both nil and populated ID, green on reapply; `worker_cache*_test.go`, `TestServiceRevisionE2E_DeleteUnpublishRaceCache`, `TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult` pass.
+  G11 (open) is test-determinism hygiene that R2.1's text already acknowledges; it didn't reproduce here, and production deadline behaviour is covered, so it doesn't block this box. It stays open for an injected clock.
+
+- **Independent approval (Area 7, single:7/review1, 4357278, 2026-10-18):** all seven current wiring checks demonstrated; ticked Review 1 only. No new wiring gap found; G11 remains failure-lens work.
+  R1.1: `cmd/arbitron/main.go:initDomain` starts the stack for serve/MCP; `domainStack.close` stops queue/engine before `layout_wiring.go:layoutStack.stop` joins worker then closes renderer, before DB close. `layout_e2e_test.go:TestLayoutE2E_ActualCommandsJoinOnContextAndEOF` passed both commands.
+  R1.2: `layout_wiring.go:newLayoutStack` feeds configured MaxAttempts through `domain/layout/requester.go:requestArrangement`, SQLite `LayoutRepo.Request`, and `worker.go:processRevision` to Job.MaxAttempts; only captured rec.Manifest is decoded and token-checked. Five-attempt sinks: `worker_test.go:TestWorkerProcessBudgetsAndFailure/5` and `cmd/arbitron/layout_render_e2e_test.go:TestLayoutRender_RealBrowserPRReview`.
+  R1.3: `layout_wiring.go:newLayoutRenderReviewer` supplies BrowserRenderer/ReadabilityReviewer to NewCoordinator; real saves reached SQLite best/evidence and layout.json in `layout_coordinator_e2e_test.go:TestCoordinator_RealBrowserBoundedBestReachesSink` and `layout_render_e2e_test.go:TestLayoutRender_RealBrowserPRReview` (browser required).
+  R1.4: contracts §6.12 supports reserved Supersede; production-call grep excluding tests/layouttest found none. `layout_availability_test.go:TestLayoutE2E_NewSaveDoesNotSupersedeHistoricalWork` passed. `domain/layout/superseded_sqlite_test.go:TestWorkerSupersedeSQLiteKeepsBestEvidence`, `TestReaderSupersededSQLite`, `TestRequesterRetrySupersededSQLite` assert actual SQLite retained evidence, valid/invalid/missing-pass views, retry generations and notifications.
+  R1.5: `worker.go:processRevision` publishes after Complete; `dispatch` polls `reconcileCache`. `adapter/sqlite/layout_repo.go:persist` clears cache_generation, `PendingCache` finds unsettled rows, `MarkCached` settles them. Real disk sink/reconciliation verified by `worker_cache_integration_test.go:TestWorkerCacheCrossProcessFence` and `layout_availability_test.go:TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult`.
+  R1.6: `newLayoutStack` shares the mutation repo with `adapter/filesystem/layout_cache.go:PublishCache`; `manifest_lock.go:WithMutations` owns destination settlement/token checks and `worker.go:publish` rechecks job/result generations and destination inside the callback. Cross-process test above rejects late bytes then publishes the current fence.
+  R1.7/folded: `domain/layout/reader.go:cachedFallback` requires matching revision/contract/graph and readable-row generations, leaves Available=false and Unreviewed=true; `reader_test.go:TestReaderUnavailableCacheIsNeverReviewedPass` passed. `adapter/config/loader.go:defaults`/`normalize` default to 5/clamp to 1; root logs LoadWarnings (`TestLayoutE2E_ConfigBudgetAndWarnings`). `workflow_operations.go:reservedWorkflowFile`, `workflow_repo.go:writeFile`/`deleteFile`/`listFiles` and `adapter/mcp/tools_workflow.go:RegisterWorkflowTools` enforce the cache-file guard.
+  Fresh verification: full `go test ./domain/layout ./adapter/sqlite ./adapter/filesystem -count=1 -timeout=5m` exited 0; six named root gates with ARBITRON_REQUIRE_BROWSER=1 exited 0 (22.871s). Config full suite exited 1 solely for baseline `TestSampleFeaturePipeline_ValidatesWithDefaultProfiles` (`../test-baseline.json`); focused TestLoad_Layout tests exited 0. Supplied verify fields were unexpanded; these are direct measurements, with no observed new regression/build break in tested scope.
+  Coverage: happy `TestWorkerProcessCapturedInput`, success real-browser PRReview, failure budget exhaustion, error `TestWorkerProcessCorruptInputAndOutage`, edge superseded valid/invalid/no-pass. Four temporary Go overlays independently removed captured input or changed Worker/Reader/Requester superseded branches: each corresponding test exited 1 on its assertions; unmodified four-test rerun exited 0. No production/test source modified.
+
+- [x] **G25 (Area 7, single:7/review1)** — Closed: persisted SQLite coverage for R1.4(ii) added in `domain/layout/superseded_sqlite_test.go` (`TestWorkerSupersedeSQLiteKeepsBestEvidence`, `TestReaderSupersededSQLite`, `TestRequesterRetrySupersededSQLite`, all via `sqlite.NewLayoutRepo`). Mutation-checked: `worker.go:193` supersede branch, `reader.go:266` superseded-pass check and `requester.go:125` each made a case fail. R1.1–3, 5–7 and R1.4(i) were verified in the prior pass (c72ce45).
+- [x] **G26 [ESCALATION resolved] (Area 6, Review 2 check 3)** — closed in this single:6/review2 pass: `domain/layout/reader.go:rejectView` preserves a readable active generation's status and disables Retry; the missing convergence fixture now exists as `domain/layout/query_retry_test.go:TestQueryService_ActiveRepairPreservesStatusAndRetryPolicy` (20 red-then-green cases) and `cmd/arbitron/layout_http_truth_test.go:TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` (real Chrome/SQLite pending and claimed repair); unsafe results stay hidden and duplicate retries leave history unchanged; no external dependency or decision remains.
+
+- [x] **G25 [ESCALATION resolved] (Area 6, Review 2 check 6)** — `domain/layout/query.go:QueryService.retry` binds workflow retries/recovery to the locked scope/name/WorkflowID via `requester.go:Requester.retry` / `requestArrangement`; `TestLayoutRetryE2E_PreExistingPrivateShadowCannotRetrySharedRow` failed with HTTP 202 and a foreign generation bump before the fix, now passes HTTP/MCP with unchanged foreign rows/manifests; `TestQueryService_MissingRetryRejectsForeignInsertWinner` also rejects a foreign recovery insert before notify/ack. Historical relocation remains revision-scoped.
+
+- **[ESCALATION] Area 5 Review 2 convergence condition (resolved this pass):** an authorised revision must retain its captured positions, report unavailable/unreviewed without evidence on a real SQL deadline, and preserve its row/manifest after recovery; `cmd/arbitron/layout_reader_failure_test.go:TestLayoutQueryE2E_StatusDeadlinePreservesFallback` now supplies that fixture (passes; removing `Reader.fallback` fails). The six checks below also pass; no missing dependency or product decision remains for this lens.
+- [x] **G23 [ESCALATION resolved] (Area 4, Review 2 check 1)** — closed in this pass: `domain/workflow/commit_source.go:CommitSource.resolveRelocation` validates either registry-selected endpoint before relocation/deletion; `TestCommitSource_RelocationUndecidedPreservesEvidence` reproduced four destructive rollback failures before the fix and passes all 14 real-filesystem/SQLite cases after it.
+- [x] **G1 (Area 4)** — rename refused by its own relocation intent. Closed 2026-10-18: `commit_source.go:withOwnRelocation`/`ownsRelocation` exempt the caller's own intent ID in `Settle`; `service_revision_move.go:renameRevision` stamps with that context. Tests: `TestCommitSource_OwnRelocationIntentIsExempt` (foreign intent still `ErrMutationPending`), `TestLayoutE2E_RenameThroughCompositionRoot`, `TestLayoutE2E_SharedRenameThroughCompositionRoot`.
+
+- [x] **G19 (Area 3, Review 2 check 4)** — closed in this single:3/review2 refinement: `domain/workflow/service_revision_copy.go:copyRevision` assigns a fresh UUID before Stamp; `TestServiceRevisionCopySourceIdentityAndFailure` fails before the fix for nil/populated sources and repeated copies, then passes; `TestLayoutE2E_InitDomainAuthoring` verifies distinct source/destination IDs through the saved manifest and SQLite layout row.
+
+- **[ESCALATION] Area 3 Review 2 convergence condition:** `domain/workflow/service_revision_copy.go:copyRevision` must allocate a fresh non-nil destination WorkflowID before `Stamp`, including legacy nil-ID sources; the saved manifest, journal input and layout row must agree, and failed staging must leave the source untouched and no destination request.
+  `domain/workflow/service_revision_test.go:TestServiceRevisionCopySourceIdentityAndFailure` previously omitted this assertion; `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_InitDomainAuthoring` explicitly required the opposite. Replace that conflicting fixture with the area's independent-copy contract; no external dependency or further identity-policy decision is needed for this check.
+  Approval additionally requires byte-exact publication rollback (manifest/support/cache), rejection of stale name-only proof, pre-stamp authorization/collisions and recoverable prepare/proof/receipt boundaries; the refiner must leave all approval boxes unchanged.
+  Resolved in this pass: the conflicting root fixture now requires independent identity; the targeted checks below pass. No external decision or fixture dependency remains for Area 3 Review 2.
+
+- [x] **G6 (Area 2, Area 7)** — closed in single:2/review1: `cmd/arbitron/stdio_identity.go:stdioContext` supplies the local default-user identity to both stdio entries; proved by `TestLayoutE2E_StdioMCPAuthoringStampsAndRequestsOncePerRevision`. Log contamination split to G17.
+
+- [x] **G16 (Area 1)** — closed in this single:1/review2 refinement: `adapter/filesystem/revision_journal.go:entries` syncs visible receipts before exposing commit proof, `MarkCommitted` retries sync on existing receipts, and `domain/workflow/commit_source.go:Settle` preserves unlinked backups on incomplete enumeration; persisted `TestCommitSource_ReceiptSyncFailurePreservesBackup` and `TestRevisionJournal_MarkCommittedRetriesDirectorySync` failed before the fix and pass afterward (blocked reads, byte-exact evidence retention, recovery through the real SQLite request sink).
+
+- [x] **G14 (Area 1)** — closed in this single:1/review2 refinement: `adapter/filesystem/file_reader.go:withExisting` settles absent candidates before probing/selecting scope and holds the lock through reads; `TestFileReader_MissingTreeSettlesBeforeScopeSelection` restores real durable backups through ReadFile/ResolvePath/FileExists (private/shared, both reserved files), red before the fix; `TestFileReader_MissingPrivateTreeFailsClosed` prevents error fallback.
+
+- [x] **G3 (Area 1)** — closed in single:1/review1: `adapter/filesystem/file_reader.go:FileReaderAdapter.settled` now locks the destination and runs `readSettler.Settle` before reserved-file (`workflow.json`, `layout.json`) `ReadFile`/`ResolvePath`; wired by `cmd/arbitron/main.go` (`fileReader.SetSettledRepository`); HTTP raw route maps `ErrMutationPending` to 503 (`workflow_handler.go:ReadFile`), MCP already did. Tests: `file_reader_settle_test.go`, `TestLayoutHTTPE2E_ImmediatePeerCrashRead/*/raw` (red without the wiring line). Residual: `FileExists` is unsettled (existence only, no bytes); engine run-time reads of non-reserved files are intentionally ungated.
+
+## Failure-lens assessment — single:1/review2
+
+- R2.1: `adapter/filesystem/revision_rollback_test.go:TestRevisionStamper_RealRollbackPreservesRecoveryEvidence` passes failed-rollback intent/input retention, blocked next mutation, reopened recovery and byte-exact restoration.
+- R2.2: `domain/workflow/commit_source_test.go:TestCommitSource_PartialErrorsAndCancellation` / `TestCommitSource_PublicationOutageIsUndecided` pass partial committed results plus error, cancellation and retention of undecided inputs.
+- R2.3: `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_CorruptReceiptNeverArranges` / `TestLayoutE2E_PreparedInputIsQuarantinedNeverArranged` pass; no row is arranged for invalid/uncommitted input.
+- R2.4: `adapter/filesystem/manifest_lock.go:WithMutations` sorts/deduplicates before locking; `TestManifestLocks_Process`, `TestManifestLocks_InverseCopiesAndSourceMutation`, `TestManifestLocks_NoExpansionAndExpiredContext` pass, including fail-closed nested expansion.
+- R2.5: `adapter/filesystem/revision_receipt_durability_test.go:TestCommitSource_ReceiptSyncFailurePreservesBackup` fails if receipt durability or incomplete-enumeration retention is removed; `TestRevisionJournal_MarkCommittedRetriesDirectorySync` fails if an existing receipt bypasses sync. Both failed before implementation and pass after. The former reopens the real journal during persistent sync failure, preserves backup/input bytes, blocks reads/replay, then proves cleanup and exact-manifest SQLite replay after storage recovers. Existing receipt-before-finish assertions also pass.
+- R2.6 / folded: `cmd/arbitron/layout_repository_boundary_test.go:TestLayoutRepository_UnresolvedRelocationFailsClosed`, `TestLayoutHTTPE2E_PendingRelocationReadAndSave`, `TestLayoutMCPE2E_PendingRelocationReadAndSave` (transport pair: 0.969s), `TestLayoutE2E_PreSeedUndecidedSettlementAbortsBoot`, and `domain/queue/manager_shutdown_test.go:TestManagerStopJoinsCapacityNotifications` pass. `rg -n 'syncDir|os.Rename' adapter/filesystem/{revision_journal,tree_commit,durable,workflow_repo}.go` still confirms G15. Review 1 already demonstrated the actual boot deadline with retained evidence; persisting that overlay is optional.
+- Verification this pass: initial filesystem/workflow targeted checks passed. The new regressions failed on unsynced retry acknowledgement and deleted backup. An intermediate barrier also broke `TestRevisionJournal_DurabilityErrors/directory_sync`; requiring sync only when receipts exist preserved prepared-only inspection and resolved it. Final targeted filesystem/workflow checks passed (9.881s/5.562s), queue shutdown passed (0.255s); command-root boot/corrupt/prepared/unresolved/HTTP+MCP peer-crash checks passed (4.980s). No new exported collaborators, dashboard changes, whole-suite runs or approval-box edits.
+Recommend: no approval for single:1/review2 — G15 still lacks compensating-rename fsync and injected restore/sync ordering evidence at `tree_commit.go:RollbackTreeCommit` and `workflow_repo.go:copyTreeLocked`.
+
+## Independent approvals
+
+**single:1/review1 — Approved against 8fe3066; only Area 1 Review 1 ticked.**
+- R1.1: `cmd/arbitron/layout_wiring.go:newLayoutStack` constructs the sole production `workflow.NewCommitSource` with real journal, repo/trees/mutations, SQLite publications/registry and requester; it contains the only non-test `SetReadSettler` call.
+- R1.2: `cmd/arbitron/main.go:initDomain` settles at lines 565–570 before seed at 581, registry backfill at 621, and returning to `runServe`/`runMCP`; `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_PreSeedUndecidedSettlementAbortsBoot` passes with evidence retained.
+- R1.3: `adapter/filesystem/workflow_operations.go:WorkflowRepo.Load`, `domain/workflow/revision_stamper.go:RevisionStamper.Stamp` / `EnsureStamped`, `domain/workflow/service_revision.go:Service.settle`, `adapter/filesystem/layout_cache.go:LayoutCache.current`, `adapter/filesystem/file_reader.go:FileReaderAdapter.settled`, and `domain/workflow/commit_source.go:CommittedRequests` call `Settle`.
+- R1.4: `domain/workflow/commit_source.go:CommitSource.exactPublication` compares both publication revision and WorkflowID; `settlePrepared` also checks the visible manifest ID; `domain/workflow/commit_source_test.go:TestCommitSource_PublicationExactness` passes exact/old-proof/wrong-ID cases.
+- R1.5: `cmd/arbitron/main.go:initDomain` calls `SetSettledRepository(workflowRepo)`; `domainStack.routerDeps` / `mcpDeps` feed that reader to `adapter/http/workflow_handler.go:WorkflowHandler.ReadFile` / `adapter/mcp/tools_workflow.go:workflowReadFileHandler`. `FileReaderAdapter.settled` holds the real destination lock through settlement and byte read; both handlers propagate pending errors.
+- R1.6: `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_InitDomainAuthoring`, `cmd/arbitron/layout_recovery_test.go:TestLayoutE2E_KillAndImmediatePeerRead` and `cmd/arbitron/layout_http_recovery_test.go:TestLayoutHTTPE2E_ImmediatePeerCrashRead` pass; the latter verifies raw HTTP bytes before/after proof. An overlay removing only the production setter made before-proof/raw fail on candidate revision; unmodified rerun passed.
+- Folded in: `adapter/filesystem/durable.go:durableFiles.write`, `revision_journal.go:RevisionJournal.quarantine`, `tree_commit.go:FinishTreeCommit` / `RollbackTreeCommit` wire directory fsync on success (failure exception G15). A scratch overlay test held the real journal flock through `layout_wiring.go:layoutSettlementTimeout` (30s): `main.go:initDomain` returned DeadlineExceeded, seeded nothing and retained exact prepared input. `domain/queue/manager.go:Manager.Stop` joins notifications before `main.go:domainStack.close` closes SQLite; `manager_shutdown_test.go:TestManagerStopJoinsCapacityNotifications` passes.
+- Five categories: happy/save and success/crash tests above; failure `adapter/filesystem/revision_rollback_test.go:TestRevisionStamper_RealRollbackPreservesRecoveryEvidence`; error pre-seed I/O test above; edge `adapter/filesystem/file_reader_settle_test.go:TestFileReader_ReservedReadIsSettledFirst` (private/shared), `domain/workflow/commit_source_test.go:TestCommitSource_Constructor` (nil ports). The removed-setter experiment proves a real production input is load-bearing.
+- Validation: fresh `go test ./adapter/filesystem ./adapter/http ./adapter/mcp ./adapter/sqlite ./domain/workflow ./domain/queue -count=1` exited 0; targeted `./cmd/arbitron` authoring, crash HTTP/MCP, repository boundaries, publication and lifecycle tests exited 0. No measured failures/build break in this scope; supplied measurement placeholders were replaced by these runs. Failure-lens follow-ups G14/G15 remain open.
+
+**single:1/review2 — Withheld against 3124fb9; no box ticked.** Measurement placeholders were unfilled, so suites were run by hand: `go build ./...` ok; `go test -count=1 ./adapter/filesystem ./domain/workflow ./domain/queue` and targeted `./cmd/arbitron` crash/boundary tests exited 0.
+- The G14 fix (`file_reader.go:withExisting`) is correct and covered (`TestFileReader_MissingTreeSettlesBeforeScopeSelection`, `TestFileReader_MissingPrivateTreeFailsClosed`). Checks R2.1–R2.4 and R2.6 pass as the refiner reported.
+- **R2.5 fails as written** ("backup removed only after the receipt is *durable*"): `durable.go:durableFiles.write` renames the receipt and then calls `syncDir`. If that sync fails, `revision_journal.go:MarkCommitted` errors but leaves the receipt visible, and its existing-receipt branch (line 151) returns nil with no sync on retry. `commit_source.go:Settle` (line 100) treats `JournalCommitted` as proof and calls `FinishTreeCommit`, so the backup is deleted with no durable receipt (G16). The existing ordering tests only cover call order, not durability.
+- Folded-in fsync rule fails: compensating renames at `tree_commit.go:242` (`RollbackTreeCommit`) and `workflow_repo.go:599` (`copyTreeLocked`) are not followed by a directory sync (G15).
+- Next time: fix G16 (sync the receipt directory on both `MarkCommitted` branches, or have `entries` require a sync before reporting committed) and add a persisted test that fails journal dir-sync and asserts the backup is retained. Fix G15 with injected-failure ordering tests. The boot-timeout item was already shown by the R1 overlay; adding a persisted fixture is optional.
+- The refiner's `[ESCALATION]` label on the Area 1 entry above is wrong: it says itself that no human decision is needed. Treat it as ordinary open work.
+
+**single:1/review2 — Approved against 7896fb5; only Area 1 Review 2 ticked.** Measurement placeholders were unfilled, so suites were run by hand: `go build ./...` ok; `go test -count=1 ./adapter/filesystem ./domain/workflow ./domain/queue` exited 0; targeted `./cmd/arbitron` corrupt/prepared/unresolved/pre-seed/kill-peer/HTTP+MCP crash/pending-relocation tests exited 0.
+- R2.1 `TestServiceRevisionRollbackFailureKeepsPrepare`, `TestRevisionStamper_RealRollbackPreservesRecoveryEvidence`; R2.2 `TestCommitSource_PartialErrorsAndCancellation` / `PublicationOutageIsUndecided`; R2.3 `TestLayoutE2E_CorruptReceiptNeverArranges` / `PreparedInputIsQuarantinedNeverArranged`; R2.4 `manifest_lock.go:WithMutations` + `TestManifestLocks_NoExpansionAndExpiredContext`; R2.6 `TestLayoutRepository_UnresolvedRelocationFailsClosed`. All pass.
+- R2.5 (was G16) now holds: `revision_journal.go:entries` syncs the journal directory before any receipt is exposed, `MarkCommitted` existing-receipt branch re-syncs, and `commit_source.go:Settle` keeps unlinked backups when `entryErr != nil`. Mutations checked: disabling the `entries` barrier, or the `entryErr` guard, each turns `TestCommitSource_ReceiptSyncFailurePreservesBackup` red. Reverted; tree clean.
+- G15 is not a blocker: in both `tree_commit.go:RollbackTreeCommit` and `workflow_repo.go:copyTreeLocked` the unsynced compensating rename happens on an error return, so the TreeCommit intent and backup are kept. If a crash then reverts the rename, the destination is missing, `Load` settles, and `RollbackTreeCommit` (`exists=false` branch) restores it from the backup. Worst case is an orphaned `.old-*` dir, not lost bytes or a visible staging tree. Left open as durability hygiene. Removed the mislabeled `[ESCALATION]` entry: no human ruling was needed.
+
+**single:2/review1 — Withheld against 8246fc5; no box ticked.**
+- R1.1–3 pass: `cmd/arbitron/main.go:initDomain` installs stamper/mutations; `domainStack.routerDeps` / `mcpDeps` override adapter defaults. `cmd/arbitron/layout_wiring.go:newLayoutStack` supplies `Displayed: ls.store`, `cfg.Layout.MaxAttempts` and `ls.worker.Notify`; `adapter/sqlite/layout_repo.go:LayoutRepo.Request` deduplicates by revision.
+- R1.4 passes: `cmd/arbitron/layout_save_entrypoints_async_test.go:TestLayoutE2E_HTTPAndMCPSavesReturnBeforeArrangementAndRequestOnce` verifies four responses and nonterminal SQLite rows with rendering blocked. `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_SaveIsAsyncAndEngineSnapshotRetainsPendingRevision` verifies the full worker input and engine snapshot.
+- **R1.5 fails:** `cmd/arbitron/main.go:runMCP` → `adapter/mcp/server.go:Server.ServeStdio` supplies no identity; `domain/workflow/service.go:caller` rejects before stamping. `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_StdioMissingIdentityIsNotBypassed` confirms actual-command denial. The new test injects `adminCtxForLocalUser` into registered-tool calls.
+- R1.6 / folded pass: `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_ExplicitStandaloneNoRegistrySave`; `cmd/arbitron/revision_metadata_e2e_test.go:TestRevisionMetadataE2E_CreateRejectsClientPresentation`; `domain/workflow/revision_stamper_test.go:TestRevisionStamperFallback`; `adapter/sqlite/layout_migration_test.go:TestLayoutMigration`.
+- Five categories verified: happy/async and success/root tests above; failure `domain/workflow/service_revision_test.go:TestServiceRevisionUpdateDeniedBeforePrepare`; error `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_LiveEnqueueOutageRecoversByPoll`; edge metadata A→B→A/identical saves and `TestLayoutE2E_NilCopiedIDStillRequests`.
+- Unfilled measurement placeholders replaced by fresh exit-0 runs: `go build ./...`; full tests for `domain/workflow`, `domain/layout`, `adapter/sqlite`, `adapter/filesystem`, `adapter/http`, `adapter/mcp`; targeted root authoring/async/stdio/local/config/metadata/outage/nil-ID tests. No sibling or failure-lens defect blocks this judgement.
+- Mutation proof: an external Go overlay changed only `main.go:initDomain` to `SetRevisionStamper(nil)`; the new transport test exited 1 on the empty saved revision. The unmodified test passed before and after; production files were never edited.
+- Next: wire an authenticated identity producer through `main.go:runMCP` and `runServe --mcp-stdio`; prove actual stdio create/update responses, distinct revisions and one durable row per revision with rendering blocked. That satisfies R1.5; further identity-denial characterization does not.
+
+- [ ] **G16 (Area 2, Review 1 hardening, non-blocking)** — `adapter/mcp/tools_workflow.go:workflowSvc` and `adapter/http/workflow_handler.go:NewWorkflowHandler` fall back to `workflow.NewWorkflowService(repo, nil)` with no stamper when `Deps.WorkflowSvc` is nil, and `adapter/http/server.go:202` passes `d.WorkflowSvc` unchecked. Production is fed (`main.go:594-597` builds the only stamped Service and `main.go:313,350` pass `ds.workflowSvc` to both transports), so no live path takes the legacy `if s.stamper != nil` branches (`service.go:244,284`). A future composition mistake would silently save with no revision and no request. Consider failing fast in `RegisterWorkflowTools`/`NewServer` when `WorkflowSvc` is nil outside tests. Review-1 pass 2026-10-17: checks 1–4, 6 verified; check 5 still fails on G6.
+
+**single:2/review1 — Independent review of e2263f5: withheld; Review 1 remains unticked.**
+- HEAD changes only this ledger; no identity producer was added. R1.5 still fails: `cmd/arbitron/main.go:runMCP` / `runServe` pass identity-free contexts to `adapter/mcp/server.go:Server.ServeStdio`; `domain/workflow/service.go:caller` rejects authoring before stamping.
+- Fresh `go test ./cmd/arbitron -run '^TestLayoutE2E_StdioMissingIdentityIsNotBypassed$' -count=1 -v` exits 0 and confirms the actual CLI returns identity denial and writes no manifest (`cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_StdioMissingIdentityIsNotBypassed`).
+- R1.1–3 remain fed through `cmd/arbitron/main.go:initDomain`, `domainStack.routerDeps` / `mcpDeps`, and `cmd/arbitron/layout_wiring.go:newLayoutStack`; adapter fallback G16 is non-blocking because live routes receive the stamped service.
+- R1.4/6 and folded checks remain covered by `cmd/arbitron/layout_save_entrypoints_async_test.go:TestLayoutE2E_HTTPAndMCPSavesReturnBeforeArrangementAndRequestOnce`, `layout_e2e_test.go:TestLayoutE2E_ExplicitStandaloneNoRegistrySave`, `revision_metadata_e2e_test.go:TestRevisionMetadataE2E_CreateRejectsClientPresentation`, `domain/workflow/revision_stamper_test.go:TestRevisionStamperFallback`, and `adapter/sqlite/layout_migration_test.go:TestLayoutMigration`.
+- Measurement fields were unexpanded, so verified directly: `go build ./...`, uncached full suites for `domain/workflow`, `domain/layout`, `adapter/sqlite`, `adapter/filesystem`, `adapter/http`, `adapter/mcp`, and selected root authoring/async/local/metadata/outage/nil-ID tests all exit 0.
+- To pass R1.5: supply an authenticated identity at both stdio composition entries while retaining Service authorization; prove actual stdio create/update responses and one durable row per distinct saved revision while rendering is blocked. No sibling or failure-lens finding is a withholding reason.
+
+**single:2/review1 — G6 closed (refiner pass).** `cmd/arbitron/stdio_identity.go:domainStack.stdioContext` now feeds both stdio entries (`main.go:runMCP`, `runServe --mcp-stdio` goroutine): local mode injects `identity.LocalAdminIdentity(default user)` (the same builder `adapter/http/auth_middleware.go` uses); org/edge stay unauthenticated and are denied by `Service.caller`. `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_StdioMCPAuthoringStampsAndRequestsOncePerRevision` drives the real `mcp` command: create + update succeed with the renderer blocked and leave two distinct `layout_revisions` rows (it failed with "no identity in context" before the fix). Unit: `stdio_identity_test.go`. Replaced the denial characterization `TestLayoutE2E_StdioMissingIdentityIsNotBypassed`; org/edge denial is covered by `TestStdioContext_NonLocalModeStaysUnauthenticated`. Stdout log contamination split out as G17.
+
+**single:2/review1 — Independent approval of 3f0e81d; only Area 2 Review 1 ticked.**
+- R1.1: `cmd/arbitron/main.go:initDomain` installs the only live Service stamper/mutations; `domainStack.routerDeps` / `mcpDeps` feed it to both adapters. Grep confirms adapter fallback constructors remain, but HTTP replaces its fallback before routing and MCP never selects its fallback with these deps; existing G16 hardening stays non-blocking.
+- R1.2–3: `cmd/arbitron/layout_wiring.go:newLayoutStack` supplies `Displayed: ls.store`, `cfg.Layout.MaxAttempts`, and `ls.worker.Notify`; `adapter/sqlite/layout_repo.go:LayoutRepo.DisplayedLayout` reads actual result geometry, and `LayoutRepo.Request` deduplicates on revision after `RevisionJournal.MarkCommitted`.
+- R1.4: `cmd/arbitron/layout_save_entrypoints_async_test.go:TestLayoutE2E_HTTPAndMCPSavesReturnBeforeArrangementAndRequestOnce` proves four responses with blocked rendering and one row per revision; `layout_e2e_test.go:TestLayoutE2E_SaveIsAsyncAndEngineSnapshotRetainsPendingRevision` compares the entire worker measurement input and persisted engine snapshot to the saved graph.
+- R1.5: `cmd/arbitron/stdio_identity.go:domainStack.stdioContext` resolves the real default user and feeds `main.go:runMCP` / `runServe`; `layout_e2e_test.go:TestLayoutE2E_StdioMCPAuthoringStampsAndRequestsOncePerRevision` proves successful actual-CLI create/update and two durable distinct revisions. An external test overlay exercised the same assertions through `serve --mcp-stdio`, exit 0. Existing stdout hygiene G17 remains separate.
+- R1.6: `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_ExplicitStandaloneNoRegistrySave` reaches the real SQLite sink without a registry; `TestLayoutE2E_InitDomainAuthoring` also verifies private and admin-shared updates and exact captured manifests.
+- Folded checks: `cmd/arbitron/revision_metadata_e2e_test.go:TestRevisionMetadataE2E_CreateRejectsClientPresentation` proves server metadata and distinct identical/A→B→A saves; `domain/workflow/revision_stamper_test.go:TestRevisionStamperFallback` checks surviving-node filtering with a revision-bound displayed reader; `adapter/sqlite/layout_migration_test.go:TestLayoutMigration` exercises down/up and preserved publication data.
+- Five categories: happy/async and success/root evidence above; failure `domain/workflow/service_revision_test.go:TestServiceRevisionUpdateDeniedBeforePrepare`; error `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_LiveEnqueueOutageRecoversByPoll`; edge metadata and `TestLayoutE2E_NilCopiedIDStillRequests` in that package. Failure-lens status remains untouched.
+- Unexpanded measurement fields required direct verification: `go build ./...` and uncached full suites for `domain/identity`, `domain/workflow`, `domain/layout`, `adapter/sqlite`, `adapter/filesystem`, `adapter/http`, `adapter/mcp` all exit 0; targeted root authoring/async/stdio/local/config/metadata/outage/nil-ID/lifecycle tests exit 0 (20.172s).
+- Load-bearing producer checked independently: an external Go overlay returning the identity-free context from `stdioContext` makes the stdio authoring test exit 1 at its successful-response assertion with "no identity in context"; unmodified rerun exits 0. Production files were never mutated.
+
+## Failure-lens assessment — single:2/review2
+
+- R2.1: `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_LiveEnqueueOutageRecoversByPoll` passes: Create and later Update retain two exact inputs through a real SQLite enqueue outage, periodic replay and duplicate replay.
+- R2.2: G18 above remains an explicit contract decision. `cmd/arbitron/layout_save_receipt_test.go:TestLayoutSaveReceiptFailureSurvivesOverwriteAndDelete` passes all three operations with actual filesystem receipt failure, blocked read/write, retained shared backup, settlement before overwrite, deletion and two recoveries into exact SQLite rows.
+- R2.3–5: `domain/workflow/service_revision_test.go:TestServiceRevisionUpdateDeniedBeforePrepare`, `TestServiceRevisionUpdateReloadsAfterLockAndSettlement`, `TestServiceRevisionSharedCancellationRestoresPrior`, `TestServiceRevisionFailureOrdering` and `TestServiceRevisionSharedFailureRestoresBeforeAbandon` pass; baseline targeted workflow tests were green before edits.
+- R2.6: `cmd/arbitron/layout_availability_test.go:TestLayoutE2E_NilCopiedIDStillRequests` and `layout_e2e_test.go:TestLayoutE2E_ExplicitStandaloneNoRegistrySave` pass. `adapter/sqlite/layout_repo.go:LayoutRepo.Request` keys deduplication by revision, independently of nil/shared WorkflowID and destination.
+- Folded: `TestRevisionMetadataE2E_CreateRejectsClientPresentation`, `TestRevisionStamperFallback`, `TestLayoutMigration`, `TestLayoutRequesterSQLiteSink` and `TestLayoutE2E_SaveIsAsyncAndEngineSnapshotRetainsPendingRevision` pass. `rg -n 'SetRevisionStamper|SetMutationCoordinator|StamperDeps|SetNotifier' cmd/arbitron/{main,layout_wiring,sample_seed}.go` confirms existing production inputs; no production fields/collaborators added, approval boxes untouched.
+- Verification: targeted `go test ./domain/workflow -run 'Test(ServiceRevision(CreateUpdate|UpdateDeniedBeforePrepare|UpdateReloadsAfterLockAndSettlement|FailureOrdering|SharedFailureRestoresBeforeAbandon|SharedCancellationRestoresPrior)|RevisionStamper)' -count=1` passed (1.223s); root outage/nil-ID/standalone/async/metadata filter passed (16.480s); SQLite migration/requester filter and layout requester filter passed. New three-case test passed (1.727s); `git diff --check` passed. No whole suites run.
+- Input sensitivity: an external Go overlay deleting `revision_stamper.go:Stamp`'s `Journal.Record` call makes the new Create case fail (exit 1); the unmodified three-case rerun passes. Initial fixture omitted the real active-instance counter; it was wired before the passing runs. The intentional mutation failure is not a branch regression.
+Recommend: no approval for single:2/review2 — G18 requires reconciliation of R2.2's receipt-or-rollback success gate with Create/Update's manifest-commit acknowledgement policy; receipt failure and exact-once recovery now have durable integration evidence.
+
+## Approval — single:2/review2 (ticked)
+
+- G18 resolved by the human-selected design, not a new ruling: design phase 1 ("Save success depends on the manifest commit, not on the queue") and phase 2 §SAVE-COMMIT-PROOF ("Without receipt, roll forward only when the destination and publication prove the same token/ID"). Returning nil after `MarkCommitted` fails is not silent: `revision_stamper.go:committed` logs an Error, keeps the prepare and the tree backup, and settlement rolls it forward to a receipt before any read or overwrite.
+- R2.2 input sensitivity checked by the approver: adding `s.Abandon` on the `MarkCommitted` error path in `revision_stamper.go:committed` makes `cmd/arbitron/layout_save_receipt_test.go:TestLayoutSaveReceiptFailureSurvivesOverwriteAndDelete` fail in all 3 subtests. Reverted; tree clean.
+- R2.1/3/4/5/6 cited tests pass when the approver reruns them. `go build ./...` and uncached `domain/workflow`, `domain/layout`, `adapter/{sqlite,filesystem,http,mcp}` suites exit 0 (measurement fields were unexpanded, so these ran by hand).
+
+## Area 3 Review 1 (wiring) — pass 2026-10-17
+- R1.1 pass: `cmd/arbitron/main.go:555-595` — one `publishedRepo` feeds `newLayoutStack` (`CommitSourceDeps.Publications`, `layout_wiring.go:123`) and `NewWorkflowService`; `ds.publishedRepo` is what the E2E asserts against.
+- R1.2 note: real order in `service_revision_copy.go:publishRevision` is `CopyTreeStamped` callback → `Stamp` → `PrepareTreeCommit` (backs up the still-visible destination, needs `req.Revision`) → swap → `WriteAndRecord` → `CommitPublication` → `committed`/`FinishTreeCommit`. The plan's "Prepare, then stamp" wording is inverted; the code order is the correct one.
+- R1.3–4 pass: `copyRevision`/`duplicateRevision` stamp in the callback; `TestLayoutE2E_*` (layout_e2e_test.go:200-230) asserts one `layout_revisions` row per destination through `initDomain`.
+- Closed gap: folded-in `publishing.go:84` guard had no test (the fake store rejected empty proofs itself, sqlite only rejects ""). Added `TestWriteAndRecordRejectsInvalidPreparedProof`; fails with the guard disabled.
+- FOR REVIEW 2 (not fixed): `layout_e2e_test.go:221` asserts `Copy` keeps the source `WorkflowID` ("retains source identity"), while Review 2 check 4 expects a fresh destination ID. Decide which contract holds and cite `TestServiceRevisionCopySourceIdentityAndFailure`. `Duplicate` has no HTTP route (MCP `workflow_duplicate` only).
+
+## Area 3 Review 1 — independent approval of 62215c3 (2026-10-17)
+- R1.1: `cmd/arbitron/main.go:initDomain` passes the same `publishedRepo` to Service and `newLayoutStack`; `cmd/arbitron/layout_wiring.go:newLayoutStack` feeds it to `CommitSourceDeps.Publications`, with real journal/repo/registry/requester. `domainStack.routerDeps`/`mcpDeps` feed the stamped Service to HTTP Publish/Copy and MCP Publish/Copy/Duplicate.
+- R1.2: `domain/workflow/service_revision_copy.go:publishRevision` stamps in the hidden callback, prepares a durable prior-tree backup, swaps, then `domain/workflow/publishing.go:WriteAndRecord` commits exact revision+ID; `domain/workflow/service_revision.go:committed` reaches receipt, request, then backup cleanup. `adapter/filesystem/tree_commit.go:PrepareTreeCommit` needs the stamped revision; all backup work precedes visibility as design phase 2 §2 requires.
+- [ESCALATION] R1.2 plan wording: should “PrepareTreeCommit, then stamps” be corrected to “Stamp, then PrepareTreeCommit, before swap”? The named API requires the fresh revision. This documentation question is set aside under rule 6; the required reversible publication path is present.
+- R1.3–4: `adapter/filesystem/workflow_repo.go:copyTreeLocked` persists the callback-stamped staging manifest before rename; `copyRevision`/`duplicateRevision` feed it real destination requests. `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_InitDomainAuthoring` checks exact captured manifests and destination row counts (Publish/re-publish 1/2, Copy 1, Duplicate 1); `layout_publication_e2e_test.go:TestLayoutPublicationE2E_ExactProofAndFailedReplacement` checks SQLite proof, replacement rollback, and no phantom revision.
+- R1.5: publisher checks and `checkSourceScope` are inside `publishRevision`'s two-target lock. `domain/workflow/service_revision_test.go:TestServiceRevisionPublishRechecksSourceOwnerUnderLock` changes authority before acquisition and proves rejection without a request; `TestServiceRevisionCopyPublishAuthorizationAndCollision` covers the other publisher.
+- Folded: `revision_stamper.go:retained` consumes revision-keyed `LayoutRepo.DisplayedLayout` positions, never verdict; `TestServiceRevisionPublishFallbackUsesSourceThenDestinationDisplay` verifies fallback priority. Copied cache bytes cannot prove the fresh token (`adapter/filesystem/layout_cache.go:validateCache`, `domain/layout/reader.go:cachedFallback`). `publishing.go:WriteAndRecord` rejects invalid revisions/nil IDs before the store.
+- Sensitivity: temporary Go overlays (no tracked code edits) disabling the guard make all 4 `TestWriteAndRecordRejectsInvalidPreparedProof` cases fail; emptying `publishRevision`'s proof WorkflowID makes `TestLayoutPublicationE2E_ExactProofAndFailedReplacement` fail. Happy/success: fresh/re-publish/copy/duplicate sink checks; failure: proof rejection/restore; error: operation boundary injections; edge: nil source ID and invalid prepared proofs.
+- Verification: supplied measurement fields were unexpanded, so reran uncached `go test ./domain/workflow ./domain/layout ./adapter/filesystem ./adapter/sqlite ./adapter/http ./adapter/mcp -count=1`, targeted `./cmd/arbitron` publication/root/MCP/stdio/nil-copy tests, and `go build ./...`: all exit 0. Root provenance fixtures deliberately use unavailable Chrome; assertions cover publication/request sinks, not rendered acceptance. Only Area 3 Review 1 ticked; G19 remains for Review 2.
+
+## Area 3 Review 2 — failure-lens assessment (single:3/review2)
+
+- Baseline: `go test ./domain/workflow -run 'TestServiceRevision(Publish|Copy|OperationFailure)' -count=1` passed before changes; the added fresh-ID assertions then failed for both nil and populated source identities before the production fix.
+- R2.1: `domain/workflow/service_revision_test.go:TestServiceRevisionPublishFailureRestoresWholeTree` now compares raw prior/restored manifest bytes, exact supporting-file bytes and distinct prior/source cache bytes, with unchanged proof, no request and abandoned prepare; `adapter/filesystem/tree_commit_test.go:TestTreeCommit_RestoreAllBytes` also covers unknown manifest fields and extra-file removal.
+- R2.2: `domain/workflow/commit_source_test.go:TestCommitSource_PublicationExactness/old_proof` passes normally and fails with a temporary Go overlay removing only the revision comparison from `commit_source.go:exactPublication` (mutation exit 1); a same-name old publication cannot prove a new revision.
+- R2.3: `TestServiceRevisionCopyPublishAuthorizationAndCollision` passes; `service_revision_copy.go:copyRevision` checks visibility before CopyTreeStamped, whose `workflow_repo.go:copyTreeLocked` collision guard runs before the stamping callback. `TestServiceRevisionPublishRechecksSourceOwnerUnderLock` covers changed source authority.
+- R2.4: production grep `rg -n 'CommitPublication|PrepareTreeCommit|uuid.New\(' domain/workflow/service_revision_copy.go domain/workflow/service_revision_move.go` locates fresh Copy ID allocation before Stamp and Duplicate allocation before registration; identity tests assert request/manifest agreement, distinct repeated-copy IDs and source preservation on journal failure. No new collaborator/config was introduced.
+- R2.5: `TestServiceRevisionOperationFailureBoundaries` (publish/copy/duplicate cases), `TestCommitSource_PrivateAndHistory` and `TestCommitSource_SettleBeforeOverwritePreservesMissedReceipt` cover prepare/write/receipt/request failures and SQLite recovery; `TestLayoutRepository_StagedPublicationReadBoundaries` proves deadline-blocked readers, before-proof rollback and after-proof acceptance following writer death. Backup errors leave no swap; proof/rollback errors preserve recovery evidence (`publishRevision`); receipts retain prepared inputs (`RevisionStamper.committed`).
+- Folded/edge: `TestWriteAndRecordRejectsInvalidPreparedProof`, `TestRevisionStamperInvalidEnvelope`, `TestRevisionStamperFallback`, `TestServiceRevisionPublishFallbackUsesSourceThenDestinationDisplay` and `TestReaderUnavailableCacheIsNeverReviewedPass` pass: invalid/nil inputs fail closed; foreign cache revisions yield retained fallback and no reviewed verdict. Root fixtures deliberately have no browser and verify publication/SQLite sinks, without claiming rendering acceptance.
+Recommend: approve single:3/review2 — fresh Copy identity is test-first verified through the saved/request/SQLite sinks; exact publication proof, byte-identical rollback, authorization/collision guards and recoverable failure boundaries pass targeted tests. Approval boxes remain untouched.
+
+### Targeted verification for single:3/review2
+
+- PASS: `go test ./domain/workflow -run '^(TestServiceRevision(Publish|Copy|OperationFailure|RenameDuplicateTransfer)|TestWriteAndRecordRejectsInvalidPreparedProof|TestCommitSource_(PublicationExactness|PublicationOutageIsUndecided|PartialErrorsAndCancellation|PrivateAndHistory|SettleBeforeOverwritePreservesMissedReceipt))' -count=1`.
+- PASS: `go test ./cmd/arbitron -run '^(TestLayoutE2E_InitDomainAuthoring|TestLayoutPublicationE2E_ExactProofAndFailedReplacement|TestLayoutRepository_StagedPublicationReadBoundaries)$' -count=1`.
+- PASS: `go test ./adapter/filesystem ./adapter/sqlite -run '^(TestWorkflowRepoCopyTreeStamped.*|TestTreeCommit_.*|TestRevisionPublicationCommit)$' -count=1`.
+- PASS: `go test ./domain/workflow ./domain/layout ./adapter/filesystem -run '^(TestRevisionStamper(InvalidEnvelope|Fallback)|TestLayoutCache_EnvelopeAndReadSettlement|TestReaderUnavailableCacheIsNeverReviewedPass)$' -count=1`; `git diff --check` passes. No full suites or dashboard commands were run; no failures occurred in the targeted production runs.
+
+## Area 3 Review 2 — approver verdict (single:3/review2, approved)
+
+- Measurement fields were unexpanded, so confidence was treated as low and I reran the suites myself: `go build ./...` and `go test ./domain/workflow ./domain/layout ./adapter/filesystem ./adapter/sqlite ./adapter/http ./adapter/mcp -count=1`, plus targeted `./cmd/arbitron` publication/root tests. All exited 0.
+- R2.1: `TestServiceRevisionPublishFailureRestoresWholeTree/overwrite` checks manifest bytes, `notes.txt` and `layout.json` cache bytes. An overlay that disables `RollbackTreeCommit` in `publishRevision` makes both subtests fail.
+- R2.2: an overlay that drops `p.Revision == rev` from `commit_source.go:exactPublication` makes `TestCommitSource_PublicationExactness/old_proof` fail.
+- R2.3: `TestServiceRevisionCopyPublishAuthorizationAndCollision` asserts `j.entries` is empty (no Stamp) for hidden-source, other-publisher, collision and missing cases.
+- R2.4: an overlay that reverts `copyRevision` to `staged.Name = name` makes `TestServiceRevisionCopySourceIdentityAndFailure` fail (nil and inherited IDs).
+- R2.5: `TestServiceRevisionOperationFailureBoundaries` (stamp=record, write, receipt, enqueue) and the publication-error restore test cover these boundaries. The prepare boundary for Publish was verified by a probe only (G20).
+
+
+## Area 4 Review 1 (wiring) — pass 2026-10-18
+Checks 1-5 verified. 1: G1 fixed (above). 2: `layout_wiring.go:123` Relocator=ls.requester; stamper Requester is the same. 3: `TestLayoutE2E_TransferRelocatesWithoutNewRevision` passes. 4: `RenamePublication` (`published_workflow_repo.go:89-120`) updates identity+publication in one tx; shared e2e added. 5: no `DELETE FROM layout_revisions` in non-test Go.
+Note for Review 2: `finishRelocation` swallows Relocate/RelocateArrangements errors (logs, returns nil) leaving the intent for recovery; rename success may precede completed relocation.
+
+
+## Independent approval — single:4/review1 — 2026-10-18
+- R1.1: `domain/workflow/service_revision_move.go:renameRevision` supplies the exact intent ID via `commit_source.go:withOwnRelocation`; `Settle` exempts only it. `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_RenameThroughCompositionRoot` and `TestLayoutE2E_SharedRenameThroughCompositionRoot` pass through `initDomain`, preserving ID/history and adding exactly one revision.
+- R1.2: `cmd/arbitron/main.go:initDomain` injects the stamper/coordinator; `layout_wiring.go:newLayoutStack` supplies the same real requester to stamper and CommitSource.Relocator. `service_revision_move.go:finishRelocation` and `commit_source.go:resolveRelocation` feed `domain/layout/requester.go:RelocateArrangements` → `adapter/sqlite/layout_repo.go:Relocate` with real endpoints.
+- R1.3: `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_TransferRelocatesWithoutNewRevision` passes: same saved revision, one row, new owner, old manifest gone.
+- R1.4: `adapter/sqlite/published_workflow_repo.go:RenamePublication` uses one BeginTx/Commit for workflow_identity and published_workflows, including the new saved_revision; the shared-root rename test verifies proof/old-name removal and two history rows.
+- R1.5: case-insensitive production Go/SQL search finds no DELETE FROM layout_revisions; `adapter/sqlite/migrations/019_layout_revisions.up.sql` has no identity foreign-key cascade. `cmd/arbitron/layout_service_revision_test.go:TestServiceRevisionE2E_DeleteUnpublishRaceCache` passes all four orders, retaining the exact manifest and immutable result after removal.
+- Folded guard: `domain/workflow/service_revision_support.go:lockedDelete` settles/rechecks before `delete.go:guardNoActiveInstances`. A temporary overlay test, TestApprovalGuardAfterSettlement, makes settlement introduce an active instance; Delete and Unpublish both refuse and preserve the tree (exit 0). Existing TestServiceRevisionDeleteRechecksIdentityAfterSettlement also passes.
+- Verification: fresh `go test -count=1` for domain/workflow, domain/layout, adapter/filesystem, adapter/sqlite, adapter/http and adapter/mcp exits 0; the four named root tests exit 0 on rerun (G22 records the initial browser-start failure). These commands compile every affected Go target; supplied measurement fields were unresolved templates.
+- Sensitivity: temporary production overlays disabling the own-intent exemption or blanking finishRelocation's source name each exit 1 at the existing rename/transfer acceptance assertion. No probe changes remain in the worktree. Review 1 only is ticked; G21/G22 and the prior finishRelocation error-recovery note remain separate from these numbered wiring checks.
+
+## Area 4 Review 2 (failure) — pass 2026-10-18
+- [ESCALATION] Convergence condition: `domain/workflow/commit_source.go:CommitSource.resolveRelocation` needs a real-filesystem/SQLite fixture preserving surviving bytes, intent, journal and row when either winning endpoint is missing/unreadable/wrong-ID, plus third-authority and deadline cases; checks 2–5 need cancellation, proof rollback, real cache race and delete/recreate evidence. Those fixtures now exist and the targeted commands below completed; no external decision remains for this lens.
+- R2.1: `commit_source_test.go:TestCommitSource_RelocationAuthority` passes both-folder source/target decisions; `TestCommitSource_RelocationUndecidedPreservesEvidence` passes 14 cases (missing, I/O error, malformed, wrong ID, third destination, missing registry and deadline, in both directions). Before the production guard, four source-authority cases failed because target/workflow.json was deleted. G23 is closed.
+- R2.2–3: `service_revision_test.go:TestServiceRevisionMoveSurvivesCancellationAfterIdentityCommit`, `TestServiceRevisionMoveRollbackAndPostcommitCleanup` and `TestServiceRevisionSharedRenameProofFailure` pass; `adapter/sqlite/published_workflow_repo_test.go:TestRevisionPublicationRename` passes actual SQL-trigger failure, cancellation and proof/identity conflict rollback.
+- R2.4: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^TestServiceRevisionE2E_DeleteUnpublishRaceCache$' -count=1 -v -timeout=3m` exits 0 (26.686s); all four cache/removal orders preserve immutable results and never recreate removed folders. No skips or browser-start failures this run; G22 remains a separate host-flake investigation.
+- R2.5: `commit_source_test.go:TestServiceRevisionDeleteRecreateKeepsHistory` passes Delete/Create and Unpublish/Publish through real journal/filesystem/SQLite: distinct identity and revision, unchanged old row, new manifest current after recovery. Folded guard: `service_revision_support.go:lockedDelete` settles/rechecks before `delete.go:guardNoActiveInstances`; `TestServiceRevisionDeleteRechecksIdentityAfterSettlement` passes.
+- Verification: pre-change focused workflow tests exited 0 (5.916s). Final `go test ./domain/workflow -run '^TestCommitSource_(RelocationAuthority|RelocationUndecidedPreservesEvidence|OwnRelocationIntentIsExempt)$|^TestServiceRevision(DeleteRecreateKeepsHistory|MoveSurvivesCancellationAfterIdentityCommit|SharedRenameProofFailure|DeleteRechecksIdentityAfterSettlement|RenameDuplicateTransfer|MoveRollbackAndPostcommitCleanup|LocalDelete)$' -count=1` exits 0 (6.629s); `go test ./adapter/sqlite -run '^TestRevisionPublicationRename$' -count=1` exits 0 (0.707s).
+- `rg -n 'Relocator:|CommittedRequests\(|RelocateArrangements\(|BeginRelocation\(' cmd/arbitron/layout_wiring.go domain/workflow/commit_source.go domain/workflow/service_revision_move.go domain/layout/requester.go` confirms unchanged real collaborators; no exported ports added. Happy/success/failure/error/edge coverage reaches folder bytes, receipts, SQLite rows and immutable results. G21 belongs to the other lens and is unchanged. No approval box edited.
+Recommend: approve single:4/review2 — symmetric winning-tree validation prevents proven recovery data loss; all five failure checks have completed targeted evidence, including real Chrome cache races and recreated-name history isolation.
+
+## Independent approval — single:4/review2 — 2026-10-18 (ticked)
+- R2.1: `commit_source.go:CommitSource.resolveRelocation` now validates the registry-selected winner before relocating or deleting. Reverting only that file makes `TestCommitSource_RelocationUndecidedPreservesEvidence` from/{missing,read-error,malformed,wrong-id} fail; restoring it makes all 14 cases pass. Both-folder roll-forward and rollback: `TestCommitSource_RelocationAuthority` from/to.
+- R2.2–3: `TestServiceRevisionMoveSurvivesCancellationAfterIdentityCommit`, `TestServiceRevisionSharedRenameProofFailure` and sqlite `TestRevisionPublicationRename` pass. R2.4: `ARBITRON_REQUIRE_BROWSER=1` `TestServiceRevisionE2E_DeleteUnpublishRaceCache` passes all 4 orders (36s). R2.5: `TestServiceRevisionDeleteRecreateKeepsHistory` passes for delete and unpublish.
+- Suites (the measurement fields were unresolved templates, so I ran them): domain/workflow, domain/layout, adapter/filesystem and adapter/sqlite pass; `go build ./...` succeeds. In cmd/arbitron, the only failure is G24, which predates this pass and fails with the change reverted. Rule 5: recorded, not blocking.
+
+**single:5/review1 — wiring lens verified (refiner pass 2026-10-18; no code change needed).** `main.go:562 ds.layout = ls` then `main.go:974 ls.attachQuery(workflowSvc, eng)` precede `mcpDeps`/`routerDeps`, which assign `Layouts` from `ds.layoutQuery()` (`main.go:339,380`; `server.go:207` `SetLayouts`, `:208` `NewLayoutHandler`). `layout_wiring.go:132` feeds `NewReader(store, journal, cache)`. Workflow read keys on `wf.SavedRevision()` of the loaded manifest, instance read on the decoded snapshot (`engine/layout_access.go:InstanceLayoutSnapshot`), never `WorkflowID`. Layout routes sit inside the `/api/v1` `d.Auth.Handler` group (`server.go:~243`). Ran and passed: `TestDomainStack_RouterDeps_ThreadsHandlersAndNilLayouts`, `TestLayoutHTTPE2E_InstanceReadsCarrySnapshotRevision`, `TestLayoutQueryE2E_InstanceStaysOnHistoricalRevisionAfterUpdate`, `TestLayoutMCPE2E_WorkflowGetRevisionRace`, `TestLayoutHTTPE2E_UnwiredLayoutsAreExplicit`; `domain/layout`, `domain/engine`, `domain/workflow`, `adapter/http`, `adapter/mcp` packages green. Legacy tokenless snapshot: `TestInstanceLayoutSnapshot_LegacySnapshot_NilPresentation` + `Reader.View` returns `DisplayLegacy` for empty revision. Not run: full `go test ./cmd/arbitron` (G13/G24: ~11 min).
+
+
+**single:5/review1 — independent approval (2026-10-18), all five wiring checks pass.**
+- R1.1: `cmd/arbitron/main.go:initDomain` calls `layoutStack.attachQuery` before returning; `runServe`/`runMCP` then call `domainStack.routerDeps`/`mcpDeps`, feeding the same non-nil query. Verified through `cmd/arbitron/layout_http_e2e_test.go:TestLayoutHTTPE2E_WorkflowLayoutReturnsOnDiskRevision` and `layout_mcp_e2e_test.go:TestLayoutMCPE2E_WorkflowGetArrangementMatchesManifestRevision`.
+- R1.2: `adapter/http/server.go:NewRouterFromDeps` calls `InstanceHandler.SetLayouts`; `adapter/http/instance_handler.go:InstanceHandler.Get` embeds the view. `cmd/arbitron/layout_http_e2e_test.go:TestLayoutHTTPE2E_InstanceReadsCarrySnapshotRevision` proves both embedded and dedicated responses retain R1 after a save creates R2.
+- R1.3: `domain/layout/query.go:QueryService.WorkflowLayout` uses `Service.LoadForLayout`; `Engine.InstanceLayoutSnapshot` decodes the authorised snapshot. `domain/layout/reader.go:Reader.View` queries `SavedRevision`; `adapter/sqlite/layout_repo.go:LayoutRepo.Get`/`Result` use revision/generation predicates. `cmd/arbitron/layout_query_e2e_test.go:TestLayoutQueryE2E_InstanceStaysOnHistoricalRevisionAfterUpdate` passes.
+- R1.4: `cmd/arbitron/layout_wiring.go:newLayoutStack` constructs SQLite store, filesystem journal/cache and feeds all three to `layout.NewReader`. `cmd/arbitron/layout_reader_e2e_test.go:TestLayoutReader_RealBrowserWorkflowAndInstanceParity` passes with actual rendered evidence, complete geometry and retained pending fallback reaching both consumers.
+- R1.5: `adapter/mcp/tools_layout.go:workflowWithArrangement` reloads once on mismatch, then reports explicit unavailability on another race. `cmd/arbitron/layout_mcp_race_test.go:TestLayoutMCPE2E_WorkflowGetRevisionRace` passes both interleavings with the real query/save pipeline, checking the manifest and summary revision at the response sink.
+- Folded in: `adapter/http/server.go:NewRouterFromDeps` registers both layout routes inside the sibling `/api/v1` auth group. `domain/engine/layout_access_test.go:TestInstanceLayoutSnapshot_LegacySnapshot_NilPresentation` and `domain/layout/reader_test.go:TestReaderLegacyAndMissing` prove legacy snapshot decoding/provenance. Happy/success: HTTP and real-browser tests above; failure: `TestReaderStagesAndTerminalTruth`; error: `TestReaderResultOutageUsesOnlyMatchingCacheFence`; edge: legacy and racing-save tests. No new gap found for this lens.
+- Verification: unresolved measurement placeholders required direct checks. Fresh `go test -count=1` passes domain/{layout,workflow,engine}, adapter/{http,mcp,sqlite,filesystem}; 13 focused cmd/arbitron tests pass (35.866s, no browser skip); `go build ./...` exits 0. HEAD changes documentation only. Temporarily feeding `NewReader(nil, ls.journal, ls.cache)` makes `TestLayoutHTTPE2E_WorkflowLayoutReturnsOnDiskRevision` exit 1 (expected 200, got 503); restoring production bytes returns exit 0. Full cmd suite not claimed; existing G24 remains separate.
+
+
+**single:5/review2 — failure-lens assessment (2026-10-18; recommendation only).**
+- R2.1: `domain/layout/query.go:WorkflowLayout` / `InstanceLayout` accept names/instance IDs only and authorise before `Reader.View`; `TestLayoutHTTPE2E_AuthorizationAndBodyBoundaries`, `TestLoadForLayout`, `TestInstanceLayoutSnapshot` and query negative tests pass (hidden subjects are not-found; missing identity is denied).
+- R2.2: `cmd/arbitron/layout_query_e2e_test.go:TestLayoutQueryE2E_HistoricalMissingRowAfterOwnershipMove` passes with required real Chrome: the old caller cannot load the moved private workflow, yet the authorised snapshot retains its revision through relocation, missing-row recovery and deletion.
+- R2.3: `domain/layout/reader_outage_test.go:TestReaderResultOutageUsesOnlyMatchingCacheFence` and `TestReaderUnavailableCacheIsNeverReviewedPass` pass; real SQL outage in `TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` preserves fallback with available=false. New `layout_reader_failure_test.go:TestLayoutQueryE2E_StatusDeadlinePreservesFallback` holds SQLite's sole connection, expires the authorised query, checks literal saved positions, unchanged row/manifest and recovery to pending.
+- R2.4: `domain/layout/reader_test.go:TestReaderRejectsUnsupportedPass` covers missing/wrong identity, incompatible geometry, missing/forged evidence and blocking findings with a store that rejects writes. `TestLayoutReader_RealBrowserWorkflowAndInstanceParity` also passes with real evidence, unchanged pending row/manifest/cache and historical reads after deletion.
+- R2.5–6: `TestReaderLegacyAndMissing` proves missing-row requests stay pending, journal errors unavailable; `query_negative_test.go` covers nil/empty/malformed inputs; `TestLayoutHTTPE2E_UnwiredLayoutsAreExplicit` and HTTP/MCP nil-service tests pass. Folded: tokenless snapshot decoding is legacy; both layout routes are inside `server.go:NewRouterFromDeps`'s authenticated API group.
+- Ordering/inputs: `TestLayoutMCPE2E_WorkflowGetRevisionRace` passes both racing-save interleavings. `rg -n 'NewQueryService|NewReader|LoadForLayout|InstanceLayoutSnapshot' --glob '*.go' --glob '!**/*_test.go' domain adapter cmd` confirms the reviewed production seams; temporarily omitting `Reader.fallback` makes the new deadline fixture exit 1 (legacy provenance), restored bytes exit 0. No production change or approval-box edit.
+- Verification: targeted `go test -count=1` passes domain/layout (Reader/ViewJSONContract/query reads and negatives), domain/workflow (LoadForLayout), domain/engine (InstanceLayoutSnapshot/DecodeWorkflowSnapshot), adapter/http (LayoutHandler/InstanceHandler_Get), adapter/mcp (Arrangement/WorkflowGet/Layout), plus the seven cmd tests named above (ARBITRON_REQUIRE_BROWSER=1 on browser groups, 21.460s and 10.623s; deadline 0.924s). Whole suites were not run; baseline W1/W3 and unrelated G24 remain outside this pass.
+Recommend: approve single:5/review2 — all six failure checks pass, with real deadline/outage/read-only/history/auth evidence and a fallback-removal mutation caught at the query sink.
+
+**single:5/review2 — APPROVED by independent reviewer (2026-10-18).**
+- Measurement placeholders were unfilled, so I checked directly: `go build ./...` exit 0; `go test -count=1` passes domain/{layout,workflow,engine}, adapter/{http,mcp,sqlite}; 7 named cmd/arbitron failure tests pass with ARBITRON_REQUIRE_BROWSER=1 (33.5s).
+- C1: `query.go:WorkflowLayout(name)`/`InstanceLayout(id)` take no revision argument; `TestLayoutHTTPE2E_AuthorizationAndBodyBoundaries` passes. C2: `TestLayoutQueryE2E_HistoricalMissingRowAfterOwnershipMove` passes. C6: `TestLayoutHTTPE2E_UnwiredLayoutsAreExplicit` passes.
+- C3 mutation: passing `unavailable=false` for the status-store error in `reader.go:Reader.View` → `TestReaderUnavailableCacheIsNeverReviewedPass` and the new `TestLayoutQueryE2E_StatusDeadlinePreservesFallback` go red.
+- C4: `Reader` only calls `store.Get`/`store.Result` (read-only); `TestReaderRejectsUnsupportedPass` covers downgrade. C5 mutation: missing row → DisplayLegacy → `TestReaderLegacyAndMissing` goes red.
+- No new gaps found. Mutations were reverted and the tree is clean.
+
+### Area 6 — single:6/review1 (wiring) pass
+- R1.1: G2 fixed (above). R1.2: `TestLayoutQueryE2E_RetryWorkflowThroughCompositionRoot`, `TestLayoutMCPE2E_RetryGenerationSinks` pass. R1.3: `grep Authorize` in `adapter/http/layout_handler.go`, `adapter/mcp/tools_layout.go` finds nothing; both call `QueryService`. R1.4: `layout_wiring.go:149 SetNotifier(worker.Notify)`; `Requester.Retry` calls `notified` (requester.go:141). R1.5: `TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` passes. Folded in: `register.go:16` calls `RegisterLayoutTools`; `register_test.go:103-104` lists both tools.
+- Not run this pass: full `go test ./cmd/arbitron` (≈11 min, see G24); only the named retry tests ran.
+
+### Area 6 — single:6/review1 independent approval (de94c9f)
+- R1.1: `domain/workflow/layout_access.go:Service.LayoutRetryTargets` feeds both caller-private and shared candidates to `domain/layout/query.go:QueryService.RetryWorkflow`; locked reauthorization preserves scope and expected revision. `cmd/arbitron/layout_query_concurrency_test.go:TestLayoutQueryE2E_RetryCrossProcessSaveFence/shared-only` reaches the real SQLite generation sink through initDomain and filesystem locks, closing G2.
+- R1.2: `cmd/arbitron/layout_query_e2e_test.go:TestLayoutQueryE2E_RetryWorkflowThroughCompositionRoot` and `cmd/arbitron/layout_mcp_retry_test.go:TestLayoutMCPE2E_RetryGenerationSinks` pass; private/current and deleted-workflow historical retries increment only their captured revision's persisted generation, preserve manifest bytes and acknowledge that generation.
+- R1.3: `cmd/arbitron/main.go:initDomain` attaches the real Service/Engine through `cmd/arbitron/layout_wiring.go:layoutStack.attachQuery`; `domainStack.routerDeps`/`mcpDeps` inject the same query into HTTP/MCP. `adapter/http/layout_handler.go:LayoutHandler.RetryWorkflowLayout`/`RetryInstanceLayout` and `adapter/mcp/tools_layout.go:workflowLayoutRetryHandler`/`instanceLayoutRetryHandler` forward to it; neither adapter calls Authorize.
+- R1.4: `cmd/arbitron/layout_wiring.go:newLayoutStack` installs Worker.Notify; `domain/layout/requester.go:Requester.Retry` notifies the accepted revision after Store.Retry. `domain/layout/worker.go:Worker.Notify` wakes dispatch; `TestLayoutMCPE2E_RetryGenerationSinks` observes the acknowledged generation reach a terminal worker result.
+- R1.5: `domain/layout/requester.go:Requester.Retry` passes revision/job/result-generation fences to `adapter/sqlite/layout_repo.go:LayoutRepo.InvalidateResult` before Retry. `cmd/arbitron/layout_http_truth_test.go:TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` passes with real Chrome, retained fallback, HTTP 202 and the incremented SQLite generation.
+- Folded in: `adapter/mcp/register.go:RegisterAllTools` invokes RegisterLayoutTools; `adapter/mcp/register_test.go:expectedTools` lists both retry tools and the MCP package passes.
+- Five categories: happy/shared-only and success/worker generation above; failure/stale token in `cmd/arbitron/layout_http_e2e_test.go:TestLayoutHTTPE2E_RetryValidatesAndConflicts`; error/SQL outage in the HTTP repair test; edge/nil collaborators in `domain/layout/query_negative_test.go:TestQueryService_NilCollaboratorsFailClosed` and empty tokens in the MCP generation test.
+- Fresh verification: `go test -count=1` passes domain/{layout,workflow,engine}, adapter/{filesystem,sqlite,http,mcp}; six focused cmd/arbitron retry tests pass (24.746s, ARBITRON_REQUIRE_BROWSER=1, no skips); `go build ./...` exits 0. Measurement placeholders were unresolved, so these commands supplied direct evidence. Full cmd suite not claimed; existing G24 remains separate. No new gaps.
+- Mutation proof: temporarily returning nil targets from `Service.LayoutRetryTargets` makes the shared-only E2E exit 1 (omitted destination); returning only Shared makes it exit 1 (lock expansion). Restored production bytes make it exit 0; no production edits retained. Only Review 1 is ticked.
+
+### Area 6 — single:6/review2 (failure) pass
+- Arrival baseline: `go test ./domain/layout -run 'Test(QueryService|Requester|Reader)' -count=1` and the three cmd retry/stale/cross-process tests passed before edits; no pre-existing area failure observed. G25 unit and HTTP regressions then failed on foreign generation changes, and the recovery-insert regression failed on erroneous notification/acknowledgement; all pass after destination binding.
+- R2.1/2: `cmd/arbitron/layout_http_e2e_test.go:TestLayoutHTTPE2E_RetryValidatesAndConflicts`, `layout_mcp_retry_test.go:TestLayoutMCPE2E_RetryGenerationSinks` (stale tokens preserve all three rows), and `layout_query_concurrency_test.go:TestLayoutQueryE2E_RetryCrossProcessSaveFence` pass both save/retry orderings and same-token shadow races under real OS locks.
+- R2.3/4: `domain/layout/{reader,requester,query_retry}_test.go` cover missing-row recovery, active conflict, passed/invalid passed, terminal/superseded states and outages; `layout_http_truth_test.go:TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` passes real SQL outage/503, visible Retry and repaired generation. Active corrupt-best policy still fails the independent probe (G26).
+- R2.5/6: MCP generation sink now compares persisted instance, node execution and variable snapshot rows before/after historical retry; root historical ownership-move/missing-row recovery passes. `layout_retry_shadow_test.go:TestLayoutRetryE2E_PreExistingPrivateShadowCannotRetrySharedRow` passes authenticated HTTP/MCP for failed and invalid-passed foreign rows. Scope/name/identity and foreign insert winners are covered by `domain/layout/query_retry_test.go`.
+- Final domain checks: `go test ./domain/layout -run 'Test(QueryService|Requester|Reader)' -count=1` (0.422s); `go test ./domain/workflow ./domain/engine -run 'Test(AuthorizeLayoutRetry|LayoutRetryTargets|AuthorizeInstanceLayoutRetry|DecodeWorkflowSnapshot)' -count=1` (0.311s/0.309s), all pass. New binding regressions rechecked after removing the temporary G26 probe (0.559s).
+- Final adapter check: `go test ./adapter/filesystem ./adapter/sqlite ./adapter/http ./adapter/mcp -run 'Test(ManifestLocks|LayoutStoreContract|LayoutResultTransactionRollback|LayoutHandler|WorkflowLayoutRetry|InstanceLayoutRetry|LayoutRetryTools|RegisterAllTools_IncludesLayoutRetryTools)' -count=1` passes (0.786s/0.818s/0.506s/0.739s), including lock deadlines, SQL generation fences/rollback and folded-in MCP registration.
+- Final root check: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run 'TestLayout(RetryE2E_PreExistingPrivateShadowCannotRetrySharedRow|HTTPE2E_RetryValidatesAndConflicts|HTTPE2E_RetryRepairsIncompatiblePersistedPass|HTTPE2E_AuthorizationAndBodyBoundaries|QueryE2E_RetryCrossProcessSaveFence|QueryE2E_HistoricalMissingRowAfterOwnershipMove|MCPE2E_RetryGenerationSinks)$' -count=1` passes (25.744s); no whole-suite/dashboard run claimed.
+- `rg -n 'NewQueryService|NewRequester|SetNotifier|attachQuery|LayoutRetryTargets|requestArrangement\(' cmd/arbitron domain/layout domain/workflow -g '*.go' -g '!**/*_test.go'` confirms the new private binding path is fed from `QueryService.retry`; root `layout_wiring.go:newLayoutStack/attachQuery` retains real stores/access/notifier. No new exported collaborator or approval-box edit.
+Recommend: no approval for single:6/review2 — G26: active repairs with incompatible prior results advertise Retry and terminal attention while Requester correctly conflicts; R2.3 still fails.
+
+### Area 6 — single:6/review2 approver (withheld)
+- Checks 1, 2, 4, 5, 6 verified: `query.go:QueryService.retry` passes the locked `Destination` to `requester.go:Requester.retry`/`requestArrangement` (rejects foreign destination before the store mutates or notifies); `layout_retry_shadow_test.go:TestLayoutRetryE2E_PreExistingPrivateShadowCannotRetrySharedRow`, `layout_mcp_retry_test.go:TestLayoutMCPE2E_RetryGenerationSinks` (stale token, instance/trace/vars unchanged), `TestLayoutHTTPE2E_RetryValidatesAndConflicts`, `TestLayoutQueryE2E_RetryCrossProcessSaveFence` pass.
+- Check 3 FAILS (G26): `reader.go:Reader.View`→`rejectView` reports Retry eligible for pending/in_progress repairs that `Requester.retry` rejects. Reproduced by my own probe (removed).
+- Placeholders unresolved, so I ran it myself: `go build ./...` ok; `go test -count=1` domain/{layout,workflow,engine} adapter/{sqlite,http,mcp,filesystem} all ok; the four cmd retry tests ok.
+- To tick next time: fix G26 with a regression test that fails without the fix. Nothing else in this lens is outstanding.
+
+### Area 6 — single:6/review2 (failure) convergence pass
+- Arrival: `go test ./domain/layout -run 'Test(QueryService|Requester|Reader)' -count=1` passed (0.390s); no arrival failure in this target. No baseline failure was changed.
+- R2.1/2: `cmd/arbitron/layout_http_e2e_test.go:TestLayoutHTTPE2E_RetryValidatesAndConflicts`, `layout_mcp_retry_test.go:TestLayoutMCPE2E_RetryGenerationSinks` and `layout_query_concurrency_test.go:TestLayoutQueryE2E_RetryCrossProcessSaveFence` pass stale-token immutability and both real cross-process save/retry orderings.
+- R2.3: `domain/layout/reader.go:rejectView` now retains known active status/Retry=false when a retained result fails. `query_retry_test.go:TestQueryService_ActiveRepairPreservesStatusAndRetryPolicy` failed before the fix, passes all 20 cases after it (incompatible/missing/outage/deadline × queued/arranging/rendering/reviewing/publishing); workflow/instance views agree, unsafe geometry/evidence is hidden, retained coordinates survive and duplicate retries leave the row unchanged. The extended real Chrome/SQLite HTTP test also failed pending/rendering assertions before the fix and passes after it. Existing missing-row, terminal, passed/invalid-passed and superseded matrix tests pass.
+- R2.4/5/6: `layout_http_truth_test.go:TestLayoutHTTPE2E_RetryRepairsIncompatiblePersistedPass` preserves visible Retry and explicit 503 on actual SQL outage; `layout_mcp_retry_test.go:TestLayoutMCPE2E_RetryGenerationSinks` preserves current history/instance/trace/variables during historical retry; `layout_retry_shadow_test.go:TestLayoutRetryE2E_PreExistingPrivateShadowCannotRetrySharedRow` preserves foreign rows/manifests through HTTP/MCP. Nil/empty inputs fail closed in `query_negative_test.go` and the MCP sink test.
+- Final domain verification: `go test ./domain/layout -run 'Test(QueryService|Requester|Reader)' -count=1` passed (0.365s); `go test ./domain/workflow ./domain/engine -run 'Test(AuthorizeLayoutRetry|LayoutRetryTargets|AuthorizeInstanceLayoutRetry|DecodeWorkflowSnapshot)' -count=1` passed (0.363s/0.681s).
+- Final adapter verification: `go test ./adapter/filesystem ./adapter/sqlite ./adapter/http ./adapter/mcp -run 'Test(ManifestLocks|LayoutStoreContract|LayoutResultTransactionRollback|LayoutHandler|WorkflowLayoutRetry|InstanceLayoutRetry|LayoutRetryTools|RegisterAllTools_IncludesLayoutRetryTools)' -count=1` passed (0.633s/1.298s/0.627s/1.584s); covers lock cancellation, SQL fences/rollback and folded-in tool registration.
+- Final root verification: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run 'TestLayout(RetryE2E_PreExistingPrivateShadowCannotRetrySharedRow|HTTPE2E_RetryValidatesAndConflicts|HTTPE2E_RetryRepairsIncompatiblePersistedPass|HTTPE2E_AuthorizationAndBodyBoundaries|QueryE2E_RetryCrossProcessSaveFence|QueryE2E_HistoricalMissingRowAfterOwnershipMove|MCPE2E_RetryGenerationSinks)$' -count=1` passed (25.035s), no browser skips. No whole-suite/dashboard run claimed.
+- Production-input check: `rg -n 'NewQueryService|NewReader|NewRequester|SetNotifier|attachQuery|LayoutRetryTargets' cmd/arbitron domain/layout domain/workflow -g '*.go' -g '!**/*_test.go'` confirms the same real reader/store/access/lock/notifier at `layout_wiring.go:newLayoutStack/attachQuery`; no exported collaborator added. Removing the active guard demonstrably fails both new regressions; nil query wiring fails the MCP sink test. All six failure checks meet their criteria; approvals remain untouched.
+Recommend: approve single:6/review2 — G26's permanent unit and real HTTP/SQLite regressions are red-then-green; all six failure checks and targeted verification above pass.
+
+### Area 6 — single:6/review2 approver (independent, 2026-10-18) — TICKED
+- Template placeholders unfilled, so measured myself: `go build ./...` ok; `go test -count=1 ./domain/... ./adapter/{sqlite,http,mcp,filesystem}` exit 0; `ARBITRON_REQUIRE_BROWSER=1` targeted cmd/arbitron retry/read set (9 tests incl. RetryValidatesAndConflicts, RetryCrossProcessSaveFence, RetryRepairsIncompatiblePersistedPass, MCPE2E_RetryGenerationSinks, PrivateShadow) all PASS, 32.9s.
+- R2.3 (G26): `reader.go:rejectView` keeps active status and `RetryEligible=false` only when `JobGeneration>0 && pending/in_progress`. Reverting reader.go to HEAD~1 makes `TestQueryService_ActiveRepairPreservesStatusAndRetryPolicy` fail (21 FAIL lines); restored → green.
+- R2.4 preserved: Get-outage and journal-outage paths leave JobGeneration=0, so Retry stays visible.
+- Note (non-blocking): an active row whose *result* read hits a store outage now hides Retry; consistent with `Requester.retry` rejecting pending rows, recorded for Area 12 dashboard reviewers.
+
+Recommend: approve single:8/review1 — R1.1–R1.5 unchanged and green (`ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run '^(TestNewLayoutRenderReviewer_.*|TestLayoutBuild_.*|TestLayoutRender_RealBrowserPRReview|TestLayoutRender_MissingBrowserFailsVisiblyAndIsRetryable|TestLayoutArrange_RealBrowserSavedSamplesReachView)$'` 43s ok); R1.6 now met: `TestLayoutArrange_RealBrowserSavedSamplesReachView` requires `passed` for feature-pipeline, pr-review, ralph-loop (all pass), and `reviewer_browser_test.go:...FeaturePipelinePassesThroughTheCoordinator` / `...RalphLoopPasses...` pass. Open and not blocking this lens: G9 (Dockerfile has no Chromium, Folded-in check), G28/G29/G30 timing flakes.
+
+## Area 9 Review 1 (wiring) — pass 2026-10-18
+- Check 1: `cmd/arbitron/main.go:582` passes `ls.stamper`, `ls.mutations`, `identityRepo` (not nil) to `sample_seed.go:seedSampleWorkflows`, which calls all three setters. Seeding at `:582` follows settlement at `:567`; `BackfillRegistry` at `:622` follows seeding; `ls.start` at `:1224` is last.
+- Check 2: `TestLayoutE2E_SeedThroughRootAndRestart` installs the `published_workflows` identity trigger; it passes.
+- Check 3: `TestSeedSampleWorkflows_TwoProcessesCommitOnce` asserts one `prepared-*`, one durable seed, one ledger line; passes.
+- Check 4: `domain/workflow/backfill.go` has no stamper/journal/requester reference; `TestLayoutE2E_LegacyReadsAndBackfillNeverStamp` asserts 0 rows and no saved revision; passes.
+- Check 5: `Requester.RequestArrangement` writes the durable row before `ls.start`; `layout/worker.go:dispatch` runs `sweep()` (`Claimable`) first; `TestLayoutE2E_SeedThroughRootAndRestart` reaches terminal via `layoutE2EWaitTerminal`.
+- Folded in: added `cmd/arbitron/flatstore_migrate_test.go:TestMigrateFlatStore_NeverStampsOrJournals` (bytes identical, no presentation, no journal/tree-commit dir). `SampleSource.Read`: malformed skips only that sample (`TestSeedRevisionMalformedVersusInfrastructure`); non-malformed errors deliberately abort the whole seed run (`ports.go` doc), so the plan's "aborts only that sample" wording is looser than the code. Failure-lens question: confirm whether abort-all is intended. G4/G5 remain open for Review 2.
+
+## Independent approval — single:9/review1 — 2026-10-18 (c274f95)
+- R1.1: `cmd/arbitron/main.go:initDomain` supplies real stamper, filesystem mutations and SQLite identity repo; `cmd/arbitron/sample_seed.go:seedSampleWorkflows` installs all three; `layout_wiring.go:newLayoutStack` constructs their journal/requester/worker chain.
+- R1.2: `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_SeedThroughRootAndRestart` passes its publication-time SQL identity trigger before backfill; an overlay replacing `SetRegistry(registry)` with `SetRegistry(nil)` exits 1 on that trigger and missing seed. Unmodified rerun exits 0 (1.784s).
+- R1.3: `cmd/arbitron/sample_seed_race_test.go:TestSeedSampleWorkflows_TwoProcessesCommitOnce` passes: one prepared token, exact publication/identity, one durable row and exactly one ledger line through real adapters (`sample_seed_durable_test.go:assertDurableSeed`).
+- R1.4 / migration: `cmd/arbitron/layout_e2e_test.go:TestLayoutE2E_LegacyReadsAndBackfillNeverStamp` and `flatstore_migrate_test.go:TestMigrateFlatStore_NeverStampsOrJournals` pass: no saved revision/row, unchanged migrated bytes, no presentation or journal/tree-commit directory.
+- R1.5 / success sink: `domain/layout/requester.go:Requester.requestArrangement` persists before notifying; `domain/layout/worker.go:Worker.dispatch` sweeps Claimable at startup. Root/restart test passes; `cmd/arbitron/layout_arrange_e2e_test.go:TestLayoutArrange_RealBrowserSavedSamplesReachView/pr-review` passes with required Chrome, result/view/cache agreement and unchanged seed manifest.
+- Five categories: happy/fresh (`seeder_revision_test.go:TestSeedRevisionFreshCommit`), success/restart (root test above), failure/rollback (`sample_seed_rollback_test.go:TestSeedSampleWorkflows_DurableSupportingFileRollback`), error (`seeder_revision_test.go:TestSeedRevisionErrorMatrix`), edge (`seeder_test.go:TestSeed_EmptySourceIsNoOp`, two-process test); all pass. Empty-source overlay makes the root test exit 1, proving producer sensitivity.
+- Fresh verification exits 0: `go test ./... -run '^$' -count=1`; `go test ./domain/samples ./adapter/filesystem ./domain/workflow -count=1 -timeout=5m`; cmd filter covering every `TestSeedSampleWorkflows*`, `TestMigrateFlatStore_*` and the three Area 9 root tests (39.377s); required-browser pr-review selection (37.574s). Supplied measurement fields were unresolved; these are independent targeted checks, not a claimed full-suite baseline comparison.
+- Ticked only Area 9 Review 1. G4/G5 remain Review 2 recovery defects; G31 records the folded-in read-error policy conflict for a contract ruling, set aside under the lens/escalation rules.
+
+## Area 10 Review 1 pass (single:10/review1, 2026-10-18)
+- R1.1 `worker.go:Worker.processRevision` unmarshals the captured `rec.Manifest` into `Job.Manifest`; `coordinator.go:Run` calls `BuildGraph`. `graph_test.go:TestBuildGraph_EdgeOrdinalsAndBranchText`, `arrange_test.go:TestArrange_IdenticalParallelEdgesNeverMerge`, e2e `layout_layers_e2e_test.go:TestLayoutLayers_RealBrowserSavedRowsReachView/parallel-shortcuts` (duplicate a→d edges).
+- R1.2 `coordinator.go:Run` `Refine(opts, all)` → `opts = next` → next `Arrange`; `TestRun_VisualOnlyBranchClippingGrowsSinkBoxes`, `TestRefine_RealBrowserSavedBranchClippingReachesSink` pass.
+- R1.3 `TestRun_PreflightFailuresAreStillRenderedAndReviewed`. R1.4 `TestBuildGraph_DoesNotMutateManifest`, `TestArrange_DoesNotMutateTheGraph`, e2e `before` bytes compare.
+- R1.5 `TestLayoutArrange_RealBrowserSavedSamplesReachView` passes feature-pipeline, pr-review, ralph-loop, harness-update as `passed`. The Area 10 Check 5 text ("feature-pipeline and ralph-loop end needs_attention") is stale since G7 closed; docs-only drift, plan text not edited by this role.
+
+## Area 10 independent approval (single:10/review1, 2026-10-18, reviewed c044530)
+- R1.1: `cmd/arbitron/main.go:initDomain` constructs `layout_wiring.go:newLayoutStack` with real repository/SQLite ports; stamped bytes flow through `domain/layout/requester.go:requestArrangement` to `worker.go:Worker.processRevision` and `coordinator.go:Coordinator.Run` → `BuildGraph(job.Manifest)` (line 152). `graph_test.go:TestBuildGraph_EdgeOrdinalsAndBranchText` and `arrange_test.go:TestArrange_IdenticalParallelEdgesNeverMerge` verify ordinal identity; real-root parallel-shortcuts passes.
+- R1.2: `domain/layout/coordinator.go:Coordinator.Run` applies `Refine` at line 283, assigns `opts = next` at 287, then calls `Arrange` at 218. `cmd/arbitron/layout_refine_e2e_test.go:TestRefine_RealBrowserSavedBranchClippingReachesSink` passes with real browser/reviewer delegation, larger next-attempt label boxes, persisted passing geometry and matching Reader/cache output.
+- R1.3: `domain/layout/coordinator.go:Coordinator.Run` creates preflight findings at line 225 before unconditional render/review; `coordinator_test.go:TestRun_PreflightFailuresAreStillRenderedAndReviewed` passes. `cmd/arbitron/layout_preflight_e2e_test.go:TestLayoutPreflight_RealBrowserSavedFindingsAndScoreReachView` verifies nonempty sample findings, scores and rendered evidence at the stored/display sink.
+- R1.4: `domain/layout/graph_test.go:TestBuildGraph_DoesNotMutateManifest` checks serialized bytes including nested config/manual positions; `arrange_test.go:TestArrange_DoesNotMutateTheGraph` passes. Saved-file byte comparisons pass in all selected root tests, including refinement.
+- R1.5: `domain/layout/samples_geometry_test.go:TestSamples_FeaturePipelineShape` verifies 66 nodes/79 edges; `TestSamples_RalphLoopHasDistinctLoopChannels` verifies separate overlapping return lanes. `cmd/arbitron/layout_layers_e2e_test.go:TestLayoutLayers_RealBrowserSavedRowsReachView` and `layout_arrange_e2e_test.go:TestLayoutArrange_RealBrowserSavedSamplesReachView` pass. Named acceptance samples reach `passed`; obsolete `needs_attention` wording is escalated as G33 and set aside under rule 6.
+- Folded-in: `domain/layout/contract_test.go:TestDefaultContract_MatchesDashboardContractJSON` passes. `geometry_test.go:TestGeometry_ValidVariantsAndRoundTrips/zero_policy_values` and `dashboard/src/graph/arranged/validate.test.ts` (zero-margin/zero-search parity case) pass; `geometry.go:validateGeometryOptions` permits both zeros. Existing G10 is a Review 2 policy conflict, not missing R1 wiring.
+- Five categories pass: `domain/layout/coordinator_test.go:TestRun_PassesOnFirstCleanRenderedReview` (happy), `TestRun_VisualOnlyClippingIsRefinedThenPasses` (success), `TestRun_BudgetExhaustionReturnsBestWithItsFindings` (failure), `TestRun_MeasureFailure` (error), `arrange_test.go:TestArrange_IdenticalParallelEdgesNeverMerge` (edge). A temporary Go overlay replacing the worker's `Job.Manifest` with nil makes `worker_test.go:TestWorkerProcessCapturedInput` exit 1 (expected passed, got failed); the unchanged source passes again, exit 0.
+- Fresh verification exits 0: `go test ./... -run '^$' -count=1 -timeout=5m`; `go test ./domain/layout -count=1 -timeout=5m` (3.514s); required-browser cmd selection of the four root tests named above (118.907s); `npx vitest run src/graph/arranged/validate.test.ts --maxWorkers=1` (157/157). Supplied measurement fields were unresolved; these are independent checks, not a full-suite baseline comparison. HEAD changed only ledger text. Ticked only Area 10 Review 1.
+
+## Area 11 — Review 1 (wiring) pass 2026-10-18
+No open gaps. Verified: `coordinator.go:Run` (l.192-193) is the only production caller of `Measure`; sole non-test impl is `renderreview/browser.go:Measure` (wired at `cmd/arbitron/layout_wiring.go:64,141`; `layouttest` is not imported by non-test code). `MeasureSurface.classForStyle` uses `nodeTextClassNames`/`edgeLabelClassName`; `ensureFonts`→`ensureBundledTextFonts` runs before and after render and `fontsReady` is gated in JS, `browser.go`, and `Run`. Keys round-trip in `TestLayoutSizing_RealBrowserSavedUnicodeMeasurementsReachView` (passes, 17s). Fontsource lock: noto-sans-sc 5.3.1, noto-emoji 5.3.2; licenses present in `public/` and `dist/`. Noted (non-blocking, Review 2): empty-item request makes JS report fontsReady=false.
+
+## Area 11 — Independent Review 1 approval (2026-10-18; reviewed 6564bf9)
+- R1.1: `cmd/arbitron/main.go:initDomain` → `layout_wiring.go:newLayoutStack/newLayoutRenderReviewer` constructs `BrowserRenderer` → coordinator → worker; `domain/layout/worker.go:processRevision` feeds captured manifest; `coordinator.go:Run` passes `measure.go:MeasureRequestFor` to the sole production `Measure` implementation (`adapter/renderreview/browser.go:BrowserRenderer.Measure`) and feeds its result to `arrange.go:Arrange`. No production imports of layouttest or alternate measurer found.
+- R1.2–3: `dashboard/src/render/MeasureSurface.tsx:classForStyle/runMeasureJob` shares `ArrangedNode.tsx:nodeTextClassNames` / `RoutedEdge.tsx:edgeLabelClassName`, awaits `report.ts:ensureFonts` → `graph/arranged/fonts.ts:ensureBundledTextFonts` before measuring (ranges, weights, hashes, loaded faces); `browser.go:Measure` and `coordinator.go:Run` reject fontsReady=false.
+- R1.4: `cmd/arbitron/layout_sizing_e2e_test.go:TestLayoutSizing_RealBrowserSavedUnicodeMeasurementsReachView` passed with required Chrome: saved Unicode node/edge text → browser keys → taller geometry → SQLite → Reader/cache. `measure.go:NodeLabelKey/NodeTypeKey/EdgeLabelKey` and `browser.go:Measure` retain/check every requested key.
+- R1.5: `MeasureSurface.tsx:metricsFrom` subtracts border/padding and retains fractional content bounds; `domain/layout/size.go:metricForText/nodeSizes/edgeLabelSizes/ceilPx` uses the request's maxWidth/lineHeight and adds padding plus one rounding slack per metric. The saved-Unicode E2E has zero blocking rendered findings; `adapter/renderreview/sizing_browser_test.go:TestSizing_RealBrowserBranchClippingRefinesSharedTextSlack` passes and detects real branch clipping from understated metrics.
+- Folded in: `dashboard/package.json` and lock pin Noto Sans SC 5.3.1 / Noto Emoji 5.3.2, matching `graph/arranged/contract.json`; all three font licenses exist in public/licenses and adapter/dashboard/dist/licenses. `dashboard/scripts/test-font-coverage.mjs` passed 3/3, including exact license redistribution and coverage provenance.
+- Five categories passed in `domain/layout`: `coordinator_test.go:TestRun_PassesOnFirstCleanRenderedReview` (happy), `TestRun_VisualOnlyClippingIsRefinedThenPasses` (success), `TestRun_BudgetExhaustionReturnsBestWithItsFindings` (failure), `TestRun_MeasureFailure` (error); `measure_test.go:TestMeasureRequestFor_PreservesTextOccurrencesAndCustomWidths` (edge). Fakes consume requested text/style/width; browser-backed tests above cover the real producer/sink.
+- Sensitivity: a temporary Go overlay setting `coordinator.go:Run`'s `measureReq.Items=nil` makes the saved-Unicode E2E exit 1 at its expected-passed assertion, reporting “measuring text: renderreview: measure items must be explicit”; the unmodified run exits 0. `surface_boundary_test.go:TestBrowserRenderer_RealSurfaceNilMeasurementsCannotArrange` also passed. Repository production files were never modified.
+- Fresh verification: `go test ./... -run '^$' -count=1 -timeout=5m`, full `go test ./domain/layout -count=1 -timeout=5m`, three required-browser renderreview tests above/`surface_test.go:TestBrowserRenderer_RealSurfaceMeasure`, required-browser saved-Unicode E2E, `npx tsc --noEmit`, font script, and `npx vitest run src/render src/graph/arranged/fonts.test.ts --maxWorkers=1` all exit 0 (99/99 Vitest). Supplied measurement fields were unresolved; no full-suite baseline claim is made. Ticked only Area 11 Review 1.
+- Existing G28 recurred: `dashboard/src/render/report.test.ts:fontFamilyResolved` timed out once (12.155s/5s), then passed isolated (2.20s), and the identical full selection passed 99/99 (1.95s total test time). HEAD and parent have identical dashboard/domain/adapter/cmd tree hashes; this ledger-only pass introduces no source regression. Retain G28 as non-blocking timing hardening; no R1 gap found.
+
+**single:12/review1 — wiring lens verified (refiner pass, no production change).** (1) `WorkflowReview.tsx:ReviewPage` and `ExecutionView.tsx:InstanceArrangement` both mount `useLayoutStatus` over `api.workflows.getLayout`/`api.instances.getLayout` (`client.ts:179,214`) and feed `LayoutStatusPanel` + `ArrangedGraph` with the live view. (2) Revision join: `WorkflowReview.test.tsx` "manifest/layout revision join" (refetch once, no loop) and `ExecutionView.layout.test.tsx` "ignores a foreign embedded layout"/"never draws or retries foreign GET geometry". (3) `ExecutionView.layout.test.tsx` "polls without websocket traffic…" + `TestLayoutSurfaces_CompletedInstanceRefreshesWithoutWebSocket` pass. (4) `useLayoutStatus.ts:retryCurrent` posts the displayed `savedRevision`, installs `minimums` from `RetryAck` before `load()`. (5) `useFollowActiveNode` takes the anchor centre from `ArrangedGraph:nodeCenter`; `CalloutConnector` uses `measured?.width ?? node.width ?? 200`; remaining `NODE_WIDTH/HEIGHT` are only legacy dagre/`LoopBackEdge`/fallback stacking. (6) `TestLayoutSurfaces_ClientValidationAndAPIReachDOM` passes (go, 97s). `grep SaveNodePositions|saveLayout|needsAutoSave` non-test: none; only `fitView` is the explicit control (`ArrangedGraph.tsx:186`); `typeAccent` shared by `ArbitronNode` and `ArrangedNode`. Vitest 154/154 on the 5 area files.
+- Note for Review 2 (non-blocking): `ExecutionView.tsx:181` hard-codes `canRetry={true}` (server re-checks; a refused Retry surfaces `retryError`), unlike `WorkflowReview.canRetryLayout`.
+
+## Paired row 3 (Area 3 publication ↔ Area 1 settlement) — refiner pass 2026-10-18
+- Publication→settlement: `service_revision_copy.go:publishRevision` stamps and `PrepareTreeCommit`s inside the `CopyTreeStamped` callback before the rename. `publishing.go:WriteAndRecord` then calls `CommitPublication` with `req.Revision` plus `finalID` (= staged.ID). So proof never comes before a durable backup and always names the visible revision.
+- Settlement→publication: `commit_source.go:exactPublication` requires `p.Revision == rev && p.WorkflowID == id`. `settlePrepared` also requires `wf.ID == r.WorkflowID`, and a visible manifest that is not proven and has no backup returns `ErrMutationPending`. Other `published_workflows` writers: `setVisibility`→`Upsert` leaves saved_revision/workflow_id alone (asserted in `TestLayoutPublicationE2E_ExactProofAndFailedReplacement`). `SetWorkflowID` runs only on the legacy unstamped Publish branch. `RenamePublication` is row 5.
+- Wired and fed: `main.go:555-558,595` passes one `publishedRepo` to `newLayoutStack`→`NewCommitSource` and to the Service. `layout_wiring.go:newLayoutStack` rejects having only one of publications/registry.
+- Added `shared/after-proof` to `cmd/arbitron/layout_restart_recovery_test.go:TestLayoutE2E_RestartSettlesThenWorkerRecovers`. With no live root, a fresh `initDomain` decides between the old same-name proof row and the new one. It asserts the proof row before and after, the kept tree and support bytes, that no backup is left (`PendingTreeCommits` empty), the row and the cleared journal.
+- Mutation checks (reverted): dropping the revision comparison (name/ID-only proof) fails `shared/before-proof`. A never-matching revision (a committed publish rolled back) fails `shared/after-proof`.
+Recommend: approve paired:3 — exact revision+WorkflowID proof (`commit_source.go:exactPublication`/`settlePrepared`) is written only after stamp+backup (`publishRevision`/`WriteAndRecord`). Restart `shared/before-proof` and `shared/after-proof` both pass, and each goes red under its own mutation. One `publishedRepo` instance feeds both sides at `main.go:555-595`. Approval boxes untouched.
+
+
+## Paired 3 — independent approval of 0d0115f / e5c7bec (2026-10-18): APPROVED
+- Publication→settlement: `domain/workflow/service_revision_copy.go:publishRevision` settles both endpoints under mutation locks, stamps the final WorkflowID and revision in staging, and durably backs up the prior tree with `adapter/filesystem/tree_commit.go:PrepareTreeCommit`; `workflow_repo.go:copyTreeLocked` syncs the stamped tree before visibility. `domain/workflow/publishing.go:WriteAndRecord` writes exact proof only after that copy returns; `PublishedWorkflowRepo.CommitPublication` atomically stores revision plus WorkflowID.
+- Settlement→publication: `domain/workflow/commit_source.go:exactPublication` requires both proof fields; `settlePrepared` also checks the visible revision and manifest ID, marks the receipt before finishing backups, restores unproven replacements, and returns `ErrMutationPending` if a visible unproven tree has no backup. `adapter/filesystem/workflow_operations.go:Load` settles under the destination lock; `service_revision.go:committed` preserves backup until a durable receipt.
+- Wired and fed: `cmd/arbitron/main.go:initDomain` supplies the same `publishedRepo` to the stamped Service and `layout_wiring.go:newLayoutStack`→`NewCommitSource`, performs boot settlement before traffic, and installs the read settler. `newLayoutStack` rejects an incomplete registry/publication pair. `service.go:setVisibility`→generated `UpsertPublishedWorkflow` preserves both proof columns; production `Service.Publish` takes the stamped branch before legacy `SetWorkflowID`.
+- BREAK independently demonstrated with temporary Go overlays (tracked code untouched): removing the revision comparison makes `cmd/arbitron/layout_restart_recovery_test.go:TestLayoutE2E_RestartSettlesThenWorkerRecovers/shared/before-proof` exit 1 at the restored-revision assertion; inverting that comparison makes `shared/after-proof` exit 1 because the proven revision never reaches its durable row. The unmodified four-case restart test and `commit_source_test.go:TestCommitSource_PublicationExactness` cover roll-forward, rollback and wrong identity.
+- Fresh checks exit 0: full `go test ./domain/workflow ./adapter/filesystem ./adapter/sqlite -count=1 -timeout=5m`; focused cmd restart, kill/peer-read, exact-proof/failed-replacement and `TestLayoutRepository_StagedPublicationReadBoundaries`; `go test ./... -run '^$' -count=1 -timeout=5m` compiles every test target. Fixtures intentionally lack Chrome and verify durable provenance rather than rendered acceptance. Measurement placeholders were unresolved, so no full-suite baseline comparison is claimed.
+- No new seam defect found; existing G15/G20/G24 remain separate. Only paired:3 ticked.
+
+## Paired row 8 (Area 7 worker ↔ Area 8 rendered review) — refiner pass 2026-10-18
+- **Fixed (BREAK reproduced):** `domain/layout/coordinator.go:Coordinator.Run` bound the Rendering (revision/attempt/digest/report/time) but never required `Review.Evidence.Artifacts` to be the artifacts of that Rendering. A nil-error Review citing another rendering's overview/tiles, a capture failure returned as an artifact-free Rendering, or a dropped/extra tile set, all PASSED whenever the envelope was self-consistent. Guard: `slices.Equal(review.Evidence.Artifacts, rendering.Artifacts)` else blocking `render_mismatch`, `Rendered=false`. Red→green: `coordinator_regression_test.go:TestRun_ReviewEvidenceMustCiteItsOwnRenderingArtifacts` (4 cases, all passed before the guard).
+- **A→B (worker assumes reviewer):** `worker.go:processRevision` recomputes the stored verdict from `HasRenderedEvidence` + `cand.Passed`, so the guard's `Rendered=false` reaches `LayoutRepo.Complete` as an unreviewed (failed) result, never passed. Wiring: `layout_wiring.go:newLayoutStack` → `layoutRenderReviewerFactory` (= `newLayoutRenderReviewer`: `BrowserRenderer`, `ReadabilityReviewer`) → `layout.NewCoordinator` (line 141); no nil/fake in production.
+- **B→A (reviewer assumes worker/coordinator):** `reviewer.go:checkIdentity` rejects revision/attempt/digest/contract/zoom/canvas mismatch; `checkCoverage` rejects missing nodes/edges/crossings/states; `loadArtifacts` errors (→ `StageReviewing` failure, retryable) on missing/hash-mismatched/non-PNG files or no overview/tiles. The production reviewer copies `rend.Artifacts` verbatim, so the new guard is a no-op on the real path: `TestLayoutRender_RealBrowserPRReview`, `TestCoordinator_RealBrowserBoundedBestReachesSink` pass; `go test ./adapter/renderreview` ok (186s).
+
+## Paired row 8 — independent approval (2026-10-18, reviewed 6fc885a): TICKED
+- SHARED is `domain/layout/render.go:Rendering` / `Evidence`: the exact candidate/contract, revision, attempt and screenshot list. Only paired:8 was reviewed and ticked.
+- A→B: `cmd/arbitron/layout_wiring.go:newLayoutStack` feeds the real `newLayoutRenderReviewer` ports into the coordinator and worker; `domain/layout/coordinator.go:Coordinator.Run` synchronously renders, reviews, then checks artifact equality, rendering identity/time and `HasRenderedEvidence` before accepting a candidate. `domain/layout/worker.go:processRevision` recomputes the stored verdict; `adapter/sqlite/layout_repo.go:LayoutRepo.persist` writes its unreviewed flag and findings, so rejected evidence cannot become a stored pass.
+- B→A: `domain/layout/coordinator.go:Coordinator.Run` supplies the same revision, attempt and geometry to both ports; `adapter/renderreview/browser.go:validateRenderRequest` checks raw node types/runtime states and `BrowserRenderer.capture` completes all screenshots before returning. `adapter/renderreview/reviewer.go:checkIdentity` / `checkCoverage` validate the supplied rendering, `loadArtifacts` hashes/decodes its actual files, and `ReadabilityReviewer.Review` copies that exact artifact list. Errors terminate the corresponding stage before acceptance.
+- BREAK independently reproduced with a temporary Go overlay removing only the new guard/import: `domain/layout/coordinator_regression_test.go:TestRun_ReviewEvidenceMustCiteItsOwnRenderingArtifacts` exits 1 in all four cases because each forged review passes. Unmodified HEAD exits 0 in all four; tracked source stayed untouched.
+- Fresh checks exit 0: `go test ./domain/layout/... -count=1 -timeout=5m`; `go test ./adapter/sqlite -count=1 -timeout=5m`; required-browser full `./adapter/renderreview` (233.909s); required-browser `./cmd/arbitron` selection `TestLayoutRender_RealBrowserPRReview`, `TestCoordinator_RealBrowserBoundedBestReachesSink`, `TestLayoutRender_ReadabilityReviewerSavedEvidenceReachesSinks`, `TestLayoutRender_MissingBrowserFailsVisiblyAndIsRetryable` (49.378s). These verify real captures, bounded best evidence, malformed-evidence failure and retry through durable/query sinks.
+- `go build ./...` and `go test ./... -run '^$' -count=1 -timeout=5m` exit 0. Supplied measurement fields were unresolved, so these are direct scoped checks, not a full-suite baseline comparison. No new seam defect found; existing G9 container packaging remains a separate escalation.
+
+## Paired row 9 (Area 7 worker terminal record ↔ Area 5 layout read) — refiner pass 2026-10-18
+- **Gap closed (evidence only, no production defect):** existing reader tests used MemStore with a hand-built passed `Completion` for every state, and `superseded_sqlite_test.go:TestWorkerSupersedeSQLiteKeepsBestEvidence` never read its row back through `Reader`. New `domain/layout/worker_reader_seam_test.go:TestWorkerTerminalRowReachesReaderSQLite` drives the real `Worker.ProcessRevision` on the real `adaptsqlite.LayoutRepo` to passed, needs_attention, failed-with-best (retry, renderer down) and superseded-unpassed, then reads through `Reader.View` (live store, then full and result-only outage). It also reads the `Worker.publish` cache via `Reader.cachedFallback`. `TestReaderResultOutageRejectsWorkerCacheFromOlderGenerationSQLite`: after a gen-2 pass whose publish failed, the gen-1 cache is not drawn.
+- **Worker→reader:** `worker.go:processRevision` stores row state = coordinator verdict but recomputes the result verdict. `layout_repo.go:persist` keeps superseded and writes result_generation/verdict. `reader.go:View` shows geometry whenever the result is compatible, regardless of state, and allows complete only for passed or superseded-passed with `row.Verdict==passed` and an empty `passProblem`. `displayFor` maps superseded-unpassed → needs_attention.
+- **Reader→worker:** Reader assumes `Get`/`Result` wrap DB faults as `ErrStoreUnavailable` (`layout_repo.go:layoutError`), and that the cache carries job/result generations (`Worker.publish`). `cachedFallback` sets `Unreviewed=true` and `Evidence=nil`, and rejects a cache whose fences differ from a readable row's.
+- **Mutation proof** (temporary, reverted): superseded→complete, failed rows dropping geometry, a cache restoring reviewed status, and a removed row-fence check each turn a new test red.
+- **Wired:** `layout_wiring.go:newLayoutStack` hands the same `ls.store`/`ls.cache` to `NewWorker` (l.145) and `NewReader` (l.132). `QueryService` → `Reader.View` → handlers `WriteJSON(view)` verbatim. Correction to the row's assumption: superseded is terminal, so `Worker.publish` does cache its unpassed best. Outage reads show it as unavailable/unreviewed.
+- Recommend: approve paired:9.
+
+
+## Paired row 9 — independent approval (2026-10-18, reviewed 3eb7c5b): TICKED
+- SHARED: `adapter/sqlite/layout_repo.go:LayoutRepo.persist` commits `layout_results` and the revision's terminal state, verdict, result generation, findings and failure in one transaction, fencing job generation and preserving superseded state. Only paired:9 ticked; no production defect found.
+- Worker→reader: `domain/layout/worker.go:processRevision` recomputes result verdict, retains the prior best on a failed retry, awaits Complete before publish; `domain/layout/reader.go:Reader.View` reads the exact revision/result generation and compatible geometry regardless of terminal state. `displayFor` keeps superseded-unpassed at needs_attention; `requester.go:passProblem` guards complete with matching evidence and no blocking findings. A reviewed needs_attention best may carry evidence without being a pass.
+- Reader→worker: `domain/layout/worker.go:Worker.publish` supplies revision, contract, geometry and both generation fences; `adapter/sqlite/layout_repo.go:layoutError` exposes database faults as ErrStoreUnavailable. `domain/layout/reader.go:Reader.cachedFallback` checks revision/contract/coverage and readable row fences; fallback/rejectView keep unavailable, unreviewed and evidence-free even for a cached pass. `adapter/filesystem/layout_cache.go:LayoutCache.PublishCache` validates currency and the worker's fence under the mutation lock before writing.
+- Production TRACE: `cmd/arbitron/layout_wiring.go:newLayoutStack` shares one store/cache with worker and reader; `attachQuery` feeds `domain/layout/query.go:QueryService.WorkflowLayout` / `InstanceLayout`. `adapter/http/layout_handler.go:LayoutHandler.GetWorkflowLayout` and `instance_handler.go:InstanceHandler.instanceLayout` return that View unchanged, with workflow or frozen-instance revision selected by the query.
+- BREAK independently caught using temporary Go overlays, tracked source untouched: forcing superseded complete, dropping failed geometry and restoring cached reviewed status each make `domain/layout/worker_reader_seam_test.go:TestWorkerTerminalRowReachesReaderSQLite` exit 1; removing cachedFallback's generation guard makes `TestReaderResultOutageRejectsWorkerCacheFromOlderGenerationSQLite` exit 1. Unmodified full layout suite exits 0, covering all four terminal states and both outage types.
+- Fresh exit-0 checks: `go test ./domain/layout/... ./adapter/sqlite -count=1 -timeout=5m`; `go test ./adapter/http ./adapter/filesystem -count=1 -timeout=5m`; six cmd/arbitron tests covering workflow/instance query revision selection, historical snapshot after update, workflow/instance HTTP reads and router wiring (8.187s); `go build ./...`; `go test ./... -run '^$' -count=1 -timeout=5m`. Measurement placeholders were unresolved: these are direct affected-suite/build checks, not a full-suite baseline comparison.
+
+## Paired row 10 (Area 2 Create/Update save ↔ Area 5 layout read) — refiner pass 2026-10-18
+- **Gap closed (evidence only, no production defect):** `cmd/arbitron/layout_reader_e2e_test.go:TestLayoutReader_RealBrowserWorkflowAndInstanceParity` covered only a graph-compatible pending Update. It now also runs a graph-changing Update (adds `t3`, rewires t1→t3→t2) while the worker is stopped, triggers an instance and reads `QueryService.WorkflowLayout` and `InstanceLayout`. Both return the same pending View: `retained_positions`, nil Geometry/Contract/Evidence, `Retained.FromRevision` = first, positions = first's reviewed boxes for t1/t2 only. The earlier pending instance stays unchanged, and all three historical views survive Delete.
+- **Save→read:** `revision_stamper.go:Stamp` writes `Presentation.Retained` (from `LayoutRepo.DisplayedLayout`, else prior Retained, else manifest positions; filtered to surviving nodes) before Marshal. `engine.go:TriggerWithDepartment` snapshots the same `workflowRepo` Load (`main.go:538,595,866`) via json.Marshal, so Presentation is frozen. `engine/layout_access.go:DecodeWorkflowSnapshot` round-trips it.
+- **Read→save:** `reader.go:Reader.View` → `fallback` refilters with `retainedFor` and draws prior geometry only if `Result(FromRevision, FromGeneration)` matches both fences and `Compatible` (exact node/edge identity, `geometry.go:Validate`) holds, so stale edges cannot be drawn. Unreviewed is always true. Placing new nodes is left to the client (Area 12).
+- **Mutation proof** (temporary, reverted): disabling `Compatible` in `Reader.fallback` makes the test fail at `layout_reader_e2e_test.go:116` (provenance retained_geometry).
+- Ran: `ARBITRON_REQUIRE_BROWSER=1 go test ./cmd/arbitron -run 'TestLayoutReader_RealBrowserWorkflowAndInstanceParity$' -count=1` → ok (6.2s).
+- Recommend: approve paired:10 — both directions verified, BREAK caught by the extended real-root test.
+
+
+## Paired row 10 — independent approval (2026-10-18, reviewed 8ffdae1): TICKED
+- **Save→read:** `domain/workflow/service_revision.go:Service.updateRevision` reloads prior under destination locks, calls `domain/workflow/revision_stamper.go:RevisionStamper.Stamp` before repository Update, then acknowledges. `adapter/filesystem/workflow_operations.go:WorkflowRepo.Load` shares those locks and settles before reading; `workflow_repo.go:WorkflowRepo.update` atomically writes the stamped manifest. `cmd/arbitron/main.go:initDomain` supplies the same repository to service and engine.
+- **Snapshot/consumer TRACE:** `domain/engine/engine.go:Engine.TriggerWithDepartment` JSON-copies the entire loaded Workflow, including Presentation and new nodes. `domain/engine/layout_access.go:Engine.InstanceLayoutSnapshot` decodes only that snapshot; `domain/layout/query.go:QueryService.WorkflowLayout` / `InstanceLayout` feed their respective manifests to the same `Reader.View`. HTTP dedicated and embedded reads preserve these revision-scoped views.
+- **Read→save:** `cmd/arbitron/layout_wiring.go:newLayoutStack` feeds the same SQLite store to stamper and reader. `adapter/sqlite/layout_repo.go:LayoutRepo.DisplayedLayout` returns the prior revision's compatible best and exact generation; `revision_stamper.go:RevisionStamper.retained` captures its coordinates/reference or the prior captured fallback, filtering surviving IDs before save. `domain/layout/reader.go:Reader.fallback` rechecks source revision/generation and `domain/layout/geometry.go:Compatible` / `Geometry.Validate` enforce full node/edge coverage before reusing routes; fallback is always unreviewed, and a new node remains in the manifest without an invented retained position.
+- **BREAK independently caught:** `cmd/arbitron/layout_reader_e2e_test.go:TestLayoutReader_RealBrowserWorkflowAndInstanceParity` passes with required real Chrome, covering compatible and graph-changing pending saves, equal workflow/instance views and an older frozen view after a later save. A temporary Go overlay bypassing only fallback's Compatible guard exits 1 at line 116 (retained_geometry instead of retained_positions); tracked production source stayed untouched. Unmodified rerun exits 0 (7.635s).
+- **Fresh verification:** full suites `go test ./domain/workflow/... ./domain/layout/... ./domain/engine/... ./adapter/filesystem/... ./adapter/sqlite/... ./adapter/http/... -count=1 -timeout=5m` exit 0; five cmd tests for asynchronous snapshot capture, historical query, workflow HTTP, instance HTTP and router wiring exit 0 (18.723s). `go build ./...` and `go test ./... -run '^$' -count=1 -timeout=5m` exit 0.
+- Measurement placeholders were unresolved; these are direct affected-suite/build checks, not a full-suite baseline comparison. No new seam defect found; only paired:10 approved.
+
+## Paired row 11 (Area 4 relocation and delete ↔ Area 7 cache publication) — refiner pass 2026-10-18
+- **Gap closed (evidence only, no production defect):** rename/transfer had no real-root cache assertion (`TestLayoutE2E_TransferRelocatesWithoutNewRevision` checks only the row; `worker_cache_test.go:TestWorkerCacheOwnershipMove` uses memstore/fake cache). New `cmd/arbitron/layout_relocation_cache_test.go:TestLayoutE2E_RelocationLatePublishTargetsMovedDestination` (real SQLite, lock, on-disk cache; fake renderer/reviewer) replays `Worker.publish`'s post-read steps with the pre-move locator after Transfer/Rename: `PublishCache(old)` → `ErrDestinationGone`, no folder resurrected; `MarkCached(old)` → `ErrStaleGeneration`; `ReconcileCache` then settles the row at its new locator and (transfer, copied layout.json removed) writes the cache there; after recreating the old name, `PublishCache(old)` → `ErrNotCurrent` and neither folder holds the old revision's cache.
+- **Area 4→7:** `service_revision_move.go:withIdentityMutation` holds both endpoint locks across `finishRelocation` (`Journal.Relocate` → `RelocateArrangements` → source `Delete`); `layout_repo.go:Relocate` resets `cache_generation=0`, so `PendingCache` re-selects it. Wiring: `layout_wiring.go:116,123,145` (one repo for cache/mutations, `Relocator: ls.requester`, `NewRepositoryManifests(repo)`).
+- **Area 7→4:** `layout_cache.go:PublishCache` loads under the destination lock (NotFound → Gone; revision/ID mismatch → NotCurrent); `worker.go:publish` fence rechecks `Destination`; `layout_repo.go:MarkCached` fences locator + WorkflowID.
+- **Mutation proofs** (temporary, reverted): drop MarkCached's locator clause → red at the late-settle assertion; drop `cache_generation=0` in Relocate → red "relocated destination must get its cache"; disable PublishCache's revision/ID check → red at the ErrNotCurrent assertion.
+- **Observation (non-blocking):** relocation does not `Notify`; the new destination's republish waits for the dispatcher sweep (`PollInterval` default 15s). For transfer the verbatim-copied layout.json is valid meanwhile; for rename the new revision gets its own job.
+- Ran: the new test, `TestLayoutE2E_(TransferRelocates|RenameThrough|SharedRename)`, `TestServiceRevisionE2E_DeleteUnpublishRaceCache` (real Chrome, 15.7s), `go test ./domain/layout -run TestWorkerCache`, `./adapter/filesystem -run TestLayoutCache` → all ok.
+- Recommend: approve paired:11 — both directions verified; BREAK caught by the new real-root test plus the delete/unpublish race test.
+
+
+## Paired row 11 — independent approval of c38e0c1 (2026-10-18)
+- **Approved only paired:11 (Area 4 ↔ Area 7).** SHARED destination locator and workflow folder traced in production; no new seam defect found.
+- **4→7:** `domain/workflow/service_revision_move.go:withIdentityMutation` owns both endpoint locks through `finishRelocation` (journal → layout rows → source removal); `service_revision_support.go:lockedDelete` owns the removal lock. `adapter/sqlite/layout_repo.go:Relocate` resets cache settlement; `PendingCache` reselects moved results.
+- **7→4:** `adapter/filesystem/layout_cache.go:PublishCache` settles and reloads under that same lock, rejecting absent/replaced destinations before writing; `domain/layout/worker.go:publish` rechecks destination and generations, and `adapter/sqlite/layout_repo.go:MarkCached` conditionally matches locator plus workflow ID even after the publication lock is released. `domain/layout/manifests.go:RepositoryManifests.CurrentRevision` feeds the preliminary check.
+- **Wiring/recovery:** `cmd/arbitron/layout_wiring.go:newLayoutStack` gives cache, mutations and manifests the same repository and wires requester as relocator; `main.go:initDomain` installs these on the service. `domain/workflow/commit_source.go:Settle` blocks unresolved moves, and `resolveRelocation` holds both endpoints while recovering them.
+- **BREAK independently exercised:** `cmd/arbitron/layout_relocation_cache_test.go:TestLayoutE2E_RelocationLatePublishTargetsMovedDestination` passes for transfer/rename/recreate; compilable temporary overlays removing MarkCached's destination fence fail at line 78, and retaining Relocate's cache_generation fails at line 95 (missing transferred cache). Bypassing PublishCache's identity check fails at line 109 on the error contract; validateCache still rejects the stale envelope. Tracked production source was unchanged; unmodified final rerun passes (2.171s).
+- **Fresh verification, exit 0:** required-browser root relocation/transfer/private+shared rename and `layout_service_revision_test.go:TestServiceRevisionE2E_DeleteUnpublishRaceCache` (66.104s); full `go test ./domain/workflow/... ./domain/layout/... ./adapter/filesystem/... ./adapter/sqlite/... -count=1 -timeout=5m`; `go build ./...`; all-package compile via `go test ./... -run '^$' -count=1 -timeout=5m`.
+- Verification placeholders were unresolved: direct affected-suite/build evidence replaces missing measurement, without claiming a full-suite branch-point comparison. Existing republish-on-next-sweep observation remains non-blocking; no other row approved.
+
+## Paired row 12 (Area 3 Publish/Copy ↔ Area 7 worker publication) — refiner pass 2026-10-18
+- **Gap closed (evidence only, no production defect):** the seam was guarded only by unit fakes (`reader_test.go:TestReaderUnavailableCacheIsNeverReviewedPass` uses `layouttest.NewFakeCache`; `layout_cache_test.go` never copies a tree). New `cmd/arbitron/layout_copy_cache_test.go:TestLayoutE2E_CopiedCacheNeverServesDestinationDuringOutage` (real root, SQLite, on-disk cache, HTTP router; fake renderer/reviewer) runs Create → Publish → shared passes and caches → Copy (dest job held at render) → asserts dest layout.json is byte-identical to the source's, then takes the store offline.
+- **3→7 (copy assumes the cache is token-checked):** `layout_cache.go:validateCache` (`e.Revision != wf.SavedRevision()`) makes `ReadCache` reject the copied envelope; `reader.go:cachedFallback` rechecks `e.Revision != v.SavedRevision`. Row-only outage: dest is `unavailable`, unreviewed, no evidence, provenance `retained_geometry` from `Presentation.Retained.FromRevision == srcRev` (the designed `Reader.fallback`, not the cache). Full outage (both tables): dest geometry nil, `retained_positions`; control: source in the same outage serves its cache as `arranged`, unreviewed, so the outage path really reaches `cachedFallback`.
+- **7→3 (worker assumes a foreign layout.json is harmless and replaceable):** after release, the dest job passes, `PublishCache` (revision/ID under lock) overwrites the copy with `own.Revision == dstRev`; the source cache bytes are unchanged.
+- **Mutation proofs** (temporary, reverted): drop both revision guards → red at the sink (provenance `arranged`, geometry drawn for dest); drop only the filesystem guard → red; drop only the Reader guard → green (the ReadCache guard alone holds). So the filesystem check carries the load and the Reader check is defence in depth.
+- Wiring: `layout_wiring.go:116` (`NewLayoutCache(repo)`), `:132` (`NewReader(..., ls.cache)`); `copyDirRecursive` reached via `workflow_repo.go:CopyTreeStamped` from `service_revision_copy.go:102,197` and `service_revision_move.go:87,148`. Duplicate/Rename copy the same way and hit the same `validateCache` (fresh revision), but this test exercises Publish/Copy only.
+- Ran: new test plus `TestLayoutE2E_RelocationLatePublishTargetsMovedDestination`, `TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult` → ok (2.1s).
+- Recommend: approve paired:12 — both directions verified through the HTTP sink; BREAK caught by the new real-root test, with mutation evidence.
+
+## Paired row 12 — independent approval of 042f2f8 (2026-10-18)
+- **Approved paired:12 only; SHARED layout.json verified in both directions.** `adapter/filesystem/workflow_repo.go:copyTreeLocked` copies cache bytes, invokes the stamp callback, syncs, then renames under both endpoint locks; `domain/workflow/service_revision_copy.go:publishRevision` / `copyRevision` enqueue only after commit, with fresh revisions from `domain/workflow/revision_stamper.go:Stamp`.
+- **3→7:** `adapter/filesystem/layout_cache.go:validateCache` rejects the source token before returning copied geometry; `domain/layout/reader.go:cachedFallback` repeats the revision check and preserves unavailable/unreviewed status. `cmd/arbitron/layout_copy_cache_test.go:TestLayoutE2E_CopiedCacheNeverServesDestinationDuringOutage` proves retained-only row-outage fallback, no destination geometry in full outage, and usable unreviewed source cache as control.
+- **7→3:** `domain/layout/worker.go:Worker.publish` builds the destination envelope and rechecks job/result/destination fences before writing; `adapter/filesystem/layout_cache.go:LayoutCache.PublishCache` settles and checks revision/ID under the mutation lock. The same root test proves replacement with the destination token and byte-identical source cache preservation.
+- Production wiring: `cmd/arbitron/layout_wiring.go:newLayoutStack` gives the same repository-backed cache to Worker and Reader; `cmd/arbitron/layout_http_e2e_test.go:newLayoutE2ERouter` exercises the production router/query wiring.
+- Independently removed both revision guards temporarily: the new test exited 1 at HTTP provenance and geometry assertions (foreign geometry became arranged); restored both production files byte-for-byte, then the three root tests passed again. No new seam defect found.
+- Unexpanded measurement placeholders replaced with direct checks: uncached `go test ./domain/workflow ./domain/layout/... ./adapter/filesystem ./adapter/sqlite ./adapter/http ./adapter/mcp -count=1`, the new test plus `TestLayoutE2E_RelocationLatePublishTargetsMovedDestination` and `TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult`, and `go build ./...` all exited 0. Scope: affected packages and named root tests, not the full repository suite.
+
+## Paired row 13 (Area 4 relocation and delete ↔ Area 5 layout read) — refiner pass 2026-10-18
+- **A→B (relocation assumes the read is destination-free):** `domain/layout/query.go:QueryService.InstanceLayout` decodes only the authorised snapshot (`engine/layout_access.go:InstanceLayoutSnapshot` → `GetInstance`/`canView`, no workflow lookup) and `reader.go:Reader.View` keys `store.Get`/`Result`/`fallback` on `SavedRevision`. No production `DELETE FROM layout_revisions|layout_results` (grep over adapter/domain/cmd, non-test: none); `layout_repo.go:LayoutRepo.Relocate` rewrites only locator/workflow_id/cache_generation, never state/result.
+- **B→A (the read assumes relocation keeps history):** the only locator-keyed read is `Reader.cachedFallback` (outage only), which rejects any cache whose `Revision` ≠ snapshot revision, so a recreated old name (revision C) cannot be drawn for A; after a transfer it misses the relocated cache and stays explicitly unavailable/unreviewed (truthful, per rows 9/12).
+- **New evidence:** `cmd/arbitron/layout_relocation_read_test.go:TestLayoutRelocationRead_HistoricalInstanceKeepsSnapshotRevision` (real `initDomain`, production router + MCP server): instance on A; Rename (B), recreate old name (C), TransferOwnership, Delete both. After each step HTTP `GET /instances/{id}/layout` and embedded `GET /instances/{id}` equal the pre-relocation body exactly, never B/C; MCP `instance_get` snapshot revision stays A; A's and B's rows survive delete. Passed (8.9s, browser present → A passed with evidence).
+- **Mutation probe:** temporarily making `InstanceLayout` re-resolve via `LoadForLayout(wf.Presentation.Name)` turned the test red at "after recreating the old name" (dedicated and embedded); restored, green. Delete-only history was already covered by `layout_reader_e2e_test.go:TestLayoutReader_RealBrowserWorkflowAndInstanceParity`.
+- Observation (not a gap): MCP `instance_get` returns the raw instance (snapshot) with no arrangement summary; design phase 3 §3 requires a summary only on `workflow_get`.
+- Recommend: approve paired:13 — both directions cited above; BREAK caught by the new real-root test (red under name-resolution mutation).
+
+## Paired row 13 — independent approval 2026-10-18 (e5021f3)
+- Approved only paired:13, Area 4 relocation/delete ↔ Area 5 layout read; no new seam defect found.
+- A→B: `domain/engine/engine.go:TriggerWithDepartment` persists the captured snapshot before enqueue; `domain/engine/layout_access.go:InstanceLayoutSnapshot` authorizes through `GetInstance` without resolving the workflow. `domain/layout/query.go:QueryService.InstanceLayout` feeds that snapshot to `domain/layout/reader.go:Reader.View`, whose row/result lookups use only revision and generation.
+- B→A: `domain/workflow/service_revision_move.go:Service.finishRelocation` feeds `domain/layout/requester.go:Requester.RelocateArrangements` → `adapter/sqlite/layout_repo.go:LayoutRepo.Relocate`; its atomic UPDATE preserves revision, manifest, state and results. `domain/workflow/service_revision_support.go:Service.lockedDelete` settles before deletion; `domain/workflow/delete.go:Service.deleteWorkflow` removes folder/publication/registry only. No production history DELETE or identity-cascade FK exists (`adapter/sqlite/migrations/019_layout_revisions.up.sql`).
+- Outage guard: `domain/layout/reader.go:Reader.cachedFallback` rejects a cache with a different snapshot revision; `domain/layout/reader_test.go:TestReaderUnavailableCacheIsNeverReviewedPass` covers that rejection and explicit unavailable/unreviewed status. Production `cmd/arbitron/layout_wiring.go:newLayoutStack` shares the store/cache between the mutation and read paths.
+- BREAK: independently ran `cmd/arbitron/layout_relocation_read_test.go:TestLayoutRelocationRead_HistoricalInstanceKeepsSnapshotRevision` through the real root, HTTP router and MCP. A temporary Go overlay made InstanceLayout prefer the current workflow by snapshot name: exit 1, both dedicated/embedded reads failed after recreation. Repository production files stayed unchanged; an unmutated overlay additionally requiring complete/unreviewed=false/non-nil evidence passed, exit 0. MCP `adapter/mcp/tools_instance.go:instanceGetHandler` preserves the raw snapshot; phase-3 design §3 does not require its own arrangement summary.
+- Unexpanded measurement fields replaced by direct exit-code checks: `go test ./domain/workflow ./domain/engine ./domain/layout/... ./adapter/filesystem ./adapter/sqlite ./adapter/http ./adapter/mcp -count=1`, the new root test plus `TestLayoutE2E_RelocationLatePublishTargetsMovedDestination` and `TestLayoutE2E_CacheOutageAndDeletionPreserveAuthoritativeResult`, and `go build ./...` all exited 0. Scope is affected packages and named root tests, not the full repository suite or a baseline comparison.
+
+## Paired row 15 (Area 5 layout read ↔ Area 12 dashboard views) — refiner pass 2026-10-18
+- **Finding (fixed this pass):** nothing pinned the Go `domain/layout/reader.go:View`/`query.go:RetryAck` JSON tags or the `DisplayStatus`/`Provenance` constants to `dashboard/src/graph/arranged/types.ts`. Go tests checked Go JSON and TS tests used hand-built `testFixtures.ts:fixtureView`, so each side's fakes ignored the other. Only Chrome-gated root e2e would catch drift. An unknown status would also throw in `LayoutStatusPanel.tsx` (`TITLES[...]` is undefined).
+- **Guard:** shared `dashboard/src/graph/arranged/layoutView.contract.json` (required vs omitempty keys, enums). `domain/layout/view_contract_test.go:TestViewWireContract_MatchesDashboardFixture` derives keys by reflecting on the tags and enums via go/ast; `TestViewWireContract_EmptyViewCarriesEveryRequiredKey` checks that an unavailable View still emits `available:false`/`resultGeneration`/`unreviewed`. `layoutViewContract.test.ts` uses compile-time exhaustive `Record<RequiredKeys<LayoutView>,true>`/`Record<DisplayStatus,true>` records.
+- **Mutation probes (all red, all restored):** Go `available`→omitempty (both Go tests fail); Go `resultGeneration`→`resultGen`; an added Go `DisplayStatus` "queued"; TS `available?` (tsc TS2353/TS2741 in the contract test); TS `resultGeneration` renamed (tsc).
+- **A→B (the read assumes the client honours the wire):** `layout_handler.go:GetWorkflowLayout` writes `layout.View` directly (`WriteJSON`); `instance_handler.go` embeds `*layout.View` as `layout`. Routes `server.go:286,350`; Layouts fed by `main.go:974 attachQuery`. The client fails safe: `useLayoutStatus.ts:load` treats a falsy `available` as unavailable, and `LayoutStatusPanel` downgrades `complete` with `!available`/`unreviewed`/non-`arranged` provenance.
+- **B→A (the client assumes one generation per view):** `useLayoutStatus.ts:load` rejects lower job/result generations for the same revision. Geometry is borrowed only from the same `savedRevision` when unavailable, and is then forced `unreviewed`/`retained_geometry` without evidence. Routes join on `savedRevision` (`WorkflowReview.tsx:184`). Nested Geometry semantics are row 19.
+- Recommend: approve paired:15. The shared contract is now mechanically pinned on both sides (Go reflection/AST plus tsc/vitest against one fixture), the five mutation probes went red, and the fail-safe client guards and real wiring are cited above.
+
+## Paired row 15 — independent approval of b4f58f1 (2026-10-18): APPROVED
+- Only paired:15 reviewed/ticked; SHARED is `domain/layout/reader.go:View` ↔ `dashboard/src/graph/arranged/types.ts:LayoutView`, including required fields, status/provenance and revision/job/result fences. No new seam gap found.
+- Server→dashboard TRACE: `cmd/arbitron/main.go:initDomain` → `layout_wiring.go:layoutStack.attachQuery` → `domainStack.routerDeps` → `adapter/http/server.go:NewRouterFromDeps` → `layout_handler.go:LayoutHandler.GetWorkflowLayout`/`GetInstanceLayout` serialize View directly; `instance_handler.go:InstanceHandler.instanceLayout` supplies the embedded seed. `dashboard/src/api/client.ts:getLayout` feeds both routes' `useLayoutStatus`, `LayoutStatusPanel` and `ArrangedGraph`.
+- Dashboard→server assumptions hold: `domain/layout/reader.go:Reader.View` checks result revision/generation before exposing geometry; `Reader.cachedFallback` checks readable row fences and stays unavailable/unreviewed. `dashboard/src/hooks/useLayoutStatus.ts:load` rejects lower healthy job/result generations before replacing state; outage borrowing is same-revision only, forced unreviewed with evidence removed. `retryCurrent` installs the accepted minimum/epoch before refetch.
+- DOM guards: `WorkflowReview.tsx:ReviewPage` and `ExecutionView.tsx:InstanceArrangement` join savedRevision before rendering; `validate.ts:resolveDisplayGeometry` rechecks the revision and geometry; `LayoutStatusPanel.tsx:LayoutStatusPanel` downgrades complete for unavailable/unreviewed/missing/non-arranged geometry or display issues. Existing hook/panel/route tests exercise these paths in the passing dashboard suite.
+- BREAK sensitivity independently reproduced: Go available→omitempty and resultGeneration→resultGen each exit 1 in `domain/layout/view_contract_test.go:TestViewWireContract_MatchesDashboardFixture`; a physical added typed queued status also exits 1 (a compiler overlay alone cannot affect its on-disk AST parser). Source restored byte-for-byte; both contract tests then exit 0. TypeScript compiler-host mutations available? and resultGen each produce errors in `layoutViewContract.test.ts` without changing repository files.
+- Real production sink: required-browser `cmd/arbitron/layout_client_acceptance_test.go:TestLayoutSurfaces_ClientValidationAndAPIReachDOM` passed both routes, including invalid/missing geometry fallback, truthful status and actual Retry reaching SQLite/new DOM geometry; root wiring and snapshot-revision tests also passed (combined 44.899s).
+- Supplied verification placeholders contained no measurements. Fresh exit-0 checks: `go test ./domain/layout/... ./adapter/http -count=1`, `go build ./...`, `npx tsc --noEmit`, full `npx vitest run --maxWorkers=1` (71 files, 1049 tests), and the three root tests above. Scope is affected Go packages plus selected root tests and the full dashboard; no full-repository Go baseline comparison claimed.
+
+## Paired row 18 (Area 4 relocation ↔ Area 6 historical retry) — refiner pass 2026-10-18
+- **Gap closed (evidence only, no production defect):** the committed-relocated-envelope branch of `domain/layout/query.go:QueryService.retry` had only fake-journal unit evidence (`TestQueryService_RetryInstance_PrefersCommittedRelocatedEnvelope`, same owner both sides). The real-root probe `TestLayoutQueryE2E_HistoricalMissingRowAfterOwnershipMove` never reached it (the journal entry is removed after enqueue) and asserted no row destination. Added `cmd/arbitron/layout_relocation_retry_test.go:TestLayoutE2E_HistoricalRetryUsesCommittedRelocatedEnvelope`. It goes through the root's SQLite enqueue-outage trigger, then Create, `eng.Trigger`, `TransferOwnership` (real `RevisionJournal.Relocate`) and old-caller `RetryInstance`. It asserts the row destination is {Private(owner), name, WorkflowID}, the captured manifest bytes are unchanged, the state is passed, `layout.json` is at the moved folder and the old folder is not recreated. The probe now also asserts the no-evidence rebuild at the snapshot locator.
+- **4→6:** `revision_journal.go:Relocate` rewrites only Scope/Name. `requestDigest` excludes both, so the receipt stays committed and the manifest bytes are immutable. `LayoutRepo.Relocate` moves an existing row. `LayoutRepo.Retry` never touches the locator, and the historical path passes `expectedDestination=nil`.
+- **6→4:** `QueryService.retry` adopts only `JournalCommitted` entries for the exact revision. A prepared entry is ignored, and with no journal the snapshot locator is used.
+- **Mutation proofs** (temporary, reverted): skip the journal lookup → new test red at the row destination (:65). Rewrite the manifest Presentation.OwnerID to the new scope → red at the manifest equality (:67). Make `Journal.Relocate` a no-op → red at :53. Accept prepared entries → unit test `committed=false` red. Re-marshalling the snapshot bytes yields identical bytes, so that mutation is not observable.
+- **Wired:** `layout_wiring.go:132` `NewReader(ls.store, ls.journal, ls.cache)` (the journal the retry reads); `:31` `NewQueryService(ls.reader, ls.requester, …)`; `:123` `Relocator: ls.requester`; `service_revision_move.go:205/209` and `commit_source.go:277/280` call `Journal.Relocate` → `RelocateArrangements`.
+- **Observation (non-blocking):** the old-locator rebuild, with no row and no journal, only follows manual row deletion; no production path runs `DELETE FROM layout_revisions`.
+- Ran: the new test plus the probe with `ARBITRON_REQUIRE_BROWSER=1` (PASS, 20.9s); `go test ./domain/layout -run TestQueryService_` (ok); `go vet ./cmd/arbitron` (clean).
+- Recommend: approve paired:18. Both directions are cited above, and BREAK is caught by the new real-root test (three mutations) and the unit test (the prepared-entry mutation).
+
+## Paired row 19 (Area 10 downward geometry ↔ Area 8 rendered review) — refiner pass 2026-10-18
+- **Gap closed (evidence, no production defect):** no browser-free test fed ACTUAL Go `Arrange` crossings through the TS renderer; TS tests used hand fixtures. Added `dashboard/src/graph/arranged/crossingSeam.test.tsx`: `go run` arranges pr-review/feature-pipeline/ralph-loop (2/52/15 crossings) → `validateGeometry` → `buildArrangedFlow` → `RoutedEdge` DOM `d`/`strokeDasharray` → a dash-phase ink model mirroring `report.ts:collectCrossings` (under hole + inked banks, over inked across the span). It also requires forward/forward, forward-over-loop, loop-over-forward and a swapped-role pair (pr-review 15/16).
+- **10→8 (TS reads Go):** mutations each go red: over/under swapped in `buildArrangedFlow` (feature-pipeline 47/4 under ink); `overs` dropped (dash restarts lost, 34/6 over ink); gaps keyed by edge pair (47/4 over ink). Go `route.go:findCrossings` role swap → `Arrange` self-rejects (go run exits 1). Edges keyed by `routed-${ordinal}`/`data-edge-path`, never by pair.
+- **8→10 (reviewer assumes Go semantics):** over-horizontal/under-vertical is enforced identically by `geometry.go:interiorOnRoute` and `validate.ts:interiorOnRoute`; `reviewer_checks.go:expectedSegments` mirrors `routedPath.ts:buildRoutedPath` (`TestExpectedSegments_DashRestartsMirrorTheRenderer`). TS gap matching (first segment within 0.5px) differs from Go (every segment within 0.01px) only for crossings near a bend, which `preflight.go:crossingNearBend` blocks (radius gap/2+stroke); a widened 12px epsilon mutation stays green on all real samples.
+- **Validators/G10:** `validateGeometryOptions` and `validate.ts:validateGeometry` both accept margin/crossingSweeps ≥ 0, pinned by `TestGeometry_ValidVariantsAndRoundTrips/zero_policy_values` and `validate.test.ts`; parity holds. G10 stays an escalated plan-text ruling, not a seam divergence. Both routes and `RenderSurface.tsx:80` call the same `resolveDisplayGeometry` (`ArrangedGraph.tsx:62,109`).
+- Ran: `npx vitest run src/graph/arranged` (12 files/313 pass), the new file (pass), `npx tsc --noEmit` (exit 0); `ARBITRON_REQUIRE_BROWSER=1 go test ./adapter/renderreview -run '^(TestReadabilityReviewer_RealBrowser_FeaturePipelinePassesThroughTheCoordinator|TestReadabilityReviewer_RealBrowser_DashedLoopCrossings|TestExpectedSegments_DashRestartsMirrorTheRenderer)$'` (ok 18.5s); `go test ./domain/layout -run 'TestGeometry_ValidVariantsAndRoundTrips|TestDefaultContract_MatchesDashboardContractJSON'` (ok).
+- Recommend: approve paired:19 — both directions cited above; BREAK caught by `crossingSeam.test.tsx` (three TS mutations, one Go mutation) and the real-Chrome feature-pipeline pass.

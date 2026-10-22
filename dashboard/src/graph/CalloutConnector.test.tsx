@@ -8,9 +8,11 @@ import type { Node } from '@xyflow/react'
 
 const mockNodes: Node[] = []
 const mockFlowToScreen = vi.fn()
+const mockStore = { getState: () => ({ domNode: document.body }) }
 
 vi.mock('@xyflow/react', () => ({
   useNodes: () => mockNodes,
+  useStoreApi: () => mockStore,
   useReactFlow: () => ({ flowToScreenPosition: mockFlowToScreen }),
 }))
 

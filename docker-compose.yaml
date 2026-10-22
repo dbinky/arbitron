@@ -40,8 +40,17 @@ services:
       # `claude /login` only has to be run once. CLAUDE_CONFIG_DIR is on the
       # subprocess env allowlist.
       - CLAUDE_CONFIG_DIR=/claude-config
+      # SECURITY: keep Chromium's sandbox for layout review. The image's
+      # ARBITRON_LAYOUT_BROWSERNOSANDBOX=true is only the bare `docker run`
+      # fallback (Docker's default seccomp profile blocks the sandbox); this
+      # deployment loads a seccomp profile that permits it (below).
+      - ARBITRON_LAYOUT_BROWSERNOSANDBOX=false
     security_opt:
       - no-new-privileges:true
+      # Docker's default seccomp profile plus clone/unshare/setns/chroot, which
+      # Chromium's unprivileged namespace sandbox needs. See
+      # docs/install/README.md "Browser for workflow auto-arrangement".
+      - seccomp=./docker/seccomp-chromium.json
     restart: unless-stopped
 
 volumes:

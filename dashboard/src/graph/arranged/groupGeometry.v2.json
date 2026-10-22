@@ -1,0 +1,4475 @@
+[
+  {
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "ordinary",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "next",
+          "type": "transform",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "ordinary",
+          "target": "next"
+        }
+      ]
+    },
+    "geometry": {
+      "format": "arbitron.layout/v2",
+      "contract": {
+        "version": "arranged-renderer/2",
+        "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+        "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+        "nodeLabelFontPx": 13,
+        "nodeLabelWeight": 600,
+        "nodeTypeFontPx": 10,
+        "nodeTypeWeight": 700,
+        "edgeLabelFontPx": 11,
+        "edgeLabelWeight": 500,
+        "lineHeight": 1.35,
+        "nodePaddingX": 12,
+        "nodePaddingY": 8,
+        "nodeBorderPx": 2,
+        "nodeTypeBarPx": 4,
+        "nodeTextGapPx": 2,
+        "nodeMinWidth": 180,
+        "nodeTextMaxWidth": 240,
+        "edgeLabelPaddingX": 6,
+        "edgeLabelPaddingY": 3,
+        "edgeLabelMaxWidth": 160,
+        "strokePx": 2,
+        "arrowPx": 10,
+        "crossingTreatment": "gap",
+        "crossingGapPx": 10,
+        "forwardColor": "#8a8ab0",
+        "loopReturnColor": "#7c8cf5",
+        "loopReturnDash": "6 4",
+        "practicalZoom": 0.9,
+        "minReadableTextPx": 9,
+        "minContrastRatio": 4.5,
+        "minClearancePx": 4,
+        "groupPaddingPx": 32,
+        "groupTaskGapPx": 24,
+        "groupRowGapPx": 48,
+        "groupMinWidth": 200,
+        "groupHeaderMinHeight": 80,
+        "groupFooterMinHeight": 80,
+        "groupTaskMinHeight": 96,
+        "groupConnectorDash": "3 3"
+      },
+      "options": {
+        "rankSpacing": 48,
+        "nodeSpacing": 56,
+        "laneSeparation": 14,
+        "gutterWidth": 48,
+        "labelGap": 10,
+        "portSpacing": 24,
+        "nodeTextSlack": 0,
+        "dummyWidth": 24,
+        "crossingSweeps": 8,
+        "margin": 40
+      },
+      "nodes": [
+        {
+          "id": "ordinary",
+          "box": {
+            "x": 40,
+            "y": 40,
+            "w": 180,
+            "h": 60
+          },
+          "text": "ordinary",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "next",
+          "box": {
+            "x": 40,
+            "y": 148,
+            "w": 180,
+            "h": 60
+          },
+          "text": "next",
+          "typeCaption": "transform",
+          "textLines": 1,
+          "rank": 1
+        }
+      ],
+      "edges": [
+        {
+          "ordinal": 0,
+          "source": "ordinary",
+          "target": "next",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 130,
+              "y": 100
+            },
+            {
+              "x": 130,
+              "y": 148
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "ordinary",
+            "elementId": "[\"node\",\"ordinary\"]",
+            "side": "bottom",
+            "point": {
+              "x": 130,
+              "y": 100
+            }
+          },
+          "targetAttach": {
+            "nodeId": "next",
+            "elementId": "[\"node\",\"next\"]",
+            "side": "top",
+            "point": {
+              "x": 130,
+              "y": 148
+            }
+          }
+        }
+      ],
+      "crossings": [],
+      "canvas": {
+        "x": 0,
+        "y": 0,
+        "w": 260,
+        "h": 248
+      }
+    },
+    "groups": null
+  },
+  {
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "fan",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "second",
+                  "entry": "a",
+                  "inputs": {
+                    "nested": {
+                      "values": [
+                        "original"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "first",
+                  "entry": "b"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "oops",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "fan"
+        },
+        {
+          "source": "fan",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "fan",
+          "target": "oops",
+          "output": "failure"
+        },
+        {
+          "source": "fan",
+          "target": "a",
+          "output": "task",
+          "label": "Same port label"
+        },
+        {
+          "source": "fan",
+          "target": "b",
+          "output": "task",
+          "label": "Same port label"
+        }
+      ]
+    },
+    "geometry": {
+      "format": "arbitron.layout/v2",
+      "contract": {
+        "version": "arranged-renderer/2",
+        "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+        "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+        "nodeLabelFontPx": 13,
+        "nodeLabelWeight": 600,
+        "nodeTypeFontPx": 10,
+        "nodeTypeWeight": 700,
+        "edgeLabelFontPx": 11,
+        "edgeLabelWeight": 500,
+        "lineHeight": 1.35,
+        "nodePaddingX": 12,
+        "nodePaddingY": 8,
+        "nodeBorderPx": 2,
+        "nodeTypeBarPx": 4,
+        "nodeTextGapPx": 2,
+        "nodeMinWidth": 180,
+        "nodeTextMaxWidth": 240,
+        "edgeLabelPaddingX": 6,
+        "edgeLabelPaddingY": 3,
+        "edgeLabelMaxWidth": 160,
+        "strokePx": 2,
+        "arrowPx": 10,
+        "crossingTreatment": "gap",
+        "crossingGapPx": 10,
+        "forwardColor": "#8a8ab0",
+        "loopReturnColor": "#7c8cf5",
+        "loopReturnDash": "6 4",
+        "practicalZoom": 0.9,
+        "minReadableTextPx": 9,
+        "minContrastRatio": 4.5,
+        "minClearancePx": 4,
+        "groupPaddingPx": 32,
+        "groupTaskGapPx": 24,
+        "groupRowGapPx": 48,
+        "groupMinWidth": 200,
+        "groupHeaderMinHeight": 80,
+        "groupFooterMinHeight": 80,
+        "groupTaskMinHeight": 96,
+        "groupConnectorDash": "3 3"
+      },
+      "options": {
+        "rankSpacing": 48,
+        "nodeSpacing": 56,
+        "laneSeparation": 14,
+        "gutterWidth": 48,
+        "labelGap": 10,
+        "portSpacing": 24,
+        "nodeTextSlack": 0,
+        "dummyWidth": 24,
+        "crossingSweeps": 8,
+        "margin": 40
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "box": {
+            "x": 436,
+            "y": 40,
+            "w": 180,
+            "h": 60
+          },
+          "text": "start",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "fan",
+          "box": {
+            "x": 289,
+            "y": 342,
+            "w": 474,
+            "h": 95
+          },
+          "text": "fan",
+          "typeCaption": "parallel group",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "done",
+          "box": {
+            "x": 318,
+            "y": 1549,
+            "w": 180,
+            "h": 60
+          },
+          "text": "done",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "oops",
+          "box": {
+            "x": 554,
+            "y": 1549,
+            "w": 180,
+            "h": 60
+          },
+          "text": "oops",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "a",
+          "box": {
+            "x": 262,
+            "y": 802,
+            "w": 180,
+            "h": 60
+          },
+          "text": "a",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "b",
+          "box": {
+            "x": 610,
+            "y": 802,
+            "w": 180,
+            "h": 60
+          },
+          "text": "b",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        }
+      ],
+      "edges": [
+        {
+          "ordinal": 0,
+          "source": "start",
+          "target": "fan",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 526,
+              "y": 100
+            },
+            {
+              "x": 526,
+              "y": 342
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "start",
+            "elementId": "[\"node\",\"start\"]",
+            "side": "bottom",
+            "point": {
+              "x": 526,
+              "y": 100
+            }
+          },
+          "targetAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "top",
+            "point": {
+              "x": 526,
+              "y": 342
+            }
+          }
+        },
+        {
+          "ordinal": 1,
+          "source": "fan",
+          "target": "done",
+          "output": "success",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 449,
+              "y": 1187
+            },
+            {
+              "x": 449,
+              "y": 1535
+            },
+            {
+              "x": 408,
+              "y": 1535
+            },
+            {
+              "x": 408,
+              "y": 1549
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 449,
+              "y": 1187
+            }
+          },
+          "targetAttach": {
+            "nodeId": "done",
+            "elementId": "[\"node\",\"done\"]",
+            "side": "top",
+            "point": {
+              "x": 408,
+              "y": 1549
+            }
+          },
+          "text": {
+            "text": "success",
+            "box": {
+              "x": 459,
+              "y": 1197,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 2,
+          "source": "fan",
+          "target": "oops",
+          "output": "failure",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 538,
+              "y": 1187
+            },
+            {
+              "x": 538,
+              "y": 1535
+            },
+            {
+              "x": 644,
+              "y": 1535
+            },
+            {
+              "x": 644,
+              "y": 1549
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 538,
+              "y": 1187
+            }
+          },
+          "targetAttach": {
+            "nodeId": "oops",
+            "elementId": "[\"node\",\"oops\"]",
+            "side": "top",
+            "point": {
+              "x": 644,
+              "y": 1549
+            }
+          },
+          "text": {
+            "text": "failure",
+            "box": {
+              "x": 548,
+              "y": 1197,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 3,
+          "source": "fan",
+          "target": "a",
+          "output": "task",
+          "label": "Same port label",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 402,
+              "y": 437
+            },
+            {
+              "x": 402,
+              "y": 788
+            },
+            {
+              "x": 352,
+              "y": 788
+            },
+            {
+              "x": 352,
+              "y": 802
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 402,
+              "y": 437
+            }
+          },
+          "targetAttach": {
+            "nodeId": "a",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "top",
+            "point": {
+              "x": 352,
+              "y": 802
+            }
+          },
+          "text": {
+            "text": "Same port label",
+            "box": {
+              "x": 412,
+              "y": 447,
+              "w": 102,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 4,
+          "source": "fan",
+          "target": "b",
+          "output": "task",
+          "label": "Same port label",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 538,
+              "y": 437
+            },
+            {
+              "x": 538,
+              "y": 788
+            },
+            {
+              "x": 700,
+              "y": 788
+            },
+            {
+              "x": 700,
+              "y": 802
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 538,
+              "y": 437
+            }
+          },
+          "targetAttach": {
+            "nodeId": "b",
+            "elementId": "[\"node\",\"b\"]",
+            "side": "top",
+            "point": {
+              "x": 700,
+              "y": 802
+            }
+          },
+          "text": {
+            "text": "Same port label",
+            "box": {
+              "x": 548,
+              "y": 447,
+              "w": 102,
+              "h": 22
+            },
+            "lines": 1
+          }
+        }
+      ],
+      "crossings": [],
+      "groupElements": [
+        {
+          "id": "[\"group\",\"fan\",\"container\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "container",
+          "box": {
+            "x": 40,
+            "y": 262,
+            "w": 972,
+            "h": 957
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+              "text": "Parallel branches · all succeed",
+              "style": "edge_label",
+              "box": {
+                "x": 54,
+                "y": 272,
+                "w": 185,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"node\",\"fan\"]",
+          "groupNodeId": "fan",
+          "role": "header",
+          "box": {
+            "x": 289,
+            "y": 342,
+            "w": 474,
+            "h": 95
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+              "text": "fan-out",
+              "style": "node_type",
+              "box": {
+                "x": 303,
+                "y": 394,
+                "w": 39,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+              "text": "2 tasks · branches",
+              "style": "edge_label",
+              "box": {
+                "x": 303,
+                "y": 411,
+                "w": 108,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "footer",
+          "box": {
+            "x": 289,
+            "y": 1024,
+            "w": 474,
+            "h": 163
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+              "text": "gather · All succeed",
+              "style": "node_label",
+              "box": {
+                "x": 303,
+                "y": 1034,
+                "w": 141,
+                "h": 19
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+              "text": "wait for remaining · results",
+              "style": "edge_label",
+              "box": {
+                "x": 303,
+                "y": 1055,
+                "w": 167,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 303,
+            "y": 1073,
+            "w": 104,
+            "h": 104
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"lane\",\"second\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "role": "lane",
+          "box": {
+            "x": 190,
+            "y": 549,
+            "w": 324,
+            "h": 385
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"second\\\"]\",\"caption\"]",
+              "text": "task 1 · second",
+              "style": "node_type",
+              "box": {
+                "x": 204,
+                "y": 559,
+                "w": 82,
+                "h": 15
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 204,
+            "y": 576,
+            "w": 138,
+            "h": 84
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"lane\",\"first\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "role": "lane",
+          "box": {
+            "x": 538,
+            "y": 549,
+            "w": 324,
+            "h": 385
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"first\\\"]\",\"caption\"]",
+              "text": "task 2 · first",
+              "style": "node_type",
+              "box": {
+                "x": 552,
+                "y": 559,
+                "w": 77,
+                "h": 15
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 552,
+            "y": 576,
+            "w": 138,
+            "h": 84
+          }
+        }
+      ],
+      "groupLanes": [
+        {
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "box": {
+            "x": 190,
+            "y": 549,
+            "w": 324,
+            "h": 385
+          },
+          "nodeIds": [
+            "a"
+          ]
+        },
+        {
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "box": {
+            "x": 538,
+            "y": 549,
+            "w": 324,
+            "h": 385
+          },
+          "nodeIds": [
+            "b"
+          ]
+        }
+      ],
+      "groupConnectors": [
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"a\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 352,
+              "y": 862
+            },
+            {
+              "x": 352,
+              "y": 876
+            },
+            {
+              "x": 514,
+              "y": 876
+            },
+            {
+              "x": 514,
+              "y": 1024
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "bottom",
+            "point": {
+              "x": 352,
+              "y": 862
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 514,
+              "y": 1024
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"b\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 700,
+              "y": 862
+            },
+            {
+              "x": 700,
+              "y": 876
+            },
+            {
+              "x": 538,
+              "y": 876
+            },
+            {
+              "x": 538,
+              "y": 1024
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"b\"]",
+            "side": "bottom",
+            "point": {
+              "x": 700,
+              "y": 862
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 538,
+              "y": 1024
+            }
+          }
+        }
+      ],
+      "canvas": {
+        "x": 0,
+        "y": 0,
+        "w": 1052,
+        "h": 1649
+      }
+    },
+    "groups": {
+      "groups": {
+        "fan": {
+          "nodeId": "fan",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "second",
+                "entry": "a",
+                "inputs": {
+                  "nested": {
+                    "values": [
+                      "original"
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "first",
+                "entry": "b"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {
+            "first": [
+              "b"
+            ],
+            "second": [
+              "a"
+            ]
+          },
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "oops"
+        }
+      },
+      "owner": {
+        "a": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "b": {
+          "groupNodeId": "fan",
+          "taskKey": "first"
+        }
+      },
+      "order": [
+        "fan"
+      ]
+    }
+  },
+  {
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "fan",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "workflows",
+              "tasks": [
+                {
+                  "key": "second",
+                  "workflow": "同じ子 ✅",
+                  "inputs": {
+                    "nested": {
+                      "values": [
+                        "original"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "first",
+                  "workflow": "同じ子 ✅"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "oops",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "fan"
+        },
+        {
+          "source": "fan",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "fan",
+          "target": "oops",
+          "output": "failure"
+        }
+      ]
+    },
+    "geometry": {
+      "format": "arbitron.layout/v2",
+      "contract": {
+        "version": "arranged-renderer/2",
+        "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+        "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+        "nodeLabelFontPx": 13,
+        "nodeLabelWeight": 600,
+        "nodeTypeFontPx": 10,
+        "nodeTypeWeight": 700,
+        "edgeLabelFontPx": 11,
+        "edgeLabelWeight": 500,
+        "lineHeight": 1.35,
+        "nodePaddingX": 12,
+        "nodePaddingY": 8,
+        "nodeBorderPx": 2,
+        "nodeTypeBarPx": 4,
+        "nodeTextGapPx": 2,
+        "nodeMinWidth": 180,
+        "nodeTextMaxWidth": 240,
+        "edgeLabelPaddingX": 6,
+        "edgeLabelPaddingY": 3,
+        "edgeLabelMaxWidth": 160,
+        "strokePx": 2,
+        "arrowPx": 10,
+        "crossingTreatment": "gap",
+        "crossingGapPx": 10,
+        "forwardColor": "#8a8ab0",
+        "loopReturnColor": "#7c8cf5",
+        "loopReturnDash": "6 4",
+        "practicalZoom": 0.9,
+        "minReadableTextPx": 9,
+        "minContrastRatio": 4.5,
+        "minClearancePx": 4,
+        "groupPaddingPx": 32,
+        "groupTaskGapPx": 24,
+        "groupRowGapPx": 48,
+        "groupMinWidth": 200,
+        "groupHeaderMinHeight": 80,
+        "groupFooterMinHeight": 80,
+        "groupTaskMinHeight": 96,
+        "groupConnectorDash": "3 3"
+      },
+      "options": {
+        "rankSpacing": 48,
+        "nodeSpacing": 56,
+        "laneSeparation": 14,
+        "gutterWidth": 48,
+        "labelGap": 10,
+        "portSpacing": 24,
+        "nodeTextSlack": 0,
+        "dummyWidth": 24,
+        "crossingSweeps": 8,
+        "margin": 40
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "box": {
+            "x": 306,
+            "y": 40,
+            "w": 180,
+            "h": 60
+          },
+          "text": "start",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "fan",
+          "box": {
+            "x": 295,
+            "y": 286,
+            "w": 202,
+            "h": 95
+          },
+          "text": "fan",
+          "typeCaption": "parallel group",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "done",
+          "box": {
+            "x": 188,
+            "y": 1238,
+            "w": 180,
+            "h": 60
+          },
+          "text": "done",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "oops",
+          "box": {
+            "x": 424,
+            "y": 1238,
+            "w": 180,
+            "h": 60
+          },
+          "text": "oops",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        }
+      ],
+      "edges": [
+        {
+          "ordinal": 0,
+          "source": "start",
+          "target": "fan",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 396,
+              "y": 100
+            },
+            {
+              "x": 396,
+              "y": 286
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "start",
+            "elementId": "[\"node\",\"start\"]",
+            "side": "bottom",
+            "point": {
+              "x": 396,
+              "y": 100
+            }
+          },
+          "targetAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "top",
+            "point": {
+              "x": 396,
+              "y": 286
+            }
+          }
+        },
+        {
+          "ordinal": 1,
+          "source": "fan",
+          "target": "done",
+          "output": "success",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 319,
+              "y": 932
+            },
+            {
+              "x": 319,
+              "y": 1224
+            },
+            {
+              "x": 278,
+              "y": 1224
+            },
+            {
+              "x": 278,
+              "y": 1238
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 319,
+              "y": 932
+            }
+          },
+          "targetAttach": {
+            "nodeId": "done",
+            "elementId": "[\"node\",\"done\"]",
+            "side": "top",
+            "point": {
+              "x": 278,
+              "y": 1238
+            }
+          },
+          "text": {
+            "text": "success",
+            "box": {
+              "x": 329,
+              "y": 942,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 2,
+          "source": "fan",
+          "target": "oops",
+          "output": "failure",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 408,
+              "y": 932
+            },
+            {
+              "x": 408,
+              "y": 1224
+            },
+            {
+              "x": 514,
+              "y": 1224
+            },
+            {
+              "x": 514,
+              "y": 1238
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 408,
+              "y": 932
+            }
+          },
+          "targetAttach": {
+            "nodeId": "oops",
+            "elementId": "[\"node\",\"oops\"]",
+            "side": "top",
+            "point": {
+              "x": 514,
+              "y": 1238
+            }
+          },
+          "text": {
+            "text": "failure",
+            "box": {
+              "x": 418,
+              "y": 942,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        }
+      ],
+      "crossings": [],
+      "groupElements": [
+        {
+          "id": "[\"group\",\"fan\",\"container\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "container",
+          "box": {
+            "x": 40,
+            "y": 206,
+            "w": 712,
+            "h": 758
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+              "text": "Parallel workflows · all succeed",
+              "style": "edge_label",
+              "box": {
+                "x": 54,
+                "y": 216,
+                "w": 191,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"node\",\"fan\"]",
+          "groupNodeId": "fan",
+          "role": "header",
+          "box": {
+            "x": 295,
+            "y": 286,
+            "w": 202,
+            "h": 95
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+              "text": "fan-out",
+              "style": "node_type",
+              "box": {
+                "x": 309,
+                "y": 338,
+                "w": 39,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+              "text": "2 tasks · workflows",
+              "style": "edge_label",
+              "box": {
+                "x": 309,
+                "y": 355,
+                "w": 114,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "footer",
+          "box": {
+            "x": 295,
+            "y": 769,
+            "w": 202,
+            "h": 163
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+              "text": "gather · All succeed",
+              "style": "node_label",
+              "box": {
+                "x": 309,
+                "y": 779,
+                "w": 141,
+                "h": 19
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+              "text": "wait for remaining · results",
+              "style": "edge_label",
+              "box": {
+                "x": 309,
+                "y": 800,
+                "w": 167,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 309,
+            "y": 818,
+            "w": 104,
+            "h": 104
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"task\",\"second\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "role": "task",
+          "box": {
+            "x": 182,
+            "y": 493,
+            "w": 202,
+            "h": 186
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"second\\\"]\",\"caption\"]",
+              "text": "task 1 · second",
+              "style": "node_type",
+              "box": {
+                "x": 196,
+                "y": 503,
+                "w": 82,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"second\\\"]\",\"title\"]",
+              "text": "同じ子 ✅",
+              "style": "node_label",
+              "box": {
+                "x": 196,
+                "y": 520,
+                "w": 120,
+                "h": 19
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 196,
+            "y": 541,
+            "w": 138,
+            "h": 84
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"task\",\"first\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "role": "task",
+          "box": {
+            "x": 408,
+            "y": 493,
+            "w": 202,
+            "h": 186
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"first\\\"]\",\"caption\"]",
+              "text": "task 2 · first",
+              "style": "node_type",
+              "box": {
+                "x": 422,
+                "y": 503,
+                "w": 77,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"first\\\"]\",\"title\"]",
+              "text": "同じ子 ✅",
+              "style": "node_label",
+              "box": {
+                "x": 422,
+                "y": 520,
+                "w": 120,
+                "h": 19
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 422,
+            "y": 541,
+            "w": 138,
+            "h": 84
+          }
+        }
+      ],
+      "groupLanes": [
+        {
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "box": {
+            "x": 182,
+            "y": 493,
+            "w": 202,
+            "h": 186
+          },
+          "nodeIds": []
+        },
+        {
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "box": {
+            "x": 408,
+            "y": 493,
+            "w": 202,
+            "h": 186
+          },
+          "nodeIds": []
+        }
+      ],
+      "groupConnectors": [
+        {
+          "id": "[\"connector\",\"fan\",\"fanout\",\"second\",\"[\\\"node\\\",\\\"fan\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"second\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "kind": "fanout",
+          "sourceElementId": "[\"node\",\"fan\"]",
+          "targetElementId": "[\"group\",\"fan\",\"task\",\"second\"]",
+          "points": [
+            {
+              "x": 384,
+              "y": 381
+            },
+            {
+              "x": 384,
+              "y": 395
+            },
+            {
+              "x": 283,
+              "y": 395
+            },
+            {
+              "x": 283,
+              "y": 493
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 384,
+              "y": 381
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"task\",\"second\"]",
+            "side": "top",
+            "point": {
+              "x": 283,
+              "y": 493
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"gather\",\"second\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"second\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "kind": "gather",
+          "sourceElementId": "[\"group\",\"fan\",\"task\",\"second\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 283,
+              "y": 679
+            },
+            {
+              "x": 283,
+              "y": 693
+            },
+            {
+              "x": 384,
+              "y": 693
+            },
+            {
+              "x": 384,
+              "y": 769
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"task\",\"second\"]",
+            "side": "bottom",
+            "point": {
+              "x": 283,
+              "y": 679
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 384,
+              "y": 769
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"fanout\",\"first\",\"[\\\"node\\\",\\\"fan\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"first\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "kind": "fanout",
+          "sourceElementId": "[\"node\",\"fan\"]",
+          "targetElementId": "[\"group\",\"fan\",\"task\",\"first\"]",
+          "points": [
+            {
+              "x": 408,
+              "y": 381
+            },
+            {
+              "x": 408,
+              "y": 409
+            },
+            {
+              "x": 509,
+              "y": 409
+            },
+            {
+              "x": 509,
+              "y": 493
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 408,
+              "y": 381
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"task\",\"first\"]",
+            "side": "top",
+            "point": {
+              "x": 509,
+              "y": 493
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"gather\",\"first\",\"[\\\"group\\\",\\\"fan\\\",\\\"task\\\",\\\"first\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "kind": "gather",
+          "sourceElementId": "[\"group\",\"fan\",\"task\",\"first\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 509,
+              "y": 679
+            },
+            {
+              "x": 509,
+              "y": 693
+            },
+            {
+              "x": 408,
+              "y": 693
+            },
+            {
+              "x": 408,
+              "y": 769
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"task\",\"first\"]",
+            "side": "bottom",
+            "point": {
+              "x": 509,
+              "y": 679
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 408,
+              "y": 769
+            }
+          }
+        }
+      ],
+      "canvas": {
+        "x": 0,
+        "y": 0,
+        "w": 792,
+        "h": 1338
+      }
+    },
+    "groups": {
+      "groups": {
+        "fan": {
+          "nodeId": "fan",
+          "config": {
+            "form": "workflows",
+            "tasks": [
+              {
+                "key": "second",
+                "workflow": "同じ子 ✅",
+                "inputs": {
+                  "nested": {
+                    "values": [
+                      "original"
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "first",
+                "workflow": "同じ子 ✅"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {},
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "oops"
+        }
+      },
+      "owner": {},
+      "order": [
+        "fan"
+      ]
+    }
+  },
+  {
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "fan",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "second",
+                  "entry": "a",
+                  "inputs": {
+                    "nested": {
+                      "values": [
+                        "original"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "first",
+                  "entry": "b"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "oops",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "workflows",
+              "tasks": [
+                {
+                  "key": "second",
+                  "workflow": "同じ子 ✅",
+                  "inputs": {
+                    "nested": {
+                      "values": [
+                        "original"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "first",
+                  "workflow": "同じ子 ✅"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "inner-done",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "inner-oops",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "fan"
+        },
+        {
+          "source": "fan",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "fan",
+          "target": "oops",
+          "output": "failure"
+        },
+        {
+          "source": "fan",
+          "target": "a",
+          "output": "task",
+          "label": "Same port label"
+        },
+        {
+          "source": "fan",
+          "target": "b",
+          "output": "task",
+          "label": "Same port label"
+        },
+        {
+          "source": "a",
+          "target": "inner-done",
+          "output": "success"
+        },
+        {
+          "source": "a",
+          "target": "inner-oops",
+          "output": "failure"
+        }
+      ]
+    },
+    "geometry": {
+      "format": "arbitron.layout/v2",
+      "contract": {
+        "version": "arranged-renderer/2",
+        "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+        "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+        "nodeLabelFontPx": 13,
+        "nodeLabelWeight": 600,
+        "nodeTypeFontPx": 10,
+        "nodeTypeWeight": 700,
+        "edgeLabelFontPx": 11,
+        "edgeLabelWeight": 500,
+        "lineHeight": 1.35,
+        "nodePaddingX": 12,
+        "nodePaddingY": 8,
+        "nodeBorderPx": 2,
+        "nodeTypeBarPx": 4,
+        "nodeTextGapPx": 2,
+        "nodeMinWidth": 180,
+        "nodeTextMaxWidth": 240,
+        "edgeLabelPaddingX": 6,
+        "edgeLabelPaddingY": 3,
+        "edgeLabelMaxWidth": 160,
+        "strokePx": 2,
+        "arrowPx": 10,
+        "crossingTreatment": "gap",
+        "crossingGapPx": 10,
+        "forwardColor": "#8a8ab0",
+        "loopReturnColor": "#7c8cf5",
+        "loopReturnDash": "6 4",
+        "practicalZoom": 0.9,
+        "minReadableTextPx": 9,
+        "minContrastRatio": 4.5,
+        "minClearancePx": 4,
+        "groupPaddingPx": 32,
+        "groupTaskGapPx": 24,
+        "groupRowGapPx": 48,
+        "groupMinWidth": 200,
+        "groupHeaderMinHeight": 80,
+        "groupFooterMinHeight": 80,
+        "groupTaskMinHeight": 96,
+        "groupConnectorDash": "3 3"
+      },
+      "options": {
+        "rankSpacing": 48,
+        "nodeSpacing": 56,
+        "laneSeparation": 14,
+        "gutterWidth": 48,
+        "labelGap": 10,
+        "portSpacing": 24,
+        "nodeTextSlack": 0,
+        "dummyWidth": 24,
+        "crossingSweeps": 8,
+        "margin": 40
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "box": {
+            "x": 584,
+            "y": 40,
+            "w": 180,
+            "h": 60
+          },
+          "text": "start",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "fan",
+          "box": {
+            "x": 437,
+            "y": 342,
+            "w": 474,
+            "h": 95
+          },
+          "text": "fan",
+          "typeCaption": "parallel group",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "done",
+          "box": {
+            "x": 466,
+            "y": 2651,
+            "w": 180,
+            "h": 60
+          },
+          "text": "done",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "oops",
+          "box": {
+            "x": 702,
+            "y": 2651,
+            "w": 180,
+            "h": 60
+          },
+          "text": "oops",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "a",
+          "box": {
+            "x": 399,
+            "y": 882,
+            "w": 202,
+            "h": 95
+          },
+          "text": "a",
+          "typeCaption": "parallel group",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "b",
+          "box": {
+            "x": 1024,
+            "y": 802,
+            "w": 180,
+            "h": 60
+          },
+          "text": "b",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "inner-done",
+          "box": {
+            "x": 292,
+            "y": 1890,
+            "w": 180,
+            "h": 60
+          },
+          "text": "inner-done",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 1
+        },
+        {
+          "id": "inner-oops",
+          "box": {
+            "x": 528,
+            "y": 1890,
+            "w": 180,
+            "h": 60
+          },
+          "text": "inner-oops",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 1
+        }
+      ],
+      "edges": [
+        {
+          "ordinal": 0,
+          "source": "start",
+          "target": "fan",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 674,
+              "y": 100
+            },
+            {
+              "x": 674,
+              "y": 342
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "start",
+            "elementId": "[\"node\",\"start\"]",
+            "side": "bottom",
+            "point": {
+              "x": 674,
+              "y": 100
+            }
+          },
+          "targetAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "top",
+            "point": {
+              "x": 674,
+              "y": 342
+            }
+          }
+        },
+        {
+          "ordinal": 1,
+          "source": "fan",
+          "target": "done",
+          "output": "success",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 597,
+              "y": 2289
+            },
+            {
+              "x": 597,
+              "y": 2637
+            },
+            {
+              "x": 556,
+              "y": 2637
+            },
+            {
+              "x": 556,
+              "y": 2651
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 597,
+              "y": 2289
+            }
+          },
+          "targetAttach": {
+            "nodeId": "done",
+            "elementId": "[\"node\",\"done\"]",
+            "side": "top",
+            "point": {
+              "x": 556,
+              "y": 2651
+            }
+          },
+          "text": {
+            "text": "success",
+            "box": {
+              "x": 607,
+              "y": 2299,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 2,
+          "source": "fan",
+          "target": "oops",
+          "output": "failure",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 686,
+              "y": 2289
+            },
+            {
+              "x": 686,
+              "y": 2637
+            },
+            {
+              "x": 792,
+              "y": 2637
+            },
+            {
+              "x": 792,
+              "y": 2651
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 686,
+              "y": 2289
+            }
+          },
+          "targetAttach": {
+            "nodeId": "oops",
+            "elementId": "[\"node\",\"oops\"]",
+            "side": "top",
+            "point": {
+              "x": 792,
+              "y": 2651
+            }
+          },
+          "text": {
+            "text": "failure",
+            "box": {
+              "x": 696,
+              "y": 2299,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 3,
+          "source": "fan",
+          "target": "a",
+          "output": "task",
+          "label": "Same port label",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 550,
+              "y": 437
+            },
+            {
+              "x": 550,
+              "y": 868
+            },
+            {
+              "x": 500,
+              "y": 868
+            },
+            {
+              "x": 500,
+              "y": 882
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 550,
+              "y": 437
+            }
+          },
+          "targetAttach": {
+            "nodeId": "a",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "top",
+            "point": {
+              "x": 500,
+              "y": 882
+            }
+          },
+          "text": {
+            "text": "Same port label",
+            "box": {
+              "x": 560,
+              "y": 447,
+              "w": 102,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 4,
+          "source": "fan",
+          "target": "b",
+          "output": "task",
+          "label": "Same port label",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 686,
+              "y": 437
+            },
+            {
+              "x": 686,
+              "y": 545
+            },
+            {
+              "x": 1114,
+              "y": 545
+            },
+            {
+              "x": 1114,
+              "y": 802
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 686,
+              "y": 437
+            }
+          },
+          "targetAttach": {
+            "nodeId": "b",
+            "elementId": "[\"node\",\"b\"]",
+            "side": "top",
+            "point": {
+              "x": 1114,
+              "y": 802
+            }
+          },
+          "text": {
+            "text": "Same port label",
+            "box": {
+              "x": 696,
+              "y": 447,
+              "w": 102,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 5,
+          "source": "a",
+          "target": "inner-done",
+          "output": "success",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 423,
+              "y": 1528
+            },
+            {
+              "x": 423,
+              "y": 1876
+            },
+            {
+              "x": 382,
+              "y": 1876
+            },
+            {
+              "x": 382,
+              "y": 1890
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "a",
+            "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 423,
+              "y": 1528
+            }
+          },
+          "targetAttach": {
+            "nodeId": "inner-done",
+            "elementId": "[\"node\",\"inner-done\"]",
+            "side": "top",
+            "point": {
+              "x": 382,
+              "y": 1890
+            }
+          },
+          "text": {
+            "text": "success",
+            "box": {
+              "x": 433,
+              "y": 1538,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 6,
+          "source": "a",
+          "target": "inner-oops",
+          "output": "failure",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 512,
+              "y": 1528
+            },
+            {
+              "x": 512,
+              "y": 1876
+            },
+            {
+              "x": 618,
+              "y": 1876
+            },
+            {
+              "x": 618,
+              "y": 1890
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "a",
+            "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 512,
+              "y": 1528
+            }
+          },
+          "targetAttach": {
+            "nodeId": "inner-oops",
+            "elementId": "[\"node\",\"inner-oops\"]",
+            "side": "top",
+            "point": {
+              "x": 618,
+              "y": 1890
+            }
+          },
+          "text": {
+            "text": "failure",
+            "box": {
+              "x": 522,
+              "y": 1538,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        }
+      ],
+      "crossings": [],
+      "groupElements": [
+        {
+          "id": "[\"group\",\"fan\",\"container\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "container",
+          "box": {
+            "x": 40,
+            "y": 262,
+            "w": 1268,
+            "h": 2059
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+              "text": "Parallel branches · all succeed",
+              "style": "edge_label",
+              "box": {
+                "x": 54,
+                "y": 272,
+                "w": 185,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"node\",\"fan\"]",
+          "groupNodeId": "fan",
+          "role": "header",
+          "box": {
+            "x": 437,
+            "y": 342,
+            "w": 474,
+            "h": 95
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+              "text": "fan-out",
+              "style": "node_type",
+              "box": {
+                "x": 451,
+                "y": 394,
+                "w": 39,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+              "text": "2 tasks · branches",
+              "style": "edge_label",
+              "box": {
+                "x": 451,
+                "y": 411,
+                "w": 108,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "footer",
+          "box": {
+            "x": 437,
+            "y": 2126,
+            "w": 474,
+            "h": 163
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+              "text": "gather · All succeed",
+              "style": "node_label",
+              "box": {
+                "x": 451,
+                "y": 2136,
+                "w": 141,
+                "h": 19
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+              "text": "wait for remaining · results",
+              "style": "edge_label",
+              "box": {
+                "x": 451,
+                "y": 2157,
+                "w": 167,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 451,
+            "y": 2175,
+            "w": 104,
+            "h": 104
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"lane\",\"second\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "role": "lane",
+          "box": {
+            "x": 72,
+            "y": 549,
+            "w": 856,
+            "h": 1473
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"second\\\"]\",\"caption\"]",
+              "text": "task 1 · second",
+              "style": "node_type",
+              "box": {
+                "x": 86,
+                "y": 559,
+                "w": 82,
+                "h": 15
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 86,
+            "y": 576,
+            "w": 138,
+            "h": 84
+          }
+        },
+        {
+          "id": "[\"group\",\"a\",\"container\",\"\"]",
+          "groupNodeId": "a",
+          "role": "container",
+          "box": {
+            "x": 144,
+            "y": 802,
+            "w": 712,
+            "h": 758
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+              "text": "Parallel workflows · all succeed",
+              "style": "edge_label",
+              "box": {
+                "x": 158,
+                "y": 812,
+                "w": 191,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"node\",\"a\"]",
+          "groupNodeId": "a",
+          "role": "header",
+          "box": {
+            "x": 399,
+            "y": 882,
+            "w": 202,
+            "h": 95
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"a\\\"]\",\"fanout\"]",
+              "text": "fan-out",
+              "style": "node_type",
+              "box": {
+                "x": 413,
+                "y": 934,
+                "w": 39,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"a\\\"]\",\"metadata\"]",
+              "text": "2 tasks · workflows",
+              "style": "edge_label",
+              "box": {
+                "x": 413,
+                "y": 951,
+                "w": 114,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"group\",\"a\",\"footer\",\"\"]",
+          "groupNodeId": "a",
+          "role": "footer",
+          "box": {
+            "x": 399,
+            "y": 1365,
+            "w": 202,
+            "h": 163
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+              "text": "gather · All succeed",
+              "style": "node_label",
+              "box": {
+                "x": 413,
+                "y": 1375,
+                "w": 141,
+                "h": 19
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+              "text": "wait for remaining · results",
+              "style": "edge_label",
+              "box": {
+                "x": 413,
+                "y": 1396,
+                "w": 167,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 413,
+            "y": 1414,
+            "w": 104,
+            "h": 104
+          }
+        },
+        {
+          "id": "[\"group\",\"a\",\"task\",\"second\"]",
+          "groupNodeId": "a",
+          "taskKey": "second",
+          "role": "task",
+          "box": {
+            "x": 286,
+            "y": 1089,
+            "w": 202,
+            "h": 186
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"caption\"]",
+              "text": "task 1 · second",
+              "style": "node_type",
+              "box": {
+                "x": 300,
+                "y": 1099,
+                "w": 82,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"title\"]",
+              "text": "同じ子 ✅",
+              "style": "node_label",
+              "box": {
+                "x": 300,
+                "y": 1116,
+                "w": 120,
+                "h": 19
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 300,
+            "y": 1137,
+            "w": 138,
+            "h": 84
+          }
+        },
+        {
+          "id": "[\"group\",\"a\",\"task\",\"first\"]",
+          "groupNodeId": "a",
+          "taskKey": "first",
+          "role": "task",
+          "box": {
+            "x": 512,
+            "y": 1089,
+            "w": 202,
+            "h": 186
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"caption\"]",
+              "text": "task 2 · first",
+              "style": "node_type",
+              "box": {
+                "x": 526,
+                "y": 1099,
+                "w": 77,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"title\"]",
+              "text": "同じ子 ✅",
+              "style": "node_label",
+              "box": {
+                "x": 526,
+                "y": 1116,
+                "w": 120,
+                "h": 19
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 526,
+            "y": 1137,
+            "w": 138,
+            "h": 84
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"lane\",\"first\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "role": "lane",
+          "box": {
+            "x": 952,
+            "y": 549,
+            "w": 324,
+            "h": 1473
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"first\\\"]\",\"caption\"]",
+              "text": "task 2 · first",
+              "style": "node_type",
+              "box": {
+                "x": 966,
+                "y": 559,
+                "w": 77,
+                "h": 15
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 966,
+            "y": 576,
+            "w": 138,
+            "h": 84
+          }
+        }
+      ],
+      "groupLanes": [
+        {
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "box": {
+            "x": 72,
+            "y": 549,
+            "w": 856,
+            "h": 1473
+          },
+          "nodeIds": [
+            "a",
+            "inner-done",
+            "inner-oops"
+          ]
+        },
+        {
+          "groupNodeId": "a",
+          "taskKey": "second",
+          "box": {
+            "x": 286,
+            "y": 1089,
+            "w": 202,
+            "h": 186
+          },
+          "nodeIds": []
+        },
+        {
+          "groupNodeId": "a",
+          "taskKey": "first",
+          "box": {
+            "x": 512,
+            "y": 1089,
+            "w": 202,
+            "h": 186
+          },
+          "nodeIds": []
+        },
+        {
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "box": {
+            "x": 952,
+            "y": 549,
+            "w": 324,
+            "h": 1473
+          },
+          "nodeIds": [
+            "b"
+          ]
+        }
+      ],
+      "groupConnectors": [
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"inner-done\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 382,
+              "y": 1950
+            },
+            {
+              "x": 382,
+              "y": 1964
+            },
+            {
+              "x": 650,
+              "y": 1964
+            },
+            {
+              "x": 650,
+              "y": 2126
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"inner-done\"]",
+            "side": "bottom",
+            "point": {
+              "x": 382,
+              "y": 1950
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 650,
+              "y": 2126
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"inner-oops\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 618,
+              "y": 1950
+            },
+            {
+              "x": 618,
+              "y": 2098
+            },
+            {
+              "x": 674,
+              "y": 2098
+            },
+            {
+              "x": 674,
+              "y": 2126
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"inner-oops\"]",
+            "side": "bottom",
+            "point": {
+              "x": 618,
+              "y": 1950
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 674,
+              "y": 2126
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"b\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 1114,
+              "y": 862
+            },
+            {
+              "x": 1114,
+              "y": 2084
+            },
+            {
+              "x": 698,
+              "y": 2084
+            },
+            {
+              "x": 698,
+              "y": 2126
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"b\"]",
+            "side": "bottom",
+            "point": {
+              "x": 1114,
+              "y": 862
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 698,
+              "y": 2126
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"a\",\"fanout\",\"second\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\"]",
+          "groupNodeId": "a",
+          "taskKey": "second",
+          "kind": "fanout",
+          "sourceElementId": "[\"node\",\"a\"]",
+          "targetElementId": "[\"group\",\"a\",\"task\",\"second\"]",
+          "points": [
+            {
+              "x": 488,
+              "y": 977
+            },
+            {
+              "x": 488,
+              "y": 991
+            },
+            {
+              "x": 387,
+              "y": 991
+            },
+            {
+              "x": 387,
+              "y": 1089
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "bottom",
+            "point": {
+              "x": 488,
+              "y": 977
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"a\",\"task\",\"second\"]",
+            "side": "top",
+            "point": {
+              "x": 387,
+              "y": 1089
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"a\",\"gather\",\"second\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "a",
+          "taskKey": "second",
+          "kind": "gather",
+          "sourceElementId": "[\"group\",\"a\",\"task\",\"second\"]",
+          "targetElementId": "[\"group\",\"a\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 387,
+              "y": 1275
+            },
+            {
+              "x": 387,
+              "y": 1289
+            },
+            {
+              "x": 488,
+              "y": 1289
+            },
+            {
+              "x": 488,
+              "y": 1365
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"a\",\"task\",\"second\"]",
+            "side": "bottom",
+            "point": {
+              "x": 387,
+              "y": 1275
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 488,
+              "y": 1365
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"a\",\"fanout\",\"first\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\"]",
+          "groupNodeId": "a",
+          "taskKey": "first",
+          "kind": "fanout",
+          "sourceElementId": "[\"node\",\"a\"]",
+          "targetElementId": "[\"group\",\"a\",\"task\",\"first\"]",
+          "points": [
+            {
+              "x": 512,
+              "y": 977
+            },
+            {
+              "x": 512,
+              "y": 1005
+            },
+            {
+              "x": 613,
+              "y": 1005
+            },
+            {
+              "x": 613,
+              "y": 1089
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "bottom",
+            "point": {
+              "x": 512,
+              "y": 977
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"a\",\"task\",\"first\"]",
+            "side": "top",
+            "point": {
+              "x": 613,
+              "y": 1089
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"a\",\"gather\",\"first\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "a",
+          "taskKey": "first",
+          "kind": "gather",
+          "sourceElementId": "[\"group\",\"a\",\"task\",\"first\"]",
+          "targetElementId": "[\"group\",\"a\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 613,
+              "y": 1275
+            },
+            {
+              "x": 613,
+              "y": 1289
+            },
+            {
+              "x": 512,
+              "y": 1289
+            },
+            {
+              "x": 512,
+              "y": 1365
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"a\",\"task\",\"first\"]",
+            "side": "bottom",
+            "point": {
+              "x": 613,
+              "y": 1275
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 512,
+              "y": 1365
+            }
+          }
+        }
+      ],
+      "groupCrossings": [
+        {
+          "point": {
+            "x": 650,
+            "y": 2098
+          },
+          "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]"
+        },
+        {
+          "point": {
+            "x": 618,
+            "y": 1964
+          },
+          "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]"
+        }
+      ],
+      "canvas": {
+        "x": 0,
+        "y": 0,
+        "w": 1348,
+        "h": 2751
+      }
+    },
+    "groups": {
+      "groups": {
+        "a": {
+          "nodeId": "a",
+          "config": {
+            "form": "workflows",
+            "tasks": [
+              {
+                "key": "second",
+                "workflow": "同じ子 ✅",
+                "inputs": {
+                  "nested": {
+                    "values": [
+                      "original"
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "first",
+                "workflow": "同じ子 ✅"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "parent": {
+            "groupNodeId": "fan",
+            "taskKey": "second"
+          },
+          "bodies": {},
+          "nested": [],
+          "successTarget": "inner-done",
+          "failureTarget": "inner-oops"
+        },
+        "fan": {
+          "nodeId": "fan",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "second",
+                "entry": "a",
+                "inputs": {
+                  "nested": {
+                    "values": [
+                      "original"
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "first",
+                "entry": "b"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {
+            "first": [
+              "b"
+            ],
+            "second": [
+              "a",
+              "inner-done",
+              "inner-oops"
+            ]
+          },
+          "nested": [
+            "a"
+          ],
+          "successTarget": "done",
+          "failureTarget": "oops"
+        }
+      },
+      "owner": {
+        "a": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "b": {
+          "groupNodeId": "fan",
+          "taskKey": "first"
+        },
+        "inner-done": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "inner-oops": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        }
+      },
+      "order": [
+        "fan",
+        "a"
+      ]
+    }
+  },
+  {
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "fan",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "second",
+                  "entry": "a",
+                  "inputs": {
+                    "nested": {
+                      "values": [
+                        "original"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "first",
+                  "entry": "b"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "oops",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a2",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a3",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "sink",
+          "type": "script",
+          "config": {},
+          "label": "",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "fan"
+        },
+        {
+          "source": "fan",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "fan",
+          "target": "oops",
+          "output": "failure"
+        },
+        {
+          "source": "fan",
+          "target": "a",
+          "output": "task",
+          "label": "Same port label"
+        },
+        {
+          "source": "fan",
+          "target": "b",
+          "output": "task",
+          "label": "Same port label"
+        },
+        {
+          "source": "a",
+          "target": "a2"
+        },
+        {
+          "source": "a2",
+          "target": "a3"
+        },
+        {
+          "source": "a3",
+          "target": "a"
+        },
+        {
+          "source": "a",
+          "target": "sink"
+        }
+      ]
+    },
+    "geometry": {
+      "format": "arbitron.layout/v2",
+      "contract": {
+        "version": "arranged-renderer/2",
+        "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+        "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+        "nodeLabelFontPx": 13,
+        "nodeLabelWeight": 600,
+        "nodeTypeFontPx": 10,
+        "nodeTypeWeight": 700,
+        "edgeLabelFontPx": 11,
+        "edgeLabelWeight": 500,
+        "lineHeight": 1.35,
+        "nodePaddingX": 12,
+        "nodePaddingY": 8,
+        "nodeBorderPx": 2,
+        "nodeTypeBarPx": 4,
+        "nodeTextGapPx": 2,
+        "nodeMinWidth": 180,
+        "nodeTextMaxWidth": 240,
+        "edgeLabelPaddingX": 6,
+        "edgeLabelPaddingY": 3,
+        "edgeLabelMaxWidth": 160,
+        "strokePx": 2,
+        "arrowPx": 10,
+        "crossingTreatment": "gap",
+        "crossingGapPx": 10,
+        "forwardColor": "#8a8ab0",
+        "loopReturnColor": "#7c8cf5",
+        "loopReturnDash": "6 4",
+        "practicalZoom": 0.9,
+        "minReadableTextPx": 9,
+        "minContrastRatio": 4.5,
+        "minClearancePx": 4,
+        "groupPaddingPx": 32,
+        "groupTaskGapPx": 24,
+        "groupRowGapPx": 48,
+        "groupMinWidth": 200,
+        "groupHeaderMinHeight": 80,
+        "groupFooterMinHeight": 80,
+        "groupTaskMinHeight": 96,
+        "groupConnectorDash": "3 3"
+      },
+      "options": {
+        "rankSpacing": 48,
+        "nodeSpacing": 56,
+        "laneSeparation": 14,
+        "gutterWidth": 48,
+        "labelGap": 10,
+        "portSpacing": 24,
+        "nodeTextSlack": 0,
+        "dummyWidth": 24,
+        "crossingSweeps": 8,
+        "margin": 40
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "box": {
+            "x": 460.51,
+            "y": 40,
+            "w": 180,
+            "h": 60
+          },
+          "text": "start",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "fan",
+          "box": {
+            "x": 313.51,
+            "y": 342,
+            "w": 474,
+            "h": 95
+          },
+          "text": "fan",
+          "typeCaption": "parallel group",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "done",
+          "box": {
+            "x": 342.51,
+            "y": 2367,
+            "w": 180,
+            "h": 60
+          },
+          "text": "done",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "oops",
+          "box": {
+            "x": 578.51,
+            "y": 2367,
+            "w": 180,
+            "h": 60
+          },
+          "text": "oops",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "a",
+          "box": {
+            "x": 262.01,
+            "y": 1007,
+            "w": 180,
+            "h": 60
+          },
+          "text": "a",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "b",
+          "box": {
+            "x": 777.01,
+            "y": 802,
+            "w": 180,
+            "h": 60
+          },
+          "text": "b",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 0
+        },
+        {
+          "id": "a2",
+          "box": {
+            "x": 144,
+            "y": 1355,
+            "w": 180,
+            "h": 60
+          },
+          "text": "a2",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 1
+        },
+        {
+          "id": "a3",
+          "box": {
+            "x": 144,
+            "y": 1577,
+            "w": 180,
+            "h": 60
+          },
+          "text": "a3",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 2
+        },
+        {
+          "id": "sink",
+          "box": {
+            "x": 380.01,
+            "y": 1355,
+            "w": 180,
+            "h": 60
+          },
+          "text": "sink",
+          "typeCaption": "script",
+          "textLines": 1,
+          "rank": 1
+        }
+      ],
+      "edges": [
+        {
+          "ordinal": 0,
+          "source": "start",
+          "target": "fan",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 550.51,
+              "y": 100
+            },
+            {
+              "x": 550.51,
+              "y": 342
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "start",
+            "elementId": "[\"node\",\"start\"]",
+            "side": "bottom",
+            "point": {
+              "x": 550.51,
+              "y": 100
+            }
+          },
+          "targetAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "top",
+            "point": {
+              "x": 550.51,
+              "y": 342
+            }
+          }
+        },
+        {
+          "ordinal": 1,
+          "source": "fan",
+          "target": "done",
+          "output": "success",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 473.51,
+              "y": 2005
+            },
+            {
+              "x": 473.51,
+              "y": 2353
+            },
+            {
+              "x": 432.51,
+              "y": 2353
+            },
+            {
+              "x": 432.51,
+              "y": 2367
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 473.51,
+              "y": 2005
+            }
+          },
+          "targetAttach": {
+            "nodeId": "done",
+            "elementId": "[\"node\",\"done\"]",
+            "side": "top",
+            "point": {
+              "x": 432.51,
+              "y": 2367
+            }
+          },
+          "text": {
+            "text": "success",
+            "box": {
+              "x": 483.51,
+              "y": 2015,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 2,
+          "source": "fan",
+          "target": "oops",
+          "output": "failure",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 562.51,
+              "y": 2005
+            },
+            {
+              "x": 562.51,
+              "y": 2353
+            },
+            {
+              "x": 668.51,
+              "y": 2353
+            },
+            {
+              "x": 668.51,
+              "y": 2367
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "bottom",
+            "point": {
+              "x": 562.51,
+              "y": 2005
+            }
+          },
+          "targetAttach": {
+            "nodeId": "oops",
+            "elementId": "[\"node\",\"oops\"]",
+            "side": "top",
+            "point": {
+              "x": 668.51,
+              "y": 2367
+            }
+          },
+          "text": {
+            "text": "failure",
+            "box": {
+              "x": 572.51,
+              "y": 2015,
+              "w": 55,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 3,
+          "source": "fan",
+          "target": "a",
+          "output": "task",
+          "label": "Same port label",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 426.51,
+              "y": 437
+            },
+            {
+              "x": 426.51,
+              "y": 979
+            },
+            {
+              "x": 340.01,
+              "y": 979
+            },
+            {
+              "x": 340.01,
+              "y": 1007
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 426.51,
+              "y": 437
+            }
+          },
+          "targetAttach": {
+            "nodeId": "a",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "top",
+            "point": {
+              "x": 340.01,
+              "y": 1007
+            }
+          },
+          "text": {
+            "text": "Same port label",
+            "box": {
+              "x": 436.51,
+              "y": 447,
+              "w": 102,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 4,
+          "source": "fan",
+          "target": "b",
+          "output": "task",
+          "label": "Same port label",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 562.51,
+              "y": 437
+            },
+            {
+              "x": 562.51,
+              "y": 545
+            },
+            {
+              "x": 867.01,
+              "y": 545
+            },
+            {
+              "x": 867.01,
+              "y": 802
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "fan",
+            "elementId": "[\"node\",\"fan\"]",
+            "side": "bottom",
+            "point": {
+              "x": 562.51,
+              "y": 437
+            }
+          },
+          "targetAttach": {
+            "nodeId": "b",
+            "elementId": "[\"node\",\"b\"]",
+            "side": "top",
+            "point": {
+              "x": 867.01,
+              "y": 802
+            }
+          },
+          "text": {
+            "text": "Same port label",
+            "box": {
+              "x": 572.51,
+              "y": 447,
+              "w": 102,
+              "h": 22
+            },
+            "lines": 1
+          }
+        },
+        {
+          "ordinal": 5,
+          "source": "a",
+          "target": "a2",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 340.01,
+              "y": 1067
+            },
+            {
+              "x": 340.01,
+              "y": 1081
+            },
+            {
+              "x": 234,
+              "y": 1081
+            },
+            {
+              "x": 234,
+              "y": 1355
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "a",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "bottom",
+            "point": {
+              "x": 340.01,
+              "y": 1067
+            }
+          },
+          "targetAttach": {
+            "nodeId": "a2",
+            "elementId": "[\"node\",\"a2\"]",
+            "side": "top",
+            "point": {
+              "x": 234,
+              "y": 1355
+            }
+          }
+        },
+        {
+          "ordinal": 6,
+          "source": "a2",
+          "target": "a3",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 234,
+              "y": 1415
+            },
+            {
+              "x": 234,
+              "y": 1577
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "a2",
+            "elementId": "[\"node\",\"a2\"]",
+            "side": "bottom",
+            "point": {
+              "x": 234,
+              "y": 1415
+            }
+          },
+          "targetAttach": {
+            "nodeId": "a3",
+            "elementId": "[\"node\",\"a3\"]",
+            "side": "top",
+            "point": {
+              "x": 234,
+              "y": 1577
+            }
+          }
+        },
+        {
+          "ordinal": 7,
+          "source": "a3",
+          "target": "a",
+          "kind": "loop_return",
+          "side": "right",
+          "lane": 8,
+          "points": [
+            {
+              "x": 234,
+              "y": 1637
+            },
+            {
+              "x": 234,
+              "y": 1651
+            },
+            {
+              "x": 649.01,
+              "y": 1651
+            },
+            {
+              "x": 649.01,
+              "y": 993
+            },
+            {
+              "x": 364.01,
+              "y": 993
+            },
+            {
+              "x": 364.01,
+              "y": 1007
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "a3",
+            "elementId": "[\"node\",\"a3\"]",
+            "side": "bottom",
+            "point": {
+              "x": 234,
+              "y": 1637
+            }
+          },
+          "targetAttach": {
+            "nodeId": "a",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "top",
+            "point": {
+              "x": 364.01,
+              "y": 1007
+            }
+          }
+        },
+        {
+          "ordinal": 8,
+          "source": "a",
+          "target": "sink",
+          "kind": "forward",
+          "points": [
+            {
+              "x": 364.01,
+              "y": 1067
+            },
+            {
+              "x": 364.01,
+              "y": 1095
+            },
+            {
+              "x": 470.01,
+              "y": 1095
+            },
+            {
+              "x": 470.01,
+              "y": 1355
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "a",
+            "elementId": "[\"node\",\"a\"]",
+            "side": "bottom",
+            "point": {
+              "x": 364.01,
+              "y": 1067
+            }
+          },
+          "targetAttach": {
+            "nodeId": "sink",
+            "elementId": "[\"node\",\"sink\"]",
+            "side": "top",
+            "point": {
+              "x": 470.01,
+              "y": 1355
+            }
+          }
+        }
+      ],
+      "crossings": [],
+      "groupElements": [
+        {
+          "id": "[\"group\",\"fan\",\"container\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "container",
+          "box": {
+            "x": 40,
+            "y": 262,
+            "w": 1021.01,
+            "h": 1775
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+              "text": "Parallel branches · all succeed",
+              "style": "edge_label",
+              "box": {
+                "x": 54,
+                "y": 272,
+                "w": 185,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"node\",\"fan\"]",
+          "groupNodeId": "fan",
+          "role": "header",
+          "box": {
+            "x": 313.51,
+            "y": 342,
+            "w": 474,
+            "h": 95
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+              "text": "fan-out",
+              "style": "node_type",
+              "box": {
+                "x": 327.51,
+                "y": 394,
+                "w": 39,
+                "h": 15
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+              "text": "2 tasks · branches",
+              "style": "edge_label",
+              "box": {
+                "x": 327.51,
+                "y": 411,
+                "w": 108,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ]
+        },
+        {
+          "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "groupNodeId": "fan",
+          "role": "footer",
+          "box": {
+            "x": 313.51,
+            "y": 1842,
+            "w": 474,
+            "h": 163
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+              "text": "gather · All succeed",
+              "style": "node_label",
+              "box": {
+                "x": 327.51,
+                "y": 1852,
+                "w": 141,
+                "h": 19
+              },
+              "lines": 1
+            },
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+              "text": "wait for remaining · results",
+              "style": "edge_label",
+              "box": {
+                "x": 327.51,
+                "y": 1873,
+                "w": 167,
+                "h": 16
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 327.51,
+            "y": 1891,
+            "w": 104,
+            "h": 104
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"lane\",\"second\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "role": "lane",
+          "box": {
+            "x": 72,
+            "y": 549,
+            "w": 609.01,
+            "h": 1203
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"second\\\"]\",\"caption\"]",
+              "text": "task 1 · second",
+              "style": "node_type",
+              "box": {
+                "x": 86,
+                "y": 559,
+                "w": 82,
+                "h": 15
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 86,
+            "y": 576,
+            "w": 138,
+            "h": 84
+          }
+        },
+        {
+          "id": "[\"group\",\"fan\",\"lane\",\"first\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "role": "lane",
+          "box": {
+            "x": 705.01,
+            "y": 549,
+            "w": 324,
+            "h": 1203
+          },
+          "texts": [
+            {
+              "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"first\\\"]\",\"caption\"]",
+              "text": "task 2 · first",
+              "style": "node_type",
+              "box": {
+                "x": 719.01,
+                "y": 559,
+                "w": 77,
+                "h": 15
+              },
+              "lines": 1
+            }
+          ],
+          "overlayBox": {
+            "x": 719.01,
+            "y": 576,
+            "w": 138,
+            "h": 84
+          }
+        }
+      ],
+      "groupLanes": [
+        {
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "box": {
+            "x": 72,
+            "y": 549,
+            "w": 609.01,
+            "h": 1203
+          },
+          "nodeIds": [
+            "a",
+            "a2",
+            "a3",
+            "sink"
+          ]
+        },
+        {
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "box": {
+            "x": 705.01,
+            "y": 549,
+            "w": 324,
+            "h": 1203
+          },
+          "nodeIds": [
+            "b"
+          ]
+        }
+      ],
+      "groupConnectors": [
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"sink\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "second",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"sink\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 470.01,
+              "y": 1415
+            },
+            {
+              "x": 470.01,
+              "y": 1429
+            },
+            {
+              "x": 663.01,
+              "y": 1429
+            },
+            {
+              "x": 663.01,
+              "y": 1828
+            },
+            {
+              "x": 538.51,
+              "y": 1828
+            },
+            {
+              "x": 538.51,
+              "y": 1842
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"sink\"]",
+            "side": "bottom",
+            "point": {
+              "x": 470.01,
+              "y": 1415
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 538.51,
+              "y": 1842
+            }
+          }
+        },
+        {
+          "id": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "groupNodeId": "fan",
+          "taskKey": "first",
+          "kind": "sink",
+          "sourceElementId": "[\"node\",\"b\"]",
+          "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "points": [
+            {
+              "x": 867.01,
+              "y": 862
+            },
+            {
+              "x": 867.01,
+              "y": 1814
+            },
+            {
+              "x": 562.51,
+              "y": 1814
+            },
+            {
+              "x": 562.51,
+              "y": 1842
+            }
+          ],
+          "sourceAttach": {
+            "nodeId": "",
+            "elementId": "[\"node\",\"b\"]",
+            "side": "bottom",
+            "point": {
+              "x": 867.01,
+              "y": 862
+            }
+          },
+          "targetAttach": {
+            "nodeId": "",
+            "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+            "side": "top",
+            "point": {
+              "x": 562.51,
+              "y": 1842
+            }
+          }
+        }
+      ],
+      "groupCrossings": [
+        {
+          "point": {
+            "x": 649.01,
+            "y": 1429
+          },
+          "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"sink\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "under": "edge:7"
+        },
+        {
+          "point": {
+            "x": 663.01,
+            "y": 1814
+          },
+          "over": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"sink\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]"
+        },
+        {
+          "point": {
+            "x": 562.51,
+            "y": 1828
+          },
+          "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"sink\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+          "under": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]"
+        }
+      ],
+      "canvas": {
+        "x": 0,
+        "y": 0,
+        "w": 1101.01,
+        "h": 2467
+      }
+    },
+    "groups": {
+      "groups": {
+        "fan": {
+          "nodeId": "fan",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "second",
+                "entry": "a",
+                "inputs": {
+                  "nested": {
+                    "values": [
+                      "original"
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "first",
+                "entry": "b"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {
+            "first": [
+              "b"
+            ],
+            "second": [
+              "a",
+              "a2",
+              "a3",
+              "sink"
+            ]
+          },
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "oops"
+        }
+      },
+      "owner": {
+        "a": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "a2": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "a3": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "b": {
+          "groupNodeId": "fan",
+          "taskKey": "first"
+        },
+        "sink": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        }
+      },
+      "order": [
+        "fan"
+      ]
+    }
+  }
+]

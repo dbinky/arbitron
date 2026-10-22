@@ -13,6 +13,19 @@ import (
 
 var fsDefaultUser = uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
+func TestFlatStoreMigrationPreservesLayoutArtifacts(t *testing.T) {
+	base := t.TempDir()
+	names := []string{".arbitron-locks", ".arbitron-layout-journal", ".arbitron-tree-commits", ".demo.tmp-" + uuid.NewString(), ".demo.old-" + uuid.NewString()}
+	for _, name := range names {
+		flatWorkflow(t, base, name)
+	}
+	require.NoError(t, migrateFlatStore(base, fsDefaultUser))
+	for _, name := range names {
+		_, err := os.Stat(filepath.Join(base, name, "workflow.json"))
+		require.NoError(t, err, "artifact %s must not migrate", name)
+	}
+}
+
 // flatWorkflow writes a flat workflow folder (workflow.json + an extra file)
 // under base.
 func flatWorkflow(t *testing.T, base, name string) {
@@ -77,6 +90,21 @@ func TestMigrateFlatStore_LeavesNonWorkflowAndReservedDirs(t *testing.T) {
 }
 
 // --- Error/failure ---
+
+func TestMigrateFlatStore_LeavesLayoutArtifactsAndStagingTrees(t *testing.T) {
+	base := t.TempDir()
+	names := []string{".arbitron-locks", ".arbitron-layout-journal", ".arbitron-tree-commits", ".target.tmp-00000000-0000-0000-0000-000000000001", ".target.old-00000000-0000-0000-0000-000000000001"}
+	for _, name := range names {
+		flatWorkflow(t, base, name)
+	}
+	flatWorkflow(t, base, "ordinary")
+	require.NoError(t, migrateFlatStore(base, fsDefaultUser))
+	for _, name := range names {
+		require.FileExists(t, filepath.Join(base, name, "workflow.json"))
+		require.NoDirExists(t, filepath.Join(base, "users", fsDefaultUser.String(), name))
+	}
+	require.FileExists(t, filepath.Join(base, "users", fsDefaultUser.String(), "ordinary", "workflow.json"))
+}
 
 func TestMigrateFlatStore_CollisionErrorsWithoutClobber(t *testing.T) {
 	base := t.TempDir()
@@ -150,4 +178,23 @@ func TestMigrateFlatStore_PermsAndMarkerMode(t *testing.T) {
 	minfo, err := os.Stat(filepath.Join(base, flatStoreMarker))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), minfo.Mode().Perm(), "marker must be 0o600")
+}
+
+// Migration only renames folders: it must never stamp a revision, write
+// presentation metadata or leave a layout journal entry behind.
+func TestMigrateFlatStore_NeverStampsOrJournals(t *testing.T) {
+	base := t.TempDir()
+	flatWorkflow(t, base, "alpha")
+	before, err := os.ReadFile(filepath.Join(base, "alpha", "workflow.json"))
+	require.NoError(t, err)
+
+	require.NoError(t, migrateFlatStore(base, fsDefaultUser))
+
+	after, err := os.ReadFile(filepath.Join(base, "users", fsDefaultUser.String(), "alpha", "workflow.json"))
+	require.NoError(t, err)
+	require.Equal(t, before, after, "migration must move workflow.json byte-for-byte")
+	require.NotContains(t, string(after), "presentation")
+	for _, dir := range []string{".arbitron-layout-journal", ".arbitron-tree-commits"} {
+		require.NoDirExists(t, filepath.Join(base, dir), "migration must not create %s", dir)
+	}
 }

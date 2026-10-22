@@ -176,9 +176,10 @@ type Workflow struct {
 	// GitVariable optionally names the variable (dotted path allowed) holding
 	// the run's branch/worktree for the dashboard Git column. Empty applies the
 	// conventional fallback: branch, pr_branch, then work_dir's last segment.
-	GitVariable string `json:"gitVariable,omitempty"`
-	Nodes       []Node `json:"nodes"`
-	Edges       []Edge `json:"edges"`
+	GitVariable  string        `json:"gitVariable,omitempty"`
+	Nodes        []Node        `json:"nodes"`
+	Edges        []Edge        `json:"edges"`
+	Presentation *Presentation `json:"presentation,omitempty"`
 }
 
 // InputField describes a required or optional input parameter for a workflow.

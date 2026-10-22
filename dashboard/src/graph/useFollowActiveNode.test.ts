@@ -202,6 +202,26 @@ describe('useFollowActiveNode — isRunning guard', () => {
   })
 })
 
+describe('useFollowActiveNode — terminal Recenter', () => {
+  it('records terminal and late anchors for explicit Recenter only, then clears a missing anchor', () => {
+    const { result, rerender } = renderHook(
+      ({ anchor }: { anchor: { x: number; y: number } | null }) => useFollowActiveNode(anchor, false),
+      { initialProps: { anchor: { x: 140, y: 240 } as { x: number; y: number } | null } },
+    )
+    act(() => result.current.onMoveStart({ type: 'pointerdown' }))
+    act(() => result.current.recenter())
+    expect(setCenter).toHaveBeenLastCalledWith(140, 240, { zoom: 0.9 })
+    setCenter.mockClear()
+    rerender({ anchor: { x: 200, y: 480 } })
+    expect(setCenter).not.toHaveBeenCalled()
+    act(() => result.current.recenter())
+    expect(setCenter).toHaveBeenLastCalledWith(200, 480, { zoom: 0.9 })
+    rerender({ anchor: null }); setCenter.mockClear()
+    act(() => result.current.recenter())
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+})
+
 describe('useFollowActiveNode — several concurrently active nodes (bounds)', () => {
   type B = { x: number; y: number; width: number; height: number }
   const a1 = { x: 100, y: 100 }

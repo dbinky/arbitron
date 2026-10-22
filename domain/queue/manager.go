@@ -48,6 +48,9 @@ type Manager struct {
 	// optional-collaborator pattern as SetWebhookRegistry / SetScheduler.
 	childTerminal func(ctx context.Context, instanceID uuid.UUID)
 	mu            sync.Mutex
+	notifyMu      sync.Mutex
+	notifications sync.WaitGroup
+	stopped       bool
 }
 
 // NewManager constructs a new Manager with all required dependencies.
@@ -205,11 +208,26 @@ func (m *Manager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) 
 // NotifyCapacityFreed is called when an instance leaves running state.
 // It triggers asynchronous queue evaluation.
 func (m *Manager) NotifyCapacityFreed(_ context.Context) {
+	m.notifyMu.Lock()
+	defer m.notifyMu.Unlock()
+	if m.stopped {
+		return
+	}
+	m.notifications.Add(1)
 	go func() {
+		defer m.notifications.Done()
 		if err := m.Evaluate(context.Background()); err != nil {
 			slog.Error("queue: async evaluation failed after capacity freed", "error", err)
 		}
 	}()
+}
+
+// Stop joins asynchronous capacity notifications before collaborators close.
+func (m *Manager) Stop() {
+	m.notifyMu.Lock()
+	m.stopped = true
+	m.notifyMu.Unlock()
+	m.notifications.Wait()
 }
 
 // OnTimerFired implements TimerFiredHandler on the Manager.

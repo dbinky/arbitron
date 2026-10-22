@@ -35,10 +35,15 @@ func defaults() map[string]interface{} {
 		"capabilitiespath":  "",
 		"samples.seed":      true,
 		"samples.sourcedir": "",
-		"llm.provider":      "anthropic",
-		"llm.apikey":        "",
-		"llm.binarypath":    "",
-		"llm.model":         "",
+		// Total arrange/review attempts and browser settings for saved revisions.
+		"layout.maxattempts":      DefaultLayoutMaxAttempts,
+		"layout.browserpath":      "",
+		"layout.artifactdir":      "",
+		"layout.browsernosandbox": false,
+		"llm.provider":            "anthropic",
+		"llm.apikey":              "",
+		"llm.binarypath":          "",
+		"llm.model":               "",
 		// SECURITY: 30 minutes upper bound on a single provider call.
 		// Default 0 (unbounded) is a queue-pinning DoS — see PR #8 security
 		// thread 3291944120.
@@ -286,6 +291,29 @@ notifications:
 tracing:
   enabled: false
   exportdir: "./traces"
+layout:
+  maxattempts: 5
+  #   Total arrangement-and-review attempts per saved workflow revision. Each
+  #   attempt arranges the graph top-to-bottom, renders it and visually reviews
+  #   readability; failing candidates are refined and reviewed again. When the
+  #   budget is spent the best layout is kept and marked as needing attention.
+  #   Values below 1 are clamped to 1 with a startup warning.
+  #   Override via ARBITRON_LAYOUT_MAXATTEMPTS.
+  # browserpath: ""
+  #   Chrome/Chromium executable used to render and review layouts. Empty
+  #   (default) auto-detects an installed Chrome/Chromium. On macOS a
+  #   chrome-headless-shell on PATH is preferred over Google Chrome.app, which
+  #   flickers the Dock on every launch; prefer setting an absolute path to
+  #   chrome-headless-shell here over relying on PATH.
+  #   Override via ARBITRON_LAYOUT_BROWSERPATH.
+  # artifactdir: ""
+  #   Directory for rendered review artifacts (overview and tile captures).
+  #   Empty (default) uses <directory of database.path>/layout-artifacts.
+  #   Override via ARBITRON_LAYOUT_ARTIFACTDIR.
+  # browsernosandbox: false
+  #   SECURITY: true launches the review browser with --no-sandbox. Only set it
+  #   in a container that cannot provide the Chrome sandbox.
+  #   Override via ARBITRON_LAYOUT_BROWSERNOSANDBOX.
 # samples:
 #   seed: true
 #     When true (default), the server seeds the built-in sample workflows into
@@ -516,12 +544,19 @@ const DefaultAgentBackend = "claude-code"
 // (mirroring the timeout floor).
 const DefaultSessionTTLSeconds = 43200
 
+// DefaultLayoutMaxAttempts is the total arrangement-and-review attempt budget
+// for a saved workflow revision. Values below one are clamped in normalize.
+const DefaultLayoutMaxAttempts = 5
+
 // normalize applies safety floors and value normalization to a loaded config in
 // place. It clamps a non-positive llm.timeoutseconds up to DefaultTimeoutSeconds
 // so a misconfigured 0 cannot disable every deadline, and trims trailing
 // slashes from the public base URL so callers can concatenate "/instances/<id>"
-// deterministically.
+// deterministically. It also clamps layout.maxattempts to at least one and
+// trims browser/artifact paths. LoadWarnings is reset before normalization so
+// warnings can only be produced here, never injected through YAML or env.
 func normalize(cfg *domainconfig.Config) {
+	cfg.LoadWarnings = nil
 	if cfg.LLM.TimeoutSeconds <= 0 {
 		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
 	}
@@ -551,6 +586,13 @@ func normalize(cfg *domainconfig.Config) {
 	if cfg.Auth.Session.CookieName == "" {
 		cfg.Auth.Session.CookieName = "arbitron_session"
 	}
+	if cfg.Layout.MaxAttempts < 1 {
+		cfg.LoadWarnings = append(cfg.LoadWarnings,
+			fmt.Sprintf("layout.maxattempts %d is below 1; using 1", cfg.Layout.MaxAttempts))
+		cfg.Layout.MaxAttempts = 1
+	}
+	cfg.Layout.BrowserPath = strings.TrimSpace(cfg.Layout.BrowserPath)
+	cfg.Layout.ArtifactDir = strings.TrimSpace(cfg.Layout.ArtifactDir)
 }
 
 // validateAuth enforces the org-mode contract: a deployment that turns on org

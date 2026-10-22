@@ -256,9 +256,6 @@ func (r *errOnDeleteNameRepo) Load(ctx context.Context, s workflow.Scope, name s
 func (r *errOnDeleteNameRepo) List(ctx context.Context, s workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	return r.inner.List(ctx, s)
 }
-func (r *errOnDeleteNameRepo) SaveNodePositions(ctx context.Context, s workflow.Scope, name string, positions map[string]workflow.NodePosition) error {
-	return r.inner.SaveNodePositions(ctx, s, name, positions)
-}
 func (r *errOnDeleteNameRepo) Create(ctx context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
 	return r.inner.Create(ctx, s, name, wf)
 }
@@ -546,4 +543,14 @@ func TestService_Rename_RollbackFails_RegistryErrorStillReturned(t *testing.T) {
 	gotID, rerr := reg.ResolveID(adminCtx, "alpha")
 	require.NoError(t, rerr)
 	assert.Equal(t, idA, gotID, "source registry row unchanged")
+}
+
+func (r *errOnDeleteNameRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	return r.inner.CopyTreeStamped(ctx, src, sn, dst, dn, overwrite, stamp)
+}
+func (r *errOnCopyTreeRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	return r.err
+}
+func (r *realLabelCopyRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	return r.updateErr
 }

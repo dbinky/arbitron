@@ -1,0 +1,161 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "name": "",
+  "description": "",
+  "author": "",
+  "defaultErrorBehavior": {},
+  "inputs": null,
+  "nodes": [
+    {
+      "id": "start",
+      "type": "script",
+      "config": {},
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {},
+      "entrypoint": true
+    },
+    {
+      "id": "fan",
+      "type": "parallel_group",
+      "config": {
+        "group": {
+          "form": "branches",
+          "tasks": [
+            {
+              "key": "second",
+              "entry": "a",
+              "inputs": {
+                "nested": {
+                  "values": [
+                    "original"
+                  ]
+                }
+              }
+            },
+            {
+              "key": "first",
+              "entry": "b"
+            }
+          ],
+          "completionRule": "all_succeed",
+          "unfinishedBehavior": "wait_for_remaining",
+          "gatherMode": "results"
+        }
+      },
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "done",
+      "type": "script",
+      "config": {},
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "oops",
+      "type": "script",
+      "config": {},
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "a",
+      "type": "parallel_group",
+      "config": {
+        "group": {
+          "form": "workflows",
+          "tasks": [
+            {
+              "key": "second",
+              "workflow": "Überprüfe sämtliche Abhängigkeiten 🧪 審查",
+              "inputs": {
+                "nested": {
+                  "values": [
+                    "original"
+                  ]
+                }
+              }
+            },
+            {
+              "key": "first",
+              "workflow": "Überprüfe sämtliche Abhängigkeiten 🧪 審查"
+            }
+          ],
+          "completionRule": "all_succeed",
+          "unfinishedBehavior": "wait_for_remaining",
+          "gatherMode": "results"
+        }
+      },
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "b",
+      "type": "script",
+      "config": {},
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "inner-done",
+      "type": "script",
+      "config": {},
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "inner-oops",
+      "type": "script",
+      "config": {},
+      "label": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+      "description": "",
+      "errorBehavior": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "fan"
+    },
+    {
+      "source": "fan",
+      "target": "done",
+      "output": "success"
+    },
+    {
+      "source": "fan",
+      "target": "oops",
+      "output": "failure"
+    },
+    {
+      "source": "fan",
+      "target": "a",
+      "output": "task",
+      "label": "Same port label"
+    },
+    {
+      "source": "fan",
+      "target": "b",
+      "output": "task",
+      "label": "Same port label"
+    },
+    {
+      "source": "a",
+      "target": "inner-done",
+      "output": "success"
+    },
+    {
+      "source": "a",
+      "target": "inner-oops",
+      "output": "failure"
+    }
+  ]
+}

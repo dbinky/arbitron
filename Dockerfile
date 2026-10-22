@@ -45,7 +45,7 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 # OPENCODE_NPM_PKG). Package: opencode-ai;
 # runtime gate: >= 0.4.0 (adapter/opencode/version.go minOpencodeVersion).
 RUN apk add --no-cache \
-        ca-certificates=20260413-r0 \
+        ca-certificates=20261020-r0 \
         bash=5.2.26-r0 \
         coreutils=9.5-r2 \
         nodejs=20.15.1-r0 \
@@ -53,6 +53,10 @@ RUN apk add --no-cache \
         git=2.45.4-r0 \
         github-cli=2.47.0-r4 \
         make=4.4.1-r2 \
+        chromium=131.0.6778.108-r0 \
+        font-noto=23.7.1-r0 \
+        font-noto-cjk=0_git20220127-r1 \
+        font-noto-emoji=2.042-r0 \
  && npm install -g @anthropic-ai/claude-code@2.1.170 \
  && npm install -g opencode-ai@1.17.1 \
  && addgroup -S arbitron \
@@ -78,6 +82,13 @@ ENV SHELL=/bin/bash
 # it is run; operators may override either var to disable or redirect.
 ENV ARBITRON_SAMPLES_SEED=true \
     ARBITRON_SAMPLES_SOURCEDIR=/samples
+# Docker's default seccomp profile blocks Chromium's user-namespace sandbox, so
+# NOSANDBOX=true is ONLY the fallback for a bare `docker run` (arbitron logs a
+# startup warning naming the residual risk). The supported docker-compose.yaml
+# overrides it to false and loads docker/seccomp-chromium.json, which keeps the
+# sandbox; see docs/install/README.md. Keep review evidence on the data volume.
+ENV ARBITRON_LAYOUT_BROWSERNOSANDBOX=true \
+    ARBITRON_LAYOUT_ARTIFACTDIR=/data/layout-artifacts
 VOLUME /data
 USER arbitron
 EXPOSE 8080

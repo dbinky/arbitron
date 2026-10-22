@@ -10,7 +10,8 @@ const fitBoundsSpy = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 // React Flow stub: every rendered node becomes a clickable div exposing its
 // type and execution state, so the test reads what the graph would highlight.
 // ---------------------------------------------------------------------------
-vi.mock('@xyflow/react', () => ({
+vi.mock('@xyflow/react', async () => ({
+  ...await vi.importActual<typeof import('@xyflow/react')>('@xyflow/react'),
   ReactFlow: (props: {
     nodes: Array<{ id: string; type?: string; selected?: boolean; position: { x: number; y: number }; data: Record<string, unknown> }>
     onNodeClick?: (e: unknown, n: unknown) => void
@@ -22,6 +23,8 @@ vi.mock('@xyflow/react', () => ({
           key={n.id}
           data-testid={`node-${n.id}`}
           data-type={n.type}
+          data-definition-node={String(n.data.definitionNodeId ?? n.id)}
+          data-layout-instance={n.data.layoutInstanceId as string | undefined}
           data-x={n.position.x}
           data-y={n.position.y}
           data-state={String(n.data.executionState ?? '')}
@@ -37,6 +40,8 @@ vi.mock('@xyflow/react', () => ({
   Controls: () => null,
   MarkerType: { ArrowClosed: 'arrowclosed' },
   useNodes: () => [],
+  // CalloutConnector (#77) reads the flow's DOM node from the store.
+  useStoreApi: () => ({ getState: () => ({ domNode: document.body }) }),
   useReactFlow: () => ({
     flowToScreenPosition: (p: unknown) => p,
     setCenter: vi.fn(),
@@ -112,12 +117,17 @@ const exec = (instanceId: string, nodeId: string, output: Record<string, unknown
 })
 const notFound = () => Promise.reject(new Error('API 404: instance not found'))
 const apiMock = vi.hoisted(() => ({
+  // Arrangement status (#77): no reviewed geometry, so every graph here uses the
+  // standard layout; an unknown identity keeps the retry control hidden.
+  me: vi.fn(() => Promise.reject(new Error('API 401: unauthenticated'))),
   instances: {
     get: vi.fn(),
     getTrace: vi.fn(),
     getVariables: vi.fn(),
     getNodeTrace: vi.fn(),
     graphState: vi.fn(),
+    getLayout: vi.fn(() => Promise.resolve({ savedRevision: '', displayStatus: 'pending', available: false })),
+    retryLayout: vi.fn(),
     pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), retry: vi.fn(), rerun: vi.fn(),
   },
 }))
@@ -178,6 +188,7 @@ function renderView() {
   )
 }
 
+const tileNode = (instanceId: string, nodeId: string, type = 'arbitronNode') => document.querySelector<HTMLElement>(`[data-layout-instance="${instanceId}"][data-definition-node="${nodeId}"][data-type="${type}"]`)
 const stateOf = (id: string) => screen.getByTestId(`node-${id}`).getAttribute('data-state')
 
 describe('ExecutionView — aggregate graph state (happy path)', () => {
@@ -567,23 +578,24 @@ describe('ExecutionView — groups nested inside a child workflow', () => {
 
   it('lays out the nested group of the child workflow and shows its live node states', async () => {
     renderView()
-    await screen.findByTestId('node-group:g:header')
-    expect(await screen.findByTestId('node-group:wf-a:h:header')).toBeInTheDocument()
-    expect(screen.getByTestId('node-group:wf-a:h:footer').getAttribute('data-type')).toBe('groupFooter')
-    expect(stateOf('wf-a:x2')).toBe('running')
-    expect(stateOf('wf-a:x1')).toBe('completed')
-    // The child's `start` does not alias the root's `start`.
-    expect(stateOf('wf-a:start')).toBe('completed')
-    expect(stateOf('start')).toBe('completed')
+    await waitFor(() => expect(tileNode('root', 'g', 'groupHeader')).toBeInTheDocument())
+    expect(tileNode('wf-a', 'h', 'groupHeader')).toBeInTheDocument()
+    expect(tileNode('wf-a', 'h', 'groupFooter')).toBeInTheDocument()
+    expect(tileNode('wf-a', 'x2')!.dataset.state).toBe('running')
+    expect(tileNode('wf-a', 'x1')!.dataset.state).toBe('completed')
+    expect(tileNode('wf-a', 'start')!.dataset.state).toBe('completed')
+    expect(tileNode('root', 'start')!.dataset.state).toBe('completed')
+    expect(tileNode('wf-a', 'start')!.dataset.testid).not.toBe(tileNode('root', 'start')!.dataset.testid)
   })
 
   it('selecting the nested header opens ITS panel (child instance, original node id), not the root group', async () => {
     renderView()
-    fireEvent.click(await screen.findByTestId('node-group:wf-a:h:header'))
+    await waitFor(() => expect(tileNode('wf-a', 'h', 'groupHeader')).toBeInTheDocument())
+    fireEvent.click(tileNode('wf-a', 'h', 'groupHeader')!)
     const p = await screen.findByTestId('group-panel')
     expect(within(p).getByText('Nested fan')).toBeInTheDocument()
     expect(within(p).getByText('Waiting for task x')).toBeInTheDocument()
-    expect(screen.getByTestId('node-group:wf-a:h:header').getAttribute('data-selected')).toBe('true')
+    expect(tileNode('wf-a', 'h', 'groupHeader')!.dataset.selected).toBe('true')
   })
 
   it('selecting a nested body node opens the branch instance\'s trace with the original node id', async () => {
@@ -592,7 +604,8 @@ describe('ExecutionView — groups nested inside a child workflow', () => {
     )
     apiMock.instances.getVariables.mockImplementation((id: string) => (id === 'root' || id === 'br-x' ? Promise.resolve({ owner: id }) : notFound()))
     renderView()
-    fireEvent.click(await screen.findByTestId('node-wf-a:x2'))
+    await waitFor(() => expect(tileNode('wf-a', 'x2')).toBeInTheDocument())
+    fireEvent.click(tileNode('wf-a', 'x2')!)
     await waitFor(() => expect(apiMock.instances.getNodeTrace).toHaveBeenCalledWith('br-x', 'x2'))
     expect(await screen.findByText(/"answer": "nested"/)).toBeInTheDocument()
   })

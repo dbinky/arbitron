@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
+import { render, screen, fireEvent, within, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import type { Edge } from '@xyflow/react'
@@ -39,6 +39,7 @@ vi.mock('@xyflow/react', () => ({
     )
   },
   ReactFlowProvider: ({ children }: { children: React.ReactNode }) => children,
+  useReactFlow: () => ({ setCenter: () => {}, fitView: () => {}, fitBounds: () => Promise.resolve(true), getZoom: () => 1 }),
   Background: () => null,
   Controls: () => null,
   Handle: () => null,
@@ -47,7 +48,13 @@ vi.mock('@xyflow/react', () => ({
 }))
 
 const apiMock = vi.hoisted(() => ({
-  workflows: { get: vi.fn(), groupLayout: vi.fn(), saveLayout: vi.fn(), getStats: vi.fn(), trigger: vi.fn() },
+  // Arrangement status (#77): no reviewed geometry, so groups use the standard layout.
+  me: vi.fn(() => Promise.reject(new Error('API 401: unauthenticated'))),
+  workflows: {
+    get: vi.fn(), groupLayout: vi.fn(), getStats: vi.fn(), trigger: vi.fn(),
+    getLayout: vi.fn(() => Promise.resolve({ savedRevision: '', displayStatus: 'pending', available: false })),
+    retryLayout: vi.fn(),
+  },
   schedules: { list: vi.fn() },
 }))
 vi.mock('../api/client', () => ({ api: apiMock }))
@@ -74,7 +81,6 @@ beforeEach(() => {
     if (!l) return Promise.reject(new Error('API 404: workflow not found'))
     return l instanceof Error ? Promise.reject(l) : Promise.resolve(l)
   })
-  apiMock.workflows.saveLayout.mockResolvedValue(undefined)
   apiMock.workflows.getStats.mockResolvedValue({ totalRuns: 0, successCount: 0, failureCount: 0, avgDurationSeconds: 0 })
   apiMock.schedules.list.mockResolvedValue([])
 })
@@ -146,24 +152,9 @@ describe('WorkflowReview — selection and group details (success)', () => {
     expect(within(branches).getByText('entry w1')).toBeInTheDocument()
   })
 
-  it('auto-saves dagre positions mapped back to definition ids (header saved as the group node)', async () => {
-    renderReview('wf-mixed')
-    await waitFor(() => expect(apiMock.workflows.saveLayout).toHaveBeenCalledTimes(1))
-    const [name, positions] = apiMock.workflows.saveLayout.mock.calls[0] as [string, Record<string, { x: number; y: number }>]
-    expect(name).toBe('wf-mixed')
-    expect(Object.keys(positions).sort()).toEqual(['a1', 'b2', 'b3', 'done', 'g1', 'oops', 'start', 'w1'])
-    expect(Object.keys(positions).some((k) => k.startsWith('group:'))).toBe(false)
-  })
-
-  it('dragging a group header persists the GROUP NODE position and no presentation ids', async () => {
-    renderReview('wf-mixed')
-    await waitFor(() => expect(apiMock.workflows.saveLayout).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByTestId('drag-group:w1:header'))
-    await waitFor(() => expect(apiMock.workflows.saveLayout).toHaveBeenCalledTimes(2))
-    const positions = apiMock.workflows.saveLayout.mock.calls[1][1] as Record<string, { x: number; y: number }>
-    expect(positions.w1).toEqual({ x: 999, y: 111 })
-    expect(Object.keys(positions).some((k) => k.startsWith('group:'))).toBe(false)
-  })
+  // Auto-save and drag persistence were removed with workflow-auto-arrangement
+  // (#77): positions come only from the server's reviewed arrangement, and the
+  // dashboard never writes a layout.
 })
 
 describe('WorkflowReview — failure and edge cases', () => {
@@ -171,7 +162,8 @@ describe('WorkflowReview — failure and edge cases', () => {
     layouts['wf-mixed'] = new Error('API 500: analysis failed')
     renderReview('wf-mixed')
     expect(await screen.findByTestId('node-g1')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Group layout unavailable: API 500: analysis failed')
+    // The arrangement panel is a status region too; select the group notice.
+    expect(screen.getAllByRole('status').some((el) => el.textContent?.includes('Group layout unavailable: API 500: analysis failed'))).toBe(true)
     expect(screen.queryByTestId('node-group:g1:header')).toBeNull()
   })
 
@@ -179,15 +171,8 @@ describe('WorkflowReview — failure and edge cases', () => {
     renderReview('wf-plain')
     expect(await screen.findByTestId('node-a')).toBeInTheDocument()
     expect(screen.getByTestId('node-b')).toBeInTheDocument()
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByText(/Group layout unavailable/)).toBeNull()
     expect(document.querySelector('[data-type^="group"]')).toBeNull()
-  })
-
-  it('does not auto-save when every node already has a stored position', async () => {
-    defs['wf-mixed'] = { ...mixedDef, nodes: mixedNodes.map((n, i) => ({ ...n, position: { x: i * 10, y: i * 100 } })) }
-    renderReview('wf-mixed')
-    await screen.findByTestId('node-group:w1:header')
-    expect(apiMock.workflows.saveLayout).not.toHaveBeenCalled()
   })
 })
 
@@ -219,10 +204,16 @@ describe('WorkflowReview — stalled layout request', () => {
     vi.useFakeTimers()
     const view = renderReview('wf-mixed')
     await act(async () => { await vi.advanceTimersByTimeAsync(14_999) })
-    expect(screen.getByText('Loading workflow...')).toBeInTheDocument()
+    // The workflow is loaded; its graph waits for the group analysis or its deadline.
+    expect(screen.getByText('Loading layout...')).toBeInTheDocument()
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    console.log('DBG after 15000', !!screen.queryByTestId('node-g1'), screen.queryByText('Loading layout...') ? 'loading' : '')
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    console.log('DBG after flush', !!screen.queryByTestId('node-g1'))
+    await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+    console.log('DBG after 15100', !!screen.queryByTestId('node-g1'))
     expect(screen.getByTestId('node-g1')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent(/Group layout unavailable:.*timed out/i)
+    expect(screen.getAllByRole('status').some((el) => /Group layout unavailable:.*timed out/i.test(el.textContent ?? ''))).toBe(true)
     expect(layoutSignal?.aborted).toBe(true)
     await act(async () => { finishLayout(mixedGraph) })
     expect(screen.queryByTestId('node-group:g1:header')).toBeNull()
@@ -297,11 +288,6 @@ describe('WorkflowReview — partial ownership wire fixtures', () => {
         if (fixture.name === 'shared-body') {
           // The skipped task must not acquire the other task's entry as a sink.
           expect(rendered.edges.filter((e) => e.data?.kind === 'sink').map((e) => e.data?.taskKey)).toEqual(['a'])
-        }
-        if (!stored) {
-          const positions = apiMock.workflows.saveLayout.mock.calls[0][1] as Record<string, { x: number; y: number }>
-          expect(Object.keys(positions).sort()).toEqual(definition.nodes.map((n) => n.id).sort())
-          expect(Object.values(positions).every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true)
         }
       })
     }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,7 +116,7 @@ func bootGraphStateStack(t *testing.T) *domainStack {
 // (minus the per-process dashboard/MCP/notification/webhook handlers).
 func gsServeAPI(t *testing.T, ds *domainStack) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(adapthttp.NewRouterFromDeps(ds.routerDeps()))
+	srv := httptest.NewServer(adapthttp.NewRouterFromDeps(ds.routerDeps(nil, nil, nil, nil)))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -163,7 +164,25 @@ func gsListIDs(srv *httptest.Server, query string) (map[uuid.UUID]bool, error) {
 // reader, routerDeps does not pass it, or the route is not registered, this GET
 // is a 404 and the test fails. The sink is the HTTP JSON body.
 func TestGraphStateE2E_RunningGroupShowsBothBranchesThroughCompositionRoot(t *testing.T) {
-	ds := bootGraphStateStack(t)
+	gates := newGroupProcessGates(t)
+	var wf workflow.Workflow
+	require.NoError(t, json.Unmarshal([]byte(gsFanoutManifest), &wf))
+	for i := range wf.Nodes {
+		n := &wf.Nodes[i]
+		if n.ID != "a1" && n.ID != "b1" {
+			continue
+		}
+		// Hold the original tool producer at admission, retaining its real
+		// output rather than making process speed decide the observation window.
+		script := strings.SplitN(n.Config.Args[1], "; ", 2)
+		require.Len(t, script, 2)
+		require.True(t, strings.HasPrefix(script[0], "sleep "))
+		n.Config.Args = []string{"-c", `touch "$1/$2.reached"; n=0; while [ ! -f "$1/$2.release" ]; do n=$((n+1)); [ "$n" -lt 1200 ] || exit 91; sleep .05; done; ` + script[1], "sh", gates.dir, n.ID}
+	}
+	manifest, err := json.Marshal(wf)
+	require.NoError(t, err)
+	ds, _ := bootGroupExecStack(t, 5, map[string]string{"gs-fanout": string(manifest)})
+	t.Cleanup(func() { gates.release(t, "a1"); gates.release(t, "b1") })
 	srv := gsServeAPI(t, ds)
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "gs-fanout", map[string]any{}, "normal")
@@ -174,6 +193,11 @@ func TestGraphStateE2E_RunningGroupShowsBothBranchesThroughCompositionRoot(t *te
 	require.Equal(t, http.StatusOK, code, "the production graph-state route must be wired")
 	require.NotNil(t, initial)
 
+	gates.reached(t, "a1")
+	gates.reached(t, "b1")
+	// The roster can say waiting_for_tasks before the parent has parked. Join
+	// that real state transition before taking the HTTP snapshot asserted below.
+	waitForState(t, ds, parentID, instance.StateWaiting)
 	var gs *engine.GraphState
 	require.Eventually(t, func() bool {
 		_, got, ferr := gsFetchGraphState(srv, parentID)
@@ -222,6 +246,8 @@ func TestGraphStateE2E_RunningGroupShowsBothBranchesThroughCompositionRoot(t *te
 	assert.Equal(t, engine.LiveStateWaiting, nodes[engine.NodeStateKey{InstanceID: parentID, NodeID: "g"}])
 
 	// Completed-run inspection: the frozen gather survives completion.
+	gates.release(t, "a1")
+	gates.release(t, "b1")
 	waitForState(t, ds, parentID, instance.StateCompleted)
 	code, final, err := gsFetchGraphState(srv, parentID)
 	require.NoError(t, err)

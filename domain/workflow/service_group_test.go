@@ -950,3 +950,20 @@ func TestServiceGroup_GroupValidationError_Shape(t *testing.T) {
 	assert.Len(t, back.Errors, 3)
 	assert.Equal(t, "parallel group definition is invalid", (&workflow.GroupValidationError{}).Error())
 }
+
+// CopyTreeStamped satisfies the stamped-copy port: copy, then stamp the staged
+// manifest and persist it. Group tests run without a revision stamper, so this
+// only keeps sgRepo a complete workflow.Repository.
+func (r *sgRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	if err := r.CopyTree(ctx, src, srcName, dst, dstName, overwrite); err != nil {
+		return err
+	}
+	wf, err := r.Load(ctx, dst, dstName)
+	if err != nil {
+		return err
+	}
+	if err := stamp(wf); err != nil {
+		return err
+	}
+	return r.Update(ctx, dst, dstName, wf)
+}

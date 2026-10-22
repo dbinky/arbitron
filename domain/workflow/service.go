@@ -90,11 +90,20 @@ type Service struct {
 	// unset (nil), the guard is skipped (local/unconfigured mode has no registry
 	// id to count by).
 	activeInstances ActiveInstanceCounter
+	stamper         *RevisionStamper
+	mutations       MutationCoordinator
 	// groupProfiles / groupFiles are the scoped checkers parallel_group writes
 	// require. When unset, group writes fail with GROUP_CHECKER_UNAVAILABLE.
 	groupProfiles ProfileChecker
 	groupFiles    OwnerFileChecker
 }
+
+// SetRevisionStamper enables the authoring-save protocol. A stamper requires
+// the same MutationCoordinator used by the repository and recovery source.
+func (s *Service) SetRevisionStamper(st *RevisionStamper) { s.stamper = st }
+
+// SetMutationCoordinator wires operation-wide source/destination locking.
+func (s *Service) SetMutationCoordinator(m MutationCoordinator) { s.mutations = m }
 
 // SetActiveInstanceCounter wires the non-terminal-instance counter consulted by
 // the admin Delete guard. When unset (nil), Delete does not guard against running
@@ -197,7 +206,7 @@ func (s *Service) translateWrite(ctx context.Context, name string, err error) er
 // Any private write that succeeded, or failed for a reason other than
 // not-found-but-shared-exists, is returned verbatim (translateWrite's mapping is
 // preserved for the non-admin/no-shared cases). sharedWrite performs the actual
-// shared-scope mutation (Update/WriteFile/SaveNodePositions against Shared()).
+// shared-scope mutation (Update/WriteFile against Shared()).
 //
 // An in-flight instance is unaffected: it executes from its own snapshot, so a
 // shared edit only changes what FUTURE triggers load.
@@ -242,10 +251,14 @@ func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
 	if err != nil {
 		return err
 	}
-	// Reject invalid groups before allocating identity or claiming the name.
-	// Non-group workflows retain the legacy write path without validation.
+	// Reject invalid groups before allocating identity or claiming the name, on
+	// both the stamped revision path and the legacy one. Non-group workflows
+	// retain their write path without validation.
 	if err := s.rejectInvalidGroups(ctx, wf, id.UserID); err != nil {
 		return err
+	}
+	if s.stamper != nil {
+		return s.createRevision(ctx, name, wf)
 	}
 	if s.localMode() {
 		return s.repo.Create(ctx, Private(id.UserID), name, wf)
@@ -286,6 +299,8 @@ func (s *Service) Update(ctx context.Context, name string, wf *Workflow) error {
 
 // updateWithGroupFindings is the shared Update path, retaining the accepted
 // pre-write findings for callers that return a group view with the receipt.
+// The group gate runs before either write protocol, so the stamped revision
+// path (production) is gated exactly like the legacy one.
 func (s *Service) updateWithGroupFindings(ctx context.Context, name string, wf *Workflow) ([]ValidationError, error) {
 	id, err := caller(ctx)
 	if err != nil {
@@ -303,6 +318,12 @@ func (s *Service) updateWithGroupFindings(ctx context.Context, name string, wf *
 			return nil, err
 		}
 	}
+	if s.stamper != nil {
+		if err := s.updateRevision(ctx, name, wf); err != nil {
+			return nil, err
+		}
+		return findings, nil
+	}
 	privateErr := s.repo.Update(ctx, Private(id.UserID), name, wf)
 	if err := s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
 		return s.repo.Update(ctx, scope, name, wf)
@@ -312,22 +333,13 @@ func (s *Service) updateWithGroupFindings(ctx context.Context, name string, wf *
 	return findings, nil
 }
 
-// SaveNodePositions persists node layout in the caller's private scope (an admin
-// may target a shared-only workflow in place; see adminSharedWrite).
-func (s *Service) SaveNodePositions(ctx context.Context, name string, p map[string]NodePosition) error {
-	id, err := caller(ctx)
-	if err != nil {
-		return err
-	}
-	privateErr := s.repo.SaveNodePositions(ctx, Private(id.UserID), name, p)
-	return s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
-		return s.repo.SaveNodePositions(ctx, scope, name, p)
-	})
-}
-
 // WriteFile writes a file into the caller's private workflow directory (an admin
 // may target a shared-only workflow in place; see adminSharedWrite).
 func (s *Service) WriteFile(ctx context.Context, name, rel string, content []byte) error {
+	return s.withSupportingWrite(ctx, name, func(ctx context.Context) error { return s.writeFile(ctx, name, rel, content) })
+}
+
+func (s *Service) writeFile(ctx context.Context, name, rel string, content []byte) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -344,7 +356,13 @@ func (s *Service) DeleteFile(ctx context.Context, name, rel string) error {
 	if err != nil {
 		return err
 	}
-	return s.translateWrite(ctx, name, s.repo.DeleteFile(ctx, Private(id.UserID), name, rel))
+	target := MutationTarget{Scope: Private(id.UserID), Name: name}
+	return s.withMutations(ctx, []MutationTarget{target}, func(ctx context.Context) error {
+		if err := s.settle(ctx, target); err != nil {
+			return err
+		}
+		return s.translateWrite(ctx, name, s.repo.DeleteFile(ctx, target.Scope, name, rel))
+	})
 }
 
 // auditingFilter returns a SharedVisibilityFilter bound to id, or nil when no
@@ -581,7 +599,11 @@ func (s *Service) Stats(ctx context.Context, name string, from, to time.Time) (*
 // publishedName and records the caller as publisher. Only the original
 // publisher may overwrite an existing published name.
 //
-// ORDERING INVARIANT: the shared tree is copied FIRST (repo.CopyTree), then the
+// Stamped saves stage the final identity/revision before visibility and retain a
+// reversible tree backup until exact publication proof commits. The following
+// describes only the isolated legacy path used without a stamper.
+//
+// LEGACY ORDERING: the shared tree is copied FIRST (repo.CopyTree), then the
 // publication is recorded (published.Upsert). These are two separate stores with
 // no shared transaction, so the failure handling is path-dependent:
 //
@@ -594,6 +616,9 @@ func (s *Service) Stats(ctx context.Context, name string, from, to time.Time) (*
 //     must NOT delete — that would destroy the shared copy entirely (data loss).
 //     The error is surfaced loudly so the operator can retry the record.
 func (s *Service) Publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
+	if s.stamper != nil {
+		return s.publishRevision(ctx, privateName, publishedName, visibility, department)
+	}
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -700,6 +725,9 @@ func (s *Service) Publish(ctx context.Context, privateName, publishedName string
 // Copy duplicates a shared workflow into the caller's private scope. The copy
 // is fully independent — no back-link to the shared original.
 func (s *Service) Copy(ctx context.Context, sharedName, newPrivateName string) error {
+	if s.stamper != nil {
+		return s.copyRevision(ctx, sharedName, newPrivateName)
+	}
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -781,6 +809,19 @@ func authorizePublish(id identity.Identity, visibility Visibility, department, o
 // admin; the target level is gated by the same rules as Publish (member→own
 // department, lead/admin→public). An unknown publication is ErrNotFound.
 func (s *Service) SetVisibility(ctx context.Context, publishedName string, visibility Visibility, department string) error {
+	target := MutationTarget{Scope: Shared(), Name: publishedName}
+	return s.withMutations(ctx, []MutationTarget{target}, func(ctx context.Context) error {
+		if _, err := caller(ctx); err != nil {
+			return err
+		}
+		if err := s.settle(ctx, target); err != nil {
+			return err
+		}
+		return s.setVisibility(ctx, publishedName, visibility, department)
+	})
+}
+
+func (s *Service) setVisibility(ctx context.Context, publishedName string, visibility Visibility, department string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err

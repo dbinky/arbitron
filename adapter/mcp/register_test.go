@@ -103,6 +103,9 @@ var expectedTools = []string{
 	// User/role management (2)
 	"user_list",
 	"user_set_role",
+	// Layout arrangement retry (2)
+	"workflow_layout_retry",
+	"instance_layout_retry",
 	// Recurring schedules (5)
 	"schedule_create",
 	"schedule_list",

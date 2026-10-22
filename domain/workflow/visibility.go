@@ -24,6 +24,10 @@ func (v Visibility) Valid() bool {
 // Department is empty for public. SourceName is carried so SetVisibility (Task 4)
 // can re-Upsert the record (source_name is NOT NULL) without re-reading it.
 type Publication struct {
+	// Revision and WorkflowID are proof for one exact authoring commit.
+	// Metadata-only publication updates must preserve them.
+	Revision   string
+	WorkflowID uuid.UUID
 	Publisher  uuid.UUID
 	SourceName string
 	Visibility Visibility

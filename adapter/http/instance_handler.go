@@ -15,6 +15,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/layout"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -53,6 +54,7 @@ type InstanceHandler struct {
 	service     InstanceService
 	dismissals  instance.DismissalRepository
 	currentUser CurrentUserResolver
+	layouts     LayoutQueryService
 	graphState  GraphStateService
 }
 
@@ -86,6 +88,11 @@ func (h *InstanceHandler) SetDismissals(dismissals instance.DismissalRepository,
 	h.currentUser = currentUser
 }
 
+// SetLayouts wires the authorized snapshot-revision layout query seam.
+func (h *InstanceHandler) SetLayouts(l LayoutQueryService) {
+	h.layouts = l
+}
+
 // SetGraphState wires the aggregate read model before serving requests.
 func (h *InstanceHandler) SetGraphState(gs GraphStateService) {
 	h.graphState = gs
@@ -114,6 +121,7 @@ type instanceResponse struct {
 	WorkflowSnapshot  map[string]any `json:"workflowSnapshot,omitempty"`
 	InteractiveNodeID *string        `json:"interactiveNodeId"`
 	InteractiveActive bool           `json:"interactiveActive"`
+	Layout            *layout.View   `json:"layout,omitempty"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -515,7 +523,55 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, toInstanceResponse(inst))
+	resp := toInstanceResponse(inst)
+	view := h.instanceLayout(r, inst)
+	resp.Layout = &view
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// instanceLayout preserves the authorized snapshot's fallback when status is unavailable.
+func (h *InstanceHandler) instanceLayout(r *http.Request, inst *instance.Instance) layout.View {
+	var view layout.View
+	var err error
+	if h.layouts == nil {
+		err = errors.New("layout service not configured")
+	} else {
+		view, err = h.layouts.InstanceLayout(r.Context(), inst.ID)
+	}
+	if err == nil {
+		return view
+	}
+	// The instance itself was already authorized. Describe only status
+	// availability here; query causes can contain storage or policy details.
+	reason := "layout status unavailable; reload or retry"
+	switch {
+	case h.layouts == nil:
+		reason = "layout service not configured"
+	case errors.Is(err, workflow.ErrMutationPending):
+		reason = "workflow destination is awaiting durable mutation recovery; retry shortly"
+	case errors.Is(err, layout.ErrStoreUnavailable):
+		reason = "layout status store unavailable; retry later"
+	}
+	out := layout.View{
+		DisplayStatus:     layout.DisplayUnavailable,
+		Findings:          []layout.Finding{},
+		Provenance:        layout.ProvenanceLegacy,
+		Available:         false,
+		Unreviewed:        true,
+		AvailabilityError: reason,
+	}
+	if wf, decodeErr := engine.DecodeWorkflowSnapshot(inst.WorkflowSnapshot); decodeErr == nil {
+		graph, _ := layout.BuildGraph(wf)
+		out.Groups = graph.Groups
+		if wf.Presentation != nil {
+			retained := wf.Presentation.Retained
+			out.SavedRevision = wf.SavedRevision()
+			out.RetryEligible = out.SavedRevision != ""
+			out.Retained = &retained
+			out.Provenance = layout.ProvenanceRetainedPositions
+		}
+	}
+	return out
 }
 
 // GraphState handles GET /instances/{id}/graph-state. Error responses mirror

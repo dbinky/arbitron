@@ -1,7 +1,7 @@
 package mcp
 
 // RegisterAllTools registers all MCP tools (workflow, instance, trace, system,
-// streaming, and interactive) with the given server.
+// streaming, interactive, and layout retry) with the given server.
 func RegisterAllTools(srv *Server) {
 	RegisterWorkflowTools(srv)
 	RegisterInstanceTools(srv)
@@ -13,5 +13,6 @@ func RegisterAllTools(srv *Server) {
 	RegisterProfileTools(srv)
 	RegisterTokenTools(srv)
 	RegisterUserTools(srv)
+	RegisterLayoutTools(srv)
 	RegisterScheduleTools(srv)
 }

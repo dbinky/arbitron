@@ -54,7 +54,7 @@ func RegisterWorkflowTools(srv *Server) {
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_get",
-			gomcp.WithDescription("Load a workflow definition by name"),
+			gomcp.WithDescription("Load a workflow definition by name. Includes an arrangement summary of the saved revision's automatic-arrangement status, attempts, findings, failure reason and retryEligible; pass arrangement.savedRevision as expectedRevision to workflow_layout_retry."),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
 		),
 		workflowGetHandler(srv),
@@ -232,6 +232,8 @@ func mapLifecycleError(name string, err error) (*gomcp.CallToolResult, bool) {
 		return res, true
 	}
 	switch {
+	case errors.Is(err, workflow.ErrMutationPending):
+		return mutationPendingToolError(err), true
 	case errors.Is(err, workflow.ErrForbidden), errors.Is(err, workflow.ErrUnauthorized):
 		return gomcp.NewToolResultError(fmt.Sprintf("not authorized: %s", err)), true
 	case errors.Is(err, workflow.ErrNotFound):
@@ -252,6 +254,9 @@ func workflowListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		summaries, err := workflowSvc(srv).List(ctx)
 		if err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list workflows: %s", err)), nil
 		}
 		if summaries == nil {
@@ -275,6 +280,9 @@ func workflowGetHandler(srv *Server) server.ToolHandlerFunc {
 
 		wf, err := workflowSvc(srv).Load(ctx, name)
 		if err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -283,7 +291,7 @@ func workflowGetHandler(srv *Server) server.ToolHandlerFunc {
 		if wf == nil {
 			return gomcp.NewToolResultError("workflow not found"), nil
 		}
-		return MarshalResult(wf)
+		return workflowWithArrangement(ctx, srv, name, wf)
 	}
 }
 
@@ -305,6 +313,9 @@ func workflowCreateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).Create(ctx, wf.Name, &wf); err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if res, ok := groupValidationResult(err); ok {
 				return res, nil
 			}
@@ -343,6 +354,9 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		wf.Name = name
 
 		if err := workflowSvc(srv).Update(ctx, name, &wf); err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if res, ok := groupValidationResult(err); ok {
 				return res, nil
 			}
@@ -394,6 +408,9 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 
 		wf, err := workflowSvc(srv).Load(ctx, name)
 		if err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -435,6 +452,9 @@ func workflowListFilesHandler(srv *Server) server.ToolHandlerFunc {
 
 		files, err := workflowSvc(srv).ListFiles(ctx, name)
 		if err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -466,6 +486,9 @@ func workflowReadFileHandler(srv *Server) server.ToolHandlerFunc {
 
 		content, err := srv.deps.FileReader.ReadFile(callerOwner(ctx), name, path)
 		if err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to read file: %s", err)), nil
 		}
 		return gomcp.NewToolResultText(string(content)), nil
@@ -503,6 +526,9 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).WriteFile(ctx, name, path, []byte(content)); err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if errors.Is(err, workflow.ErrSharedReadOnly) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
 			}
@@ -536,6 +562,9 @@ func workflowDeleteFileHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).DeleteFile(ctx, name, path); err != nil {
+			if result := mutationPendingToolError(err); result != nil {
+				return result, nil
+			}
 			if errors.Is(err, workflow.ErrSharedReadOnly) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
 			}
@@ -579,6 +608,8 @@ func workflowPublishHandler(srv *Server) server.ToolHandlerFunc {
 				return res, nil
 			}
 			switch {
+			case errors.Is(err, workflow.ErrMutationPending):
+				return mutationPendingToolError(err), nil
 			case errors.Is(err, workflow.ErrInvalidVisibility):
 				return gomcp.NewToolResultError(fmt.Sprintf("invalid visibility for %q: %s", publishedName, err)), nil
 			case errors.Is(err, workflow.ErrUnauthorized):
@@ -609,6 +640,8 @@ func workflowSetVisibilityHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		if err := workflowSvc(srv).SetVisibility(ctx, name, workflow.Visibility(visibility), department); err != nil {
 			switch {
+			case errors.Is(err, workflow.ErrMutationPending):
+				return mutationPendingToolError(err), nil
 			case errors.Is(err, workflow.ErrInvalidVisibility):
 				return gomcp.NewToolResultError(fmt.Sprintf("invalid visibility: %s", err)), nil
 			case errors.Is(err, workflow.ErrUnauthorized):
@@ -646,6 +679,8 @@ func workflowCopyHandler(srv *Server) server.ToolHandlerFunc {
 				return res, nil
 			}
 			switch {
+			case errors.Is(err, workflow.ErrMutationPending):
+				return mutationPendingToolError(err), nil
 			case errors.Is(err, workflow.ErrAlreadyExists):
 				return gomcp.NewToolResultError(fmt.Sprintf("private workflow already exists: %s", newName)), nil
 			case errors.Is(err, workflow.ErrNotFound):

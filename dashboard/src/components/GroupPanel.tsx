@@ -16,6 +16,7 @@ interface GroupPanelProps {
   label?: string
   /** Opens the interactive conflict-resolution session (the parent's session at the group node). */
   onOpenSession?: (session: ResolutionSessionRef) => void
+  activeNodes?: Readonly<Record<string, readonly string[]>>
 }
 
 const TERMINAL_TASK = new Set(['completed', 'failed', 'cancelled', 'unfinished'])
@@ -51,7 +52,7 @@ function failureText(f: Record<string, unknown> | undefined): string | null {
   return text ? `${text}${node}` : null
 }
 
-function TaskRow({ task, index, frozen }: { task: GroupPanelTask; index: number; frozen: FrozenTask | undefined }) {
+function TaskRow({ task, index, frozen, activeNodes }: { task: GroupPanelTask; index: number; frozen: FrozenTask | undefined; activeNodes?: readonly string[] }) {
   const gathered = task.frozenStatus || frozen?.status || ''
   return (
     <tr data-testid={`group-task-row-${task.key}`} className={task.continuingIndependently ? styles.rowIndependent : undefined}>
@@ -67,6 +68,7 @@ function TaskRow({ task, index, frozen }: { task: GroupPanelTask; index: number;
         {task.blocking && !TERMINAL_TASK.has(task.liveStatus) && <span className={styles.badge}>blocking</span>}
         {task.cancelRequested && <span className={`${styles.badge} ${styles.badgeCancel}`}>cancel requested</span>}
         {task.launchError && <span className={styles.error}>{task.launchError}</span>}
+        {!task.redacted && activeNodes && activeNodes.length > 0 && <span>active: {activeNodes.join(', ')}</span>}
       </td>
       <td>
         {task.redacted ? (
@@ -93,7 +95,7 @@ function TaskRow({ task, index, frozen }: { task: GroupPanelTask; index: number;
  * history; and a link into the live resolution session. Redacted tasks show a
  * generic hidden dependency and no identifiers.
  */
-export default function GroupPanel({ panel, label, onOpenSession }: GroupPanelProps) {
+export default function GroupPanel({ panel, label, onOpenSession, activeNodes }: GroupPanelProps) {
   if (!panel) {
     return (
       <div className={styles.panel} data-testid="group-panel">
@@ -184,7 +186,7 @@ export default function GroupPanel({ panel, label, onOpenSession }: GroupPanelPr
           </thead>
           <tbody>
             {panel.tasks.map((t, i) => (
-              <TaskRow key={t.key} task={t} index={i} frozen={frozenByKey.get(t.key)} />
+              <TaskRow key={t.key} task={t} index={i} frozen={frozenByKey.get(t.key)} activeNodes={activeNodes?.[t.key]} />
             ))}
           </tbody>
         </table>

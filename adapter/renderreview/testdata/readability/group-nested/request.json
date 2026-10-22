@@ -1,0 +1,1393 @@
+{
+  "revision": "group-capture",
+  "attempt": 4,
+  "geometry": {
+    "format": "arbitron.layout/v2",
+    "contract": {
+      "version": "arranged-renderer/2",
+      "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+      "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+      "nodeLabelFontPx": 13,
+      "nodeLabelWeight": 600,
+      "nodeTypeFontPx": 10,
+      "nodeTypeWeight": 700,
+      "edgeLabelFontPx": 11,
+      "edgeLabelWeight": 500,
+      "lineHeight": 1.35,
+      "nodePaddingX": 12,
+      "nodePaddingY": 8,
+      "nodeBorderPx": 2,
+      "nodeTypeBarPx": 4,
+      "nodeTextGapPx": 2,
+      "nodeMinWidth": 180,
+      "nodeTextMaxWidth": 240,
+      "edgeLabelPaddingX": 6,
+      "edgeLabelPaddingY": 3,
+      "edgeLabelMaxWidth": 160,
+      "strokePx": 2,
+      "arrowPx": 10,
+      "crossingTreatment": "gap",
+      "crossingGapPx": 10,
+      "forwardColor": "#8a8ab0",
+      "loopReturnColor": "#7c8cf5",
+      "loopReturnDash": "6 4",
+      "practicalZoom": 0.9,
+      "minReadableTextPx": 9,
+      "minContrastRatio": 4.5,
+      "minClearancePx": 4,
+      "groupPaddingPx": 32,
+      "groupTaskGapPx": 24,
+      "groupRowGapPx": 48,
+      "groupMinWidth": 200,
+      "groupHeaderMinHeight": 80,
+      "groupFooterMinHeight": 80,
+      "groupTaskMinHeight": 96,
+      "groupConnectorDash": "3 3"
+    },
+    "options": {
+      "rankSpacing": 48,
+      "nodeSpacing": 56,
+      "laneSeparation": 14,
+      "gutterWidth": 48,
+      "labelGap": 10,
+      "portSpacing": 24,
+      "nodeTextSlack": 0,
+      "dummyWidth": 24,
+      "crossingSweeps": 8,
+      "margin": 40
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "box": {
+          "x": 577.5,
+          "y": 40,
+          "w": 239,
+          "h": 95
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "script",
+        "textLines": 3,
+        "rank": 0
+      },
+      {
+        "id": "fan",
+        "box": {
+          "x": 469.5,
+          "y": 377,
+          "w": 455,
+          "h": 130
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "parallel group",
+        "textLines": 3,
+        "rank": 0
+      },
+      {
+        "id": "done",
+        "box": {
+          "x": 430,
+          "y": 2809,
+          "w": 239,
+          "h": 95
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "script",
+        "textLines": 3,
+        "rank": 2
+      },
+      {
+        "id": "oops",
+        "box": {
+          "x": 725,
+          "y": 2809,
+          "w": 239,
+          "h": 95
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "script",
+        "textLines": 3,
+        "rank": 2
+      },
+      {
+        "id": "a",
+        "box": {
+          "x": 374,
+          "y": 952,
+          "w": 239,
+          "h": 130
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "parallel group",
+        "textLines": 3,
+        "rank": 0
+      },
+      {
+        "id": "b",
+        "box": {
+          "x": 1011,
+          "y": 872,
+          "w": 239,
+          "h": 95
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "script",
+        "textLines": 3,
+        "rank": 0
+      },
+      {
+        "id": "inner-done",
+        "box": {
+          "x": 226.5,
+          "y": 2013,
+          "w": 239,
+          "h": 95
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "script",
+        "textLines": 3,
+        "rank": 1
+      },
+      {
+        "id": "inner-oops",
+        "box": {
+          "x": 521.5,
+          "y": 2013,
+          "w": 239,
+          "h": 95
+        },
+        "text": "Überprüfe sämtliche Änderungen\n審查所有拉取請求\njede Abhängigkeit gründlich",
+        "typeCaption": "script",
+        "textLines": 3,
+        "rank": 1
+      }
+    ],
+    "edges": [
+      {
+        "ordinal": 0,
+        "source": "start",
+        "target": "fan",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 697,
+            "y": 135
+          },
+          {
+            "x": 697,
+            "y": 377
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "start",
+          "elementId": "[\"node\",\"start\"]",
+          "side": "bottom",
+          "point": {
+            "x": 697,
+            "y": 135
+          }
+        },
+        "targetAttach": {
+          "nodeId": "fan",
+          "elementId": "[\"node\",\"fan\"]",
+          "side": "top",
+          "point": {
+            "x": 697,
+            "y": 377
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "source": "fan",
+        "target": "done",
+        "output": "success",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 623.5,
+            "y": 2447
+          },
+          {
+            "x": 623.5,
+            "y": 2461
+          },
+          {
+            "x": 549.5,
+            "y": 2461
+          },
+          {
+            "x": 549.5,
+            "y": 2809
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "fan",
+          "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "side": "bottom",
+          "point": {
+            "x": 623.5,
+            "y": 2447
+          }
+        },
+        "targetAttach": {
+          "nodeId": "done",
+          "elementId": "[\"node\",\"done\"]",
+          "side": "top",
+          "point": {
+            "x": 549.5,
+            "y": 2809
+          }
+        },
+        "text": {
+          "text": "success",
+          "box": {
+            "x": 633.5,
+            "y": 2457,
+            "w": 57,
+            "h": 22
+          },
+          "lines": 1
+        }
+      },
+      {
+        "ordinal": 2,
+        "source": "fan",
+        "target": "oops",
+        "output": "failure",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 714.5,
+            "y": 2447
+          },
+          {
+            "x": 714.5,
+            "y": 2795
+          },
+          {
+            "x": 844.5,
+            "y": 2795
+          },
+          {
+            "x": 844.5,
+            "y": 2809
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "fan",
+          "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "side": "bottom",
+          "point": {
+            "x": 714.5,
+            "y": 2447
+          }
+        },
+        "targetAttach": {
+          "nodeId": "oops",
+          "elementId": "[\"node\",\"oops\"]",
+          "side": "top",
+          "point": {
+            "x": 844.5,
+            "y": 2809
+          }
+        },
+        "text": {
+          "text": "failure",
+          "box": {
+            "x": 724.5,
+            "y": 2457,
+            "w": 46,
+            "h": 22
+          },
+          "lines": 1
+        }
+      },
+      {
+        "ordinal": 3,
+        "source": "fan",
+        "target": "a",
+        "output": "task",
+        "label": "Same port label",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 579,
+            "y": 507
+          },
+          {
+            "x": 579,
+            "y": 938
+          },
+          {
+            "x": 493.5,
+            "y": 938
+          },
+          {
+            "x": 493.5,
+            "y": 952
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "fan",
+          "elementId": "[\"node\",\"fan\"]",
+          "side": "bottom",
+          "point": {
+            "x": 579,
+            "y": 507
+          }
+        },
+        "targetAttach": {
+          "nodeId": "a",
+          "elementId": "[\"node\",\"a\"]",
+          "side": "top",
+          "point": {
+            "x": 493.5,
+            "y": 952
+          }
+        },
+        "text": {
+          "text": "Same port label",
+          "box": {
+            "x": 589,
+            "y": 517,
+            "w": 96,
+            "h": 22
+          },
+          "lines": 1
+        }
+      },
+      {
+        "ordinal": 4,
+        "source": "fan",
+        "target": "b",
+        "output": "task",
+        "label": "Same port label",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 709,
+            "y": 507
+          },
+          {
+            "x": 709,
+            "y": 615
+          },
+          {
+            "x": 1130.5,
+            "y": 615
+          },
+          {
+            "x": 1130.5,
+            "y": 872
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "fan",
+          "elementId": "[\"node\",\"fan\"]",
+          "side": "bottom",
+          "point": {
+            "x": 709,
+            "y": 507
+          }
+        },
+        "targetAttach": {
+          "nodeId": "b",
+          "elementId": "[\"node\",\"b\"]",
+          "side": "top",
+          "point": {
+            "x": 1130.5,
+            "y": 872
+          }
+        },
+        "text": {
+          "text": "Same port label",
+          "box": {
+            "x": 719,
+            "y": 517,
+            "w": 96,
+            "h": 22
+          },
+          "lines": 1
+        }
+      },
+      {
+        "ordinal": 5,
+        "source": "a",
+        "target": "inner-done",
+        "output": "success",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 420,
+            "y": 1651
+          },
+          {
+            "x": 420,
+            "y": 1999
+          },
+          {
+            "x": 346,
+            "y": 1999
+          },
+          {
+            "x": 346,
+            "y": 2013
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "a",
+          "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+          "side": "bottom",
+          "point": {
+            "x": 420,
+            "y": 1651
+          }
+        },
+        "targetAttach": {
+          "nodeId": "inner-done",
+          "elementId": "[\"node\",\"inner-done\"]",
+          "side": "top",
+          "point": {
+            "x": 346,
+            "y": 2013
+          }
+        },
+        "text": {
+          "text": "success",
+          "box": {
+            "x": 430,
+            "y": 1661,
+            "w": 57,
+            "h": 22
+          },
+          "lines": 1
+        }
+      },
+      {
+        "ordinal": 6,
+        "source": "a",
+        "target": "inner-oops",
+        "output": "failure",
+        "kind": "forward",
+        "points": [
+          {
+            "x": 511,
+            "y": 1651
+          },
+          {
+            "x": 511,
+            "y": 1999
+          },
+          {
+            "x": 641,
+            "y": 1999
+          },
+          {
+            "x": 641,
+            "y": 2013
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "a",
+          "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+          "side": "bottom",
+          "point": {
+            "x": 511,
+            "y": 1651
+          }
+        },
+        "targetAttach": {
+          "nodeId": "inner-oops",
+          "elementId": "[\"node\",\"inner-oops\"]",
+          "side": "top",
+          "point": {
+            "x": 641,
+            "y": 2013
+          }
+        },
+        "text": {
+          "text": "failure",
+          "box": {
+            "x": 521,
+            "y": 1661,
+            "w": 46,
+            "h": 22
+          },
+          "lines": 1
+        }
+      }
+    ],
+    "crossings": [],
+    "groupElements": [
+      {
+        "id": "[\"group\",\"fan\",\"container\",\"\"]",
+        "groupNodeId": "fan",
+        "role": "container",
+        "box": {
+          "x": 40,
+          "y": 297,
+          "w": 1314,
+          "h": 2182
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+            "text": "Parallel branches · all succeed",
+            "style": "edge_label",
+            "box": {
+              "x": 54,
+              "y": 307,
+              "w": 161,
+              "h": 16
+            },
+            "lines": 1
+          }
+        ]
+      },
+      {
+        "id": "[\"node\",\"fan\"]",
+        "groupNodeId": "fan",
+        "role": "header",
+        "box": {
+          "x": 469.5,
+          "y": 377,
+          "w": 455,
+          "h": 130
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+            "text": "fan-out",
+            "style": "node_type",
+            "box": {
+              "x": 483.5,
+              "y": 464,
+              "w": 55,
+              "h": 15
+            },
+            "lines": 1
+          },
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+            "text": "2 tasks · branches",
+            "style": "edge_label",
+            "box": {
+              "x": 483.5,
+              "y": 481,
+              "w": 98,
+              "h": 16
+            },
+            "lines": 1
+          }
+        ]
+      },
+      {
+        "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+        "groupNodeId": "fan",
+        "role": "footer",
+        "box": {
+          "x": 469.5,
+          "y": 2284,
+          "w": 455,
+          "h": 163
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+            "text": "gather · All succeed",
+            "style": "node_label",
+            "box": {
+              "x": 483.5,
+              "y": 2294,
+              "w": 126,
+              "h": 19
+            },
+            "lines": 1
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+            "text": "wait for remaining · results",
+            "style": "edge_label",
+            "box": {
+              "x": 483.5,
+              "y": 2315,
+              "w": 141,
+              "h": 16
+            },
+            "lines": 1
+          }
+        ],
+        "overlayBox": {
+          "x": 483.5,
+          "y": 2333,
+          "w": 138,
+          "h": 104
+        }
+      },
+      {
+        "id": "[\"group\",\"fan\",\"lane\",\"second\"]",
+        "groupNodeId": "fan",
+        "taskKey": "second",
+        "role": "lane",
+        "box": {
+          "x": 72,
+          "y": 619,
+          "w": 843,
+          "h": 1561
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"second\\\"]\",\"caption\"]",
+            "text": "task 1 · second",
+            "style": "node_type",
+            "box": {
+              "x": 86,
+              "y": 629,
+              "w": 101,
+              "h": 15
+            },
+            "lines": 1
+          }
+        ],
+        "overlayBox": {
+          "x": 86,
+          "y": 646,
+          "w": 124,
+          "h": 84
+        }
+      },
+      {
+        "id": "[\"group\",\"a\",\"container\",\"\"]",
+        "groupNodeId": "a",
+        "role": "container",
+        "box": {
+          "x": 144,
+          "y": 872,
+          "w": 699,
+          "h": 811
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+            "text": "Parallel workflows · all succeed",
+            "style": "edge_label",
+            "box": {
+              "x": 158,
+              "y": 882,
+              "w": 166,
+              "h": 16
+            },
+            "lines": 1
+          }
+        ]
+      },
+      {
+        "id": "[\"node\",\"a\"]",
+        "groupNodeId": "a",
+        "role": "header",
+        "box": {
+          "x": 374,
+          "y": 952,
+          "w": 239,
+          "h": 130
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"a\\\"]\",\"fanout\"]",
+            "text": "fan-out",
+            "style": "node_type",
+            "box": {
+              "x": 388,
+              "y": 1039,
+              "w": 55,
+              "h": 15
+            },
+            "lines": 1
+          },
+          {
+            "key": "[\"text\",\"[\\\"node\\\",\\\"a\\\"]\",\"metadata\"]",
+            "text": "2 tasks · workflows",
+            "style": "edge_label",
+            "box": {
+              "x": 388,
+              "y": 1056,
+              "w": 103,
+              "h": 16
+            },
+            "lines": 1
+          }
+        ]
+      },
+      {
+        "id": "[\"group\",\"a\",\"footer\",\"\"]",
+        "groupNodeId": "a",
+        "role": "footer",
+        "box": {
+          "x": 374,
+          "y": 1488,
+          "w": 239,
+          "h": 163
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+            "text": "gather · All succeed",
+            "style": "node_label",
+            "box": {
+              "x": 388,
+              "y": 1498,
+              "w": 126,
+              "h": 19
+            },
+            "lines": 1
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+            "text": "wait for remaining · results",
+            "style": "edge_label",
+            "box": {
+              "x": 388,
+              "y": 1519,
+              "w": 141,
+              "h": 16
+            },
+            "lines": 1
+          }
+        ],
+        "overlayBox": {
+          "x": 388,
+          "y": 1537,
+          "w": 138,
+          "h": 104
+        }
+      },
+      {
+        "id": "[\"group\",\"a\",\"task\",\"second\"]",
+        "groupNodeId": "a",
+        "taskKey": "second",
+        "role": "task",
+        "box": {
+          "x": 176.5,
+          "y": 1194,
+          "w": 305,
+          "h": 204
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"caption\"]",
+            "text": "task 1 · second",
+            "style": "node_type",
+            "box": {
+              "x": 190.5,
+              "y": 1204,
+              "w": 101,
+              "h": 15
+            },
+            "lines": 1
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"title\"]",
+            "text": "Überprüfe sämtliche Abhängigkeiten 🧪 審查",
+            "style": "node_label",
+            "box": {
+              "x": 190.5,
+              "y": 1221,
+              "w": 241,
+              "h": 37
+            },
+            "lines": 2
+          }
+        ],
+        "overlayBox": {
+          "x": 190.5,
+          "y": 1260,
+          "w": 124,
+          "h": 84
+        }
+      },
+      {
+        "id": "[\"group\",\"a\",\"task\",\"first\"]",
+        "groupNodeId": "a",
+        "taskKey": "first",
+        "role": "task",
+        "box": {
+          "x": 505.5,
+          "y": 1194,
+          "w": 305,
+          "h": 204
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"caption\"]",
+            "text": "task 2 · first",
+            "style": "node_type",
+            "box": {
+              "x": 519.5,
+              "y": 1204,
+              "w": 87,
+              "h": 15
+            },
+            "lines": 1
+          },
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"title\"]",
+            "text": "Überprüfe sämtliche Abhängigkeiten 🧪 審查",
+            "style": "node_label",
+            "box": {
+              "x": 519.5,
+              "y": 1221,
+              "w": 241,
+              "h": 37
+            },
+            "lines": 2
+          }
+        ],
+        "overlayBox": {
+          "x": 519.5,
+          "y": 1260,
+          "w": 124,
+          "h": 84
+        }
+      },
+      {
+        "id": "[\"group\",\"fan\",\"lane\",\"first\"]",
+        "groupNodeId": "fan",
+        "taskKey": "first",
+        "role": "lane",
+        "box": {
+          "x": 939,
+          "y": 619,
+          "w": 383,
+          "h": 1561
+        },
+        "texts": [
+          {
+            "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"first\\\"]\",\"caption\"]",
+            "text": "task 2 · first",
+            "style": "node_type",
+            "box": {
+              "x": 953,
+              "y": 629,
+              "w": 87,
+              "h": 15
+            },
+            "lines": 1
+          }
+        ],
+        "overlayBox": {
+          "x": 953,
+          "y": 646,
+          "w": 124,
+          "h": 84
+        }
+      }
+    ],
+    "groupLanes": [
+      {
+        "groupNodeId": "fan",
+        "taskKey": "second",
+        "box": {
+          "x": 72,
+          "y": 619,
+          "w": 843,
+          "h": 1561
+        },
+        "nodeIds": [
+          "a",
+          "inner-done",
+          "inner-oops"
+        ]
+      },
+      {
+        "groupNodeId": "a",
+        "taskKey": "second",
+        "box": {
+          "x": 176.5,
+          "y": 1194,
+          "w": 305,
+          "h": 204
+        },
+        "nodeIds": []
+      },
+      {
+        "groupNodeId": "a",
+        "taskKey": "first",
+        "box": {
+          "x": 505.5,
+          "y": 1194,
+          "w": 305,
+          "h": 204
+        },
+        "nodeIds": []
+      },
+      {
+        "groupNodeId": "fan",
+        "taskKey": "first",
+        "box": {
+          "x": 939,
+          "y": 619,
+          "w": 383,
+          "h": 1561
+        },
+        "nodeIds": [
+          "b"
+        ]
+      }
+    ],
+    "groupConnectors": [
+      {
+        "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "groupNodeId": "fan",
+        "taskKey": "second",
+        "kind": "sink",
+        "sourceElementId": "[\"node\",\"inner-done\"]",
+        "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+        "points": [
+          {
+            "x": 346,
+            "y": 2108
+          },
+          {
+            "x": 346,
+            "y": 2122
+          },
+          {
+            "x": 673,
+            "y": 2122
+          },
+          {
+            "x": 673,
+            "y": 2284
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"node\",\"inner-done\"]",
+          "side": "bottom",
+          "point": {
+            "x": 346,
+            "y": 2108
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "side": "top",
+          "point": {
+            "x": 673,
+            "y": 2284
+          }
+        }
+      },
+      {
+        "id": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "groupNodeId": "fan",
+        "taskKey": "second",
+        "kind": "sink",
+        "sourceElementId": "[\"node\",\"inner-oops\"]",
+        "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+        "points": [
+          {
+            "x": 641,
+            "y": 2108
+          },
+          {
+            "x": 641,
+            "y": 2256
+          },
+          {
+            "x": 697,
+            "y": 2256
+          },
+          {
+            "x": 697,
+            "y": 2284
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"node\",\"inner-oops\"]",
+          "side": "bottom",
+          "point": {
+            "x": 641,
+            "y": 2108
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "side": "top",
+          "point": {
+            "x": 697,
+            "y": 2284
+          }
+        }
+      },
+      {
+        "id": "[\"connector\",\"fan\",\"sink\",\"first\",\"[\\\"node\\\",\\\"b\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "groupNodeId": "fan",
+        "taskKey": "first",
+        "kind": "sink",
+        "sourceElementId": "[\"node\",\"b\"]",
+        "targetElementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+        "points": [
+          {
+            "x": 1130.5,
+            "y": 967
+          },
+          {
+            "x": 1130.5,
+            "y": 2242
+          },
+          {
+            "x": 721,
+            "y": 2242
+          },
+          {
+            "x": 721,
+            "y": 2284
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"node\",\"b\"]",
+          "side": "bottom",
+          "point": {
+            "x": 1130.5,
+            "y": 967
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"fan\",\"footer\",\"\"]",
+          "side": "top",
+          "point": {
+            "x": 721,
+            "y": 2284
+          }
+        }
+      },
+      {
+        "id": "[\"connector\",\"a\",\"fanout\",\"second\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\"]",
+        "groupNodeId": "a",
+        "taskKey": "second",
+        "kind": "fanout",
+        "sourceElementId": "[\"node\",\"a\"]",
+        "targetElementId": "[\"group\",\"a\",\"task\",\"second\"]",
+        "points": [
+          {
+            "x": 481.5,
+            "y": 1082
+          },
+          {
+            "x": 481.5,
+            "y": 1096
+          },
+          {
+            "x": 329,
+            "y": 1096
+          },
+          {
+            "x": 329,
+            "y": 1194
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"node\",\"a\"]",
+          "side": "bottom",
+          "point": {
+            "x": 481.5,
+            "y": 1082
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"a\",\"task\",\"second\"]",
+          "side": "top",
+          "point": {
+            "x": 329,
+            "y": 1194
+          }
+        }
+      },
+      {
+        "id": "[\"connector\",\"a\",\"gather\",\"second\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"second\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "groupNodeId": "a",
+        "taskKey": "second",
+        "kind": "gather",
+        "sourceElementId": "[\"group\",\"a\",\"task\",\"second\"]",
+        "targetElementId": "[\"group\",\"a\",\"footer\",\"\"]",
+        "points": [
+          {
+            "x": 329,
+            "y": 1398
+          },
+          {
+            "x": 329,
+            "y": 1412
+          },
+          {
+            "x": 481.5,
+            "y": 1412
+          },
+          {
+            "x": 481.5,
+            "y": 1488
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"a\",\"task\",\"second\"]",
+          "side": "bottom",
+          "point": {
+            "x": 329,
+            "y": 1398
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+          "side": "top",
+          "point": {
+            "x": 481.5,
+            "y": 1488
+          }
+        }
+      },
+      {
+        "id": "[\"connector\",\"a\",\"fanout\",\"first\",\"[\\\"node\\\",\\\"a\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\"]",
+        "groupNodeId": "a",
+        "taskKey": "first",
+        "kind": "fanout",
+        "sourceElementId": "[\"node\",\"a\"]",
+        "targetElementId": "[\"group\",\"a\",\"task\",\"first\"]",
+        "points": [
+          {
+            "x": 505.5,
+            "y": 1082
+          },
+          {
+            "x": 505.5,
+            "y": 1110
+          },
+          {
+            "x": 658,
+            "y": 1110
+          },
+          {
+            "x": 658,
+            "y": 1194
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"node\",\"a\"]",
+          "side": "bottom",
+          "point": {
+            "x": 505.5,
+            "y": 1082
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"a\",\"task\",\"first\"]",
+          "side": "top",
+          "point": {
+            "x": 658,
+            "y": 1194
+          }
+        }
+      },
+      {
+        "id": "[\"connector\",\"a\",\"gather\",\"first\",\"[\\\"group\\\",\\\"a\\\",\\\"task\\\",\\\"first\\\"]\",\"[\\\"group\\\",\\\"a\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "groupNodeId": "a",
+        "taskKey": "first",
+        "kind": "gather",
+        "sourceElementId": "[\"group\",\"a\",\"task\",\"first\"]",
+        "targetElementId": "[\"group\",\"a\",\"footer\",\"\"]",
+        "points": [
+          {
+            "x": 658,
+            "y": 1398
+          },
+          {
+            "x": 658,
+            "y": 1412
+          },
+          {
+            "x": 505.5,
+            "y": 1412
+          },
+          {
+            "x": 505.5,
+            "y": 1488
+          }
+        ],
+        "sourceAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"a\",\"task\",\"first\"]",
+          "side": "bottom",
+          "point": {
+            "x": 658,
+            "y": 1398
+          }
+        },
+        "targetAttach": {
+          "nodeId": "",
+          "elementId": "[\"group\",\"a\",\"footer\",\"\"]",
+          "side": "top",
+          "point": {
+            "x": 505.5,
+            "y": 1488
+          }
+        }
+      }
+    ],
+    "groupCrossings": [
+      {
+        "point": {
+          "x": 673,
+          "y": 2256
+        },
+        "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]"
+      },
+      {
+        "point": {
+          "x": 641,
+          "y": 2122
+        },
+        "over": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-done\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]",
+        "under": "[\"connector\",\"fan\",\"sink\",\"second\",\"[\\\"node\\\",\\\"inner-oops\\\"]\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\"]"
+      }
+    ],
+    "canvas": {
+      "x": 0,
+      "y": 0,
+      "w": 1394,
+      "h": 2944
+    }
+  },
+  "workflowNodeTypes": {
+    "a": "parallel_group",
+    "b": "script",
+    "done": "script",
+    "fan": "parallel_group",
+    "inner-done": "script",
+    "inner-oops": "script",
+    "oops": "script",
+    "start": "script"
+  },
+  "workflowGroups": {
+    "groups": {
+      "a": {
+        "nodeId": "a",
+        "config": {
+          "form": "workflows",
+          "tasks": [
+            {
+              "key": "second",
+              "workflow": "Überprüfe sämtliche Abhängigkeiten 🧪 審查",
+              "inputs": {
+                "nested": {
+                  "values": [
+                    "original"
+                  ]
+                }
+              }
+            },
+            {
+              "key": "first",
+              "workflow": "Überprüfe sämtliche Abhängigkeiten 🧪 審查"
+            }
+          ],
+          "completionRule": "all_succeed",
+          "unfinishedBehavior": "wait_for_remaining",
+          "gatherMode": "results"
+        },
+        "parent": {
+          "groupNodeId": "fan",
+          "taskKey": "second"
+        },
+        "bodies": {},
+        "nested": [],
+        "successTarget": "inner-done",
+        "failureTarget": "inner-oops"
+      },
+      "fan": {
+        "nodeId": "fan",
+        "config": {
+          "form": "branches",
+          "tasks": [
+            {
+              "key": "second",
+              "entry": "a",
+              "inputs": {
+                "nested": {
+                  "values": [
+                    "original"
+                  ]
+                }
+              }
+            },
+            {
+              "key": "first",
+              "entry": "b"
+            }
+          ],
+          "completionRule": "all_succeed",
+          "unfinishedBehavior": "wait_for_remaining",
+          "gatherMode": "results"
+        },
+        "bodies": {
+          "first": [
+            "b"
+          ],
+          "second": [
+            "a",
+            "inner-done",
+            "inner-oops"
+          ]
+        },
+        "nested": [
+          "a"
+        ],
+        "successTarget": "done",
+        "failureTarget": "oops"
+      }
+    },
+    "owner": {
+      "a": {
+        "groupNodeId": "fan",
+        "taskKey": "second"
+      },
+      "b": {
+        "groupNodeId": "fan",
+        "taskKey": "first"
+      },
+      "inner-done": {
+        "groupNodeId": "fan",
+        "taskKey": "second"
+      },
+      "inner-oops": {
+        "groupNodeId": "fan",
+        "taskKey": "second"
+      }
+    },
+    "order": [
+      "fan",
+      "a"
+    ]
+  },
+  "states": [
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "waiting",
+    "skipped",
+    "selected"
+  ]
+}

@@ -72,10 +72,6 @@ func (r *mockWorkflowRepo) List(_ context.Context, s workflow.Scope) ([]workflow
 	return summaries, nil
 }
 
-func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
-	return nil
-}
-
 func (r *mockWorkflowRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return nil
 }
@@ -117,9 +113,6 @@ func (r *errWorkflowRepo) Load(_ context.Context, _ workflow.Scope, _ string) (*
 }
 func (r *errWorkflowRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	return nil, r.err
-}
-func (r *errWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
-	return r.err
 }
 func (r *errWorkflowRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return r.err
@@ -802,29 +795,8 @@ func TestWorkflowHandler_Validate_InternalError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: configurable mocks for SaveLayout / Stats
+// Helpers: configurable mocks for Stats
 // ---------------------------------------------------------------------------
-
-// capturingWorkflowRepo records the positions passed to SaveNodePositions.
-type capturingWorkflowRepo struct {
-	mockWorkflowRepo
-	savedPositions map[string]workflow.NodePosition
-	saveErr        error
-}
-
-func newCapturingWorkflowRepo() *capturingWorkflowRepo {
-	return &capturingWorkflowRepo{
-		mockWorkflowRepo: *newMockWorkflowRepo(),
-	}
-}
-
-func (r *capturingWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, name string, positions map[string]workflow.NodePosition) error {
-	if r.saveErr != nil {
-		return r.saveErr
-	}
-	r.savedPositions = positions
-	return nil
-}
 
 // statsInstanceRepo wraps mockInstanceRepo with a configurable Stats implementation.
 type statsInstanceRepo struct {
@@ -837,106 +809,6 @@ func (r *statsInstanceRepo) Stats(ctx context.Context, workflowName string, from
 		return r.statsFn(ctx, workflowName, from, to)
 	}
 	return &instance.WorkflowStats{}, nil
-}
-
-// ---------------------------------------------------------------------------
-// Tests: SaveLayout
-// ---------------------------------------------------------------------------
-
-func TestWorkflowHandler_SaveLayout(t *testing.T) {
-	t.Run("saves positions and returns 200", func(t *testing.T) {
-		repo := newCapturingWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
-
-		body := `{"positions":{"A":{"x":100,"y":200},"B":{"x":300,"y":400}}}`
-		req := httptest.NewRequest(http.MethodPut, "/workflows/test-wf/layout", strings.NewReader(body))
-		req = withChiURLParam(req, "name", "test-wf")
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		h.SaveLayout(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		var resp map[string]string
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		assert.Equal(t, "saved", resp["status"])
-		assert.InDelta(t, 100.0, repo.savedPositions["A"].X, 0.001)
-		assert.InDelta(t, 200.0, repo.savedPositions["A"].Y, 0.001)
-	})
-
-	t.Run("returns 400 for empty positions map", func(t *testing.T) {
-		repo := newCapturingWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
-
-		body := `{"positions":{}}`
-		req := httptest.NewRequest(http.MethodPut, "/workflows/test-wf/layout", strings.NewReader(body))
-		req = withChiURLParam(req, "name", "test-wf")
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		h.SaveLayout(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		var resp adapthttp.ErrorResponse
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		assert.Equal(t, "BAD_REQUEST", resp.Code)
-	})
-
-	t.Run("returns 400 for invalid JSON body", func(t *testing.T) {
-		repo := newCapturingWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
-
-		req := httptest.NewRequest(http.MethodPut, "/workflows/test-wf/layout", strings.NewReader("{not json"))
-		req = withChiURLParam(req, "name", "test-wf")
-		w := httptest.NewRecorder()
-		h.SaveLayout(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("returns 404 when repo returns not-found error", func(t *testing.T) {
-		repo := newCapturingWorkflowRepo()
-		repo.saveErr = fmt.Errorf("%w: test-wf", workflow.ErrNotFound)
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
-
-		body := `{"positions":{"A":{"x":10,"y":20}}}`
-		req := httptest.NewRequest(http.MethodPut, "/workflows/test-wf/layout", strings.NewReader(body))
-		req = withChiURLParam(req, "name", "test-wf")
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		h.SaveLayout(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		var resp adapthttp.ErrorResponse
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		assert.Equal(t, "NOT_FOUND", resp.Code)
-	})
-
-	t.Run("returns 500 when repo returns unexpected error", func(t *testing.T) {
-		repo := newCapturingWorkflowRepo()
-		repo.saveErr = fmt.Errorf("disk full")
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
-
-		body := `{"positions":{"A":{"x":10,"y":20}}}`
-		req := httptest.NewRequest(http.MethodPut, "/workflows/test-wf/layout", strings.NewReader(body))
-		req = withChiURLParam(req, "name", "test-wf")
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		h.SaveLayout(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-
-	t.Run("returns 404 for unsafe workflow name with path separator", func(t *testing.T) {
-		repo := newCapturingWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
-
-		body := `{"positions":{"A":{"x":10,"y":20}}}`
-		req := httptest.NewRequest(http.MethodPut, "/workflows/../secret/layout", strings.NewReader(body))
-		req = withChiURLParam(req, "name", "../secret")
-		w := httptest.NewRecorder()
-		h.SaveLayout(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
 }
 
 // ---------------------------------------------------------------------------
@@ -2292,4 +2164,43 @@ func TestWorkflowHandler_Copy_SharedMissing_NotFound(t *testing.T) {
 	h.Copy(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func (r *mockWorkflowRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	source, ok := r.bucket(src)[srcName]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, exists := r.bucket(dst)[dstName]; exists && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	data, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	copied.Name = dstName
+	if err := stamp(&copied); err != nil {
+		return err
+	}
+	data, err = json.Marshal(&copied)
+	if err != nil {
+		return err
+	}
+	var saved workflow.Workflow
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return err
+	}
+	r.bucket(dst)[dstName] = &saved
+	return nil
+}
+
+func (r *errWorkflowRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	return r.err
 }

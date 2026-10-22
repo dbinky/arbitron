@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,43 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSetupLogging_ConsoleUsesStderrOnly(t *testing.T) {
+	stdout, outWriter, err := os.Pipe()
+	require.NoError(t, err)
+	stderr, errWriter, err := os.Pipe()
+	require.NoError(t, err)
+	priorOut, priorErr, priorLogger := os.Stdout, os.Stderr, slog.Default()
+	os.Stdout, os.Stderr = outWriter, errWriter
+	t.Cleanup(func() {
+		os.Stdout, os.Stderr = priorOut, priorErr
+		slog.SetDefault(priorLogger)
+		stdout.Close()
+		stderr.Close()
+		outWriter.Close()
+		errWriter.Close()
+	})
+	path := filepath.Join(t.TempDir(), "console.log")
+	logger, closer, err := SetupLogging(config.LoggingConfig{Level: "info", File: path})
+	require.NoError(t, err)
+	logger.Info("protocol-safe console", "label", "并行\nsecond line")
+	require.NoError(t, closer.Close())
+	require.NoError(t, outWriter.Close())
+	require.NoError(t, errWriter.Close())
+	out, err := io.ReadAll(stdout)
+	require.NoError(t, err)
+	console, err := io.ReadAll(stderr)
+	require.NoError(t, err)
+	require.Empty(t, string(out), "stdout belongs exclusively to the protocol")
+	require.Contains(t, string(console), "protocol-safe console")
+	require.Contains(t, string(console), "level=INFO")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(data, &entry))
+	require.Equal(t, "protocol-safe console", entry["msg"])
+	require.Equal(t, "并行\nsecond line", entry["label"])
+}
 
 func TestSetupLogging_CreatesLogFileWithJSONEntries(t *testing.T) {
 	dir := t.TempDir()

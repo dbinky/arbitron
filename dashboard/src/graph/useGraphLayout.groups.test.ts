@@ -213,9 +213,8 @@ describe('useGraphLayout — groups with stored positions', () => {
   at('done', 0, 1100)
   at('oops', 300, 1100)
 
-  it('keeps saved positions, puts the header at the group node and needs no auto-save', () => {
-    const { byId, needsAutoSave } = layout(positioned, mixedEdges, mixedGraph)
-    expect(needsAutoSave).toBe(false)
+  it('keeps saved positions and puts the header at the group node', () => {
+    const { byId } = layout(positioned, mixedEdges, mixedGraph)
     expect(byId.get('a1')!.position).toEqual({ x: -300, y: 330 })
     expect(byId.get(groupHeaderId('g1'))!.position).toEqual({ x: 0, y: 150 })
     expect(byId.get(groupHeaderId('w1'))!.position).toEqual({ x: 300, y: 330 })

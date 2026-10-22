@@ -1,0 +1,91 @@
+{
+  "rendered": true,
+  "findings": [],
+  "evidence": {
+    "geometryDigest": "fe8e0fd6206596da635710b99e9a0f6ba9e286fd3ec58a4e66ddd5cf9d957823",
+    "rendererVersion": "arranged-renderer/2",
+    "contract": {
+      "version": "arranged-renderer/2",
+      "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+      "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+      "nodeLabelFontPx": 13,
+      "nodeLabelWeight": 600,
+      "nodeTypeFontPx": 10,
+      "nodeTypeWeight": 700,
+      "edgeLabelFontPx": 11,
+      "edgeLabelWeight": 500,
+      "lineHeight": 1.35,
+      "nodePaddingX": 12,
+      "nodePaddingY": 8,
+      "nodeBorderPx": 2,
+      "nodeTypeBarPx": 4,
+      "nodeTextGapPx": 2,
+      "nodeMinWidth": 180,
+      "nodeTextMaxWidth": 240,
+      "edgeLabelPaddingX": 6,
+      "edgeLabelPaddingY": 3,
+      "edgeLabelMaxWidth": 160,
+      "strokePx": 2,
+      "arrowPx": 10,
+      "crossingTreatment": "gap",
+      "crossingGapPx": 10,
+      "forwardColor": "#8a8ab0",
+      "loopReturnColor": "#7c8cf5",
+      "loopReturnDash": "6 4",
+      "practicalZoom": 0.9,
+      "minReadableTextPx": 9,
+      "minContrastRatio": 4.5,
+      "minClearancePx": 4,
+      "groupPaddingPx": 32,
+      "groupTaskGapPx": 24,
+      "groupRowGapPx": 48,
+      "groupMinWidth": 200,
+      "groupHeaderMinHeight": 80,
+      "groupFooterMinHeight": 80,
+      "groupTaskMinHeight": 96,
+      "groupConnectorDash": "3 3"
+    },
+    "fontsReady": true,
+    "zoom": 0.9,
+    "tiles": 2,
+    "artifacts": [
+      {
+        "kind": "overview",
+        "path": "overview.png",
+        "sha256": "cbd7439607e319ee487cdf86a5911a47552365b88daf3b6b9e7a2696d97a314d",
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 779,
+          "h": 1461
+        },
+        "scale": 0.9
+      },
+      {
+        "kind": "tile",
+        "path": "tile-000.png",
+        "sha256": "ad13f90c5792197d9f36679ab8a5f6e72925970c5370d5ebce5f8d1e9cdc33f0",
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 779,
+          "h": 1111.111111111111
+        },
+        "scale": 0.9
+      },
+      {
+        "kind": "tile",
+        "path": "tile-001.png",
+        "sha256": "e36d3683f9b57ec59c0cb587b0021f0dd013f254a6ea93161d21df03c9af6c07",
+        "region": {
+          "x": 0,
+          "y": 349.8888888888889,
+          "w": 779,
+          "h": 1111.111111111111
+        },
+        "scale": 0.9
+      }
+    ],
+    "reviewedAt": "2026-10-20T13:14:53.227663Z"
+  }
+}

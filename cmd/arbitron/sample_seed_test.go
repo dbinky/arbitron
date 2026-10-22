@@ -51,7 +51,7 @@ func TestSeedSampleWorkflows_BootIntegration(t *testing.T) {
 	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if err := seedSampleWorkflows(context.Background(), srcRoot, wsRoot, repo, pub, owner, logger); err != nil {
+	if err := seedSampleWorkflows(context.Background(), srcRoot, wsRoot, repo, pub, nil, nil, nil, owner, logger); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestSeedSampleWorkflows_BootIntegration(t *testing.T) {
 	}
 
 	// Second run is a no-op (ledger): no duplicate publication.
-	if err := seedSampleWorkflows(context.Background(), srcRoot, wsRoot, repo, pub, owner, logger); err != nil {
+	if err := seedSampleWorkflows(context.Background(), srcRoot, wsRoot, repo, pub, nil, nil, nil, owner, logger); err != nil {
 		t.Fatalf("second seed: %v", err)
 	}
 	if len(pub.names) != 1 {

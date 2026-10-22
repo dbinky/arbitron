@@ -1,8 +1,12 @@
 package mcp_test
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,4 +169,75 @@ func TestServer_Listen_ContextCancellation(t *testing.T) {
 			t.Fatal("Listen did not return after context cancellation")
 		}
 	})
+}
+
+// Cancellation with stdin still open must join an in-flight tool. Otherwise
+// the caller can close its DB/log before the handler finishes or writes its
+// response. The handler deliberately holds its cleanup after seeing cancellation.
+func TestServer_Listen_CancellationJoinsToolWithInputOpen(t *testing.T) {
+	srv := adaptmcp.NewServer("test", "0.0.0")
+	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	srv.AddTool(gomcp.NewTool("held"), func(ctx context.Context, _ gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		close(entered)
+		<-ctx.Done()
+		close(cancelled)
+		<-release
+		return gomcp.NewToolResultError("cancelled and joined"), nil
+	})
+	input, writer, err := os.Pipe()
+	require.NoError(t, err)
+	output, sink, err := os.Pipe()
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() { defer close(finished); done <- srv.Listen(ctx, input, sink) }()
+	var releaseOnce sync.Once
+	t.Cleanup(func() {
+		cancel()
+		releaseOnce.Do(func() { close(release) })
+		writer.Close()
+		<-finished
+		input.Close()
+		sink.Close()
+		output.Close()
+	})
+	_, err = io.WriteString(writer, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"held","arguments":{}}}`+"\n")
+	require.NoError(t, err)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("tool did not start")
+	}
+	cancel() // no EOF: keep writer open through Listen's return
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller cancellation did not reach the tool")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Listen returned before tool cleanup: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Listen failed to join with input still open")
+	}
+	// Drain the one completed response, then send more input AFTER the caller
+	// may safely close its resources. No request may be processed at that point.
+	scanner := bufio.NewScanner(output)
+	require.True(t, scanner.Scan())
+	var frame map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(scanner.Bytes(), &frame))
+	require.JSONEq(t, "1", string(frame["id"]))
+	require.Contains(t, string(frame["result"]), "cancelled and joined")
+	_, err = io.WriteString(writer, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`+"\n")
+	require.NoError(t, err)
+	require.NoError(t, sink.Close())
+	require.False(t, scanner.Scan(), "response after Listen returned: %s", scanner.Text())
+	require.NoError(t, scanner.Err())
 }

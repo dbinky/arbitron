@@ -1,3 +1,5 @@
+import type { Presentation } from './arranged/types'
+
 /** Trace-derived states plus the owning context's aggregate execution state. */
 export type NodeExecutionState =
   | 'pending'
@@ -36,4 +38,6 @@ export interface WorkflowDefinition {
   edges: WorkflowEdge[]
   inputs?: Array<{ name: string; type: string; description: string; default?: unknown; required: boolean }>
   defaultErrorBehavior?: Record<string, unknown>
+  /** Server-stamped saved revision; absent for pre-feature saves. */
+  presentation?: Presentation
 }

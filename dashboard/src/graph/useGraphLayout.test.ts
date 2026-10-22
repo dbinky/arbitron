@@ -12,11 +12,10 @@ const node = (id: string): WorkflowNode => ({
 })
 
 describe('useGraphLayout — error/invalid: empty nodes list', () => {
-  it('returns empty arrays and needsAutoSave=false when nodes is empty', () => {
+  it('returns empty arrays when nodes is empty', () => {
     const { result } = renderHook(() => useGraphLayout({ nodes: [], edges: [] }))
     expect(result.current.rfNodes).toEqual([])
     expect(result.current.rfEdges).toEqual([])
-    expect(result.current.needsAutoSave).toBe(false)
   })
 })
 
@@ -93,14 +92,13 @@ describe('useGraphLayout — single loop (dagre branch, no stored positions)', (
 })
 
 describe('useGraphLayout — stored positions branch', () => {
-  it('derives a container without changing node positions or needsAutoSave', () => {
+  it('derives a container without changing node positions', () => {
     const nodes: WorkflowNode[] = [
       { ...node('b'), position: { x: 100, y: 0 } },
       { ...node('c'), position: { x: 100, y: 200 } },
     ]
     const edges: WorkflowEdge[] = [{ source: 'b', target: 'c', label: 'again' }, { source: 'c', target: 'b' }]
     const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
-    expect(result.current.needsAutoSave).toBe(false)
     const b = result.current.rfNodes.find((n) => n.id === 'b')!
     expect(b.position).toEqual({ x: 100, y: 0 })
     expect(result.current.rfNodes.some((n) => n.type === 'loopContainer')).toBe(true)
@@ -298,5 +296,34 @@ describe('useGraphLayout — referential stability (regression: WorkflowReview b
 
     expect(result.current.rfNodes).toBe(firstNodes)
     expect(result.current.rfEdges).toBe(firstEdges)
+  })
+})
+
+describe('useGraphLayout — positions input', () => {
+  const edges: WorkflowEdge[] = [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }]
+  it('uses complete supplied positions instead of partial or complete manifest positions', () => {
+    const positions = { a: { x: 900, y: 0 }, b: { x: 900, y: 120 }, c: { x: 900, y: 240 } }
+    const nodes = [{ ...node('a'), position: { x: 5, y: 5 } }, node('b'), node('c')]
+    const { result, rerender } = renderHook(({ nodes, positions }) => useGraphLayout({ nodes, edges, positions }), {
+      initialProps: { nodes, positions },
+    })
+    expect(Object.fromEntries(result.current.rfNodes.map(n => [n.id, n.position]))).toEqual(positions)
+    rerender({ nodes: nodes.map(n => ({ ...n, position: { x: 1, y: 2 } })), positions })
+    expect(result.current.rfNodes.find(n => n.id === 'b')!.position).toEqual(positions.b)
+    const moved = { ...positions, b: { x: 300, y: 600 } }
+    rerender({ nodes, positions: moved })
+    expect(result.current.rfNodes.find(n => n.id === 'b')!.position).toEqual(moved.b)
+  })
+  it.each<Record<string, { x: number; y: number }>>([{}, { a: { x: 7777, y: 7777 } }, {
+    a: { x: 0, y: 0 }, b: { x: NaN, y: 0 }, c: { x: 0, y: Infinity },
+  }])('ignores incomplete/nonfinite maps: %j', positions => {
+    const nodes = [node('a'), node('b'), node('c')]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges, positions }))
+    const { result: dagre } = renderHook(() => useGraphLayout({ nodes, edges }))
+    expect(result.current.rfNodes).toEqual(dagre.current.rfNodes)
+  })
+  it('does not report needsAutoSave for display-only fallback', () => {
+    const { result } = renderHook(() => useGraphLayout({ nodes: [node('a')], edges: [] }))
+    expect('needsAutoSave' in result.current).toBe(false)
   })
 })

@@ -19,6 +19,7 @@ import type {
   WorkflowSummary,
 } from './types'
 import type { WorkflowDefinition } from '../graph/types'
+import type { LayoutView, RetryAck } from '../graph/arranged/types'
 
 /** Parameters for listing instances. */
 export interface ListInstancesParams {
@@ -86,8 +87,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText
     try {
-      const body = (await res.json()) as { message?: string }
-      if (body.message) detail = body.message
+      const body: unknown = await res.json()
+      if (typeof body === 'object' && body !== null) {
+        const { error, message } = body as { error?: unknown; message?: unknown }
+        if (typeof error === 'string' && error.trim()) detail = error
+        else if (typeof message === 'string' && message.trim()) detail = message
+      }
     } catch {
       // ignore parse errors
     }
@@ -217,6 +222,16 @@ export const api = {
       return request(`/api/v1/instances/${id}/variables`)
     },
 
+    /** Read arrangement status for the instance's immutable snapshot revision. */
+    getLayout(id: string, signal?: AbortSignal): Promise<LayoutView> {
+      return request(`/api/v1/instances/${id}/layout`, signal ? { signal } : undefined)
+    },
+
+    /** Acknowledge an asynchronous retry of the expected snapshot revision. */
+    retryLayout(id: string, expectedRevision: string): Promise<RetryAck> {
+      return post(`/api/v1/instances/${id}/layout/retry`, { expectedRevision })
+    },
+
     /** Authorized aggregate of this instance and its visible descendants. */
     graphState(id: string, signal?: AbortSignal): Promise<GraphState> {
       return request<GraphState>(`/api/v1/instances/${id}/graph-state`, signal ? { signal } : undefined).then(normalizeGraphState)
@@ -246,12 +261,14 @@ export const api = {
       })
     },
 
-    /** Save node positions for a workflow layout. */
-    saveLayout(
-      name: string,
-      positions: Record<string, { x: number; y: number }>,
-    ): Promise<void> {
-      return put(`/api/v1/workflows/${name}/layout`, { positions })
+    /** Read arrangement status for the workflow's current saved revision. */
+    getLayout(name: string, signal?: AbortSignal): Promise<LayoutView> {
+      return request(`/api/v1/workflows/${name}/layout`, signal ? { signal } : undefined)
+    },
+
+    /** Acknowledge a retry; a concurrent authoring save makes the token stale. */
+    retryLayout(name: string, expectedRevision: string): Promise<RetryAck> {
+      return post(`/api/v1/workflows/${name}/layout/retry`, { expectedRevision })
     },
 
     /** Static group ownership analysis of a workflow definition. */

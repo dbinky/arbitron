@@ -8,7 +8,8 @@ const fitBoundsSpy = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
 
 // React Flow stub: every rendered node becomes a clickable div exposing its
 // type and execution state, so the test reads what the graph would highlight.
-vi.mock('@xyflow/react', () => ({
+vi.mock('@xyflow/react', async () => ({
+  ...await vi.importActual<typeof import('@xyflow/react')>('@xyflow/react'),
   ReactFlow: (props: {
     nodes: Array<{ id: string; type?: string; selected?: boolean; position: { x: number; y: number }; data: Record<string, unknown> }>
     onNodeClick?: (e: unknown, n: unknown) => void
@@ -20,6 +21,8 @@ vi.mock('@xyflow/react', () => ({
           key={n.id}
           data-testid={`node-${n.id}`}
           data-type={n.type}
+          data-definition-node={String(n.data.definitionNodeId ?? n.id)}
+          data-layout-instance={n.data.layoutInstanceId as string | undefined}
           data-x={n.position.x}
           data-y={n.position.y}
           data-state={String(n.data.executionState ?? '')}
@@ -131,9 +134,9 @@ describe('QueueView live-run pane — aggregate graph (happy path + provenance)'
     const b = within(pane).getByTestId('node-b1')
     const ax = Number(a.getAttribute('data-x')), ay = Number(a.getAttribute('data-y'))
     const bx = Number(b.getAttribute('data-x')), by = Number(b.getAttribute('data-y'))
-    expect(fitBoundsSpy).toHaveBeenCalledWith({
+    await waitFor(() => expect(fitBoundsSpy).toHaveBeenCalledWith({
       x: Math.min(ax, bx), y: Math.min(ay, by), width: Math.abs(ax - bx) + 200, height: Math.abs(ay - by) + 80,
-    }, expect.objectContaining({ padding: 0.25 }))
+    }, expect.objectContaining({ padding: 0.25 })))
   })
 
   // The root's own cursor knows nothing of its branches: only the aggregate
@@ -391,18 +394,20 @@ describe('QueueView live-run pane — groups nested inside a child workflow', ()
     renderQueue()
     const pane = await openLivePane('p-nest')
 
-    expect(await within(pane).findByTestId('node-group:g:header')).toBeInTheDocument()
-    expect(within(pane).getByTestId('node-group:wf-x:g:header')).toBeInTheDocument()
-    await waitFor(() => expect(stateIn(pane, 'wf-x:a2')).toBe('running'))
-    expect(stateIn(pane, 'wf-x:b1')).toBe('running')
-    expect(stateIn(pane, 'wf-x:a1')).toBe('completed')
+    const node = (instanceId: string, nodeId: string, type = 'arbitronNode') => pane.querySelector<HTMLElement>(`[data-layout-instance="${instanceId}"][data-definition-node="${nodeId}"][data-type="${type}"]`)
+    await waitFor(() => expect(node('p-nest', 'g', 'groupHeader')).toBeInTheDocument())
+    expect(node('wf-x', 'g', 'groupHeader')).toBeInTheDocument()
+    await waitFor(() => expect(node('wf-x', 'a2')!.dataset.state).toBe('running'))
+    expect(node('wf-x', 'b1')!.dataset.state).toBe('running')
+    expect(node('wf-x', 'a1')!.dataset.state).toBe('completed')
   })
 
   it("selecting the nested header opens the CHILD's panel, and the active list names its running nodes", async () => {
     renderQueue()
     const pane = await openLivePane('p-nest')
 
-    fireEvent.click(await within(pane).findByTestId('node-group:wf-x:g:header'))
+    await waitFor(() => expect(pane.querySelector('[data-layout-instance="wf-x"][data-definition-node="g"][data-type="groupHeader"]')).toBeInTheDocument())
+    fireEvent.click(pane.querySelector('[data-layout-instance="wf-x"][data-definition-node="g"][data-type="groupHeader"]')!)
     const p = await within(pane).findByTestId('group-panel')
     expect(within(p).getByText('Fan out')).toBeInTheDocument()
     expect(within(p).getByTestId('group-task-row-a')).toBeInTheDocument()

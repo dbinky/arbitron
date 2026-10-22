@@ -1,0 +1,73 @@
+{
+  "contract": {
+    "version": "arranged-renderer/1",
+    "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+    "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+    "nodeLabelFontPx": 13,
+    "nodeLabelWeight": 600,
+    "nodeTypeFontPx": 10,
+    "nodeTypeWeight": 700,
+    "edgeLabelFontPx": 11,
+    "edgeLabelWeight": 500,
+    "lineHeight": 1.35,
+    "nodePaddingX": 12,
+    "nodePaddingY": 8,
+    "nodeBorderPx": 2,
+    "nodeTypeBarPx": 4,
+    "nodeTextGapPx": 2,
+    "nodeMinWidth": 180,
+    "nodeTextMaxWidth": 240,
+    "edgeLabelPaddingX": 6,
+    "edgeLabelPaddingY": 3,
+    "edgeLabelMaxWidth": 160,
+    "strokePx": 2,
+    "arrowPx": 10,
+    "crossingTreatment": "gap",
+    "crossingGapPx": 10,
+    "forwardColor": "#8a8ab0",
+    "loopReturnColor": "#7c8cf5",
+    "loopReturnDash": "6 4",
+    "practicalZoom": 0.9,
+    "minReadableTextPx": 9,
+    "minContrastRatio": 4.5,
+    "minClearancePx": 4
+  },
+  "fontsReady": true,
+  "items": {
+    "a": {
+      "width": 30.5625,
+      "height": 17.546875,
+      "lines": 1
+    },
+    "a-type": {
+      "width": 73.203125,
+      "height": 13.5,
+      "lines": 1
+    },
+    "b": {
+      "width": 45.203125,
+      "height": 17.546875,
+      "lines": 1
+    },
+    "b-type": {
+      "width": 73.203125,
+      "height": 13.5,
+      "lines": 1
+    },
+    "branch": {
+      "width": 18.515625,
+      "height": 14.84375,
+      "lines": 1
+    },
+    "c": {
+      "width": 27.9375,
+      "height": 17.546875,
+      "lines": 1
+    },
+    "c-type": {
+      "width": 73.34375,
+      "height": 13.5,
+      "lines": 1
+    }
+  }
+}

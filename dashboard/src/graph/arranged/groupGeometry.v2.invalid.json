@@ -1,0 +1,1051 @@
+[
+ {
+  "name": "ordinary/borrowed-ownership",
+  "fixture": 0,
+  "set": [
+   {
+    "path": [
+     "groups"
+    ],
+    "value": {
+     "groups": {
+      "fan": {
+       "nodeId": "fan",
+       "config": {
+        "form": "branches",
+        "tasks": [
+         {
+          "key": "second",
+          "entry": "a",
+          "inputs": {
+           "nested": {
+            "values": [
+             "original"
+            ]
+           }
+          }
+         },
+         {
+          "key": "first",
+          "entry": "b"
+         }
+        ],
+        "completionRule": "all_succeed",
+        "unfinishedBehavior": "wait_for_remaining",
+        "gatherMode": "results"
+       },
+       "bodies": {
+        "first": [
+         "b"
+        ],
+        "second": [
+         "a"
+        ]
+       },
+       "nested": [],
+       "successTarget": "done",
+       "failureTarget": "oops"
+      }
+     },
+     "owner": {
+      "a": {
+       "groupNodeId": "fan",
+       "taskKey": "second"
+      },
+      "b": {
+       "groupNodeId": "fan",
+       "taskKey": "first"
+      }
+     },
+     "order": [
+      "fan"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "name": "ordinary/unexpected-group-arrays",
+  "fixture": 0,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements"
+    ],
+    "value": [
+     {
+      "id": "[\"group\",\"fan\",\"container\",\"\"]",
+      "groupNodeId": "fan",
+      "role": "container",
+      "box": {
+       "x": 40,
+       "y": 262,
+       "w": 972,
+       "h": 957
+      },
+      "texts": [
+       {
+        "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"container\\\",\\\"\\\"]\",\"caption\"]",
+        "text": "Parallel branches \u00b7 all succeed",
+        "style": "edge_label",
+        "box": {
+         "x": 54,
+         "y": 272,
+         "w": 185,
+         "h": 16
+        },
+        "lines": 1
+       }
+      ]
+     },
+     {
+      "id": "[\"node\",\"fan\"]",
+      "groupNodeId": "fan",
+      "role": "header",
+      "box": {
+       "x": 289,
+       "y": 342,
+       "w": 474,
+       "h": 95
+      },
+      "texts": [
+       {
+        "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"fanout\"]",
+        "text": "fan-out",
+        "style": "node_type",
+        "box": {
+         "x": 303,
+         "y": 394,
+         "w": 39,
+         "h": 15
+        },
+        "lines": 1
+       },
+       {
+        "key": "[\"text\",\"[\\\"node\\\",\\\"fan\\\"]\",\"metadata\"]",
+        "text": "2 tasks \u00b7 branches",
+        "style": "edge_label",
+        "box": {
+         "x": 303,
+         "y": 411,
+         "w": 108,
+         "h": 16
+        },
+        "lines": 1
+       }
+      ]
+     },
+     {
+      "id": "[\"group\",\"fan\",\"footer\",\"\"]",
+      "groupNodeId": "fan",
+      "role": "footer",
+      "box": {
+       "x": 289,
+       "y": 1024,
+       "w": 474,
+       "h": 163
+      },
+      "texts": [
+       {
+        "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"title\"]",
+        "text": "gather \u00b7 All succeed",
+        "style": "node_label",
+        "box": {
+         "x": 303,
+         "y": 1034,
+         "w": 141,
+         "h": 19
+        },
+        "lines": 1
+       },
+       {
+        "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"footer\\\",\\\"\\\"]\",\"metadata\"]",
+        "text": "wait for remaining \u00b7 results",
+        "style": "edge_label",
+        "box": {
+         "x": 303,
+         "y": 1055,
+         "w": 167,
+         "h": 16
+        },
+        "lines": 1
+       }
+      ],
+      "overlayBox": {
+       "x": 303,
+       "y": 1073,
+       "w": 104,
+       "h": 104
+      }
+     },
+     {
+      "id": "[\"group\",\"fan\",\"lane\",\"second\"]",
+      "groupNodeId": "fan",
+      "taskKey": "second",
+      "role": "lane",
+      "box": {
+       "x": 190,
+       "y": 549,
+       "w": 324,
+       "h": 385
+      },
+      "texts": [
+       {
+        "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"second\\\"]\",\"caption\"]",
+        "text": "task 1 \u00b7 second",
+        "style": "node_type",
+        "box": {
+         "x": 204,
+         "y": 559,
+         "w": 82,
+         "h": 15
+        },
+        "lines": 1
+       }
+      ],
+      "overlayBox": {
+       "x": 204,
+       "y": 576,
+       "w": 138,
+       "h": 84
+      }
+     },
+     {
+      "id": "[\"group\",\"fan\",\"lane\",\"first\"]",
+      "groupNodeId": "fan",
+      "taskKey": "first",
+      "role": "lane",
+      "box": {
+       "x": 538,
+       "y": 549,
+       "w": 324,
+       "h": 385
+      },
+      "texts": [
+       {
+        "key": "[\"text\",\"[\\\"group\\\",\\\"fan\\\",\\\"lane\\\",\\\"first\\\"]\",\"caption\"]",
+        "text": "task 2 \u00b7 first",
+        "style": "node_type",
+        "box": {
+         "x": 552,
+         "y": 559,
+         "w": 77,
+         "h": 15
+        },
+        "lines": 1
+       }
+      ],
+      "overlayBox": {
+       "x": 552,
+       "y": 576,
+       "w": 138,
+       "h": 84
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "1/edge-attachment-wrong-node",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "nodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "1/edge-attachment-wrong-element",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "1/connector-synthetic-attachment-named",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "sourceAttach",
+     "nodeId"
+    ],
+    "value": "fan"
+   }
+  ]
+ },
+ {
+  "name": "1/connector-retargeted",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetElementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "1/element-wrong-owner",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     4,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "1/element-wrong-task",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     3,
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "1/lane-wrong-owner",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "1/lane-tasks-swapped",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "taskKey"
+    ],
+    "value": "first"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     1,
+     "taskKey"
+    ],
+    "value": "second"
+   }
+  ]
+ },
+ {
+  "name": "1/lane-wrong-bodies",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "nodeIds"
+    ],
+    "value": [
+     "b"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "1/owner-wrong-task",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "owner",
+     "a",
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "1/ownership-missing",
+  "fixture": 1,
+  "set": [
+   {
+    "path": [
+     "groups"
+    ],
+    "value": null
+   }
+  ]
+ },
+ {
+  "name": "2/edge-attachment-wrong-node",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "nodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "2/edge-attachment-wrong-element",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "2/connector-synthetic-attachment-named",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "sourceAttach",
+     "nodeId"
+    ],
+    "value": "fan"
+   }
+  ]
+ },
+ {
+  "name": "2/connector-retargeted",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetElementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "2/element-wrong-owner",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     4,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "2/element-wrong-task",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     3,
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "2/lane-wrong-owner",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "2/lane-tasks-swapped",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "taskKey"
+    ],
+    "value": "first"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     1,
+     "taskKey"
+    ],
+    "value": "second"
+   }
+  ]
+ },
+ {
+  "name": "2/lane-wrong-bodies",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "nodeIds"
+    ],
+    "value": [
+     "start"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "2/ownership-missing",
+  "fixture": 2,
+  "set": [
+   {
+    "path": [
+     "groups"
+    ],
+    "value": null
+   }
+  ]
+ },
+ {
+  "name": "3/edge-attachment-wrong-node",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "nodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "3/edge-attachment-wrong-element",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "3/connector-synthetic-attachment-named",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "sourceAttach",
+     "nodeId"
+    ],
+    "value": "fan"
+   }
+  ]
+ },
+ {
+  "name": "3/connector-retargeted",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetElementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "3/element-wrong-owner",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     9,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "3/element-wrong-task",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     3,
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "3/lane-wrong-owner",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "3/lane-tasks-swapped",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "taskKey"
+    ],
+    "value": "first"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     3,
+     "taskKey"
+    ],
+    "value": "second"
+   }
+  ]
+ },
+ {
+  "name": "3/lane-wrong-bodies",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "nodeIds"
+    ],
+    "value": [
+     "b"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "3/owner-wrong-task",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "owner",
+     "a",
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "3/nested-parent-dropped-a",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "groups",
+     "a",
+     "parent"
+    ],
+    "value": null
+   }
+  ]
+ },
+ {
+  "name": "3/bodies-reordered-fan-second",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "groups",
+     "fan",
+     "bodies",
+     "second"
+    ],
+    "value": [
+     "inner-oops",
+     "inner-done",
+     "a"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "3/order-reversed",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "order"
+    ],
+    "value": [
+     "a",
+     "fan"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "3/ownership-missing",
+  "fixture": 3,
+  "set": [
+   {
+    "path": [
+     "groups"
+    ],
+    "value": null
+   }
+  ]
+ },
+ {
+  "name": "4/edge-attachment-wrong-node",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "nodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "4/edge-attachment-wrong-element",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "edges",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "4/connector-synthetic-attachment-named",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "sourceAttach",
+     "nodeId"
+    ],
+    "value": "fan"
+   }
+  ]
+ },
+ {
+  "name": "4/connector-retargeted",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetElementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupConnectors",
+     0,
+     "targetAttach",
+     "elementId"
+    ],
+    "value": "[\"group\",\"fan\",\"container\",\"\"]"
+   }
+  ]
+ },
+ {
+  "name": "4/element-wrong-owner",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     4,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "4/element-wrong-task",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupElements",
+     3,
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "4/lane-wrong-owner",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "groupNodeId"
+    ],
+    "value": "start"
+   }
+  ]
+ },
+ {
+  "name": "4/lane-tasks-swapped",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "taskKey"
+    ],
+    "value": "first"
+   },
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     1,
+     "taskKey"
+    ],
+    "value": "second"
+   }
+  ]
+ },
+ {
+  "name": "4/lane-wrong-bodies",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "geometry",
+     "groupLanes",
+     0,
+     "nodeIds"
+    ],
+    "value": [
+     "b"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "4/owner-wrong-task",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "owner",
+     "a",
+     "taskKey"
+    ],
+    "value": "first"
+   }
+  ]
+ },
+ {
+  "name": "4/bodies-reordered-fan-second",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "groups",
+     "groups",
+     "fan",
+     "bodies",
+     "second"
+    ],
+    "value": [
+     "sink",
+     "a3",
+     "a2",
+     "a"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "4/ownership-missing",
+  "fixture": 4,
+  "set": [
+   {
+    "path": [
+     "groups"
+    ],
+    "value": null
+   }
+  ]
+ }
+]

@@ -36,6 +36,7 @@ func expectedDefaults() domainconfig.Config {
 			Enabled:   false,
 			ExportDir: "./traces",
 		},
+		Layout: domainconfig.LayoutConfig{MaxAttempts: 5},
 	}
 }
 
@@ -45,8 +46,8 @@ func TestLoad_Defaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
-	// Isolate from ambient environment.
-	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Isolate from ambient environment, including layout overrides.
+	isolateLayoutEnv(t)
 
 	cfg, err := adapterconfig.Load(configPath)
 	require.NoError(t, err)
@@ -65,6 +66,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, expected.Tracing.ExportDir, cfg.Tracing.ExportDir)
 	assert.Equal(t, 20, cfg.Queue.GlobalCap, "default GlobalCap must be 20")
 	assert.Equal(t, 5, cfg.Queue.PerUserCap, "default PerUserCap must be 5")
+	assert.Equal(t, expected.Layout, cfg.Layout, "five attempts, auto-detected browser, sandbox on")
+	assert.Empty(t, cfg.LoadWarnings)
 }
 
 // SECURITY: the shipped default is CLOSED (false). Allow-all on a
@@ -365,6 +368,7 @@ func TestLoad_MissingFileCreatesDefault(t *testing.T) {
 	assert.Equal(t, cfg1.Logging, cfg2.Logging)
 	assert.Equal(t, cfg1.Tracing, cfg2.Tracing)
 	assert.Equal(t, cfg1.Queue, cfg2.Queue)
+	assert.Equal(t, cfg1.Layout, cfg2.Layout, "written defaults reproduce the layout block")
 }
 
 func TestLoad_ScriptEnvPassthrough_Default(t *testing.T) {

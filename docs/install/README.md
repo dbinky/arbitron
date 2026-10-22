@@ -3,7 +3,8 @@
 Arbitron ships as a **single self-contained binary** with two subcommands —
 `arbitron serve` (the orchestration server + dashboard) and `arbitron mcp` (the
 MCP server). The binary builds with `CGO_ENABLED=0`, uses pure-Go SQLite, and
-embeds the dashboard SPA, so it has **zero hard runtime dependencies**.
+embeds the dashboard SPA. Core workflow saving and execution do not require a browser;
+rendered workflow auto-arrangement has the additional runtime prerequisite below.
 
 The only external tools the installer resolves are for the **agent features**
 (the `claude-cli` provider path): `node`, the `claude` CLI, `git`, and `gh`
@@ -113,6 +114,73 @@ TTY (or set `ARBITRON_SKIP_CLAUDE_LOGIN=1` explicitly); authenticate later with
 (require a cosign signature), `ARBITRON_HEALTH_RETRIES` / `ARBITRON_HEALTH_SLEEP`
 (post-install health-check tuning), `ARBITRON_CLAUDE_PATH` (pre-resolved `claude`
 binary), `ARBITRON_PKG_SUDO`.
+
+## Browser for workflow auto-arrangement
+
+Rendered layout review needs a local **Chrome or Chromium** executable, including
+when running `arbitron mcp` without an open dashboard. Install it on the server
+host; the installers do not install a browser. Arbitron auto-detects standard
+Chrome/Chromium locations, or configure an explicit executable:
+
+```yaml
+layout:
+  browserpath: /usr/bin/chromium
+  browsernosandbox: false
+  artifactdir: /var/lib/arbitron/layout-artifacts
+```
+
+The equivalent environment variables are `ARBITRON_LAYOUT_BROWSERPATH`,
+`ARBITRON_LAYOUT_BROWSERNOSANDBOX`, and `ARBITRON_LAYOUT_ARTIFACTDIR`.
+
+**macOS:** the full `Google Chrome.app` registers with the Dock on every launch,
+even headless, so a server arranging workflows makes the Dock flicker. Use the
+Chrome for Testing headless shell instead, which has no Dock icon. Install it
+(for example `npx @puppeteer/browsers install chrome-headless-shell@stable`) and
+point `layout.browserpath` (or `ARBITRON_LAYOUT_BROWSERPATH`) at the **absolute**
+path of its `chrome-headless-shell` executable. Auto-detection prefers a
+`chrome-headless-shell` found on the server's `PATH` over `Chrome.app`, but nothing
+puts it there by default, and an absolute path keeps the server from executing
+whatever binary of that name a writable `PATH` directory happens to hold.
+The artifact directory defaults to `layout-artifacts` beside `database.path`;
+the service account needs permission to write overview and tile PNG evidence there.
+Captures are written owner-only (directories `0700`, files `0600`) because
+screenshots show workflow text. They are review inputs, not an archive: a
+discarded or replaced capture is deleted at once, a revision keeps at most its
+selected capture until a newer save supersedes it, and startup removes leftover
+captures that no stored result references once they are older than two hours.
+The age threshold means several processes can share one data directory.
+
+**Sandbox.** Keep Chromium's sandbox enabled (`browsernosandbox: false`, the
+default) on hosts and in containers. The browser always starts with a minimal
+environment (no `ARBITRON_MASTER_KEY` or provider API keys), but without the
+sandbox a compromised renderer runs as the arbitron service user, with access to
+the database, workflow files and any credentials mounted into the container
+(for example `claude-config` and `gh-config`). Arbitron logs a startup warning
+whenever the sandbox is disabled.
+
+- **`docker compose` (supported):** `docker-compose.yaml` sets
+  `ARBITRON_LAYOUT_BROWSERNOSANDBOX=false` and loads
+  `docker/seccomp-chromium.json` with `security_opt: seccomp=...`. The profile is
+  Docker's default profile plus `clone`, `unshare`, `setns` and `chroot`,
+  which Chromium's unprivileged user-namespace sandbox needs. The container gets
+  no added capabilities. If your host kernel disables unprivileged user
+  namespaces (`kernel.unprivileged_userns_clone=0`, `user.max_user_namespaces=0`,
+  or an AppArmor userns restriction), arrangement fails at the `rendering`
+  stage. Allow user namespaces, or accept the fallback below.
+- **Bare `docker run` (fallback):** the image sets
+  `ARBITRON_LAYOUT_BROWSERNOSANDBOX=true` only so that a plain `docker run` works
+  under Docker's default seccomp profile, which blocks the sandbox. The container
+  is then the only isolation boundary around the renderer. To keep the sandbox,
+  run with `--security-opt seccomp=docker/seccomp-chromium.json -e
+  ARBITRON_LAYOUT_BROWSERNOSANDBOX=false`. Rendering in a separate restricted
+  container is planned but not yet available.
+
+A missing browser logs a boot warning but does **not** prevent startup or saving
+workflows. Arrangement fails visibly at the `rendering` stage, retains the saved
+positions, and remains retryable after installing/configuring the browser. A build
+missing `render.html` instead fails startup; rebuild embedded assets with `make ui`.
+For development, `make test-render` requires a real browser and fails rather than
+skips when none is available; `make test-all` includes that gate.
 
 ## Codex backend (optional, user-provided)
 

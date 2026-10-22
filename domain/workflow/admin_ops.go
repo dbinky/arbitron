@@ -27,6 +27,9 @@ import (
 //  6. Stamp the new id onto the copied folder's workflow.json so the copy carries
 //     its own identity (best-effort within the success path).
 func (s *Service) Duplicate(ctx context.Context, name, newName string) error {
+	if s.stamper != nil {
+		return s.duplicateRevision(ctx, name, newName)
+	}
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -108,6 +111,15 @@ func (s *Service) Unarchive(ctx context.Context, name string) error {
 // setArchived is the shared archive/unarchive implementation: admin-gated,
 // registry-coordinated, idempotent (SetArchived to the same value is harmless).
 func (s *Service) setArchived(ctx context.Context, name string, archived bool) error {
+	if s.stamper != nil {
+		return s.withIdentityMutation(ctx, name, func(scope Scope) MutationTarget { return MutationTarget{Scope: scope, Name: name} }, func(ctx context.Context, _ uuid.UUID, _ Scope, _ MutationTarget) error {
+			return s.setArchivedRegistry(ctx, name, archived)
+		})
+	}
+	return s.setArchivedRegistry(ctx, name, archived)
+}
+
+func (s *Service) setArchivedRegistry(ctx context.Context, name string, archived bool) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -143,6 +155,9 @@ func (s *Service) setArchived(ctx context.Context, name string, archived bool) e
 //  5. Delete the old-owner folder. A delete failure leaves a cosmetic stale
 //     folder (the registry + new folder are authoritative) and is surfaced.
 func (s *Service) TransferOwnership(ctx context.Context, name string, newOwnerID uuid.UUID) error {
+	if s.stamper != nil {
+		return s.transferRevision(ctx, name, newOwnerID)
+	}
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}

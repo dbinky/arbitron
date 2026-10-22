@@ -53,15 +53,29 @@ func TestGroupFilesE2E_DeadParentBeforeGatherRetriesFrozenFailure(t *testing.T) 
 				t.Cleanup(func() { ds.Close(ctx) })
 				// Stop at the durable decided/actions-applied boundary, using real
 				// tasks, terminal receipts, snapshots and the production executor.
+				// Hold both wake paths too: Shutdown drains current walkers but a
+				// sweep or an in-process claim could otherwise admit another one
+				// between that drain and the simulated parent death.
 				_, err = ds.db.Exec(`CREATE TRIGGER test_hold_before_gather BEFORE UPDATE OF state ON group_runs
 WHEN NEW.state = 'gathering'
-BEGIN SELECT RAISE(ABORT, 'test crash boundary before gathering'); END`)
+BEGIN SELECT RAISE(ABORT, 'test crash boundary before gathering'); END;
+CREATE TRIGGER test_hold_parent_wake BEFORE UPDATE OF state ON instances
+WHEN OLD.state = 'waiting' AND NEW.state IN ('queued', 'running')
+  AND OLD.id IN (SELECT parent_instance_id FROM group_runs)
+BEGIN SELECT RAISE(ABORT, 'test crash boundary before parent wake'); END`)
 				require.NoError(t, err)
 				parent := triggerGroupWorkflow(t, ds, name)
 				require.Eventually(t, func() bool {
 					run, err := ds.groupRunRepo.GetByParentNode(ctx, parent, "group-1")
 					return err == nil && run != nil && run.State == instance.GroupRunDecided && run.ActionsApplied && stateOf(t, ds, parent) == instance.StateWaiting
 				}, 15*time.Second, 20*time.Millisecond)
+				woke, err := adaptsqlite.NewQueueRepo(ds.db).SetQueuedIfWaitingAtNode(ctx, parent, "group-1", time.Now())
+				require.ErrorContains(t, err, "test crash boundary before parent wake",
+					"the crash fixture must block recovery admission before draining engine goroutines")
+				require.False(t, woke)
+				claimed, err := adaptsqlite.NewInstanceRepo(ds.db).ClaimWaitingParent(ctx, parent, "group-1")
+				require.ErrorContains(t, err, "test crash boundary before parent wake")
+				require.False(t, claimed)
 				ds.eng.Shutdown()
 				before := groupRunOf(t, ds, parent, "group-1")
 				require.Equal(t, taskOutcome, before.Decision.Outcome)
@@ -71,6 +85,8 @@ BEGIN SELECT RAISE(ABORT, 'test crash boundary before gathering'); END`)
 				if recovery == "startup" {
 					ds.Close(ctx)
 					db, err := adaptsqlite.Open(filepath.Join(paths.root, "arbitron.db"))
+					require.NoError(t, err)
+					_, err = db.Exec(`DROP TRIGGER test_hold_parent_wake`)
 					require.NoError(t, err)
 					// Reconstruct the crash image: the parent was still running
 					// before gathering; startup must fail it and settle the gather.
@@ -84,11 +100,6 @@ BEGIN SELECT RAISE(ABORT, 'test crash boundary before gathering'); END`)
 					// No terminal event is emitted: only the periodic recovery input
 					// can find and finish this missed callback.
 					require.NoError(t, ds.instanceRepo.SetFailed(ctx, parent, "group-1"))
-					// A sweep that read the parent as waiting before SetFailed is still
-					// blocked by the trigger; let it drain (many sweep intervals) so it
-					// cannot pass the boundary once the trigger is dropped and replay
-					// success for a parent that is already dead.
-					time.Sleep(10 * groupSweepInterval)
 					_, err = ds.db.Exec(`DROP TRIGGER test_hold_before_gather`)
 					require.NoError(t, err)
 				}
@@ -110,6 +121,10 @@ BEGIN SELECT RAISE(ABORT, 'test crash boundary before gathering'); END`)
 				require.NoError(t, err)
 				assert.Equal(t, "base", string(bytes))
 				assert.False(t, pathExists(filepath.Join(workspace, "a.txt")), "no task delta was applied")
+				if recovery == "periodic" {
+					_, err = ds.db.Exec(`DROP TRIGGER test_hold_parent_wake`)
+					require.NoError(t, err)
+				}
 				require.NoError(t, ds.eng.Retry(adminCtxForLocalUser(t, ds), parent, nil))
 				require.Equal(t, instance.StateCompleted, waitForTerminalState(t, ds, parent))
 				ds.eng.Shutdown()

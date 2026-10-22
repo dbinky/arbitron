@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -59,9 +60,6 @@ func (r *scopeAwareRepo) Load(_ context.Context, s workflow.Scope, name string) 
 
 func (r *scopeAwareRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	return nil, nil
-}
-func (r *scopeAwareRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
-	return nil
 }
 func (r *scopeAwareRepo) Create(_ context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
 	r.put(s, wf)
@@ -273,4 +271,41 @@ func TestTrigger_CannotSeeOtherUsersPrivate(t *testing.T) {
 	_, _, err := h.engine.Trigger(ctxAs(b), "a-only", nil, "normal")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, workflow.ErrNotFound), "B cannot reach A's private workflow")
+}
+
+func (r *scopeAwareRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	source, ok := r.bucket(src)[sn]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, ok := r.bucket(dst)[dn]; ok && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	data, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	copied.Name = dn
+	if err := stamp(&copied); err != nil {
+		return err
+	}
+	data, err = json.Marshal(&copied)
+	if err != nil {
+		return err
+	}
+	var saved workflow.Workflow
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return err
+	}
+	r.bucket(dst)[dn] = &saved
+	return nil
 }

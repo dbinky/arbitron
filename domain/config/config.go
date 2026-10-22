@@ -15,11 +15,15 @@ type Config struct {
 	Profiles      []ProfileConfig
 	Auth          AuthConfig
 	Samples       SamplesConfig
+	// Layout configures automatic workflow arrangement and its rendered review.
+	Layout LayoutConfig
 	// CapabilitiesPath is the path to an optional capability-ruleset override file
 	// (profile-editing Phase 2). Empty or a non-existent path falls back to the
 	// embedded default ruleset (LoadCapabilityRules treats a missing file as
 	// "use the default", not an error). Default: ~/.arbitron/capabilities.yaml.
 	CapabilitiesPath string
+	// LoadWarnings contains only non-fatal normalization warnings for the root to log.
+	LoadWarnings []string
 }
 
 // AuthConfig selects the operating mode and holds the org-mode auth settings.
@@ -236,6 +240,21 @@ type SamplesConfig struct {
 	// SourceDir is the absolute path to the on-disk sample source (the install
 	// hierarchy's samples/ dir). Empty disables seeding.
 	SourceDir string
+}
+
+// LayoutConfig configures automatic arrangement and rendered review of saved workflows.
+type LayoutConfig struct {
+	// MaxAttempts is the total attempt budget. Default 5; values below 1 are
+	// clamped to 1 by the loader with a LoadWarnings entry.
+	MaxAttempts int
+	// BrowserPath selects Chrome/Chromium. Empty means auto-detect.
+	BrowserPath string
+	// ArtifactDir stores overview and tile captures. Empty means the root uses
+	// <directory of database.path>/layout-artifacts.
+	ArtifactDir string
+	// BrowserNoSandbox disables the browser sandbox. SECURITY: default false;
+	// enable only in containers that cannot provide the Chrome sandbox.
+	BrowserNoSandbox bool
 }
 
 // LLMConfig holds LLM provider settings.

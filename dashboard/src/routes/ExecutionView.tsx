@@ -1,27 +1,34 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ReactFlowProvider, ReactFlow, Background, Controls, useReactFlow } from '@xyflow/react'
+import { ReactFlowProvider, useReactFlow, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
-import type { GraphState, Instance, NodeExecution, ResolutionSessionRef } from '../api/types'
+import type { GraphState, Instance, Me, NodeExecution, ResolutionSessionRef } from '../api/types'
 import type { WorkflowDefinition, NodeExecutionState } from '../graph/types'
 import { api } from '../api/client'
-import { useGraphLayout, NODE_WIDTH, NODE_HEIGHT } from '../graph/useGraphLayout'
+import type { LayoutView } from '../graph/arranged/types'
+import ArrangedGraph from '../graph/arranged/ArrangedGraph'
+import LayoutStatusPanel from '../graph/arranged/LayoutStatusPanel'
+import { resolveDisplayGeometry } from '../graph/arranged/validate'
+import { useLayoutStatus } from '../hooks/useLayoutStatus'
+import { NODE_WIDTH, NODE_HEIGHT } from '../graph/useGraphLayout'
+import { useInstanceLayoutTiles } from '../hooks/useInstanceLayoutTiles'
+import type { LayoutTile } from '../graph/arranged/composeArrangedTiles'
+import type { ArrangedGroupElementData } from '../graph/arranged/buildArrangedFlow'
 import { selectAnchorNodeId } from '../graph/selectAnchorNodeId'
-import { DEFAULT_ZOOM, FOLLOW_BOUNDS_PADDING } from '../graph/constants'
+import { FOLLOW_BOUNDS_PADDING } from '../graph/constants'
 import { useFollowActiveNode, type FollowBounds } from '../graph/useFollowActiveNode'
-import { nodeTypes } from '../graph/nodes/nodeTypes'
-import { edgeTypes } from '../graph/edges/edgeTypes'
-import { groupFooterId, groupHeaderId, TASK_CARD_HEIGHT } from '../graph/groupLayout'
+import { groupHeaderId, TASK_CARD_HEIGHT } from '../graph/groupLayout'
 import type { GroupTaskCardData } from '../graph/groupLayout'
 import {
   buildAggregateView,
+  activeNodeLabels,
   findGroupPanel,
   nodeLabelIn,
   selectionFromNode,
   type GraphSelection,
 } from '../graph/aggregateState'
-import { composeLiveGraph, withOriginalIds } from '../graph/nestedGraphs'
+import { nestedContexts } from '../graph/nestedGraphs'
 import { GRAPH_STATE_POLL_MS, useGraphState } from '../hooks/useGraphState'
 import { useInteractiveSession } from '../hooks/useInteractiveSession'
 import CalloutConnector from '../graph/CalloutConnector'
@@ -81,6 +88,8 @@ function buildExecutionStates(
 }
 
 const ACTIVE_STATES = new Set<string>(['queued', 'running', 'waiting', 'paused'])
+const EMPTY_WORKFLOW: WorkflowDefinition = { name: '', description: '', author: '', nodes: [], edges: [] }
+const NO_CONTEXTS: GraphState['contexts'] = []
 
 export function GraphView({
   instance,
@@ -90,6 +99,9 @@ export function GraphView({
   selectedNodeId,
   graphState = null,
   onSelect,
+  layoutView = null,
+  onDisplayIssues,
+  canRetry = false,
 }: {
   instance: Instance | null
   workflowDef: WorkflowDefinition | null
@@ -102,6 +114,10 @@ export function GraphView({
   graphState?: GraphState | null
   /** Instance-qualified selection: a step node with its owning instance, or a group. */
   onSelect?: (selection: GraphSelection) => void
+  /** Server-arranged geometry for the snapshot revision (null: fallback layout). */
+  layoutView?: LayoutView | null
+  onDisplayIssues?: (issues: readonly string[]) => void
+  canRetry?: boolean
 }) {
   // Aggregate view (P4-T8): node states keyed `${instanceId}:${nodeId}`,
   // projected onto the rendered graph through Phase 1 ownership. Memoized on
@@ -121,28 +137,31 @@ export function GraphView({
   )
   const executionStates = aggregate ? aggregate.executionStates : legacyStates
   const groups = aggregate ? graphState?.layout ?? null : null
-  // Child workflows' own groups are drawn beside the root graph (qualified by
-  // instance); without an aggregate this is just the root definition.
-  const live = useMemo(
-    () => (aggregate && graphState && workflowDef ? composeLiveGraph(graphState, workflowDef, aggregate) : null),
-    [aggregate, graphState, workflowDef],
-  )
-  const { rfNodes: laidOutNodes, rfEdges } = useGraphLayout({
-    nodes: live?.nodes ?? workflowDef?.nodes ?? [],
-    edges: live?.edges ?? workflowDef?.edges ?? [],
-    executionStates: live?.executionStates ?? executionStates,
-    groups: live ? live.groups : groups,
-    groupLive: live?.groupLive,
-    nodeContexts: live?.nodeContexts,
-  })
-  const rfNodes = useMemo(() => withOriginalIds(laidOutNodes, live?.originOf ?? {}), [laidOutNodes, live])
-
-  // Mark selected node. Memoized on the stable rfNodes so the array reference
-  // only changes when the layout or selection changes — not on every render.
-  const nodesWithSelection = useMemo(
-    () => rfNodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
-    [rfNodes, selectedNodeId],
-  )
+  const childContexts = useMemo(() => graphState ? nestedContexts(graphState) : NO_CONTEXTS, [graphState])
+  const childLayouts = useInstanceLayoutTiles(childContexts)
+  const tiles = useMemo<LayoutTile[] | undefined>(() => {
+    if (!workflowDef || !graphState || !aggregate) return undefined
+    const root: LayoutTile = { instanceId: graphState.rootInstanceId, definition: workflowDef, view: layoutView, groups,
+      executionStates: aggregate.executionStates, groupLive: aggregate.groupLive, nodeContexts: aggregate.nodeContexts }
+    if (!childContexts.length && !resolveDisplayGeometry(workflowDef, layoutView).geometry) return undefined
+    return [root, ...childContexts.map(c => {
+      const definition = c.graph as unknown as WorkflowDefinition
+      const local = buildAggregateView({ ...graphState, rootInstanceId: c.instanceId, layout: c.layout }, definition)
+      return { instanceId: c.instanceId, definition, view: childLayouts.views.get(c.instanceId) ?? null, groups: c.layout ?? null,
+        executionStates: local.executionStates, groupLive: local.groupLive, nodeContexts: local.nodeContexts }
+    })]
+  }, [workflowDef, graphState, aggregate, layoutView, groups, childContexts, childLayouts.views])
+  const [rfNodes, setRfNodes] = useState<Node[]>([])
+  const [tileIssues, setTileIssues] = useState<ReadonlyMap<string, readonly string[]>>(new Map())
+  const absolute = useCallback((node: Node): { x: number; y: number } => {
+    let x = node.position.x, y = node.position.y, parent = node.parentId
+    while (parent) {
+      const p = rfNodes.find(n => n.id === parent)
+      if (!p) break
+      x += p.position.x; y += p.position.y; parent = p.parentId
+    }
+    return { x, y }
+  }, [rfNodes])
 
   const reactFlow = useReactFlow()
 
@@ -152,9 +171,9 @@ export function GraphView({
     () =>
       rfNodes
         .filter((n) => {
-          if (n.type === 'arbitronNode') return ACTIVE_STATES.has(n.data.executionState as NodeExecutionState)
+          if (n.type === 'arbitronNode' || n.type === 'arrangedNode') return ACTIVE_STATES.has(n.data.executionState as NodeExecutionState)
           if (n.type !== 'groupTaskCard') return false
-          const live = (n.data as GroupTaskCardData).live
+          const live = (n.data.reviewed as ArrangedGroupElementData | undefined)?.taskLive ?? (n.data as GroupTaskCardData).live
           return Boolean(live && !live.redacted && (live.activeNodes.length > 0 || ACTIVE_STATES.has(live.status)))
         })
         .map((n) => n.id),
@@ -166,12 +185,12 @@ export function GraphView({
   const activeBounds = useMemo<FollowBounds | null>(() => {
     if (activeIds.length < 2) return null
     const rects = rfNodes.filter((n) => activeIds.includes(n.id))
-    const minX = Math.min(...rects.map((n) => n.position.x))
-    const minY = Math.min(...rects.map((n) => n.position.y))
-    const maxX = Math.max(...rects.map((n) => n.position.x + (n.width ?? NODE_WIDTH)))
-    const maxY = Math.max(...rects.map((n) => n.position.y + (n.height ?? (n.type === 'groupTaskCard' ? TASK_CARD_HEIGHT : NODE_HEIGHT))))
+    const minX = Math.min(...rects.map((n) => absolute(n).x))
+    const minY = Math.min(...rects.map((n) => absolute(n).y))
+    const maxX = Math.max(...rects.map((n) => absolute(n).x + (n.width ?? NODE_WIDTH)))
+    const maxY = Math.max(...rects.map((n) => absolute(n).y + (n.height ?? (n.type === 'groupTaskCard' ? TASK_CARD_HEIGHT : NODE_HEIGHT))))
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
-  }, [activeIds, rfNodes])
+  }, [activeIds, rfNodes, absolute])
 
   // The real step node the viewport should center on for this instance state.
   // A group node never renders itself: its header stands in for it.
@@ -193,67 +212,154 @@ export function GraphView({
     const node = rfNodes.find((n) => n.id === anchorId)
     if (!node) return null
     return {
-      x: node.position.x + (node.width ?? NODE_WIDTH) / 2,
-      y: node.position.y + (node.height ?? (node.type === 'groupTaskCard' ? TASK_CARD_HEIGHT : NODE_HEIGHT)) / 2,
+      x: absolute(node).x + (node.width ?? NODE_WIDTH) / 2,
+      y: absolute(node).y + (node.height ?? (node.type === 'groupTaskCard' ? TASK_CARD_HEIGHT : NODE_HEIGHT)) / 2,
     }
-  }, [activeBounds, anchorId, rfNodes])
+  }, [activeBounds, anchorId, rfNodes, absolute])
 
-  // Center once, on first mount, at the readable default zoom (or frame every
-  // active node when several run concurrently). Guarded by a ref so live
-  // re-renders do not re-center and fight the user. Follow-on-advance behavior
-  // is added via useFollowActiveNode; this effect is the one-shot mount center.
+  // The shared renderer centres a single anchor; frame simultaneous work once.
+  // Subsequent changes respect the user's follow/pan choice.
   const didInitialCenter = useRef(false)
   useEffect(() => {
-    if (didInitialCenter.current) return
-    if (!anchorPos) return
-    if (activeBounds) {
-      void reactFlow.fitBounds(activeBounds, { padding: FOLLOW_BOUNDS_PADDING })
-    } else {
-      reactFlow.setCenter(anchorPos.x, anchorPos.y, { zoom: DEFAULT_ZOOM })
-    }
+    if (!activeBounds || didInitialCenter.current) return
+    void reactFlow.fitBounds(activeBounds, { padding: FOLLOW_BOUNDS_PADDING })
     didInitialCenter.current = true
-  }, [anchorPos, activeBounds, reactFlow])
+  }, [activeBounds, reactFlow])
+
+  // ArrangedGraph reports the displayed payload centre of the anchor node.
+  const [arrangedAnchor, setArrangedAnchor] = useState<{ x: number; y: number } | null>(null)
+  const arrangedAnchorId = useMemo(
+    () => selectAnchorNodeId(instance, workflowDef, executionStates, trace),
+    [instance, workflowDef, executionStates, trace],
+  )
 
   const isRunning = aggregate
     ? graphState?.active === true
     : instance?.state === 'running' || instance?.state === 'waiting'
   const { following, onMoveStart, recenter } = useFollowActiveNode(
-    anchorPos,
+    activeIds.length ? anchorPos : arrangedAnchor,
     isRunning,
     activeBounds,
   )
 
   const fallbackInstanceId = instance?.id ?? graphState?.rootInstanceId ?? null
 
+  const recenterButton = (
+    <button
+      type="button"
+      className={`${styles.recenterButton} ${following ? styles.recenterButtonActive : ''}`}
+      aria-pressed={following}
+      title={following ? 'Following the active steps' : 'Recenter and follow the active steps'}
+      onClick={recenter}
+    >
+      {following ? 'Following' : 'Recenter'}
+    </button>
+  )
+
   return (
-    <div className={styles.graphContainer}>
-      <ReactFlow
-        nodes={nodesWithSelection}
-        edges={rfEdges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeClick={(_event, node) => {
-          if (onSelect) onSelect(selectionFromNode(node, fallbackInstanceId))
-          else onNodeClick?.(node.id)
-        }}
-        onMoveStart={(event) => onMoveStart(event)}
-        minZoom={0.3}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="#2a2a4a" gap={20} size={1} />
-        <Controls showInteractive={false} />
-        <button
-          type="button"
-          className={`${styles.recenterButton} ${following ? styles.recenterButtonActive : ''}`}
-          aria-pressed={following}
-          title={following ? 'Following the active steps' : 'Recenter and follow the active steps'}
-          onClick={recenter}
-        >
-          {following ? 'Following' : 'Recenter'}
-        </button>
-      </ReactFlow>
+    <div className={styles.tileScene}>
+      {childContexts.length > 0 && <nav className={styles.tileRail} aria-label="Child arrangements">
+        {childContexts.map(c => {
+          const definition = c.graph as unknown as WorkflowDefinition
+          const view = childLayouts.views.get(c.instanceId) ?? null
+          return <section key={c.instanceId} data-layout-status-instance={c.instanceId}>
+            <Link to={`/instances/${c.instanceId}`}>{definition.name || c.workflowName || 'Child workflow'}</Link>
+            <LayoutStatusPanel view={view} error={childLayouts.errors.get(c.instanceId) ?? null}
+              onRetry={() => { if (view) void childLayouts.retry(c.instanceId); else childLayouts.refresh(c.instanceId) }}
+              retrying={childLayouts.retrying.has(c.instanceId)} retryError={childLayouts.retryErrors.get(c.instanceId) ?? null}
+              canRetry={canRetry} displayIssues={tileIssues.get(c.instanceId) ?? resolveDisplayGeometry(definition, view).issues} />
+          </section>
+        })}
+      </nav>}
+      <div className={styles.graphContainer}>
+        <ArrangedGraph
+          workflowDef={workflowDef ?? EMPTY_WORKFLOW} view={layoutView} tiles={tiles}
+          executionStates={executionStates} groups={groups} groupLive={aggregate?.groupLive} nodeContexts={aggregate?.nodeContexts}
+          selectedNodeId={selectedNodeId}
+          onNodeClick={(nodeId, node) => {
+            if (onSelect && node) onSelect(selectionFromNode(node, fallbackInstanceId))
+            else onNodeClick?.(nodeId)
+          }}
+          anchorNodeId={activeIds.length === 1 ? activeIds[0] : arrangedAnchorId}
+          onMoveStart={onMoveStart} onAnchorPosition={setArrangedAnchor} onDisplayNodes={setRfNodes} onTileDisplayIssues={setTileIssues}
+          onDisplayIssues={onDisplayIssues}
+        >{recenterButton}</ArrangedGraph>
+      </div>
     </div>
+  )
+}
+
+/** Mounted only once the immutable snapshot is known; keyed by instance/revision. */
+function InstanceArrangement({ instance, workflowDef, trace, graphState, onSelect, selectedNodeId }: {
+  instance: Instance
+  workflowDef: WorkflowDefinition | null
+  trace: NodeExecution[]
+  graphState: GraphState | null
+  onSelect: (selection: GraphSelection) => void
+  selectedNodeId: string | null
+}) {
+  const [me, setMe] = useState<Me | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api.me().then(identity => {
+      if (!cancelled) setMe(identity)
+    }).catch(() => {
+      // Unknown identity keeps the intervention control hidden.
+    })
+    return () => { cancelled = true }
+  }, [])
+  // Mirror engine.canIntervene for the already-authorized instance read.
+  // The retry endpoint rechecks permissions in case they changed since loading.
+  const canRetry = me != null && (me.isAdmin || me.userId === instance.ownerId ||
+    (instance.department != null && me.ledDepartments.includes(instance.department)))
+  const revision = workflowDef?.presentation?.revision ?? ''
+  const seed = instance.layout?.savedRevision === revision ? instance.layout : null
+  const layout = useLayoutStatus(
+    signal => api.instances.getLayout(instance.id, signal),
+    expectedRevision => api.instances.retryLayout(instance.id, expectedRevision),
+    instance.id,
+    seed,
+  )
+  const matches = layout.view?.savedRevision === revision
+  // An outage preserves the same displayed boxes without claiming fresh review.
+  const joinedView = useMemo(() => {
+    if (!matches || !layout.view) return null
+    return layout.error ? { ...layout.view, available: false, unreviewed: true } : layout.view
+  }, [matches, layout.view, layout.error])
+  const mismatch = layout.view && !matches ? 'Layout revision does not match the instance snapshot revision' : null
+  const [renderIssues, setRenderIssues] = useState<readonly string[]>([])
+  const displayIssues = useMemo(() => [
+    ...(workflowDef ? resolveDisplayGeometry(workflowDef, joinedView).issues : []),
+    ...renderIssues,
+  ], [workflowDef, joinedView, renderIssues])
+  const handleRetry = () => {
+    if (joinedView) void layout.retry()
+    else layout.refresh()
+  }
+
+  return (
+    <>
+      <LayoutStatusPanel
+        view={joinedView}
+        error={mismatch ?? layout.error}
+        onRetry={handleRetry}
+        retrying={layout.retrying}
+        retryError={layout.retryError}
+        canRetry={canRetry}
+        displayIssues={displayIssues}
+      />
+      <GraphView
+        instance={instance}
+        workflowDef={workflowDef}
+        trace={trace}
+        graphState={graphState}
+        onSelect={onSelect}
+        selectedNodeId={selectedNodeId}
+        layoutView={joinedView}
+        onDisplayIssues={setRenderIssues}
+        canRetry={canRetry}
+      />
+    </>
   )
 }
 
@@ -282,6 +388,11 @@ function LinkedResolutionSession({ target, nodeName, onEnded }: {
 
 export default function ExecutionView() {
   const { id } = useParams<{ id: string }>()
+  // An instance switch fences all REST, status, font, selection and WS state.
+  return <ExecutionPage key={id} id={id} />
+}
+
+function ExecutionPage({ id }: { id: string | undefined }) {
   const [instance, setInstance] = useState<Instance | null>(null)
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(null)
   const [trace, setTrace] = useState<NodeExecution[]>([])
@@ -430,7 +541,6 @@ export default function ExecutionView() {
 
   const shortId = instance.id.slice(0, 8)
   const connected = graph.connected
-  const layoutGroups = graph.state?.layout?.groups ?? {}
   const selectedOwner = selection?.kind === 'node' ? selection.instanceId : null
   const ownerContext = selectedOwner && selectedOwner !== id
     ? graph.state?.contexts.find((c) => c.instanceId === selectedOwner) ?? null
@@ -441,10 +551,8 @@ export default function ExecutionView() {
   const linkedActive = Boolean(sessionTarget && sessionTarget.instanceId !== id)
   const routeSessionVisible = interactiveSession.isActive && !linkedActive &&
     (selection?.kind !== 'group' || sessionTarget?.instanceId === id)
-  // The resolution session sits at the group node, which renders as its footer.
-  const calloutNodeId = interactiveSession.nodeId && layoutGroups[interactiveSession.nodeId]
-    ? groupFooterId(interactiveSession.nodeId)
-    : interactiveSession.nodeId
+  const calloutNodeId = linkedActive ? sessionTarget?.nodeId : interactiveSession.nodeId
+  const calloutInstanceId = linkedActive ? sessionTarget?.instanceId : instance.id
 
   let right
   if (linkedActive && sessionTarget) {
@@ -459,7 +567,10 @@ export default function ExecutionView() {
   } else if (sessionTarget?.instanceId === id && interactiveSession.isActive) {
     right = <InteractivePanel session={interactiveSession} nodeName={interactiveNodeName} />
   } else if (selection?.kind === 'group') {
-    right = <GroupPanel panel={groupPanel} label={nodeLabelIn(graph.state, workflowDef, selection.instanceId, selection.nodeId)} onOpenSession={setSessionTarget} />
+    right = <GroupPanel panel={groupPanel} label={nodeLabelIn(graph.state, workflowDef, selection.instanceId, selection.nodeId)} onOpenSession={setSessionTarget}
+      activeNodes={Object.fromEntries((groupPanel?.tasks ?? []).filter(t => !t.redacted && t.childInstanceId).map(t => [t.key,
+        graph.state ? activeNodeLabels(graph.state, t.childInstanceId!, workflowDef ?? EMPTY_WORKFLOW) : [],
+      ]))} />
   } else if (interactiveSession.isActive) {
     right = <InteractivePanel session={interactiveSession} nodeName={interactiveNodeName} />
   } else {
@@ -487,7 +598,7 @@ export default function ExecutionView() {
 
   return (
     <ReactFlowProvider>
-      <div className={styles.page}>
+      <div className={styles.page} data-execution-view="true">
         {/* Breadcrumb bar */}
         <div className={styles.breadcrumb}>
           <Link to="/" className={styles.breadcrumbLink}>
@@ -520,7 +631,8 @@ export default function ExecutionView() {
         {/* Main content: graph + side panel */}
         <ResizablePanel
           left={
-            <GraphView
+            <InstanceArrangement
+              key={`${instance.id}:${workflowDef?.presentation?.revision ?? ''}`}
               instance={instance}
               workflowDef={workflowDef}
               trace={trace}
@@ -537,7 +649,8 @@ export default function ExecutionView() {
         {calloutNodeId && (
           <CalloutConnector
             nodeId={calloutNodeId}
-            visible={routeSessionVisible}
+            visible={routeSessionVisible || linkedActive}
+            instanceId={calloutInstanceId}
           />
         )}
       </div>

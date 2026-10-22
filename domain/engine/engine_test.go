@@ -55,10 +55,6 @@ func (r *mockWorkflowRepo) List(_ context.Context, _ workflow.Scope) ([]workflow
 	return summaries, nil
 }
 
-func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
-	return nil
-}
-
 func (r *mockWorkflowRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return nil
 }
@@ -3387,4 +3383,41 @@ func (r *mockInterventionRepo) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.records)
+}
+
+func (r *mockWorkflowRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	source, ok := r.workflows[sn]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, ok := r.workflows[dn]; ok && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	data, err := json.Marshal(source)
+	if err != nil {
+		return err
+	}
+	var copied workflow.Workflow
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	copied.Name = dn
+	if err := stamp(&copied); err != nil {
+		return err
+	}
+	data, err = json.Marshal(&copied)
+	if err != nil {
+		return err
+	}
+	var saved workflow.Workflow
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return err
+	}
+	r.workflows[dn] = &saved
+	return nil
 }

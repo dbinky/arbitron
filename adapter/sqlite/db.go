@@ -34,8 +34,9 @@ func Open(path string) (*sql.DB, error) {
 	db.SetMaxOpenConns(1)
 
 	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
+		// WAL setup can itself contend with another connection during boot.
 		"PRAGMA busy_timeout=5000",
+		"PRAGMA journal_mode=WAL",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
 		"PRAGMA secure_delete=ON",
