@@ -8,6 +8,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// ModelPinsVersionLegacy marks a run created before model pins existed; its
+// ModelPins is nil and it resolves profiles live.
+const ModelPinsVersionLegacy = 0
+
+// ModelPinsVersionSnapshot marks a run whose ModelPins were captured at trigger.
+const ModelPinsVersionSnapshot = 1
+
+// ModelPinsVersionUnreadable is a summary-only marker for a stored pin record
+// that failed to decode. It is never persisted; pin resolution refuses it as an
+// unsupported version instead of falling back to the live profile.
+const ModelPinsVersionUnreadable = -1
+
 // Sentinel errors for instance operations.
 var (
 	ErrNotFound           = errors.New("not found")
@@ -144,6 +156,21 @@ type Instance struct {
 	// cannot be computed at author time. Derived by Engine.Spawn from the
 	// parent's stored value; never caller-supplied.
 	SpawnDepth int
+	// ModelPins maps each model profile alias the workflow uses to the specific
+	// model it resolved to at trigger time; ModelPinsVersion discriminates the
+	// record. Version 0 with nil ModelPins is a LEGACY run created before pins
+	// existed: it keeps live profile resolution until it finishes and is never
+	// backfilled (D1). Version 1 is a snapshot, including a non-nil empty map
+	// for a workflow with no aliases. Any other combination is corruption.
+	// Set once by the engine Trigger path and never rewritten.
+	ModelPins        map[string]string
+	ModelPinsVersion int
+	// ModelPinRoutes records native pinned-only exceptions by alias. Only the
+	// canonical azure/bedrock families are valid; absent entries remain strict.
+	ModelPinRoutes map[string]string
+	// ModelPinRouteConnections records, per ModelPinRoutes alias, the profile
+	// connection_ref captured at trigger. Absent on older family-only rows.
+	ModelPinRouteConnections map[string]string
 	// GroupRunID / GroupTaskKey / GroupTaskKind are the group-task half of the
 	// link, set ONLY when SpawnMode == SpawnModeGroupTask (a child created by a
 	// parallel_group node). nil/empty for roots and for legacy spawn children.
@@ -212,6 +239,15 @@ type InstanceSummary struct {
 	// run name and friendly step without a per-row instance load (avoids an N+1).
 	Variables        map[string]any `json:"-"`
 	WorkflowSnapshot map[string]any `json:"-"`
+	// ModelPins, ModelPinsVersion and ModelPinRoutes carry the run's pin record
+	// (see Instance) so the list enricher describes the model a pinned run
+	// executes rather than the live profile. ModelPinsVersionUnreadable marks a
+	// stored record that failed to decode; the row still lists.
+	ModelPins        map[string]string `json:"-"`
+	ModelPinsVersion int               `json:"-"`
+	ModelPinRoutes   map[string]string `json:"-"`
+	// ModelPinRouteConnections mirrors Instance.ModelPinRouteConnections.
+	ModelPinRouteConnections map[string]string `json:"-"`
 }
 
 type Submitter struct {

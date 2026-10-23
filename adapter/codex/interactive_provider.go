@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -16,9 +17,8 @@ import (
 // backend that runs each interactive turn over `codex exec --json` (fresh) /
 // `codex exec resume --json` (resume) via the turnSession seam. It is the
 // interactive sibling of codex.Config: it shares the same construction inputs
-// (binding, binary, per-turn timeout, capability rules, response cap), and it owns
-// NO Runner (the turnSession factory wraps the subprocess runner seam — real
-// codex exec in prod, a fake in tests).
+// (binding, binary, per-turn timeout, capability rules, response cap and runner).
+// The turnSession factory retains its separate protocol-test seam.
 //
 // SECURITY: like the exec Config there is no per-provider credential — codex is
 // subscription-only (env.go), so Binding.RevealKey is never consulted and no API
@@ -28,6 +28,8 @@ type InteractiveConfig struct {
 	// Effort are consumed (the codex path is subscription-only, so RevealKey /
 	// BaseURL / provider-keyed env are deliberately NOT used).
 	Binding provider.ResolvedBinding
+	// Runner replaces only subprocess I/O; nil uses the production launcher.
+	Runner claudecli.CommandRunner
 	// BinaryPath is the codex binary; "" resolves from PATH / StandardBinDirs.
 	BinaryPath string
 	// Timeout is the default per-turn timeout; <=0 means no default (the turn is
@@ -101,14 +103,12 @@ func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() 
 }
 
 // interactiveCoreConfig projects an InteractiveConfig onto the exec adapters'
-// Config so the shared core is built by the SAME newCore path — the interactive
-// provider owns no Runner (the turnSession factory replaces that seam), so it is
-// left at its zero value (nil → the production os/exec runner, used by the version
-// probe AND the `codex exec` turns). MaxResponseBytes IS wired through (the exec
-// stream is a real stdout pipe that a runaway turn could flood).
+// Config so version checks and exec turns share the same runner, environment,
+// timeout and response bounds as batch execution.
 func interactiveCoreConfig(cfg InteractiveConfig) Config {
 	return Config{
 		Binding:          cfg.Binding,
+		Runner:           cfg.Runner,
 		BinaryPath:       cfg.BinaryPath,
 		Timeout:          cfg.Timeout,
 		CapabilityRules:  cfg.CapabilityRules,
@@ -132,6 +132,9 @@ func interactiveCoreConfig(cfg InteractiveConfig) Config {
 // non-positive timeout yields the parent ctx unchanged (no deadline), so the turn
 // is governed solely by the engine ctx, exactly as before.
 func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequest) (turnStream, context.Context, context.CancelFunc, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, "", err
+	}
 	// WorkDir guard FIRST: an empty cwd would inherit the engine launch directory
 	// (arbitron.db / config.yaml). Same invariant the exec path enforces — fail
 	// closed before any session starts.
@@ -145,6 +148,22 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 	model := req.Model
 	if model == "" {
 		model = p.binding.Model
+	}
+	// A pinned binding is verified on every turn whatever the request says (D14),
+	// and the request may not name another model than the one it pinned.
+	verify := req.RequireExecutedModel
+	if p.binding.Pinned {
+		if model != p.binding.Model {
+			return nil, nil, nil, "", fmt.Errorf("%w: request model differs from the pinned binding", ErrModelEvidence)
+		}
+		verify = true
+	}
+	// A restricted request is the usability probe; D4 probes only a model the
+	// account lists, before any turn starts.
+	if req.SuppressTools {
+		if err := accountListsModel(codexEnv(), model); err != nil {
+			return nil, nil, nil, model, err
+		}
 	}
 
 	// Effort emission: the binding's resolved Effort is floored + mapped through
@@ -161,6 +180,12 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 	// only deadline in the conversation.go → StreamChat → startTurn path, so a
 	// wedged codex turn that never emits a terminal frame is bounded here.
 	turnCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
+	if req.SuppressTools {
+		bounded, release := context.WithTimeout(procenv.WithProbeResponseLimit(turnCtx), procenv.ProbeTimeout)
+		previousCancel := cancel
+		turnCtx, cancel = bounded, func() { release(); previousCancel() }
+		req.Prompt = probeIdentityPrompt
+	}
 
 	stream, err := p.newSession().Start(turnCtx, turnConfig{
 		Model:    model,
@@ -168,6 +193,11 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 		WorkDir:  req.WorkDir,
 		ResumeID: req.SessionID,
 		Effort:   effort,
+		// A pinned run (binding.Pinned or the request flag) must prove the
+		// executed model.
+		VerifyModel: verify,
+		// The usability probe runs read-only with D10 restrictions.
+		ReadOnly: req.SuppressTools,
 	})
 	if err != nil {
 		cancel()

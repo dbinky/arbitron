@@ -130,7 +130,11 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	result, _, err := collectResult(runCtx, p.runner, p.spec(req))
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, provider.ResolvedBinding{})
+	if err != nil {
+		return nil, err
+	}
+	result, _, err := collectResult(runCtx, p.runner, p.spec(req), wantModel)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +178,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 
 		// streamState (SF3) holds per-line bookkeeping outside this closure
 		// so Handle / Finalize are individually testable.
-		var st streamState
+		st := streamState{wantModel: pinnedModel(req)}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}

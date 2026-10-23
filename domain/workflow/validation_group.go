@@ -97,19 +97,21 @@ func validateGroupNode(wf *Workflow, n Node, files FileChecker, profiles Profile
 		})
 	}
 
-	if raw.ResolverProfile != "" && profiles != nil {
-		kind, ok := profiles.ProfileKind(raw.ResolverProfile)
+	// The resolver's required kind comes from the shared ModelConsumers
+	// description, the same one run pin capture and the path inventory use.
+	if c, ok := groupResolverConsumer(n); ok && profiles != nil {
+		kind, ok := profiles.ProfileKind(c.Alias)
 		switch {
 		case !ok:
 			errs = append(errs, ValidationError{
 				Code:    "GROUP_UNKNOWN_RESOLVER_PROFILE",
-				Message: "parallel_group " + n.ID + " references unknown resolverProfile " + strconv.Quote(raw.ResolverProfile) + "; create the profile or use an existing agent profile alias",
+				Message: "parallel_group " + n.ID + " references unknown resolverProfile " + strconv.Quote(c.Alias) + "; create the profile or use an existing agent profile alias",
 				NodeID:  n.ID,
 			})
-		case kind != "agent":
+		case kind != c.Kind:
 			errs = append(errs, ValidationError{
 				Code:    "GROUP_RESOLVER_PROFILE_KIND",
-				Message: "parallel_group " + n.ID + " resolverProfile " + strconv.Quote(raw.ResolverProfile) + " is a " + kind + " profile; conflict resolution edits files and requires an agent profile",
+				Message: "parallel_group " + n.ID + " resolverProfile " + strconv.Quote(c.Alias) + " is a " + kind + " profile; conflict resolution edits files and requires an agent profile",
 				NodeID:  n.ID,
 			})
 		}

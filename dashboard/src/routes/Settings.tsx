@@ -1,8 +1,120 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { SystemConfig, WebSocketEvent } from '../api/types'
 import { api } from '../api/client'
+import type { SystemSettings, SystemSettingsPatch } from '../api/client'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
 import styles from './Settings.module.css'
+
+function ModelAnnouncementSettings() {
+  const [modelSettings, setModelSettings] = useState<SystemSettings | null>(null)
+  const [catalogUrl, setCatalogUrl] = useState('')
+  const [webhook, setWebhook] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const apply = useCallback((data: SystemSettings) => {
+    setModelSettings(data)
+    setCatalogUrl(data.catalogUrl)
+    setWebhook('')
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    api.system.getSettings().then((data) => {
+      if (!cancelled) apply(data)
+    }).catch((err: unknown) => {
+      if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load model settings')
+    })
+    return () => { cancelled = true }
+  }, [apply])
+
+  const refresh = async () => {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      apply(await api.system.getSettings())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load model settings')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const save = async (patch: SystemSettingsPatch) => {
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      apply(await api.system.updateSettings(patch))
+      setMessage('Saved successfully.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={styles.card}>
+      <div className={styles.cardHeader}>Model Announcements</div>
+      <div className={styles.cardBody}>
+        <div className={styles.fieldRow}>
+          <span className={styles.fieldLabel}>Status</span>
+          <span className={styles.fieldValue}>{modelSettings ? (modelSettings.teamsConfigured ? 'Configured' : 'Not configured') : 'Unavailable'}</span>
+        </div>
+        <div className={styles.fieldRow}>
+          <label className={styles.fieldLabel} htmlFor="model-catalog-url">Catalog URL</label>
+          <input
+            className={styles.urlInput}
+            id="model-catalog-url"
+            type="url"
+            value={catalogUrl}
+            onChange={(e) => setCatalogUrl(e.target.value)}
+            disabled={busy || !modelSettings}
+          />
+        </div>
+        <div className={styles.fieldRow}>
+          <label className={styles.fieldLabel} htmlFor="model-webhook-url">Replacement webhook URL</label>
+          <input
+            className={styles.urlInput}
+            id="model-webhook-url"
+            type="password"
+            placeholder="Leave blank to keep current"
+            value={webhook}
+            onChange={(e) => setWebhook(e.target.value)}
+            disabled={busy || !modelSettings}
+          />
+        </div>
+        <div className={styles.saveRow}>
+          {message && <span className={styles.saveMessage}>{message}</span>}
+          {error && <span className={styles.saveError} role="alert">{error}</span>}
+          <button className={styles.saveButton} disabled={busy} onClick={() => void refresh()}>
+            Refresh
+          </button>
+          <button
+            className={styles.saveButton}
+            disabled={busy || !modelSettings}
+            onClick={() => void save({ teamsWebhookUrl: '' })}
+          >
+            Clear webhook
+          </button>
+          <button
+            className={styles.saveButton}
+            disabled={busy || !modelSettings}
+            onClick={() => void save({
+              catalogUrl,
+              ...(webhook.trim() ? { teamsWebhookUrl: webhook.trim() } : {}),
+            })}
+          >
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function Settings() {
   const [config, setConfig] = useState<SystemConfig | null>(null)
@@ -238,6 +350,8 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      <ModelAnnouncementSettings />
 
       {/* Queue Status (live) */}
       <div className={styles.card}>

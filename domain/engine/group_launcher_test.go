@@ -46,7 +46,9 @@ func newLaunchFixture(t *testing.T) *launchFixture {
 	require.NoError(t, os.WriteFile(filepath.Join(parentWS, "src", "main.go"), []byte("package main\n"), 0o644))
 	g := "g"
 	parent := &instance.Instance{
-		ID: parentID, OwnerID: owner, WorkflowName: "parent-wf", State: instance.StateRunning,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               parentID, OwnerID: owner, WorkflowName: "parent-wf", State: instance.StateRunning,
 		Priority: instance.PriorityHigh, CurrentNodeID: &g,
 	}
 	require.NoError(t, instances.Create(context.Background(), parent))

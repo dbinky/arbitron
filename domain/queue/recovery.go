@@ -13,7 +13,11 @@ import (
 // SetScheduler has been called on the manager.
 func (m *Manager) RecoverTimers(ctx context.Context) error {
 	waiting, err := m.queue.ListWaitingWithTimer(ctx)
-	if err != nil {
+	if handled, ferr := m.failCorrupt(ctx, err); handled {
+		if ferr != nil {
+			return ferr
+		}
+	} else if err != nil {
 		return fmt.Errorf("listing waiting instances: %w", err)
 	}
 
@@ -46,7 +50,11 @@ func (m *Manager) RecoverTimers(ctx context.Context) error {
 // SetScheduler has been called on the manager.
 func (m *Manager) RecoverWebhooks(ctx context.Context) error {
 	waiting, err := m.queue.ListWaitingWithWebhook(ctx)
-	if err != nil {
+	if handled, ferr := m.failCorrupt(ctx, err); handled {
+		if ferr != nil {
+			return ferr
+		}
+	} else if err != nil {
 		return fmt.Errorf("listing waiting webhook instances: %w", err)
 	}
 

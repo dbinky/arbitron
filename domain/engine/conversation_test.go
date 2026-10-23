@@ -1181,3 +1181,161 @@ func TestConversationHandler_HandleMessage_GuardReleasedAfterError(t *testing.T)
 	require.NoError(t, err2)
 	assert.NotErrorIs(t, err2, instance.ErrInteractiveTurnInProgress)
 }
+
+// ctxSpyResolver records whether the context handed to Resolve carries the
+// instance ID, which PinningResolver needs to apply the run's pins.
+type ctxSpyResolver struct {
+	inner      provider.ProfileResolver
+	gotID      uuid.UUID
+	gotIDFound bool
+}
+
+func (r *ctxSpyResolver) Resolve(ctx context.Context, alias string) (provider.ResolvedBinding, error) {
+	r.gotID, r.gotIDFound = engine.InstanceIDFromContext(ctx)
+	return r.inner.Resolve(ctx, alias)
+}
+
+func TestConversationHandler_HandleMessage_ResolvesWithInstanceContext(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+	llmProvider.streamCallFn = cannedStream([]string{"ok"}, 1, 1)
+	spy := &ctxSpyResolver{inner: interactiveResolver()}
+	handler := engine.NewConversationHandler(instRepo, nodeExecRepo, streamSelector(llmProvider), spy, eventBus, queueMgr)
+
+	require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "hi"))
+	require.True(t, spy.gotIDFound, "resolver ctx must carry the instance ID so pins apply on follow-up turns")
+	require.Equal(t, instanceID, spy.gotID)
+}
+
+type conversationPinLookup struct {
+	t     *testing.T
+	id    uuid.UUID
+	calls int
+}
+
+func (l *conversationPinLookup) Lookup(_ context.Context, id uuid.UUID) (provider.PinSet, error) {
+	l.calls++
+	require.Equal(l.t, l.id, id, "pins must be loaded for the authorized instance")
+	return provider.PinSet{Version: 1, Models: map[string]string{interactiveChatProfile: "version-X"}}, nil
+}
+
+func (*conversationPinLookup) Release(uuid.UUID) {}
+
+func TestConversationHandler_HandleMessage_LostRunContextRefusesBeforeStream(t *testing.T) {
+	for _, missing := range []string{"absent", "zero"} {
+		t.Run(missing, func(t *testing.T) {
+			instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+			llmProvider.streamCallFn = cannedStreamWithSession([]string{"verified retry"}, "s")
+			stored, err := nodeExecRepo.GetByInstanceAndNode(convoCtx(), instanceID, "interact")
+			require.NoError(t, err)
+			stored.LLMConversation[engine.ConversationKeySessionID] = "s"
+			before, err := json.Marshal(stored.LLMConversation)
+			require.NoError(t, err)
+
+			// Simulate context loss at the resolver boundary, even though the
+			// conversation entry point attached its authorized instance ID.
+			lost := true
+			extract := func(ctx context.Context) (uuid.UUID, bool) {
+				if lost {
+					return uuid.Nil, missing == "zero"
+				}
+				return engine.InstanceIDFromContext(ctx)
+			}
+			lookup := &conversationPinLookup{t: t, id: instanceID}
+			resolver := provider.NewPinningResolver(interactiveResolver(), lookup, extract).ForRun()
+			handler := engine.NewConversationHandler(instRepo, nodeExecRepo, streamSelector(llmProvider), resolver, eventBus, queueMgr)
+
+			err = handler.HandleMessage(convoCtx(), instanceID, "refused")
+			require.ErrorIs(t, err, provider.ErrPinUnavailable)
+			assert.Empty(t, llmProvider.getCapturedReqs(), "missing context must never invoke the harness")
+			assert.Zero(t, lookup.calls)
+			after, err := json.Marshal(stored.LLMConversation)
+			require.NoError(t, err)
+			assert.Equal(t, string(before), string(after), "refused turn must preserve durable history and session")
+			inst, err := instRepo.Get(convoCtx(), instanceID)
+			require.NoError(t, err)
+			assert.Equal(t, instance.StateWaiting, inst.State)
+			assert.Empty(t, eventBus.eventsOfType(instanceID, engine.EventTypeInteractiveToken))
+			assert.Empty(t, eventBus.eventsOfType(instanceID, engine.EventTypeInteractiveEnded))
+
+			// Refusal releases the operation guard; a retry with intact context
+			// reaches the sink with the pin, never the live profile's model.
+			lost = false
+			require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "retry"))
+			reqs := llmProvider.getCapturedReqs()
+			require.Len(t, reqs, 1)
+			assert.Equal(t, "version-X", reqs[0].Model)
+			assert.True(t, reqs[0].RequireExecutedModel)
+			assert.Equal(t, "s", reqs[0].SessionID)
+		})
+	}
+}
+
+// pinReleaseSetter is the optional hook main.go wires with the shared pin cache
+// release; asserted through the interface exactly as the composition root does.
+type pinReleaseSetter interface{ SetPinCacheRelease(func(uuid.UUID)) }
+
+func TestConversationHandler_SessionCompletion_ReleasesPinCache(t *testing.T) {
+	t.Run("EndSession", func(t *testing.T) {
+		instRepo, nodeExecRepo, _, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+		handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
+		var released []uuid.UUID
+		handler.(pinReleaseSetter).SetPinCacheRelease(func(id uuid.UUID) { released = append(released, id) })
+
+		_, err := handler.EndSession(convoCtx(), instanceID)
+		require.NoError(t, err)
+		assert.Equal(t, []uuid.UUID{instanceID}, released)
+	})
+	t.Run("LLM-completed session", func(t *testing.T) {
+		instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+		llmProvider.streamCallFn = cannedSentinelStream("\n", map[string]any{"summary": "Done"}, "s-final")
+		handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+		var released []uuid.UUID
+		handler.(pinReleaseSetter).SetPinCacheRelease(func(id uuid.UUID) { released = append(released, id) })
+
+		require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "Finish"))
+		assert.Equal(t, []uuid.UUID{instanceID}, released)
+	})
+	t.Run("an ordinary turn does not release", func(t *testing.T) {
+		instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+		llmProvider.streamCallFn = cannedStream([]string{"ok"}, 1, 1)
+		handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+		handler.(pinReleaseSetter).SetPinCacheRelease(func(uuid.UUID) { t.Fatal("released mid-session") })
+
+		require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "Hello"))
+	})
+}
+
+// pinnedResolver marks every binding Pinned, as PinningResolver does inside a
+// post-migration run.
+type pinnedResolver struct{ inner provider.ProfileResolver }
+
+func (r pinnedResolver) Resolve(ctx context.Context, alias string) (provider.ResolvedBinding, error) {
+	b, err := r.inner.Resolve(ctx, alias)
+	b.Pinned = true
+	return b, err
+}
+
+func TestConversationHandler_HandleMessage_PinnedBindingRequiresExecutedModel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver provider.ProfileResolver
+		want     bool
+	}{
+		{"pinned run", pinnedResolver{interactiveResolver()}, true},
+		{"legacy or live run", interactiveResolver(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+			llmProvider.streamCallFn = cannedStream([]string{"ok"}, 1, 1)
+			handler := engine.NewConversationHandler(instRepo, nodeExecRepo, streamSelector(llmProvider), tc.resolver, eventBus, queueMgr)
+
+			require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "hi"))
+			require.Len(t, llmProvider.capturedReqs, 1)
+			assert.Equal(t, interactiveChatModel, llmProvider.capturedReqs[0].Model)
+			assert.Equal(t, tc.want, llmProvider.capturedReqs[0].RequireExecutedModel)
+			// Only the usability probe asks for the restricted recipe; a live
+			// follow-up keeps its profile's tools.
+			assert.False(t, llmProvider.capturedReqs[0].SuppressTools)
+		})
+	}
+}

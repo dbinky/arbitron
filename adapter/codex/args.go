@@ -34,6 +34,10 @@ const (
 	// (codex's equivalent of claudecli's --dangerously-skip-permissions /
 	// opencode's --allow-all-tools). codex-cli 0.137.0 spelling.
 	bypassFlag = "--dangerously-bypass-approvals-and-sandbox"
+	// sandboxFlag selects codex's sandbox policy; the usability probe uses it with
+	// readOnlySandbox instead of the bypass posture.
+	sandboxFlag     = "--sandbox"
+	readOnlySandbox = "read-only"
 	// modelFlag selects the model: `-m <model>`.
 	modelFlag = "-m"
 	// cdFlag sets the working directory: `--cd <dir>`. codex-cli also exposes
@@ -197,4 +201,28 @@ func buildExecArgs(model, workDir string, extra []string) ([]string, error) {
 	args = append(args, extra...) // e.g. -c model_reasoning_effort=medium
 	args = append(args, cdFlag, workDir, jsonFlag)
 	return args, nil
+}
+
+// buildProbeArgs assembles the `codex exec` argv of the usability probe: the
+// mission argv with the read-only sandbox in place of the bypass posture, so a
+// probe turn cannot write or run unsandboxed commands. The model and effort ride
+// argv exactly as a mission's do. Fixed D10 restrictions are appended here;
+// ProbeExecutedModel feeds the per-server overrides from live config enumeration.
+func buildProbeArgs(binding provider.ResolvedBinding, rules provider.CapabilityRules, workDir string) ([]string, error) {
+	extra, err := codexEffortArgs(binding, rules)
+	if err != nil {
+		return nil, err
+	}
+	args, err := buildExecArgs(binding.Model, workDir, extra)
+	if err != nil {
+		return nil, err
+	}
+	for i, a := range args {
+		if a == bypassFlag {
+			args[i] = sandboxFlag
+			args = append(args[:i+1], append([]string{readOnlySandbox}, args[i+1:]...)...)
+			break
+		}
+	}
+	return append(args, probeRestrictionArgs()...), nil
 }

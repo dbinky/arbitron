@@ -44,8 +44,9 @@ func TestLayoutE2E_LifecycleProcess(t *testing.T) {
 		layoutRenderReviewerFactory = func(*config.Config, *slog.Logger) (layout.Renderer, layout.Reviewer, func(), error) {
 			return layouttest.NewFakeRenderer(), reviewer, nil, nil
 		}
-		ds, err := initDomain(context.Background(), configPath)
+		ds, err := initDomainWithModelDependencies(context.Background(), configPath, offlineModelDependencies())
 		require.NoError(t, err)
+		require.NoError(t, ds.Start(context.Background()))
 		require.NoError(t, ds.workflowSvc.Create(adminCtxForLocalUser(t, ds), "checkpoint", layoutE2EWorkflow("checkpoint", "Retained best")))
 		select {
 		case <-reviewer.entered:
@@ -58,9 +59,10 @@ func TestLayoutE2E_LifecycleProcess(t *testing.T) {
 		require.NoError(t, err)
 		ds.Close(context.Background())
 	} else {
-		ds, err := initDomain(context.Background(), configPath)
+		ds, err := initDomainWithModelDependencies(context.Background(), configPath, offlineModelDependencies())
 		require.NoError(t, err)
 		defer ds.Close(context.Background())
+		require.NoError(t, ds.Start(context.Background()))
 		path := filepath.Join(ds.cfg.Workspace.Path, "users", localDefaultUser.String(), "checkpoint", "workflow.json")
 		rec := layoutE2EWaitTerminal(t, ds, layoutE2ESavedRevision(t, path))
 		require.Greater(t, rec.JobGeneration, int64(1))

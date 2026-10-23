@@ -22,15 +22,58 @@ var ErrProfileNotFound = errors.New("provider: profile not found")
 // with errors.Is.
 var ErrReadOnlyStore = errors.New("provider: profile store is read-only")
 
+// ErrProfileMutationUnavailable marks a store without conditional admin writes.
+var ErrProfileMutationUnavailable = errors.New("provider: conditional profile mutations not configured")
+
+// ProfileMutationStore protects admin edits against changes since their read.
+// Both operations compare the complete expected row, including its revision;
+// a changed or deleted row returns ErrAdvanceConflict without any mutation.
+type ProfileMutationStore interface {
+	UpdateExpected(ctx context.Context, expected, replacement Profile) (Profile, error)
+	DeleteExpected(ctx context.Context, expected Profile) error
+}
+
+// SelectionMutationStore persists a prepared selection after the caller has
+// revalidated its exact prospective proof under the execution mutation lease.
+// Following selections require a matching candidate and execution token; policy
+// and connection revisions are checked in the same transaction as the write.
+// Pinned selections require prior fixed-version validation, not follow evidence.
+// UpdateValidated compares the complete expected row and revision, returning
+// ErrAdvanceConflict on a concurrent edit or deletion. Both methods return the
+// authoritative stored profile and revision, never a caller-supplied revision.
+// Service/seed callers must not fall back to unconditional CRUD if unavailable.
+// External fingerprints and candidate usability remain the caller's checks.
+type SelectionMutationStore interface {
+	CreateValidated(context.Context, PreparedSelection) (Profile, error)
+	UpdateValidated(context.Context, Profile, PreparedSelection) (Profile, error)
+}
+
+// ProfileSeedStore retains the original one-time config seed across interrupted
+// boots. PendingProfileSeed atomically snapshots candidates only for an empty,
+// never-seeded store; subsequent calls return only unfinished original entries.
+// CompleteProfileSeed acknowledges an entry without changing its profile row.
+// ReplaceProfileSeed rewrites an unfinished entry's original with a corrected
+// candidate for the same alias; it never adds an entry. SeedBatch uses it only
+// for an original that can never be prepared.
+type ProfileSeedStore interface {
+	PendingProfileSeed(context.Context, []Profile) ([]Profile, error)
+	CompleteProfileSeed(context.Context, string) error
+	ReplaceProfileSeed(context.Context, Profile) error
+}
+
 // ProfileStore is the driven port for profile persistence. It is a DUMB
 // persistence port: capability validation (against the CapabilityRules) lives in
 // the Phase-4 ProfileService and the startup seed path, NOT here. The store
-// persists exactly what it is given, mirroring how ConnectionStore keeps
+// defaults selection mode to pinned and enforces mode/target shape; it owns
+// Revision (callers cannot choose it). Identity/usability validation stays above
+// this port, mirroring how ConnectionStore keeps
 // provider-specific URL/Azure checks in ValidateConnection at the seam above it.
 type ProfileStore interface {
-	// Create persists a new profile; a duplicate alias returns ErrProfileExists.
+	// Create persists a new profile at revision 1, ignoring p.Revision;
+	// a duplicate alias returns ErrProfileExists.
 	Create(ctx context.Context, p Profile) error
-	// Update overwrites an existing profile by alias; a missing alias returns
+	// Update overwrites an existing profile by alias and atomically increments
+	// the stored revision, ignoring p.Revision; a missing alias returns
 	// ErrProfileNotFound.
 	Update(ctx context.Context, p Profile) error
 	// Delete removes a profile by alias; a missing alias returns
@@ -42,7 +85,6 @@ type ProfileStore interface {
 	// List returns all profiles ordered by alias (a non-nil empty slice when
 	// empty).
 	List(ctx context.Context) ([]Profile, error)
-	// Count returns the number of stored profiles. It feeds the one-time seed
-	// gate (seed only when the table is empty; the DB wins thereafter).
+	// Count returns the number of stored profiles.
 	Count(ctx context.Context) (int, error)
 }

@@ -77,8 +77,8 @@ func newFinalizeFixture(t *testing.T, gatherMode string, state instance.GroupRun
 	log := &callLog{}
 	ordered := &orderedInstanceRepo{mockInstanceRepo: base.instanceRepo, log: log}
 	executors := map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: base.executor}
-	eng := engine.NewEngine(base.workflowRepo, ordered, base.nodeExecRepo, base.snapshotRepo, base.userRepo,
-		executors, base.eventBus, base.queueManager, base.queueRepo, "")
+	eng := wireModelPins(engine.NewEngine(base.workflowRepo, ordered, base.nodeExecRepo, base.snapshotRepo, base.userRepo,
+		executors, base.eventBus, base.queueManager, base.queueRepo, ""))
 	base.engine = eng
 	t.Cleanup(eng.Shutdown)
 	// newTestFixtures bound Enqueue to ITS engine; re-bind it to this one.
@@ -122,7 +122,9 @@ func seedGroupTask(t *testing.T, repo *mockInstanceRepo, wf *workflow.Workflow, 
 	node := "grp"
 	now := time.Now()
 	require.NoError(t, repo.Create(context.Background(), &instance.Instance{
-		ID: id, OwnerID: uuid.New(), WorkflowName: wf.Name, WorkflowSnapshot: snap,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               id, OwnerID: uuid.New(), WorkflowName: wf.Name, WorkflowSnapshot: snap,
 		State: instance.StateQueued, Priority: instance.PriorityNormal, Variables: map[string]any{},
 		ParentInstanceID: &parentID, ParentNodeID: &node, SpawnMode: instance.SpawnModeGroupTask,
 		GroupRunID: &runID, GroupTaskKey: &key, GroupTaskKind: instance.GroupTaskKindBranch,

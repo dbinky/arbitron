@@ -24,6 +24,7 @@ func TestListQueued_OrdersByPriorityThenFIFO(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	mkQueued := func(id uuid.UUID, priority instance.Priority, queuedAt time.Time) *instance.Instance {
 		return &instance.Instance{
+			ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 			ID: id, OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: map[string]any{"name": "wf"},
 			State: instance.StateQueued, Priority: priority, QueuedAt: &queuedAt, CreatedAt: now, UpdatedAt: now,
 		}
@@ -69,8 +70,8 @@ func TestListQueued_ExcludesNonQueuedStates(t *testing.T) {
 	require.NoError(t, err)
 
 	now := time.Now().UTC().Truncate(time.Second)
-	queued := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: map[string]any{"name": "wf"}, State: instance.StateQueued, Priority: instance.PriorityNormal, QueuedAt: &now, CreatedAt: now, UpdatedAt: now}
-	running := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf2", WorkflowSnapshot: map[string]any{"name": "wf2"}, State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now}
+	queued := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: map[string]any{"name": "wf"}, State: instance.StateQueued, Priority: instance.PriorityNormal, QueuedAt: &now, CreatedAt: now, UpdatedAt: now}
+	running := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: "wf2", WorkflowSnapshot: map[string]any{"name": "wf2"}, State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now}
 	require.NoError(t, instRepo.Create(context.Background(), queued))
 	require.NoError(t, instRepo.Create(context.Background(), running))
 

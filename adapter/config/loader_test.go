@@ -675,10 +675,11 @@ func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
 }
 
 // TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults verifies the
-// feature-pipeline sample's DEFAULT profile registry: the interviewer runs on
-// the claude-code default (empty backend, model "") so a fresh install runs the
-// bundled sample out of the box, while planner/coder run on claude-code
-// (opus-4.8). The gpt-5.5/codex mixed-model split ships as a COMMENTED example in
+// feature-pipeline sample's DEFAULT profile registry: the interviewer follows
+// the Anthropic sonnet tier on the inherited (claude-code) backend so a fresh
+// install runs the bundled sample out of the box, while planner/coder follow
+// the opus tier on claude-code. No default names a fixed model, so none goes
+// stale. The codex mixed-model split ships as a COMMENTED example in
 // the sample config, not the active default (PR #32 Must Fix #4 — do not ship a
 // default the authoring host could not run).
 func TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults(t *testing.T) {
@@ -695,20 +696,31 @@ func TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults(t *testing.T) {
 		byAlias[p.Alias] = p
 	}
 
-	// interviewer → claude-code default (empty backend, model "") so it runs out
-	// of the box on the claude subscription; it must NOT pin the codex backend.
+	// interviewer → inherited claude-code backend, following sonnet, so it runs
+	// out of the box on the claude subscription; it must NOT pin codex.
 	interviewer := byAlias["interviewer"]
 	assert.Equal(t, "agent", interviewer.Kind)
-	assert.NotEqual(t, "codex", interviewer.Backend, "default interviewer must NOT pin codex (would need codex installed+logged-in and a gpt-5.5 plan)")
+	assert.NotEqual(t, "codex", interviewer.Backend, "default interviewer must NOT pin codex (would need codex installed+logged-in)")
 	assert.Empty(t, interviewer.Backend, "default interviewer must inherit the backend (empty)")
-	assert.Empty(t, interviewer.Model, "default interviewer must use the subscription default model")
+	assert.Equal(t, "following", interviewer.SelectionMode)
+	assert.Equal(t, &domainconfig.FollowTargetConfig{Provider: "anthropic", Tier: "sonnet"}, interviewer.FollowTarget)
 
-	// planner + coder → claude-code / opus-4.8 / agent.
+	// planner + coder → claude-code / following opus / agent.
 	for _, alias := range []string{"planner", "coder"} {
 		p := byAlias[alias]
 		assert.Equal(t, "agent", p.Kind, "%s must be agent kind", alias)
 		assert.Equal(t, "claude-code", p.Backend, "%s must run on claude-code", alias)
-		assert.Equal(t, "opus-4.8", p.Model, "%s must run on opus-4.8", alias)
+		assert.Equal(t, "following", p.SelectionMode, "%s must follow its tier", alias)
+		assert.Equal(t, &domainconfig.FollowTargetConfig{Provider: "anthropic", Tier: "opus"}, p.FollowTarget, "%s must follow opus", alias)
+		assert.Empty(t, p.Model, "%s must not name a fixed model that goes stale", alias)
+	}
+
+	// No shipped default is pinned: a pinned profile needs a fixed model
+	// version, and an empty one is refused at seed time.
+	for _, p := range cfg.Profiles {
+		assert.Equal(t, "following", p.SelectionMode, "shipped default %q must follow a tier", p.Alias)
+		require.NotNil(t, p.FollowTarget, "shipped default %q must name a follow target", p.Alias)
+		assert.Equal(t, "anthropic", p.FollowTarget.Provider, p.Alias)
 	}
 
 	// assessor stays chat-kind (it backs the feature-pipeline llm_call node, so

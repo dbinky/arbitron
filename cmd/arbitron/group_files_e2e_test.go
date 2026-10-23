@@ -274,12 +274,14 @@ const filesBadRepoManifest = `{
 // fakeResolverScript stands in for the claude CLI behind the "resolver" agent
 // profile: it drains the prompt, changes nothing in the staging area, and
 // falsely claims success (a stream-json transcript in the adapter's shape).
-// Only the actual index can establish resolution; this must still notify.
+// Only the actual index can establish resolution; this must still notify. Its
+// result reports the pinned model it ran as (modelUsage), the executed-model
+// evidence every pinned Claude mission must carry.
 const fakeResolverScript = `#!/bin/sh
 cat >/dev/null
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-resolver"}'
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"All conflicts resolved."}]}}'
-printf '%s\n' '{"type":"result","is_error":false,"result":"All conflicts resolved.","session_id":"fake-resolver","usage":{"input_tokens":1,"output_tokens":1}}'
+printf '%s\n' '{"type":"result","is_error":false,"result":"All conflicts resolved.","session_id":"fake-resolver","usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"claude-sonnet-4-5":{}}}'
 `
 
 // ---------------------------------------------------------------------------
@@ -295,7 +297,8 @@ func requireHostGit(t *testing.T) {
 
 // writeFilesStack writes the manifests and a local-mode config whose workspace
 // root is a SYMLINK (to prove the canonical-root wiring), whose claude binary
-// is fakeResolverScript, and which seeds an agent-kind "resolver" profile.
+// is fakeResolverScript, and which seeds an agent-kind "resolver" profile on a
+// fixed model version (config profiles must name one to be seeded).
 func writeFilesStack(t *testing.T, manifests map[string]string) groupStackPaths {
 	t.Helper()
 	requireHostGit(t)
@@ -331,7 +334,7 @@ func writeFilesStack(t *testing.T, manifests map[string]string) groupStackPaths 
 		"queue:\n  globalcap: 10\n  perusercap: 5\n" +
 		"llm:\n  binarypath: " + yamlQuote(fakeClaude) + "\n" +
 		"profiles:\n" +
-		"  - alias: \"resolver\"\n    kind: \"agent\"\n    model: \"\"\n    allowedtools: [\"Read\", \"Edit\", \"Bash\"]\n"
+		"  - alias: \"resolver\"\n    kind: \"agent\"\n    model: \"claude-sonnet-4-5\"\n    allowedtools: [\"Read\", \"Edit\", \"Bash\"]\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 	return groupStackPaths{root: root, workspaceDir: workspaceDir, configPath: configPath}
 }
@@ -339,7 +342,7 @@ func writeFilesStack(t *testing.T, manifests map[string]string) groupStackPaths 
 func bootFilesStack(t *testing.T, manifests map[string]string) (*domainStack, groupStackPaths) {
 	t.Helper()
 	paths := writeFilesStack(t, manifests)
-	ds, err := initDomain(context.Background(), paths.configPath)
+	ds, err := initStartedDomain(context.Background(), paths.configPath)
 	require.NoError(t, err, "the composition root must boot with file gathering wired")
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	return ds, paths
@@ -889,7 +892,7 @@ func TestGroupFilesE2E_RestartRestoresAnInterruptedResolution(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(resolver), 0o700))
 	ctx := context.Background()
 
-	ds1, err := initDomain(ctx, paths.configPath)
+	ds1, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	closed := false
 	t.Cleanup(func() {
@@ -907,7 +910,7 @@ func TestGroupFilesE2E_RestartRestoresAnInterruptedResolution(t *testing.T) {
 	ds1.Close(ctx) // Stop producers before reboot; waiting state and gather remain durable.
 	closed = true
 
-	ds2, err := initDomain(ctx, paths.configPath)
+	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds2.Close(context.Background()) })
 

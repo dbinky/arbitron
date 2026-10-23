@@ -30,6 +30,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -51,6 +53,7 @@ import (
 	domainconfig "github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -103,6 +106,9 @@ type fakeRunner struct {
 	chatCalls      int
 	// specs records every RunSpec in call order.
 	specs []claudecli.RunSpec
+	// opencodeModel is the -m value of the latest `opencode run`, echoed by the
+	// following `opencode export`.
+	opencodeModel string
 }
 
 func newFakeRunner() *fakeRunner {
@@ -162,6 +168,20 @@ func (f *fakeRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan stri
 		close(ch)
 		return ch, func() error { return nil }, nil
 	}
+	// opencode run/export: report the session the way the real binary does, with
+	// the provider and model it was actually asked to run (taken from -m), so a
+	// pinned run's execution evidence is the fake's honest echo, not a bypass.
+	if len(spec.Args) > 0 && (spec.Args[0] == "export" || spec.Args[0] == "run") {
+		if out, ok := f.opencodeLines(spec.Args); ok {
+			f.mu.Unlock()
+			ch := make(chan string, len(out))
+			for _, l := range out {
+				ch <- l
+			}
+			close(ch)
+			return ch, func() error { return nil }, nil
+		}
+	}
 	// An armed chat done-script takes precedence for chat (assessor) calls.
 	if f.chatDoneScript != nil && isChatInvocation(joined) {
 		idx := f.chatCalls
@@ -181,6 +201,7 @@ func (f *fakeRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan stri
 		}
 	}
 	f.mu.Unlock()
+	writeCodexRollout(spec, lines)
 
 	ch := make(chan string)
 	go func() {
@@ -190,6 +211,83 @@ func (f *fakeRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan stri
 		}
 	}()
 	return ch, func() error { return nil }, nil
+}
+
+// writeCodexRollout stores the session rollout a real `codex exec` leaves under
+// $CODEX_HOME, naming the thread the stream announced and the model the run was
+// started with (-m), which is the evidence a pinned run is verified against. It
+// writes nothing unless the launch env carries an explicit CODEX_HOME.
+func writeCodexRollout(spec claudecli.RunSpec, lines []string) {
+	if len(spec.Args) == 0 || spec.Args[0] != "exec" {
+		return
+	}
+	var home, model, thread string
+	for _, kv := range spec.Env {
+		if v, ok := strings.CutPrefix(kv, "CODEX_HOME="); ok {
+			home = v
+		}
+	}
+	for i, a := range spec.Args {
+		if a == "-m" && i+1 < len(spec.Args) {
+			model = spec.Args[i+1]
+		}
+	}
+	for _, l := range lines {
+		var ev struct {
+			Type     string `json:"type"`
+			ThreadID string `json:"thread_id"`
+		}
+		if json.Unmarshal([]byte(l), &ev) == nil && ev.Type == "thread.started" {
+			thread = ev.ThreadID
+		}
+	}
+	if home == "" || model == "" || thread == "" {
+		return
+	}
+	dir := filepath.Join(home, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	meta, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": thread}})
+	turn, _ := json.Marshal(map[string]any{"type": "turn_context", "payload": map[string]any{"model": model}})
+	_ = os.WriteFile(filepath.Join(dir, "rollout-2026-01-01T00-00-00-"+thread+".jsonl"), []byte(string(meta)+"\n"+string(turn)+"\n"), 0o644)
+}
+
+// opencodeLines answers an `opencode run -m provider/model` with a completed
+// assistant step and the follow-up `opencode export <session>` with the matching
+// session envelope. Caller holds f.mu.
+func (f *fakeRunner) opencodeLines(args []string) ([]string, bool) {
+	const sessionID = "ses_acceptance"
+	const messageID = "msg_acceptance"
+	switch args[0] {
+	case "run":
+		for i, a := range args {
+			if a == "-m" && i+1 < len(args) {
+				f.opencodeModel = args[i+1]
+				step := func(kind, extra string) string {
+					return `{"type":"` + kind + `","sessionID":"` + sessionID + `","part":{"sessionID":"` + sessionID +
+						`","messageID":"` + messageID + `"` + extra + `}}`
+				}
+				return []string{
+					step("step_start", ""),
+					step("text", `,"type":"text","text":"Editing the workspace."`),
+					step("step_finish", `,"tokens":{"input":3,"output":2}`),
+				}, true
+			}
+		}
+	case "export":
+		providerID, modelID, _ := strings.Cut(f.opencodeModel, "/")
+		env, _ := json.Marshal(map[string]any{
+			"info": map[string]any{"id": sessionID},
+			"messages": []map[string]any{{"info": map[string]any{
+				"id": messageID, "sessionID": sessionID, "role": "assistant",
+				"providerID": providerID, "modelID": modelID,
+				"time": map[string]any{"completed": 1},
+			}}},
+		})
+		return []string{string(env)}, true
+	}
+	return nil, false
 }
 
 // recordedSpecs returns a copy of every RunSpec seen so far.
@@ -236,6 +334,7 @@ type recordedRequest struct {
 	Auth    string // Authorization header (Bearer, OpenAI/OpenRouter)
 	APIKey  string // api-key header (Azure)
 	XAPIKey string // x-api-key header (Anthropic Messages API)
+	Model   string // model named in the request body
 }
 
 // fakeTransport is an http.RoundTripper that returns a canned chat-completions
@@ -251,6 +350,10 @@ type fakeTransport struct {
 	// `assessor.done` exit fires.
 	doneScript []bool
 	calls      int
+	// onRequest, when set, runs after the request is recorded and before the
+	// reply is produced; n is the 1-based request number. A scenario uses it to
+	// change the world while a run is mid-flight.
+	onRequest func(n int)
 }
 
 // newFakeTransport reports the given done value on every call.
@@ -277,15 +380,33 @@ func (t *fakeTransport) nextDone() bool {
 }
 
 func (t *fakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// A pinned run only accepts a response that names the model it asked for, so
+	// the canned reply echoes the requested model like a real endpoint does.
+	model := "fake-model"
+	if req.Body != nil {
+		var sent struct {
+			Model string `json:"model"`
+		}
+		if raw, err := io.ReadAll(req.Body); err == nil && json.Unmarshal(raw, &sent) == nil && sent.Model != "" {
+			model = sent.Model
+		}
+	}
+
 	t.mu.Lock()
 	t.requests = append(t.requests, recordedRequest{
 		URL:     req.URL.String(),
 		Auth:    req.Header.Get("Authorization"),
 		APIKey:  req.Header.Get("api-key"),
 		XAPIKey: req.Header.Get("x-api-key"),
+		Model:   model,
 	})
+	n := len(t.requests)
 	done := t.nextDone()
+	hook := t.onRequest
 	t.mu.Unlock()
+	if hook != nil {
+		hook(n)
+	}
 
 	// The assessor declares an outputSchema, so the chat adapters parse the
 	// assistant content as JSON. Emit a structured {done, notes} object as the
@@ -304,13 +425,15 @@ func (t *fakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var body []byte
 	if strings.Contains(req.URL.Path, "/messages") {
 		body, _ = json.Marshal(map[string]any{
-			"model":   "fake-model",
+			"type":    "message",
+			"role":    "assistant",
+			"model":   model,
 			"content": []map[string]any{{"type": "text", "text": string(content)}},
 			"usage":   map[string]any{"input_tokens": 5, "output_tokens": 2},
 		})
 	} else {
 		body, _ = json.Marshal(map[string]any{
-			"model": "fake-model",
+			"model": model,
 			"choices": []map[string]any{
 				{"message": map[string]any{"role": "assistant", "content": string(content)}},
 			},
@@ -460,8 +583,8 @@ func codexBinding(runner *fakeRunner, transport *fakeTransport) binding {
 	return binding{
 		name: "codex",
 		profiles: []provider.Profile{
-			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "", Model: "gpt-5-codex", Backend: "codex"},
-			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-r1"},
+			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "", Model: "gpt-6.1-sol", Backend: "codex"},
+			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-v4-flash"},
 		},
 		connections: []seedConn{
 			{
@@ -483,8 +606,8 @@ func openWeightBinding(runner *fakeRunner, transport *fakeTransport) binding {
 	return binding{
 		name: "open-weight",
 		profiles: []provider.Profile{
-			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "opencode-openweight", Model: "qwen/qwen3-coder", Backend: "opencode"},
-			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-r1"},
+			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "opencode-openweight", Model: "deepseek/deepseek-v4-pro", Backend: "opencode"},
+			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-v4-flash"},
 		},
 		connections: []seedConn{
 			{
@@ -517,6 +640,9 @@ type harness struct {
 	defaultUser uuid.UUID
 	logBuf      *bytes.Buffer
 	binding     binding
+
+	profileStore *editableProfileStore
+	profileCache *providersadapter.ProfileCache
 }
 
 // fileChecker returns the owner-bound workflow.FileChecker for this harness's
@@ -570,8 +696,10 @@ func newHarness(t *testing.T, b binding) *harness {
 	// Real DB-backed profile resolver over the real connection store. The cache
 	// is built from this binding's fixed profile set (the acceptance analogue of
 	// the boot-time seed).
-	resolver := providersadapter.NewDynamicProfileResolver(
-		providersadapter.NewProfileCacheFromProfiles(b.profiles...), connStore)
+	profileStore := newEditableProfileStore(b.profiles)
+	profileCache := providersadapter.NewProfileCache(profileStore)
+	require.NoError(t, profileCache.Load(context.Background()))
+	resolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
 	connChecker := providersadapter.NewConnChecker(b.profiles, connStore)
 
 	// Real filesystem repo + reader. The worked example is committed flat under
@@ -619,11 +747,18 @@ func newHarness(t *testing.T, b binding) *harness {
 		OpencodeAllowAllTools: true,
 	})
 
-	// Real executors: agent_call + llm_call over the factory/resolver; real
-	// transform + conditional.
+	// Real pin path, as the composition root builds it (cmd/arbitron/main.go):
+	// the batch executors resolve through PinningResolver.ForRun, so a run keeps
+	// the models pinned at trigger however its profiles are edited afterwards.
+	pinningResolver := provider.NewPinningResolver(
+		resolver, providersadapter.NewPinLookup(instances), engine.InstanceIDFromContext)
+	runResolver := pinningResolver.ForRun()
+
+	// Real executors: agent_call + llm_call over the factory/pinning resolver;
+	// real transform + conditional.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, factory, resolver, "claude-code"),
-		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, factory, resolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, factory, runResolver, "claude-code"),
+		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, factory, runResolver),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 	}
@@ -635,6 +770,27 @@ func newHarness(t *testing.T, b binding) *harness {
 		"",
 	)
 	eng.SetWorkspaceManager(wsMgr)
+	// Trigger requires the pin collaborators: the real snapshotter over the real
+	// cache, connection store and route inventory, and a real execution gate. Only
+	// the version grammar is fixture-supplied (the fixtures' models
+	// gpt-4o, ..., carry no provable fixed version); every route is still checked.
+	eng.SetProfileResolver(pinningResolver)
+	inventory, err := providersadapter.NewExecutionPathInventory(providersadapter.InventoryDeps{
+		Profiles:    profileStore,
+		Connections: connStore,
+		Workflows:   workflowRepo,
+		ActiveRuns:  instances,
+		Policy:      fixturePolicy{},
+		Fingerprint: func(b []byte) string { return fmt.Sprintf("%x", b) },
+		Harness:     func(string) ([]byte, error) { return nil, nil },
+		Factory:     factory,
+		Interactive: providersadapter.NewInteractiveStreamSelector(factory, nil, "claude-code"),
+
+		DefaultAgentBackend: "claude-code",
+	})
+	require.NoError(t, err)
+	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, fixtureVersions{}, inventory))
+	eng.SetModelPinGate(provider.NewExecutionGate())
 
 	// Real queue manager (GlobalCap=0 → unlimited) wired to the engine.
 	cfg := &domainconfig.Config{}
@@ -652,7 +808,105 @@ func newHarness(t *testing.T, b binding) *harness {
 		defaultUser: defaultUser,
 		logBuf:      &logBuf,
 		binding:     b,
+
+		profileStore: profileStore,
+		profileCache: profileCache,
 	}
+}
+
+// fixtureVersions accepts every fixture model as its own fixed version. The
+// grammar is proved in domain/modelidentity; here only the route set matters.
+type fixtureVersions struct{}
+
+func (fixtureVersions) SpecificVersion(_ context.Context, req provider.VersionRequest) (string, error) {
+	if req.Model == "" {
+		return "", fmt.Errorf("acceptance fixture: empty model")
+	}
+	return req.Model, nil
+}
+
+// fixturePolicy is an empty identity policy; pin capture never reads it.
+type fixturePolicy struct{}
+
+func (fixturePolicy) Snapshot(context.Context) (modelidentity.IdentityPolicy, error) {
+	return modelidentity.IdentityPolicy{Revision: 1}, nil
+}
+
+// editableProfileStore is an in-memory ProfileStore whose profiles a scenario
+// can edit after a run has been triggered.
+type editableProfileStore struct {
+	mu       sync.Mutex
+	profiles []provider.Profile
+}
+
+func newEditableProfileStore(profiles []provider.Profile) *editableProfileStore {
+	s := &editableProfileStore{}
+	for _, p := range profiles {
+		s.profiles = append(s.profiles, p.Clone())
+	}
+	return s
+}
+
+func (s *editableProfileStore) Create(context.Context, provider.Profile) error {
+	return provider.ErrReadOnlyStore
+}
+func (s *editableProfileStore) Delete(context.Context, string) error {
+	return provider.ErrReadOnlyStore
+}
+
+func (s *editableProfileStore) Update(_ context.Context, p provider.Profile) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.profiles {
+		if s.profiles[i].Alias == p.Alias {
+			s.profiles[i] = p.Clone()
+			return nil
+		}
+	}
+	return provider.ErrProfileNotFound
+}
+
+func (s *editableProfileStore) Get(_ context.Context, alias string) (provider.Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.profiles {
+		if p.Alias == alias {
+			return p.Clone(), nil
+		}
+	}
+	return provider.Profile{}, provider.ErrProfileNotFound
+}
+
+func (s *editableProfileStore) List(context.Context) ([]provider.Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]provider.Profile, len(s.profiles))
+	for i, p := range s.profiles {
+		out[i] = p.Clone()
+	}
+	return out, nil
+}
+
+func (s *editableProfileStore) ListInternal(ctx context.Context) ([]provider.Profile, error) {
+	return s.List(ctx)
+}
+
+func (s *editableProfileStore) Count(context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.profiles), nil
+}
+
+// editProfileModel changes a profile's model and recaches it live, the way an
+// admin edit does: runs triggered earlier must keep their pinned model.
+func (h *harness) editProfileModel(t *testing.T, alias, model string) {
+	t.Helper()
+	ctx := context.Background()
+	p, err := h.profileStore.Get(ctx, alias)
+	require.NoError(t, err)
+	p.Model = model
+	require.NoError(t, h.profileStore.Update(ctx, p))
+	require.NoError(t, h.profileCache.Reload(ctx))
 }
 
 // runResult is the outcome of running the worked example to a terminal state.
@@ -718,6 +972,14 @@ func (h *harness) waitForTerminal(t *testing.T, id uuid.UUID, timeout time.Durat
 			}
 			switch inst.State {
 			case instance.StateCompleted, instance.StateFailed, instance.StateCancelled:
+				if inst.State == instance.StateFailed {
+					nodes, _ := h.nodeExecs.ListByInstance(ctx, id)
+					for _, n := range nodes {
+						if n.Status == instance.NodeStatusFailed {
+							t.Logf("failed node %s: %v", n.NodeID, n.Error)
+						}
+					}
+				}
 				return inst
 			}
 		}

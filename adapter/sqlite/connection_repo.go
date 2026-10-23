@@ -90,6 +90,7 @@ func (r *ConnectionRepo) Create(ctx context.Context, c provider.Connection, apiK
 		Extras:       extrasJSON,
 		APIKeyCipher: cipher,
 		APIKeyNonce:  nonce,
+		Name_2:       c.Name, // revision floor lookup: a recreated name starts above its prior revisions
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -107,8 +108,9 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 		return err
 	}
 	// Pre-check existence so a missing connection maps to the sentinel rather
-	// than silently affecting zero rows. This precedes the BaseURL check so an
-	// update to a non-existent connection still surfaces ErrConnectionNotFound.
+	// than silently affecting zero rows. The UPDATE also checks its affected-row
+	// count in case deletion wins after this read. This precedes the BaseURL check
+	// so an update to a non-existent connection still surfaces ErrConnectionNotFound.
 	if _, err := r.queries.GetConnectionMeta(ctx, c.Name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
@@ -129,7 +131,7 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 
 	if apiKey == nil {
 		// nil key: leave the sealed key columns untouched.
-		err = r.queries.UpdateConnectionMetadata(ctx, generated.UpdateConnectionMetadataParams{
+		rows, err := r.queries.UpdateConnectionMetadata(ctx, generated.UpdateConnectionMetadataParams{
 			Provider: c.Provider,
 			BaseURL:  c.BaseURL,
 			Extras:   extrasJSON,
@@ -137,6 +139,9 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 		})
 		if err != nil {
 			return fmt.Errorf("updating connection %q: %w", c.Name, err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
 		}
 		return nil
 	}
@@ -146,7 +151,7 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 	if err != nil {
 		return fmt.Errorf("sealing api key for connection %q: %w", c.Name, err)
 	}
-	err = r.queries.UpdateConnectionWithKey(ctx, generated.UpdateConnectionWithKeyParams{
+	rows, err := r.queries.UpdateConnectionWithKey(ctx, generated.UpdateConnectionWithKeyParams{
 		Provider:     c.Provider,
 		BaseURL:      c.BaseURL,
 		Extras:       extrasJSON,
@@ -156,6 +161,9 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 	})
 	if err != nil {
 		return fmt.Errorf("updating connection %q: %w", c.Name, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
 	}
 	return nil
 }
@@ -187,10 +195,11 @@ func (r *ConnectionRepo) Get(ctx context.Context, name string) (provider.Connect
 		return provider.Connection{}, fmt.Errorf("unmarshalling extras for connection %q: %w", name, err)
 	}
 	return provider.Connection{
-		Name:     row.Name,
-		Provider: row.Provider,
-		BaseURL:  row.BaseURL,
-		Extras:   extras,
+		Name:           row.Name,
+		Provider:       row.Provider,
+		BaseURL:        row.BaseURL,
+		Extras:         extras,
+		ConfigRevision: row.ConfigRevision,
 	}, nil
 }
 
@@ -206,10 +215,11 @@ func (r *ConnectionRepo) List(ctx context.Context) ([]provider.Connection, error
 			return nil, fmt.Errorf("unmarshalling extras for connection %q: %w", row.Name, err)
 		}
 		conns[i] = provider.Connection{
-			Name:     row.Name,
-			Provider: row.Provider,
-			BaseURL:  row.BaseURL,
-			Extras:   extras,
+			Name:           row.Name,
+			Provider:       row.Provider,
+			BaseURL:        row.BaseURL,
+			Extras:         extras,
+			ConfigRevision: row.ConfigRevision,
 		}
 	}
 	return conns, nil

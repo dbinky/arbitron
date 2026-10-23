@@ -82,7 +82,7 @@ func TestProbeVersion_StartError(t *testing.T) {
 	fr := &fakeRunner{startErr: errors.New(`exec: "codex": not found`)}
 	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.ErrorIs(t, err, fr.startErr)
 }
 
 // ERROR — a nonzero exit from the probe (wait error) surfaces as an error.
@@ -90,7 +90,7 @@ func TestProbeVersion_WaitError(t *testing.T) {
 	fr := &fakeRunner{lines: []string{"codex-cli " + minCodexVersion}, waitErr: errors.New("exit status 1")}
 	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exit status 1")
+	assert.ErrorIs(t, err, fr.waitErr)
 }
 
 // CLI-COUPLING PIN — the minimum codex-cli version is pinned here as a string

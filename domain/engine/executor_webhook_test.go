@@ -502,7 +502,7 @@ func buildWebhookEngine(t *testing.T, f *testFixtures, scheduler *mockTimerSched
 		workflow.NodeTypeTimerDelay:  engine.NewTimerDelayExecutor(f.instanceRepo, f.nodeExecRepo, scheduler, f.queueManager),
 		workflow.NodeTypeWebhookWait: webhookExec,
 	}
-	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo}, "")
+	eng := wireModelPins(engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo}, ""))
 	eng.SetScheduler(scheduler)
 	eng.SetWebhookRegistry(registry)
 

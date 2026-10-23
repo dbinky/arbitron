@@ -22,7 +22,7 @@ func terminalRun(t *testing.T, db *sql.DB, keys ...string) (*GroupRunRepo, *Inst
 	t.Helper()
 	ctx := context.Background()
 	groups, instances := NewGroupRunRepo(db), NewInstanceRepo(db)
-	parent := &instance.Instance{ID: uuid.New(), OwnerID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), WorkflowName: "terminal-parent", State: instance.StateWaiting, Priority: instance.PriorityNormal}
+	parent := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), WorkflowName: "terminal-parent", State: instance.StateWaiting, Priority: instance.PriorityNormal}
 	require.NoError(t, instances.Create(ctx, parent))
 	run := sampleGroupRun(parent.ID, "g", keys...)
 	run.CompletionRule, run.UnfinishedBehavior = "first_success", "finish_independently"
@@ -30,7 +30,9 @@ func terminalRun(t *testing.T, db *sql.DB, keys ...string) (*GroupRunRepo, *Inst
 	for _, task := range run.Tasks {
 		node, key, rid, pid := "g", task.Key, run.ID, parent.ID
 		child := &instance.Instance{
-			ID: task.ChildInstanceID, OwnerID: parent.OwnerID, WorkflowName: "terminal-child",
+			ModelPins:        map[string]string{},
+			ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+			ID:               task.ChildInstanceID, OwnerID: parent.OwnerID, WorkflowName: "terminal-child",
 			State: instance.StateQueued, Priority: instance.PriorityNormal,
 			ParentInstanceID: &pid, ParentNodeID: &node, SpawnMode: instance.SpawnModeGroupTask,
 			GroupRunID: &rid, GroupTaskKey: &key, GroupTaskKind: instance.GroupTaskKindBranch,

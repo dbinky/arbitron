@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -435,7 +436,10 @@ func TestLayoutGroupSurfaces_ResolutionCalloutAnchorsReviewedFooter(t *testing.T
 	require.NoError(t, os.WriteFile(cli, []byte(fakeResolverScript), 0700))
 	cfg, err := os.ReadFile(env.configPath)
 	require.NoError(t, err)
-	cfg = append(cfg, []byte("llm:\n  binarypath: "+yamlQuote(cli)+"\nprofiles:\n  - alias: resolver\n    kind: agent\n    model: \"\"\n    allowedtools: [Read, Edit, Bash]\n")...)
+	// Join the env's profile list; a pinned profile names a fixed model, here the
+	// one fakeResolverScript reports executing.
+	cfg = bytes.Replace(cfg, []byte("profiles:\n"), []byte("profiles:\n  - alias: resolver\n    kind: agent\n    model: \"claude-sonnet-4-5\"\n    allowedtools: [Read, Edit, Bash]\n"), 1)
+	cfg = append(cfg, []byte("llm:\n  binarypath: "+yamlQuote(cli)+"\n")...)
 	require.NoError(t, os.WriteFile(env.configPath, cfg, 0600))
 	ds, _ := env.boot(t)
 	ctx := adminCtxForLocalUser(t, ds)

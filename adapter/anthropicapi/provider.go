@@ -74,8 +74,8 @@ func New(cfg Config) *Provider {
 
 // boundedReader wraps r with the configured MaxResponseBytes cap (the shared
 // procenv bounded read; over-cap yields procenv.ErrResponseTooLarge).
-func (p *Provider) boundedReader(r io.Reader) io.Reader {
-	return procenv.BoundedReader(r, p.maxResponseBytes)
+func (p *Provider) boundedReader(ctx context.Context, r io.Reader) io.Reader {
+	return procenv.BoundedReader(r, procenv.ResponseLimit(ctx, p.maxResponseBytes))
 }
 
 // Chat POSTs a non-streaming Messages call and maps the assistant content
@@ -85,6 +85,10 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	ctx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
+	requireModel := p.binding.Pinned || req.RequireExecutedModel
+	if requireModel && (p.binding.Model == "" || (req.Model != "" && req.Model != p.binding.Model)) {
+		return nil, errModelExecutionEvidence
+	}
 	body, err := buildBody(req, p.binding.Model, false)
 	if err != nil {
 		return nil, err
@@ -100,7 +104,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	reader := p.boundedReader(resp.Body)
+	reader := p.boundedReader(ctx, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, p.statusError(resp.StatusCode, reader)
 	}
@@ -113,6 +117,11 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	msg, err := decodeMessages(raw)
 	if err != nil {
 		return nil, err
+	}
+	if requireModel {
+		if err := msg.messageIdentity.verify(p.binding.Model); err != nil {
+			return nil, err
+		}
 	}
 
 	// Return the RAW assistant output string regardless of OutputSchema. The
@@ -140,6 +149,11 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	streamCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
+	requireModel := p.binding.Pinned || req.RequireExecutedModel
+	if requireModel && (p.binding.Model == "" || (req.Model != "" && req.Model != p.binding.Model)) {
+		cancel()
+		return nil, errModelExecutionEvidence
+	}
 	body, err := buildBody(req, p.binding.Model, true)
 	if err != nil {
 		cancel()
@@ -163,7 +177,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		defer close(out)
 		defer func() { _ = resp.Body.Close() }()
 
-		reader := p.boundedReader(resp.Body)
+		reader := p.boundedReader(streamCtx, resp.Body)
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			send(streamCtx, out, engine.ChatChunk{Error: p.statusError(resp.StatusCode, reader)})
@@ -171,15 +185,28 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		}
 
 		var usage usageBlock
-		var sawUsage bool
+		var sawUsage, sawModel, sawDone bool
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var curEvent string
 		for scanner.Scan() {
-			tok, u, done, perr := parseSSEEvent(scanner.Bytes(), &curEvent)
+			tok, u, identity, done, perr := parseSSEEvent(scanner.Bytes(), &curEvent)
 			if perr != nil {
 				send(streamCtx, out, engine.ChatChunk{Error: perr})
 				return
+			}
+			if requireModel {
+				if identity != nil {
+					if sawModel || identity.verify(p.binding.Model) != nil {
+						send(streamCtx, out, engine.ChatChunk{Error: errModelExecutionEvidence})
+						return
+					}
+					sawModel = true
+				}
+				if tok != "" && !sawModel {
+					send(streamCtx, out, engine.ChatChunk{Error: errModelExecutionEvidence})
+					return
+				}
 			}
 			if u != nil {
 				// Anthropic splits usage across frames: input_tokens on
@@ -195,6 +222,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 				sawUsage = true
 			}
 			if done {
+				sawDone = true
 				break
 			}
 			if tok != "" {
@@ -208,6 +236,17 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			return
 		}
 
+		// Probe budgets cover the complete response, including bytes after stop.
+		if procenv.ResponseLimit(streamCtx, 0) > 0 {
+			if _, err := io.Copy(io.Discard, reader); err != nil {
+				send(streamCtx, out, engine.ChatChunk{Error: err})
+				return
+			}
+		}
+		if requireModel && (!sawModel || !sawDone) {
+			send(streamCtx, out, engine.ChatChunk{Error: fmt.Errorf("%w: incomplete stream", errModelExecutionEvidence)})
+			return
+		}
 		final := engine.ChatChunk{Done: true}
 		if sawUsage {
 			final.TokensIn = usage.InputTokens

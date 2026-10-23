@@ -1130,6 +1130,9 @@ create_system_layout() {
   local data="${SCFG_DATA_DIR:-$ARB_LIB}"
   _make_dir "$ARB_ETC" 0755 "root:root"
   _make_dir "$ARB_LIB" 0750 "${user}:${user}"
+  # The database and its <db>.model-state.key live directly under the data
+  # root; `install -d` would otherwise leave a custom root root-owned.
+  [ "$data" = "$ARB_LIB" ] || _make_dir "$data" 0750 "${user}:${user}"
   _make_dir "$data/workspaces" 0750 "${user}:${user}"
   _make_dir "$data/samples" 0750 "${user}:${user}"
   _make_dir "$ARB_LOG" 0750 "${user}:${user}"
@@ -1516,6 +1519,10 @@ write_shared_env() {
 write_systemd_unit() {
   local user="${ARB_SVC_USER:-arbitron}"
   local port="${SCFG_PORT:-${PORT:-8080}}"
+  local data="${SCFG_DATA_DIR:-$ARB_LIB}"
+  local rw="$ARB_LIB $ARB_LOG"
+  # ProtectSystem=strict leaves a custom data root read-only unless listed.
+  [ "$data" = "$ARB_LIB" ] || rw="$rw $data"
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/arbitron-unit.XXXXXX")" || return 1
 
@@ -1537,7 +1544,7 @@ write_systemd_unit() {
     printf 'NoNewPrivileges=yes\n'
     printf 'ProtectSystem=strict\n'
     printf 'ProtectHome=yes\n'
-    printf 'ReadWritePaths=%s %s\n' "$ARB_LIB" "$ARB_LOG"
+    printf 'ReadWritePaths=%s\n' "$rw"
     if [ "$port" -lt 1024 ] 2>/dev/null; then
       printf 'AmbientCapabilities=CAP_NET_BIND_SERVICE\n'
     fi
@@ -1651,14 +1658,18 @@ upgrade_shared() {
 }
 
 # reconfigure_shared — re-run the Q&A (pre-filled), rewrite config, restart.
-# Preserves the master key + /var/lib data.
+# Preserves the master key + /var/lib data. The layout and unit are re-rendered
+# because the Q&A may choose a new data root that must be writable by the unit.
 reconfigure_shared() {
   require_root
   log_info "Reconfiguring Arbitron (data and master key are preserved)"
   run_shared_qa
+  create_system_layout
   generate_master_key   # detects + reuses the existing key
   write_shared_config
   write_shared_env
+  write_systemd_unit
+  systemctl daemon-reload
   systemctl restart "$ARBITRON_SYSTEMD_UNIT"
   health_check_shared || true
   print_shared_summary

@@ -45,8 +45,7 @@ func (allFilesExist) FileExists(string, string) bool { return true }
 // to a binding the factory dispatches correctly".
 //
 // The DEFAULT interviewer is claude-code with the subscription default model
-// (model ""), so a fresh install runs the bundled feature-pipeline sample out of
-// the box. The gpt-5.5/codex mixed-model split ships as a COMMENTED example in
+// (model ""). The gpt-5.5/codex mixed-model split ships as a COMMENTED example in
 // the sample config (PR #32 Must Fix #4: do not ship a default the authoring host
 // could not run). The subscription path (empty ConnectionRef) reveals no key.
 func TestInterviewerProfile_ResolvesToClaudeCodeBinding(t *testing.T) {
@@ -68,10 +67,15 @@ func TestInterviewerProfile_ResolvesToClaudeCodeBinding(t *testing.T) {
 	// (inherit) backend — floored to the deployment default (claude-code) by the
 	// executor before dispatch. The key invariant this pins is that it is NOT the
 	// codex backend (which would require codex installed+logged-in and a gpt-5.5
-	// plan), so a fresh install runs out of the box.
+	// plan). The sample's stage-specific admin profiles are tested separately.
 	assert.Empty(t, binding.Backend, "default interviewer must inherit the backend (empty), not pin codex")
 	assert.NotEqual(t, "codex", binding.Backend, "default interviewer must NOT pin the codex backend")
-	assert.Empty(t, binding.Model, "default interviewer must use the subscription default model (model \"\")")
+	for _, p := range profiles {
+		if p.Alias == "interviewer" {
+			assert.Equal(t, provider.SelectionFollowing, p.SelectionMode, "default interviewer must follow its tier")
+			assert.Equal(t, &provider.FollowTarget{Provider: "anthropic", Tier: "sonnet"}, p.FollowTarget)
+		}
+	}
 	// The subscription path (empty ConnectionRef) never reveals a key: RevealKey
 	// must return empty-string, not an error.
 	key, keyErr := binding.RevealKey(context.Background())
@@ -104,7 +108,14 @@ func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 			require.NoError(t, err, "%s alias must resolve", alias)
 			assert.Equal(t, provider.ProfileKindAgent, binding.Kind, "%s must be agent-kind", alias)
 			assert.Equal(t, "claude-code", binding.Backend, "%s must resolve to claude-code backend", alias)
-			assert.Equal(t, "opus-4.8", binding.Model, "%s must resolve to opus-4.8", alias)
+			// Following opus: the concrete model is chosen at seed time from the
+			// catalog (TestShippedDefaultProfilesSeedOnFirstBoot), not in config.
+			for _, p := range profiles {
+				if p.Alias == alias {
+					assert.Equal(t, provider.SelectionFollowing, p.SelectionMode, "%s must follow its tier", alias)
+					assert.Equal(t, &provider.FollowTarget{Provider: "anthropic", Tier: "opus"}, p.FollowTarget, "%s must follow opus", alias)
+				}
+			}
 			key, keyErr := binding.RevealKey(context.Background())
 			require.NoError(t, keyErr, "%s RevealKey must not error (subscription path)", alias)
 			assert.Empty(t, key, "%s must not carry an API key (subscription-only)", alias)

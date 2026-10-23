@@ -47,6 +47,11 @@ type Manager struct {
 	// which cannot import domain/engine to call the spawn wake directly. Same
 	// optional-collaborator pattern as SetWebhookRegistry / SetScheduler.
 	childTerminal func(ctx context.Context, instanceID uuid.UUID)
+	// corruptRun is the engine's complete terminal path for a run whose stored
+	// model pins cannot be decoded (instance.CorruptPinsError from an admission
+	// or recovery read). Required in production: without it such a row would
+	// head the queue forever, so evaluation reports the error instead.
+	corruptRun    func(ctx context.Context, instanceID uuid.UUID) error
 	mu            sync.Mutex
 	notifyMu      sync.Mutex
 	notifications sync.WaitGroup
@@ -85,6 +90,31 @@ func (m *Manager) SetScheduler(s TimerSchedulerPort) {
 // recovers any parent this hook misses.
 func (m *Manager) SetChildTerminalHook(h func(ctx context.Context, instanceID uuid.UUID)) {
 	m.childTerminal = h
+}
+
+// SetCorruptRunHandler wires the engine's terminal path for runs whose model
+// pins are corrupt (Engine.FailCorruptRun). Readers only report such runs; this
+// Manager hands each reported ID to the handler and carries on.
+func (m *Manager) SetCorruptRunHandler(h func(ctx context.Context, instanceID uuid.UUID) error) {
+	m.corruptRun = h
+}
+
+// failCorrupt hands every run in an *instance.CorruptPinsError to the corrupt
+// run handler. handled reports whether err was such a report.
+func (m *Manager) failCorrupt(ctx context.Context, err error) (handled bool, failErr error) {
+	var corrupt *instance.CorruptPinsError
+	if !errors.As(err, &corrupt) {
+		return false, nil
+	}
+	if m.corruptRun == nil {
+		return true, fmt.Errorf("queue: no corrupt-run handler: %w", err)
+	}
+	for _, id := range corrupt.IDs {
+		if ferr := m.corruptRun(ctx, id); ferr != nil {
+			return true, fmt.Errorf("queue: failing run %s with corrupt model pins: %w", id, ferr)
+		}
+	}
+	return true, nil
 }
 
 // notifyChildTerminal invokes the optional hook. Nil-safe.
@@ -141,6 +171,12 @@ func (m *Manager) Evaluate(ctx context.Context) error {
 func (m *Manager) evaluateLocked(ctx context.Context) error {
 	for {
 		next, err := m.queue.NextEligible(ctx, m.config.Queue.GlobalCap, m.config.Queue.PerUserCap)
+		if handled, ferr := m.failCorrupt(ctx, err); handled {
+			if ferr != nil {
+				return ferr
+			}
+			continue // the corrupt head is terminal now; ask again
+		}
 		if err != nil {
 			return err
 		}

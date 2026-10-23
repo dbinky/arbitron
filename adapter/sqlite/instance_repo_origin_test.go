@@ -13,6 +13,7 @@ import (
 // newOriginInstance builds a minimal queued instance with the given origin.
 func newOriginInstance(src instance.TriggerSource, scheduleID *uuid.UUID) *instance.Instance {
 	return &instance.Instance{
+		ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		ID:               uuid.New(),
 		OwnerID:          uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		WorkflowName:     "wf",

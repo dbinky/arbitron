@@ -62,9 +62,11 @@ type Provider struct {
 	maxResponseBytes int64
 	allowAllTools    bool
 
-	// probeOnce memoizes the binary version probe across missions.
+	// probeOnce memoizes the binary version probe across missions; version is
+	// the parsed result, consumed by the discovery probe's stricter floor.
 	probeOnce sync.Once
 	probeErr  error
+	version   []int
 }
 
 var _ engine.AgentProvider = (*Provider)(nil)
@@ -139,7 +141,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	// Version probe (memoized): an incompatible/missing binary fails closed here,
 	// before the run launches.
-	if err := p.ensureCompatible(ctx); err != nil {
+	if err := p.ensureCompatible(ctx, mission.WorkDir); err != nil {
 		return nil, err
 	}
 
@@ -160,6 +162,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	lines, wait, err := p.runner.Run(runCtx, spec)
 	if err != nil {
+		if p.binding.Pinned {
+			err = claudecli.SanitizeProcessError(err)
+		}
 		return nil, fmt.Errorf("opencode: run: %w", err)
 	}
 
@@ -172,7 +177,13 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		// Log the full stderr tail (operator-only) before shaping the surfaced
 		// error, so a timeout/failure is debuggable even when the redacted
 		// summary alone is too terse. No-op unless waitErr carries a tail.
-		claudecli.LogStderrTail("opencode", waitErr)
+		// A pinned run must not copy untrusted harness stderr into errors or
+		// logs; it can carry account credentials. errors.Is still classifies.
+		if p.binding.Pinned {
+			waitErr = claudecli.SanitizeProcessError(waitErr)
+		} else {
+			claudecli.LogStderrTail("opencode", waitErr)
+		}
 		// On a cancel/timeout, keep the context error wrapped so callers can
 		// errors.Is against context.Canceled/DeadlineExceeded, but ALSO surface
 		// waitErr's redacted stderr summary — otherwise a hung run collapses to a
@@ -181,6 +192,12 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 			return nil, fmt.Errorf("opencode: mission timed out: %w (%v)", ctxErr, waitErr)
 		}
 		return nil, fmt.Errorf("opencode: mission failed: %w", waitErr)
+	}
+
+	if p.binding.Pinned {
+		if _, err := p.checkModelExecution(ctx, spec, collected, d); err != nil {
+			return nil, err
+		}
 	}
 
 	summary, steps, tokensIn, tokensOut := parseOutput(collected)
@@ -211,9 +228,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 // ensureCompatible runs the version probe at most once per Provider. A failure
 // is memoized so every subsequent mission fails closed without re-probing.
-func (p *Provider) ensureCompatible(ctx context.Context) error {
+func (p *Provider) ensureCompatible(ctx context.Context, workDir string) error {
 	p.probeOnce.Do(func() {
-		p.probeErr = probeVersion(ctx, p.runner, p.binPath)
+		p.version, p.probeErr = probeVersionNumber(ctx, p.runner, p.binPath, procenv.BaseEnv(), workDir)
 	})
 	return p.probeErr
 }

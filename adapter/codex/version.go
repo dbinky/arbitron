@@ -57,6 +57,11 @@ var versionRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 // derived probeTimeout, so a wedged/hostile codex build that never EOFs cannot
 // grow memory or pin the probe goroutine indefinitely.
 func probeVersion(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string) error {
+	_, err := compatibleVersion(ctx, runner, bin, env)
+	return err
+}
+
+func compatibleVersion(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string) ([]int, error) {
 	probeCtx, cancel := procenv.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
@@ -67,23 +72,23 @@ func probeVersion(ctx context.Context, runner claudecli.CommandRunner, bin strin
 		MaxResponseBytes: probeMaxResponseBytes,
 	})
 	if err != nil {
-		return fmt.Errorf("codex: version probe: %w", err)
+		return nil, fmt.Errorf("codex: version probe: %w", claudecli.SanitizeProcessError(err))
 	}
 	var out []string
 	for l := range lines {
 		out = append(out, l)
 	}
 	if waitErr := wait(); waitErr != nil {
-		return fmt.Errorf("codex: version probe: %w", waitErr)
+		return nil, fmt.Errorf("codex: version probe: %w", claudecli.SanitizeProcessError(waitErr))
 	}
 	found := parseVersion(strings.Join(out, "\n"))
 	if found == nil {
-		return fmt.Errorf("%w: could not parse version from %q (require >= %s)", ErrIncompatibleCodex, strings.Join(out, " "), minCodexVersion)
+		return nil, fmt.Errorf("%w: could not parse version (require >= %s)", ErrIncompatibleCodex, minCodexVersion)
 	}
 	if compareVersion(found, mustParseVersion(minCodexVersion)) < 0 {
-		return fmt.Errorf("%w: found %d.%d.%d, require >= %s", ErrIncompatibleCodex, found[0], found[1], found[2], minCodexVersion)
+		return nil, fmt.Errorf("%w: found %d.%d.%d, require >= %s", ErrIncompatibleCodex, found[0], found[1], found[2], minCodexVersion)
 	}
-	return nil
+	return found, nil
 }
 
 func parseVersion(s string) []int {

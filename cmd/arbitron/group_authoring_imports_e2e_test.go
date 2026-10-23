@@ -65,7 +65,7 @@ func TestGroupAuthoringE2E_BackfillSkipsInvalidGroupsAndContinuesScopes(t *testi
 	require.NoError(t, repo.Create(ctx, workflow.Shared(), child.Name, &child))
 	valid = append(valid, child.Name)
 
-	ds, err := initDomain(ctx, paths.configPath)
+	ds, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	for _, name := range valid {
@@ -113,9 +113,9 @@ func TestGroupAuthoringE2E_StartupImportsValidateBeforePersistence(t *testing.T)
 	writeWorkflow(t, ws, "legacy-valid", string(b))
 	require.NoError(t, os.WriteFile(filepath.Join(privateDir(ws, "legacy-valid"), "resolve.md"), []byte("legacy prompt"), 0o600))
 	configPath := filepath.Join(root, "config.yaml")
-	cfg := "server:\n  host: 127.0.0.1\n  port: 0\nauth:\n  mode: local\ndatabase:\n  path: " + filepath.Join(root, "arbitron.db") + "\nworkspace:\n  path: " + ws + "\nsamples:\n  seed: true\n  sourcedir: " + source + "\nlogging:\n  level: error\n  file: " + filepath.Join(root, "arbitron.log") + "\n"
+	cfg := "server:\n  host: 127.0.0.1\n  port: 0\nauth:\n  mode: local\ndatabase:\n  path: " + filepath.Join(root, "arbitron.db") + "\nworkspace:\n  path: " + ws + "\nsamples:\n  seed: true\n  sourcedir: " + source + "\nlogging:\n  level: error\n  file: " + filepath.Join(root, "arbitron.log") + "\n" + groupTestProfilesYAML
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initStartedDomain(context.Background(), configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	got, err := ds.workflowRepo.Load(context.Background(), workflow.Shared(), "valid-group")

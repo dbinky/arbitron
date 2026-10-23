@@ -245,33 +245,27 @@ func validateConnectionReferences(wf *Workflow, connChecker ConnectionChecker) [
 	return errs
 }
 
-// validateModelProfiles checks that llm_call and agent_call nodes reference a
+// validateModelProfiles checks that every model consumer node references a
 // model_profile whose capability kind matches the node type: llm_call requires
 // a chat profile, agent_call requires an agent profile. A missing alias, an
 // unknown alias, or a kind mismatch each produces a specific error so the
 // failure is caught at workflow_validate, before any run.
 func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationError {
 	var errs []ValidationError
+	nodes := make(map[string]Node, len(wf.Nodes))
 	for _, n := range wf.Nodes {
-		var wantKind string
-		switch n.Type {
-		case NodeTypeLLMCall:
-			wantKind = "chat"
-		case NodeTypeAgentCall:
-			wantKind = "agent"
-		case NodeTypeInteractiveLLM:
-			wantKind = "chat"
-		case NodeTypeInteractiveAgent:
-			wantKind = "agent"
-		case NodeTypeSpawnWorkflow:
-			// The input-preparation call is tool-SUPPRESSED, so an agent-kind
-			// binding here is a config-driven escalation from a reasoning call to
-			// an RCE-capable one. This is the author-time half of the guard
-			// domain/engine's expectedKindForNodeType enforces at run time.
-			wantKind = "chat"
-		default:
-			continue
+		nodes[n.ID] = n
+	}
+	// ModelConsumers is the one enumeration run pin capture and the path
+	// inventory also use. A spawn node requires a chat profile: its
+	// input-preparation call is tool-SUPPRESSED, so an agent-kind binding would
+	// escalate a reasoning call to an RCE-capable one (the author-time half of
+	// domain/engine's expectedKindForNodeType guard).
+	for _, c := range ModelConsumers(wf) {
+		if c.Source == ConsumerSourceGroupResolver {
+			continue // validateGroupNode reports it with GROUP_* codes from the same consumer.
 		}
+		n, wantKind := nodes[c.NodeID], c.Kind
 
 		if n.Config.ModelProfile == "" {
 			// A spawn node's alias is OPTIONAL: a child that declares zero inputs

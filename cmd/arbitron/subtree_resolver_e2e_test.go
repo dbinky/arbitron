@@ -56,7 +56,7 @@ func TestSubtreeStreamE2E_ResolverReauthorizesAllContributorsAndHistory(t *testi
 	// The group's parent is itself a descendant, so a grandparent socket must
 	// hydrate the nested resolution session (paired:14).
 	grandparent := ssSeed(t, ds, nil, instance.StateRunning)
-	parent := &instance.Instance{ID: uuid.New(), OwnerID: localDefaultUser, WorkflowName: "resolver-fixture",
+	parent := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: localDefaultUser, WorkflowName: "resolver-fixture",
 		ParentInstanceID: &grandparent, ParentNodeID: &spawnNode, SpawnMode: instance.SpawnModeFireAndForget, SpawnDepth: 1,
 		State: instance.StateWaiting, CurrentNodeID: &node, Priority: instance.PriorityNormal,
 		Visibility: instance.VisibilityPublic, Variables: map[string]any{},
@@ -88,7 +88,7 @@ func TestSubtreeStreamE2E_ResolverReauthorizesAllContributorsAndHistory(t *testi
 	conversation.(interface {
 		SetGroupResolution(instance.GroupRunRepository, engine.GroupResolutionCompleter)
 	}).SetGroupResolution(ds.groupRunRepo, bridge)
-	deps := ds.routerDeps(nil, nil, nil, nil)
+	deps := ds.httpDeps()
 	deps.Auth = nil
 	deps.ConversationHandler = conversation
 	router := adapthttp.NewRouterFromDeps(deps)

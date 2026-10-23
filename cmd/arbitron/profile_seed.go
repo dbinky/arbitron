@@ -3,58 +3,47 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
-// SeedProfiles seeds the store ONCE, only when it is empty (the seed gate). Each
-// candidate is validated against the capability rules; an invalid candidate is
-// SKIPPED (not fatal) so operator-authored config never blocks boot — the caller
-// logs the seeded/skipped counts. Returns (seeded, skipped, err).
-//
-// The DB is the source of truth after the first seed: a non-empty store is left
-// untouched, so config.yaml profile entries are ignored on every subsequent
-// boot. A non-ErrProfileExists Create error aborts and propagates (a duplicate
-// alias mid-seed is treated as already-present and skipped silently).
-func SeedProfiles(ctx context.Context, store provider.ProfileStore, rules provider.CapabilityRules, candidates []provider.Profile) (seeded, skipped int, err error) {
-	n, err := store.Count(ctx)
+// ProfileSeeder is the trusted service-backed batch seed path. Discovery and
+// capability validation precede the shared mutation lease; proofs and original
+// pending membership are rechecked under that lease before validated writes.
+type ProfileSeeder interface {
+	SeedBatch(context.Context, provider.ProfileSeedStore, []provider.Profile, func(string, error)) (int, int, error)
+}
+
+type profileSeedRepository interface {
+	provider.ProfileStore
+	provider.ProfileSeedStore
+}
+
+// SeedProfiles seeds only the original, durable empty-store snapshot. Invalid
+// or currently unproved config stays pending and is reported through onSkip;
+// persistence failures abort without losing the unfinished original entries.
+// Existing aliases are never overwritten or revalidated during an outage.
+func SeedProfiles(ctx context.Context, store profileSeedRepository, seeder ProfileSeeder, candidates []provider.Profile, onSkip func(alias string, cause error)) (seeded, skipped int, err error) {
+	if seeder != nil {
+		return seeder.SeedBatch(ctx, store, candidates, onSkip)
+	}
+	// Recovery may acknowledge a committed row without needing discovery/service
+	// dependencies, but it cannot create a profile without the trusted seeder.
+	pending, err := store.PendingProfileSeed(ctx, candidates)
 	if err != nil {
 		return 0, 0, err
 	}
-	if n > 0 {
-		return 0, 0, nil // already seeded; the DB wins.
-	}
-	for _, p := range candidates {
-		// Choose the backend the capability ruleset is keyed on via the shared
-		// EffectiveBackend rule (the SAME one ProfileService.write uses): an empty
-		// backend with no connection is the claude-cli chat-subscription default, so
-		// a bare config chat profile (default/default axes) validates against that.
-		backend := provider.EffectiveBackend(p)
-		// Normalize the unset ("") axes to their explicit default sentinel before
-		// validating: an empty string is not a Valid() enum value, but a config
-		// profile that omits the new axes must seed as default/default (always
-		// valid). A genuinely malformed axis string fails to parse and is skipped.
-		tier, terr := provider.ParseContextWindow(string(p.ContextWindow))
-		if terr != nil {
-			skipped++
-			continue
-		}
-		effort, eerr := provider.ParseEffort(string(p.Effort))
-		if eerr != nil {
-			skipped++
-			continue
-		}
-		if _, _, verr := rules.Validate(backend, p.Model, tier, effort); verr != nil {
-			skipped++
-			continue
-		}
-		if cerr := store.Create(ctx, p); cerr != nil {
-			if errors.Is(cerr, provider.ErrProfileExists) {
-				continue // a concurrent/duplicate alias is already present; skip.
+	for _, p := range pending {
+		if _, err := store.Get(ctx, p.Alias); err != nil {
+			if !errors.Is(err, provider.ErrProfileNotFound) {
+				return 0, 0, err
 			}
-			return seeded, skipped, cerr
+			return 0, 0, fmt.Errorf("profile seed: seeder not configured")
 		}
-		seeded++
+		if err := store.CompleteProfileSeed(ctx, p.Alias); err != nil {
+			return 0, 0, err
+		}
 	}
-	return seeded, skipped, nil
+	return 0, 0, nil
 }

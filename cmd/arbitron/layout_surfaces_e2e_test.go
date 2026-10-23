@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -423,11 +425,38 @@ func TestLayoutSurfaces_FeaturePipelineWorkflowAndInstanceUseReviewedGeometry(t 
 	surfaceWorkflowAndInstanceParity(t, "feature-pipeline")
 }
 
+// samplePROFILESRow matches a PROFILES.md table row: | alias | kind | ...
+var samplePROFILESRow = regexp.MustCompile(`^\|\s*([a-z0-9][a-z0-9-]*)\s*\|\s*(agent|chat)\s*\|`)
+
+// pinSampleProfiles adds the DB-only stage profiles a bundled sample documents
+// in its PROFILES.md to e's config. Triggering pins every alias a workflow
+// names, and these parity runs are visualization-only, never executed, so each
+// alias gets its documented kind on a fixed model.
+func pinSampleProfiles(t *testing.T, e *layoutE2EEnv, sample string) {
+	t.Helper()
+	doc, err := os.ReadFile(filepath.Join("..", "..", "samples", sample, "PROFILES.md"))
+	require.NoError(t, err)
+	cfg, err := os.ReadFile(e.configPath)
+	require.NoError(t, err)
+	var items strings.Builder
+	for _, line := range strings.Split(string(doc), "\n") {
+		m := samplePROFILESRow.FindStringSubmatch(line)
+		if m == nil || bytes.Contains(cfg, []byte(`alias: "`+m[1]+`"`)) || strings.Contains(items.String(), `alias: "`+m[1]+`"`) {
+			continue
+		}
+		fmt.Fprintf(&items, "  - {alias: %q, kind: %q, model: \"claude-sonnet-5-5\"}\n", m[1], m[2])
+	}
+	require.NotEmpty(t, items.String(), "%s documents its stage profiles", sample)
+	cfg = bytes.Replace(cfg, []byte("profiles:\n"), []byte("profiles:\n"+items.String()), 1)
+	require.NoError(t, os.WriteFile(e.configPath, cfg, 0o600))
+}
+
 func surfaceWorkflowAndInstanceParity(t *testing.T, name string) {
 	t.Helper()
 	browser := requireBrowserE2E(t)
 	e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "5"})
 	useLayoutE2EBrowser(t, browser)
+	pinSampleProfiles(t, e, name)
 	ds, _ := e.boot(t)
 	s := surfaceServer(t, ds)
 	wf := layoutE2EManifest(t, filepath.Join("..", "..", "samples", name, "workflow.json"))

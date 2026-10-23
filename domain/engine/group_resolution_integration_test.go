@@ -84,14 +84,15 @@ func TestGroupResolutionBridge_GatherAndConversationReachFileAndPersistenceSinks
 				map[string]any{"source": "g1", "target": "fail", "output": "failure"},
 			}
 			parent.Variables = map[string]any{"workspace": parentDir, "before": "kept"}
+			parent.ModelPins, parent.ModelPinsVersion = map[string]string{}, instance.ModelPinsVersionSnapshot
 			require.NoError(t, instances.Create(ctx, parent))
 			require.NoError(t, nodes.Create(ctx, &instance.NodeExecution{
 				ID: uuid.New(), InstanceID: parent.ID, NodeID: node, Attempt: 1,
 				Status: instance.NodeStatusSucceeded, Output: map[string]any{"groupRunId": f.runID.String()}, StartedAt: time.Now(),
 			}))
 			notifications := adaptsqlite.NewNotificationRepo(db)
-			notifier := engine.NewEngine(nil, instances, nodes, adaptsqlite.NewVariableSnapshotRepo(db), users,
-				map[workflow.NodeType]engine.NodeExecutor{}, f.bus, newMockQueueManager(), adaptsqlite.NewQueueRepo(db), "")
+			notifier := wireModelPins(engine.NewEngine(nil, instances, nodes, adaptsqlite.NewVariableSnapshotRepo(db), users,
+				map[workflow.NodeType]engine.NodeExecutor{}, f.bus, newMockQueueManager(), adaptsqlite.NewQueueRepo(db), ""))
 			faults := &resolutionNotificationRepo{Repository: notifications, failCreate: mode == "notification-create-retry"}
 			notifier.SetNotifications(faults)
 			t.Cleanup(notifier.Shutdown)

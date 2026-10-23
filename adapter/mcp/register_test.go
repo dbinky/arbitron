@@ -64,7 +64,15 @@ var expectedTools = []string{
 	"variables_get",
 	"variables_history",
 	"trace_interventions",
-	// System, queue & notifications (8)
+	// Model identity policy (2)
+	"model_identity_policy_get",
+	"model_identity_policy_update",
+	// Model catalog (2)
+	"model_catalog_list",
+	"model_catalog_refresh",
+	// System, queue & notifications (10)
+	"system_settings_get",
+	"system_settings_update",
 	"system_config",
 	"system_update_queue_config",
 	"system_update_teams_config",

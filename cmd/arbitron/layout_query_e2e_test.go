@@ -38,9 +38,10 @@ func bootQueryStack(t *testing.T) *domainStack {
 		"layout:\n  maxattempts: 1\n  artifactdir: " + yamlQuote(filepath.Join(root, "layout-artifacts")) + "\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initDomainWithModelDependencies(context.Background(), configPath, offlineModelDependencies())
 	require.NoError(t, err, "the composition root must boot")
 	t.Cleanup(func() { ds.Close(context.Background()) })
+	require.NoError(t, ds.Start(context.Background()))
 	return ds
 }
 

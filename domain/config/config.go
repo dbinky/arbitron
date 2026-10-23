@@ -113,10 +113,19 @@ const (
 	AuthModeEdge  = "edge"
 )
 
+// FollowTargetConfig names the stable catalog provider and capability tier.
+type FollowTargetConfig struct {
+	Provider string
+	Tier     string
+}
+
 // ProfileConfig is the config-file shape of one profile-registry entry. It
 // mirrors domain/provider.Profile but stays in the config package to keep
 // config free of a provider-package import; adapter/config maps it across.
+// Revision is deliberately absent: only persistence assigns it.
 type ProfileConfig struct {
+	SelectionMode string              `koanf:"selection_mode" yaml:"selection_mode"`
+	FollowTarget  *FollowTargetConfig `koanf:"follow_target" yaml:"follow_target"`
 	Alias         string
 	Kind          string // "chat" | "agent"
 	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)

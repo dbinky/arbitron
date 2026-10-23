@@ -102,6 +102,16 @@ teardown() {
   grep -qF "$TEST_SANDBOX/data/custom/workspaces" "$MOCK_LOG"
 }
 
+# G4: the database and its <db>.model-state.key live directly under the data
+# root, so a custom root must itself be service-owned and private — not merely
+# the parent that `install -d` leaves root-owned while creating workspaces.
+@test "create_system_layout makes a custom SCFG_DATA_DIR itself service-owned 0750" {
+  export SCFG_DATA_DIR="$TEST_SANDBOX/data/custom"
+  run create_system_layout
+  [ "$status" -eq 0 ]
+  grep -qxF "install -d -m 0750 -o arbitron -g arbitron $TEST_SANDBOX/data/custom" "$MOCK_LOG"
+}
+
 @test "create_system_layout makes data + log dirs service-account owned, etc root" {
   run create_system_layout
   [ "$status" -eq 0 ]

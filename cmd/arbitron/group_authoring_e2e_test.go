@@ -75,10 +75,11 @@ func bootGroupAuthoringStack(t *testing.T) (*domainStack, string) {
 		"workspace:\n  path: " + yamlQuote(workspaceDir) + "\n" +
 		"samples:\n  seed: false\n  sourcedir: \"\"\n" +
 		"logging:\n  level: \"error\"\n  file: " + yamlQuote(filepath.Join(root, "arbitron.log")) + "\n" +
-		"queue:\n  globalcap: 5\n  perusercap: 5\n"
+		"queue:\n  globalcap: 5\n  perusercap: 5\n" +
+		groupTestProfilesYAML
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initStartedDomain(context.Background(), configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	return ds, workspaceDir

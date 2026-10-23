@@ -290,7 +290,8 @@ func (e *InstanceEnricher) resolveStepLabel(s instance.InstanceSummary) string {
 // a failed run, the current node for an active one. Completed and cancelled
 // runs are running on nothing, so they get an empty binding even though they
 // still carry a CurrentNodeID (the Step column keeps showing that label).
-func (e *InstanceEnricher) resolveBinding(ctx context.Context, profiles provider.ProfileResolver, s instance.InstanceSummary) NodeBinding {
+// A pinned run's model comes from its own pins, as it does at execution.
+func (e *InstanceEnricher) resolveBinding(ctx context.Context, page provider.ProfileResolver, s instance.InstanceSummary) NodeBinding {
 	switch s.State {
 	case instance.StateCompleted, instance.StateCancelled:
 		return NodeBinding{}
@@ -303,10 +304,31 @@ func (e *InstanceEnricher) resolveBinding(ctx context.Context, profiles provider
 	if err != nil {
 		return NodeBinding{}
 	}
-	// The page resolver already logged any failure; the degraded binding stands.
-	b, _ := resolveNodeBinding(ctx, profiles, *node, e.defaultAgentBackend)
+	// The page resolver already logged any live failure, and List any unreadable
+	// pins; the degraded binding stands.
+	b, _ := resolveNodeBinding(ctx, rowProfileResolver(page, s), *node, e.defaultAgentBackend)
 	return b
 }
+
+// rowProfileResolver overlays the row's own pin record on the page's memoized
+// live resolver through the same PinningResolver the executors use: a pinned
+// run lists its trigger-time model while credentials, backend and provider
+// stay live, a legacy run lists the live model, and a missing or unreadable pin
+// degrades to node config rather than showing the live model.
+func rowProfileResolver(page provider.ProfileResolver, s instance.InstanceSummary) provider.ProfileResolver {
+	pins := summaryPins{Version: s.ModelPinsVersion, Models: s.ModelPins, OpaqueRoutes: s.ModelPinRoutes, OpaqueConnections: s.ModelPinRouteConnections}
+	return provider.NewPinningResolver(page, pins, func(context.Context) (uuid.UUID, bool) { return s.ID, true })
+}
+
+// summaryPins is the PinLookup for one list row: the pins came with the page,
+// so there is nothing to load or release.
+type summaryPins provider.PinSet
+
+func (p summaryPins) Lookup(context.Context, uuid.UUID) (provider.PinSet, error) {
+	return provider.PinSet(p), nil
+}
+
+func (summaryPins) Release(uuid.UUID) {}
 
 // relevantNodeID picks the node whose label the row's Step column shows: the
 // failed node for a failed run, otherwise CurrentNodeID. Note a completed or

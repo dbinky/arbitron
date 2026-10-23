@@ -19,7 +19,8 @@ import (
 // streaming, tool-enabled chat interface so the engine can relay partial output
 // while the agent executes tool calls.
 type StreamAgentAdapter struct {
-	core adapterCore
+	core    adapterCore
+	binding provider.ResolvedBinding
 }
 
 var _ engine.ChatProvider = (*StreamAgentAdapter)(nil)
@@ -33,14 +34,31 @@ var _ engine.ChatProvider = (*StreamAgentAdapter)(nil)
 // removing the human-in-the-loop tool gate. The allowed-tools allowlist
 // (cfg.AllowedTools) is the only bound on what the model may run.
 func NewStreamAgentAdapter(cfg Config) *StreamAgentAdapter {
-	return &StreamAgentAdapter{core: newAdapterCore(cfg)}
+	return NewStreamAgentAdapterForBinding(cfg, provider.ResolvedBinding{})
+}
+
+// NewStreamAgentAdapterForBinding applies the current turn's connection and axes
+// through the same credential environment as the batch agent adapter.
+func NewStreamAgentAdapterForBinding(cfg Config, binding provider.ResolvedBinding) *StreamAgentAdapter {
+	return &StreamAgentAdapter{core: newAdapterCore(cfg), binding: binding}
 }
 
 // spec builds the tool-enabled RunSpec for a chat request. The argsPolicy sets
 // SkipPermissions=true and forwards AllowedTools from the adapter's configured
 // allowedTools, mirroring AgentAdapter.spec's fallback behaviour.
-// SuppressTools is never set.
-func (a *StreamAgentAdapter) spec(req engine.ChatRequest) RunSpec {
+// SuppressTools is set only for a request that asks for a tool-free turn.
+func (a *StreamAgentAdapter) spec(req engine.ChatRequest, env []string) RunSpec {
+	// Probe restrictions override both the requested and configured tool scope.
+	if req.SuppressTools {
+		return RunSpec{
+			Bin:              a.core.binPath,
+			Args:             buildProbeArgs(req),
+			Stdin:            req.Prompt,
+			Dir:              req.WorkDir,
+			Env:              probeEnv(env),
+			MaxResponseBytes: a.core.maxResponseBytes,
+		}
+	}
 	// Per-request tool scope precedence (PR #18 item 1b): a non-empty
 	// req.ToolScope (the resolved profile's per-profile AllowedTools) overrides
 	// the adapter's global cfg.LLM.AllowedTools, so an interactive_agent node
@@ -60,7 +78,7 @@ func (a *StreamAgentAdapter) spec(req engine.ChatRequest) RunSpec {
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              a.core.chatEnvWithBinding(provider.ResolvedBinding{}),
+		Env:              env,
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
 }
@@ -71,10 +89,18 @@ func (a *StreamAgentAdapter) Chat(ctx context.Context, req engine.ChatRequest) (
 		return nil, err
 	}
 
+	env, err := agentEnvWithRules(ctx, a.binding, a.core.rules)
+	if err != nil {
+		return nil, err
+	}
 	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 	defer cancel()
 
-	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req))
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, a.binding)
+	if err != nil {
+		return nil, err
+	}
+	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req, env), wantModel)
 	if err != nil {
 		return nil, err
 	}
@@ -103,11 +129,24 @@ func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequ
 		return nil, err
 	}
 
+	env, err := agentEnvWithRules(ctx, a.binding, a.core.rules)
+	if err != nil {
+		return nil, err
+	}
+	// A pinned binding demands harness evidence whatever the request says, and
+	// the request may not name another model (D14); refuse before any launch.
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, a.binding)
+	if err != nil {
+		return nil, err
+	}
 	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 
-	lines, wait, err := a.core.runner.Run(runCtx, a.spec(req))
+	lines, wait, err := a.core.runner.Run(runCtx, a.spec(req, env))
 	if err != nil {
 		cancel()
+		if wantModel != "" {
+			err = SanitizeProcessError(err)
+		}
 		return nil, fmt.Errorf("claudecli: stream call: %w", err)
 	}
 
@@ -118,7 +157,7 @@ func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequ
 
 		sendChunk := makeSendChunk(runCtx, out)
 
-		var st streamState
+		st := streamState{wantModel: wantModel}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}

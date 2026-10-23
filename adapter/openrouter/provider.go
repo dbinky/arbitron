@@ -65,8 +65,8 @@ func New(cfg Config) *Provider {
 
 // boundedReader wraps r with the configured MaxResponseBytes cap (the shared
 // procenv bounded read; over-cap yields procenv.ErrResponseTooLarge).
-func (p *Provider) boundedReader(r io.Reader) io.Reader {
-	return procenv.BoundedReader(r, p.maxResponseBytes)
+func (p *Provider) boundedReader(ctx context.Context, r io.Reader) io.Reader {
+	return procenv.BoundedReader(r, procenv.ResponseLimit(ctx, p.maxResponseBytes))
 }
 
 // Chat POSTs a non-streaming completion and maps the first choice's content to
@@ -75,6 +75,10 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	ctx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
+	requireModel := p.binding.Pinned || req.RequireExecutedModel
+	if requireModel && (p.binding.Model == "" || (req.Model != "" && req.Model != p.binding.Model)) {
+		return nil, errModelExecutionEvidence
+	}
 	body, err := buildBody(req, p.binding.Model, false, p.binding.Effort)
 	if err != nil {
 		return nil, err
@@ -90,7 +94,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	reader := p.boundedReader(resp.Body)
+	reader := p.boundedReader(ctx, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, p.statusError(resp.StatusCode, reader)
 	}
@@ -103,6 +107,11 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	completion, err := decodeCompletion(raw)
 	if err != nil {
 		return nil, err
+	}
+	if requireModel {
+		if err := verifyExecutedModel(p.binding.Model, completion.Model); err != nil {
+			return nil, err
+		}
 	}
 
 	// Return the RAW assistant content string regardless of OutputSchema. The
@@ -126,6 +135,11 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	streamCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
+	requireModel := p.binding.Pinned || req.RequireExecutedModel
+	if requireModel && (p.binding.Model == "" || (req.Model != "" && req.Model != p.binding.Model)) {
+		cancel()
+		return nil, errModelExecutionEvidence
+	}
 	body, err := buildBody(req, p.binding.Model, true, p.binding.Effort)
 	if err != nil {
 		cancel()
@@ -149,7 +163,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		defer close(out)
 		defer func() { _ = resp.Body.Close() }()
 
-		reader := p.boundedReader(resp.Body)
+		reader := p.boundedReader(streamCtx, resp.Body)
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			send(streamCtx, out, engine.ChatChunk{Error: p.statusError(resp.StatusCode, reader)})
@@ -157,22 +171,34 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		}
 
 		var usage *usageBlock
+		var sawModel, sawDone bool
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			delta, u, done, perr := parseSSELine(scanner.Bytes())
+			frame, done, perr := parseSSELine(scanner.Bytes())
 			if perr != nil {
 				send(streamCtx, out, engine.ChatChunk{Error: perr})
 				return
 			}
-			if u != nil {
-				usage = u
-			}
 			if done {
+				sawDone = true
 				break
 			}
-			if delta != "" {
-				if !send(streamCtx, out, engine.ChatChunk{Token: delta}) {
+			if frame == nil {
+				continue
+			}
+			if requireModel {
+				if err := verifyExecutedModel(p.binding.Model, frame.Model); err != nil {
+					send(streamCtx, out, engine.ChatChunk{Error: err})
+					return
+				}
+				sawModel = true
+			}
+			if frame.Usage != nil {
+				usage = frame.Usage
+			}
+			if len(frame.Choices) > 0 && frame.Choices[0].Delta.Content != "" {
+				if !send(streamCtx, out, engine.ChatChunk{Token: frame.Choices[0].Delta.Content}) {
 					return
 				}
 			}
@@ -182,6 +208,17 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			return
 		}
 
+		// Probe budgets cover the complete response, including bytes after DONE.
+		if procenv.ResponseLimit(streamCtx, 0) > 0 {
+			if _, err := io.Copy(io.Discard, reader); err != nil {
+				send(streamCtx, out, engine.ChatChunk{Error: err})
+				return
+			}
+		}
+		if requireModel && (!sawModel || !sawDone) {
+			send(streamCtx, out, engine.ChatChunk{Error: fmt.Errorf("%w: incomplete stream", errModelExecutionEvidence)})
+			return
+		}
 		final := engine.ChatChunk{Done: true}
 		if usage != nil {
 			final.TokensIn = usage.PromptTokens

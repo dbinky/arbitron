@@ -104,6 +104,9 @@ type mockInstanceRepo struct {
 	// waiting — so a test can assert event-emission happened at-or-after the
 	// transition.
 	onUpdateState func(id uuid.UUID, state instance.State)
+	// corruptRunning, when set, names running rows ListRunning reports as
+	// *instance.CorruptPinsError instead of returning them.
+	corruptRunning map[uuid.UUID]bool
 	// onCreate, when set, runs after Create commits the row and releases the
 	// lock: it models an independent reader (the queue evaluator) acting on
 	// the committed row before Create's caller continues.
@@ -289,10 +292,18 @@ func (r *mockInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var running []instance.Instance
+	var corrupt []uuid.UUID
 	for _, inst := range r.instances {
 		if inst.State == instance.StateRunning {
+			if r.corruptRunning[inst.ID] {
+				corrupt = append(corrupt, inst.ID)
+				continue
+			}
 			running = append(running, *inst)
 		}
+	}
+	if len(corrupt) > 0 {
+		return running, &instance.CorruptPinsError{IDs: corrupt}
 	}
 	return running, nil
 }
@@ -863,7 +874,7 @@ func newTestFixtures() *testFixtures {
 
 	// The mock queue manager's default Enqueue calls StartInstance directly,
 	// which simulates the old behavior of immediately starting.
-	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, queueRepo, "")
+	eng := wireModelPins(engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, queueRepo, ""))
 
 	// Wire the mock queue manager to call StartInstance on the engine.
 	qm.mu.Lock()
@@ -1685,6 +1696,40 @@ func TestEngine_RecoverCrashedInstances(t *testing.T) {
 	assert.Equal(t, instance.StateFailed, inst.State)
 }
 
+// A running row with corrupt model pins is reported by ListRunning, not
+// returned; crash recovery fails it through the engine's complete terminal path
+// (instance.failed, not instance.recovered) and still recovers the healthy rows.
+func TestEngine_RecoverCrashedInstancesFailsCorruptPinRuns(t *testing.T) {
+	f := newTestFixtures()
+	ctx := context.Background()
+	healthy, corrupt := uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{healthy, corrupt} {
+		require.NoError(t, f.instanceRepo.Create(ctx, &instance.Instance{ID: id, WorkflowName: "some-wf", State: instance.StateRunning,
+			Variables: map[string]any{}, CreatedAt: time.Now(), UpdatedAt: time.Now()}))
+	}
+	f.instanceRepo.corruptRunning = map[uuid.UUID]bool{corrupt: true}
+
+	require.NoError(t, f.engine.RecoverCrashedInstances())
+
+	for _, id := range []uuid.UUID{healthy, corrupt} {
+		inst, err := f.instanceRepo.Get(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, instance.StateFailed, inst.State)
+	}
+	types := func(id uuid.UUID) []string {
+		f.eventBus.mu.Lock()
+		defer f.eventBus.mu.Unlock()
+		var out []string
+		for _, e := range f.eventBus.events[id] {
+			out = append(out, e.Type)
+		}
+		return out
+	}
+	assert.Contains(t, types(corrupt), engine.EventTypeInstanceFailed)
+	assert.NotContains(t, types(corrupt), "instance.recovered")
+	assert.Contains(t, types(healthy), "instance.recovered")
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Workflow snapshot stored on instance
 // ---------------------------------------------------------------------------
@@ -2140,14 +2185,14 @@ func TestEngine_UnregisteredNodeType(t *testing.T) {
 
 	// Remove all executors so the unknown type definitely isn't handled
 	qm2 := newMockQueueManager()
-	eng := engine.NewEngine(
+	eng := wireModelPins(engine.NewEngine(
 		f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo,
 		map[workflow.NodeType]engine.NodeExecutor{},
 		f.eventBus,
 		qm2,
 		&mockQueueRepo{instRepo: f.instanceRepo},
 		"",
-	)
+	))
 	qm2.mu.Lock()
 	qm2.enqueueFn = func(ctx context.Context, id uuid.UUID, _ uuid.UUID) (bool, error) {
 		if err := eng.StartInstance(ctx, id); err != nil {

@@ -21,6 +21,17 @@ import type {
 import type { WorkflowDefinition } from '../graph/types'
 import type { LayoutView, RetryAck } from '../graph/arranged/types'
 
+export interface SystemSettings {
+  catalogUrl: string
+  teamsWebhookUrl: string
+  teamsConfigured: boolean
+}
+
+export interface SystemSettingsPatch {
+  catalogUrl?: string
+  teamsWebhookUrl?: string
+}
+
 /** Parameters for listing instances. */
 export interface ListInstancesParams {
   state?: InstanceState
@@ -285,6 +296,12 @@ export const api = {
   },
 
   system: {
+    getSettings(): Promise<SystemSettings> {
+      return request('/api/v1/system/settings')
+    },
+    updateSettings(patch: SystemSettingsPatch): Promise<SystemSettings> {
+      return put('/api/v1/system/settings', patch)
+    },
     /** Get system configuration. */
     getConfig(): Promise<SystemConfig> {
       return request('/api/v1/system/config')

@@ -24,6 +24,7 @@ const (
 	// worktree (codex's own sandbox is the containment; no approval loop).
 	execSandboxFlag           = "-s"
 	execSandboxWorkspaceWrite = "workspace-write"
+	execSandboxReadOnly       = "read-only"
 	// execSkipGitRepoCheckFlag lets codex run non-interactively inside the isolated
 	// arbitron-created git worktree without a trust prompt (exec cannot answer one).
 	execSkipGitRepoCheckFlag = "--skip-git-repo-check"
@@ -101,24 +102,80 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 	if err := s.core.ensureCompatible(ctx); err != nil {
 		return nil, err
 	}
-
 	args, err := buildInteractiveExecArgs(cfg)
 	if err != nil {
 		return nil, err
 	}
 
+	env := codexEnv()
+	var verify func(sessionID string) error
+	if cfg.VerifyModel {
+		// Pinned run: prove the model from the session's own stored rollout.
+		// The stored session is checked BEFORE it is resumed (a session already on
+		// another model is refused without spawning), and the completed turn is
+		// checked again before it is reported done.
+		v, err := newRolloutVerifier(env)
+		if err != nil {
+			return nil, err
+		}
+		pin := strings.TrimSpace(cfg.Model)
+		prior := 0
+		if cfg.ResumeID != "" {
+			if prior, err = v.beforeResume(strings.TrimSpace(cfg.ResumeID), pin); err != nil {
+				return nil, err
+			}
+		}
+		verify = func(sessionID string) error {
+			resumeID := strings.TrimSpace(cfg.ResumeID)
+			if sessionID == "" {
+				sessionID = resumeID
+			}
+			if resumeID != "" && sessionID != resumeID {
+				// Both identities are untrusted and may contain credentials.
+				return fmt.Errorf("%w: turn ran on a different thread than requested", ErrModelEvidence)
+			}
+			return v.afterTurn(sessionID, pin, prior)
+		}
+	}
+
+	if cfg.ReadOnly {
+		override, err := s.core.probeMCPOverride(ctx, cfg.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		cfg.MCPOverride = override
+		args, err = buildInteractiveExecArgs(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
 	spec := claudecli.RunSpec{
 		Bin:              s.core.binPath,
 		Args:             args,
 		Stdin:            cfg.Prompt, // prompt via stdin — never argv (SECURITY)
 		Dir:              cfg.WorkDir,
-		Env:              codexEnv(), // NO OPENAI_API_KEY; HOME/CODEX_HOME preserved
+		Env:              env, // NO OPENAI_API_KEY; HOME/CODEX_HOME preserved
 		MaxResponseBytes: s.core.maxResponseBytes,
 	}
 
 	lines, wait, err := s.core.runner.Run(ctx, spec)
 	if err != nil {
+		if cfg.ReadOnly {
+			return nil, fmt.Errorf("%w: launch", ErrModelEvidence)
+		}
+		if cfg.VerifyModel {
+			err = claudecli.SanitizeProcessError(err)
+		}
 		return nil, fmt.Errorf("codex exec: stream call: %w", err)
+	}
+	if cfg.ReadOnly {
+		processWait := wait
+		wait = func() error {
+			if processWait() != nil {
+				return fmt.Errorf("%w: exit", ErrModelEvidence)
+			}
+			return nil
+		}
 	}
 
 	// events buffers folded turn events; the fold goroutine feeds it, the returned
@@ -126,8 +183,14 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 	// the buffer fills, sendTurnEvent applies real backpressure rather than dropping
 	// transcript content (it only gives up, with a slog.Warn, once ctx is done).
 	events := make(chan turnEvent, 64)
-	go foldExecStream(ctx, lines, wait, events, slog.Default())
-	return newEventStream(events), nil
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		foldExecStream(ctx, lines, wait, events, slog.Default(), verify)
+	}()
+	stream := newEventStream(events)
+	stream.joined = joined
+	return stream, nil
 }
 
 // buildInteractiveExecArgs assembles the `codex exec[ resume]` argv for one
@@ -163,9 +226,18 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 // its human had approved. Any turn with an empty model fails closed
 // (ErrModelRequired) — never a default-model run.
 func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
+	// A read-only turn (the usability probe) grants no writable root.
+	sandbox := execSandboxWorkspaceWrite
 	posture := []string{
 		execConfigFlag, execWritableRootsKeyPrefix + writableRootsValue(cfg.WorkDir),
 		execConfigFlag, execNetworkOff,
+	}
+	if cfg.ReadOnly {
+		sandbox = execSandboxReadOnly
+		posture = probeRestrictionArgs()
+		if cfg.MCPOverride != "" {
+			posture = append(posture, execConfigFlag, cfg.MCPOverride)
+		}
 	}
 	model := strings.TrimSpace(cfg.Model)
 	if cfg.ResumeID != "" {
@@ -184,7 +256,7 @@ func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 		args := []string{
 			execSubcommand, execResumeSubcommand, resumeID,
 			jsonFlag, execSkipGitRepoCheckFlag,
-			execConfigFlag, execSandboxModeKey + `="` + execSandboxWorkspaceWrite + `"`,
+			execConfigFlag, execSandboxModeKey + `="` + sandbox + `"`,
 		}
 		args = append(args, posture...)
 		args = append(args, modelFlag, model)
@@ -198,7 +270,7 @@ func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 	}
 	args := []string{
 		execSubcommand, jsonFlag, execSkipGitRepoCheckFlag,
-		execSandboxFlag, execSandboxWorkspaceWrite,
+		execSandboxFlag, sandbox,
 	}
 	args = append(args, posture...)
 	args = append(args, modelFlag, model, cdFlag, cfg.WorkDir)
@@ -227,7 +299,7 @@ func writableRootsValue(workDir string) string {
 // exit) — a failure is NEVER a silent clean done. It ALWAYS drains `lines` and calls
 // wait() so the subprocess is reaped, then closes events so the stream reaches its
 // terminal signal.
-func foldExecStream(ctx context.Context, lines <-chan string, wait func() error, events chan<- turnEvent, logger *slog.Logger) {
+func foldExecStream(ctx context.Context, lines <-chan string, wait func() error, events chan<- turnEvent, logger *slog.Logger, verify func(sessionID string) error) {
 	defer close(events)
 
 	acc := &parsed{}
@@ -264,19 +336,40 @@ func foldExecStream(ctx context.Context, lines <-chan string, wait func() error,
 	// A ctx cancel/timeout surfaces to the consumer via the stream's Next (ctx.Done);
 	// don't also emit a spurious turnFailed for the process the deadline just killed.
 	if waitErr != nil && ctx.Err() == nil {
+		if verify != nil {
+			waitErr = claudecli.SanitizeProcessError(waitErr)
+		}
 		// The exit code alone says only "exit status 1"; when the stream stated a
 		// cause (e.g. a quota refusal), report BOTH so a refusal is
 		// distinguishable from a crash.
 		err := fmt.Errorf("codex exec: exited with error: %w", waitErr)
-		if cause != "" {
+		// Verified turns (pins and discovery probes) cannot surface arbitrary
+		// harness messages, which may contain account credentials or tool output.
+		if verify == nil && cause != "" {
 			err = fmt.Errorf("codex exec: %s: exited with error: %w", cause, waitErr)
 		}
 		sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: err}, logger)
 		return
 	}
 	if acc.failed {
-		sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: fmt.Errorf("codex exec: turn failed: %s", acc.summary)}, logger)
+		err := fmt.Errorf("%w: turn failed", ErrModelEvidence)
+		if verify == nil {
+			err = fmt.Errorf("codex exec: turn failed: %s", acc.summary)
+		}
+		sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: err}, logger)
 		return
+	}
+	if verify != nil {
+		// Pinned run: neither a clean exit nor a matching turn_context proves
+		// successful completion. Require the harness's terminal event as well.
+		if !acc.completed {
+			sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: fmt.Errorf("%w: turn ended without completion", ErrModelEvidence)}, logger)
+			return
+		}
+		if err := verify(acc.sessionID); err != nil {
+			sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: err}, logger)
+			return
+		}
 	}
 	sendTurnEvent(ctx, events, turnEvent{
 		Kind:      turnDone,
@@ -331,6 +424,9 @@ func sendTurnEvent(ctx context.Context, events chan<- turnEvent, ev turnEvent, l
 // close alone signals "done" and its happens-before edge needs no extra error field.
 type eventStream struct {
 	events <-chan turnEvent
+	// Real exec streams join process wait on cancellation before their caller
+	// can close the provider or remove the turn's scratch workspace.
+	joined <-chan struct{}
 	// done latches errStreamDone once the channel has drained, so repeated Next calls
 	// keep returning it rather than reading a closed channel as a zero event.
 	done bool
@@ -351,6 +447,11 @@ func (s *eventStream) Next(ctx context.Context) (turnEvent, error) {
 	}
 	select {
 	case <-ctx.Done():
+		if s.joined != nil {
+			for range s.events {
+			}
+			<-s.joined
+		}
 		return turnEvent{}, ctx.Err()
 	case ev, ok := <-s.events:
 		if !ok {

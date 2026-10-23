@@ -11,10 +11,11 @@ import (
 // is never carried on this struct: it enters only through ConnectionStore.Create
 // /Update and leaves only through ConnectionStore.Reveal.
 type Connection struct {
-	Name     string            // primary key
-	Provider string            // "azure-openai" | "azure-foundry" | "openrouter" | "litellm" | ...
-	BaseURL  string            //
-	Extras   map[string]string // e.g. api-version (Azure), region
+	ConfigRevision int64             // monotonic stored credential/configuration revision
+	Name           string            // primary key
+	Provider       string            // "azure-openai" | "azure-foundry" | "openrouter" | "litellm" | ...
+	BaseURL        string            //
+	Extras         map[string]string // e.g. api-version (Azure), region
 	// No APIKey field: the plaintext key is never carried on this struct.
 }
 
@@ -80,35 +81,22 @@ func ValidBedrockRegion(region string) bool {
 	return bedrockRegionRE.MatchString(region)
 }
 
-// azureProviders is the set of providers that require an api-version in Extras.
-// Centralized so later phases can extend the Azure set in one place.
-var azureProviders = map[string]bool{
-	"azure-openai":  true,
-	"azure-foundry": true,
-}
-
-// bedrockProviders is the set of providers that require region and
-// access-key-id in Extras. Includes both the short alias "bedrock" and the
-// canonical long-form "amazon-bedrock" so either spelling enforces the rule.
-var bedrockProviders = map[string]bool{
-	"bedrock":        true,
-	"amazon-bedrock": true,
-}
-
 // ValidateConnection enforces provider-specific requirements at create/update
-// time (not at workflow validate time). Azure providers ("azure-openai",
-// "azure-foundry") require a non-empty "api-version" entry in Extras; an absent
-// or empty value returns ErrAzureAPIVersionRequired. Bedrock providers require a
-// non-empty "region" + "access-key-id" (ErrBedrockCredentialsRequired) and a
-// well-formed region (ErrBedrockInvalidRegion) since the region is interpolated
-// into the request host. Other providers pass with no extras requirement.
+// time (not at workflow validate time). Providers are matched by Canonicalize
+// family, so every spelling dispatch accepts is held to the same rule. Azure
+// requires a non-empty "api-version" entry in Extras; an absent or empty value
+// returns ErrAzureAPIVersionRequired. Bedrock requires a non-empty "region" +
+// "access-key-id" (ErrBedrockCredentialsRequired) and a well-formed region
+// (ErrBedrockInvalidRegion) since the region is interpolated into the request
+// host. Other providers pass with no extras requirement.
 func ValidateConnection(c Connection) error {
-	if azureProviders[c.Provider] {
+	family := Canonicalize(c.Provider)
+	if family == CanonicalAzure {
 		if c.Extras["api-version"] == "" {
 			return ErrAzureAPIVersionRequired
 		}
 	}
-	if bedrockProviders[c.Provider] {
+	if family == CanonicalBedrock {
 		if c.Extras["region"] == "" || c.Extras["access-key-id"] == "" {
 			return ErrBedrockCredentialsRequired
 		}

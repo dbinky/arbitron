@@ -7,6 +7,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
@@ -81,4 +82,39 @@ func TestEngine_NodeStartedBinding_NoResolverStillPublishes(t *testing.T) {
 func TestEngine_SetProfileResolver_NilPanics(t *testing.T) {
 	f := newTestFixtures()
 	assert.Panics(t, func() { f.engine.SetProfileResolver(nil) })
+}
+
+// runCtxResolver stands in for the production PinningResolver: inside a run
+// (instance ID on the context) it reports the trigger-time pin, outside it the
+// live model.
+type runCtxResolver struct{}
+
+func (runCtxResolver) Resolve(ctx context.Context, _ string) (provider.ResolvedBinding, error) {
+	if _, ok := engine.InstanceIDFromContext(ctx); ok {
+		return provider.ResolvedBinding{Model: "pinned-model", Backend: "codex"}, nil
+	}
+	return provider.ResolvedBinding{Model: "live-model", Backend: "codex"}, nil
+}
+
+// node.started must describe the model the run will execute on, so it resolves
+// inside the run context where a pinning resolver substitutes the pin.
+func TestEngine_NodeStartedBinding_ResolvesInsideRunContext(t *testing.T) {
+	f := newTestFixtures()
+	f.engine.SetProfileResolver(runCtxResolver{})
+	f.workflowRepo.add(bindingLiveWorkflow())
+	f.executor.onNode("init", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return &engine.NodeResult{Output: map[string]any{"branch": "feat/live"}}, nil
+	})
+	id, _, err := f.engine.Trigger(context.Background(), "binding-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	var model any
+	for _, e := range f.eventBus.eventsOfType(id, "node.started") {
+		d := e.Data.(map[string]any)
+		if d["nodeId"] == "review" {
+			model = d["model"]
+		}
+	}
+	assert.Equal(t, "pinned-model", model)
 }

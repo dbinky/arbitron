@@ -27,6 +27,7 @@ func TestInstanceRepo_Create_StampsWorkflowID_Atomically(t *testing.T) {
 	wfID := uuid.New()
 
 	inst := &instance.Instance{
+		ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		ID:               uuid.New(),
 		OwnerID:          uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		WorkflowID:       wfID,
@@ -58,6 +59,7 @@ func TestInstanceRepo_Create_NilWorkflowID_LeavesColumnNull(t *testing.T) {
 	ctx := context.Background()
 
 	inst := &instance.Instance{
+		ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		ID:               uuid.New(),
 		OwnerID:          uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		WorkflowName:     "legacy",

@@ -11,11 +11,17 @@ package provider
 // surface — MCP today, REST tomorrow — inherits the same safe partial-edit
 // semantics rather than each re-implementing a full-replace footgun.
 type ProfilePatch struct {
-	Kind          *string
-	ConnectionRef *string
-	Model         *string
-	Backend       *string
-	AllowedTools  *[]string
+	SelectionMode *string
+	// nil omits the target; a pointer to nil explicitly clears it.
+	FollowTarget **FollowTarget
+	// ExpectedRevision, when set, is the revision the caller last read; the
+	// patch is refused with ErrAdvanceConflict if the stored row has moved on.
+	ExpectedRevision *int64
+	Kind             *string
+	ConnectionRef    *string
+	Model            *string
+	Backend          *string
+	AllowedTools     *[]string
 	// ContextWindow / Effort are the raw axis strings as received at the boundary;
 	// they are parsed (and a malformed value rejected) when the patch is applied,
 	// keeping the parse in the same place full writes do it.
@@ -28,7 +34,13 @@ type ProfilePatch struct {
 // is carried from base verbatim. A malformed axis string surfaces
 // ErrInvalidContextWindow / ErrInvalidEffort and aborts the merge.
 func (p ProfilePatch) apply(base Profile) (Profile, error) {
-	out := base
+	out := base.Clone()
+	if p.SelectionMode != nil {
+		out.SelectionMode = SelectionMode(*p.SelectionMode)
+	}
+	if p.FollowTarget != nil {
+		out.FollowTarget = *p.FollowTarget
+	}
 	if p.Kind != nil {
 		out.Kind = ProfileKind(*p.Kind)
 	}
@@ -58,5 +70,5 @@ func (p ProfilePatch) apply(base Profile) (Profile, error) {
 		}
 		out.Effort = eff
 	}
-	return out, nil
+	return NormalizeSelection(out)
 }

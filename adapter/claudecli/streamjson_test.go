@@ -179,6 +179,13 @@ func TestParseEvent_MalformedUsageFailsClosed(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseEvent_ResultModelUsageKeys(t *testing.T) {
+	ev, ok, err := parseEvent([]byte(`{"type":"result","result":"r","modelUsage":{"b":{"inputTokens":1},"a":{}}}`))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"a", "b"}, ev.ModelUsage)
+}
+
 // Claude Code 2.1.300 emits non-assistant events whose `message` is a plain
 // string. Decoding `message` as an object for EVERY line crashed run d35eab7c's
 // produce-plans with "cannot unmarshal string into Go struct field

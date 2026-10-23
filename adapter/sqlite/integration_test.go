@@ -82,6 +82,8 @@ func newTestInstance(t *testing.T, ownerID uuid.UUID) *instance.Instance {
 		Priority:          instance.PriorityNormal,
 		Variables:         map[string]any{"key": "value"},
 		OriginalVariables: map[string]any{"key": "value"},
+		ModelPins:         map[string]string{},
+		ModelPinsVersion:  instance.ModelPinsVersionSnapshot,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}

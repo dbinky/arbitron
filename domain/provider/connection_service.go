@@ -39,6 +39,22 @@ type ProfileLister interface {
 type ConnectionService struct {
 	store    ConnectionStore
 	profiles ProfileLister
+	gate     *ExecutionGate
+}
+
+// SetMutationGate injects the shared execution gate. Create, Update,
+// UpdatePatch and Delete then hold its exclusive lease for the whole store write,
+// so a connection edit can never interleave with a model advancement or a run's
+// snapshot capture. A nil gate (unit tests of the pure admin rule) writes
+// directly; the root wiring test proves production injects one.
+func (s *ConnectionService) SetMutationGate(g *ExecutionGate) { s.gate = g }
+
+// mutate runs fn under the exclusive execution lease when a gate is injected.
+func (s *ConnectionService) mutate(ctx context.Context, fn func(context.Context) error) error {
+	if s.gate == nil {
+		return fn(ctx)
+	}
+	return s.gate.WithMutation(ctx, fn)
 }
 
 // NewConnectionService wraps the existing ConnectionStore with the admin gate.
@@ -71,7 +87,7 @@ func (s *ConnectionService) Create(ctx context.Context, c Connection, apiKey str
 	if err := requireAdmin(ctx); err != nil {
 		return err
 	}
-	return s.store.Create(ctx, c, apiKey)
+	return s.mutate(ctx, func(ctx context.Context) error { return s.store.Create(ctx, c, apiKey) })
 }
 
 // Update changes a connection's metadata (admin-only). A nil apiKey preserves the
@@ -82,7 +98,7 @@ func (s *ConnectionService) Update(ctx context.Context, c Connection, apiKey *st
 	if err := requireAdmin(ctx); err != nil {
 		return err
 	}
-	return s.store.Update(ctx, c, apiKey)
+	return s.mutate(ctx, func(ctx context.Context) error { return s.store.Update(ctx, c, apiKey) })
 }
 
 // UpdatePatch is the merge-on-update path for a connection (admin-only). When
@@ -101,18 +117,22 @@ func (s *ConnectionService) UpdatePatch(ctx context.Context, c Connection, extra
 	if err := requireAdmin(ctx); err != nil {
 		return err
 	}
-	if extras != nil {
-		c.Extras = *extras
-	} else {
-		// Absent extras: preserve the stored map so a partial update never desyncs
-		// the sealed key from its non-secret credential metadata.
-		existing, err := s.store.Get(ctx, c.Name)
-		if err != nil {
-			return err
+	// The read-merge-write runs under one lease so the merged extras are never
+	// stale relative to a concurrent advancement or snapshot.
+	return s.mutate(ctx, func(ctx context.Context) error {
+		if extras != nil {
+			c.Extras = *extras
+		} else {
+			// Absent extras: preserve the stored map so a partial update never desyncs
+			// the sealed key from its non-secret credential metadata.
+			existing, err := s.store.Get(ctx, c.Name)
+			if err != nil {
+				return err
+			}
+			c.Extras = existing.Extras
 		}
-		c.Extras = existing.Extras
-	}
-	return s.store.Update(ctx, c, apiKey)
+		return s.store.Update(ctx, c, apiKey)
+	})
 }
 
 // Delete removes a connection by name (admin-only). It is fail-closed against
@@ -125,14 +145,16 @@ func (s *ConnectionService) Delete(ctx context.Context, name string) error {
 	if err := requireAdmin(ctx); err != nil {
 		return err
 	}
-	refs, err := s.referencingProfiles(ctx, name)
-	if err != nil {
-		return err
-	}
-	if len(refs) > 0 {
-		return fmt.Errorf("%w: connection %q in use by profiles [%s]", ErrConnectionInUse, name, strings.Join(refs, ", "))
-	}
-	return s.store.Delete(ctx, name)
+	return s.mutate(ctx, func(ctx context.Context) error {
+		refs, err := s.referencingProfiles(ctx, name)
+		if err != nil {
+			return err
+		}
+		if len(refs) > 0 {
+			return fmt.Errorf("%w: connection %q in use by profiles [%s]", ErrConnectionInUse, name, strings.Join(refs, ", "))
+		}
+		return s.store.Delete(ctx, name)
+	})
 }
 
 // referencingProfiles returns the sorted aliases of profiles whose ConnectionRef

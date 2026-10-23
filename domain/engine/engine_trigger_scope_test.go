@@ -98,7 +98,16 @@ type triggerHarness struct {
 	enqueuedOwner uuid.UUID
 }
 
+// newTriggerHarness wires the pin snapshotter and gate production injects.
 func newTriggerHarness() *triggerHarness {
+	h := newBareTriggerHarness()
+	wireModelPins(h.engine)
+	return h
+}
+
+// newBareTriggerHarness leaves the engine without pin collaborators, for tests
+// that assert what a missing one does.
+func newBareTriggerHarness() *triggerHarness {
 	repo := newScopeAwareRepo()
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()

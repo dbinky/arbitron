@@ -7,6 +7,11 @@ sql:
       go:
         package: "generated"
         out: "generated"
+        # Keep SQLite storage types until the pin decoder validates them.
+        # Scanning into int64 would accept BLOB "0" as a legacy run.
+        overrides:
+          - column: "instances.model_pins_version"
+            go_type: "interface{}"
         rename:
           llm_conversation: "LLMConversation"
           llm_model: "LLMModel"

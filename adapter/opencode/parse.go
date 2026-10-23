@@ -35,12 +35,15 @@ const maxErrorSummaryLen = 512
 // subprocess accounting" contract on AgentResult, but downstream cost reporting
 // must not treat them as exact.
 type ocEvent struct {
-	Type string `json:"type"`
-	Part struct {
-		Type   string `json:"type"`
-		Text   string `json:"text"`
-		Tool   string `json:"tool"`
-		Tokens struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionID"`
+	Part      struct {
+		SessionID string `json:"sessionID"`
+		MessageID string `json:"messageID"`
+		Type      string `json:"type"`
+		Text      string `json:"text"`
+		Tool      string `json:"tool"`
+		Tokens    struct {
 			Input  int `json:"input"`
 			Output int `json:"output"`
 		} `json:"tokens"`

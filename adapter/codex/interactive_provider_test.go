@@ -614,3 +614,71 @@ func TestNewInteractiveProvider_Defaults(t *testing.T) {
 	assert.Equal(t, "codex", p.binPath, "core must resolve the binary like the exec adapters")
 	require.NotNil(t, p.newSession, "a nil session factory must default to the real stdio session")
 }
+
+// A pinned request (RequireExecutedModel) must reach the transport as
+// turnConfig.VerifyModel, or the rollout proof never runs.
+func TestInteractive_StreamChat_PinnedRequestForwardsVerifyModel(t *testing.T) {
+	for _, pinned := range []bool{true, false} {
+		fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+		p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+			Prompt: "p", WorkDir: "/tmp/ws", Model: "gpt-5-codex", RequireExecutedModel: pinned,
+		})
+		require.NoError(t, err)
+		collectChunks(t, ch)
+		assert.Equal(t, pinned, fake.gotCfg.VerifyModel)
+	}
+}
+
+// A tool-free request (SuppressTools, the usability probe) must reach the
+// transport as a read-only turn; an ordinary request keeps the workspace-write
+// posture.
+func TestInteractive_StreamChat_SuppressToolsForwardsReadOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	writeModelsCache(t, home, "gpt-5-codex")
+	for _, suppress := range []bool{true, false} {
+		fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+		p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+			Prompt: "p", WorkDir: "/tmp/ws", Model: "gpt-5-codex", SuppressTools: suppress,
+		})
+		require.NoError(t, err)
+		collectChunks(t, ch)
+		assert.Equal(t, suppress, fake.gotCfg.ReadOnly)
+	}
+}
+
+// D14: a pinned binding verifies the executed model on every interactive turn
+// whatever the request says, and the request may not name another model.
+func TestInteractive_PinnedBindingDemandsVerificationAndItsOwnModel(t *testing.T) {
+	pinned := codexBinding("gpt-5-codex", nil)
+	pinned.Pinned = true
+
+	t.Run("request flag absent still verifies", func(t *testing.T) {
+		for _, model := range []string{"gpt-5-codex", ""} {
+			fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+			p := newInteractiveTestProvider(t, fake, pinned)
+			ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "p", WorkDir: "/tmp/ws", Model: model})
+			require.NoError(t, err)
+			collectChunks(t, ch)
+			assert.True(t, fake.gotCfg.VerifyModel, "model %q", model)
+			assert.Equal(t, "gpt-5-codex", fake.gotCfg.Model)
+		}
+	})
+	t.Run("chat verifies too", func(t *testing.T) {
+		fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+		p := newInteractiveTestProvider(t, fake, pinned)
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "p", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+		require.NoError(t, err)
+		assert.True(t, fake.gotCfg.VerifyModel)
+	})
+	t.Run("another request model never starts a turn", func(t *testing.T) {
+		fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+		p := newInteractiveTestProvider(t, fake, pinned)
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "p", WorkDir: "/tmp/ws", Model: "gpt-5-mini"})
+		require.ErrorIs(t, err, ErrModelEvidence)
+		assert.Nil(t, ch)
+		assert.False(t, fake.startCalled)
+	})
+}

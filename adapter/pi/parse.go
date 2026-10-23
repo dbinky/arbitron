@@ -27,6 +27,9 @@ type parsed struct {
 	tokensIn  int
 	tokensOut int
 	sessionID string
+	// executedModels records every authoritative assistant message, including
+	// absent identity fields, so a later match cannot hide an earlier fallback.
+	executedModels []executedModel
 	// failed records that the turn ended in a failure stop reason. pi exits 0
 	// even when the provider call fails, so this — NOT the process exit code —
 	// is the authoritative success signal for the whole adapter.
@@ -154,6 +157,7 @@ func foldMessage(out *parsed, m *piMessage) {
 	if m == nil || m.Role != "assistant" {
 		return
 	}
+	out.executedModels = append(out.executedModels, executedModel{provider: m.ProviderID, model: m.Model})
 	for _, c := range decodeContent(m.Content) {
 		switch c.Type {
 		case "text":

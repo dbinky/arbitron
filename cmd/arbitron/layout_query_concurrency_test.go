@@ -57,9 +57,11 @@ func TestLayoutQueryE2E_MutationProcess(t *testing.T) {
 	if configPath == "" {
 		return
 	}
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initDomainWithModelDependencies(context.Background(), configPath, offlineModelDependencies())
 	require.NoError(t, err)
 	defer ds.Close(context.Background())
+	// Its own layout worker reviews the independent save; it runs in Start.
+	require.NoError(t, ds.Start(context.Background()))
 	ctx := adminCtxForLocalUser(t, ds)
 	syncDir := os.Getenv("ARBITRON_QUERY_PROCESS_SYNC")
 	name := "query-race"

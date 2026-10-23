@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/arbitron/arbitron/domain/provider"
@@ -15,6 +16,7 @@ import (
 // edits. Readers take the read-lock; a Load/Reload takes the write-lock.
 type ProfileCache struct {
 	store   provider.ProfileStore
+	loadMu  sync.Mutex // serializes whole Load calls (read, build, swap) so an older read cannot publish last
 	mu      sync.RWMutex
 	byAlias map[string]provider.Profile
 }
@@ -41,14 +43,16 @@ func (s fixedProfileStore) Delete(context.Context, string) error { return provid
 func (s fixedProfileStore) Get(_ context.Context, alias string) (provider.Profile, error) {
 	for _, p := range s.profiles {
 		if p.Alias == alias {
-			return p, nil
+			return p.Clone(), nil
 		}
 	}
 	return provider.Profile{}, provider.ErrProfileNotFound
 }
 func (s fixedProfileStore) List(context.Context) ([]provider.Profile, error) {
 	out := make([]provider.Profile, len(s.profiles))
-	copy(out, s.profiles)
+	for i, p := range s.profiles {
+		out[i] = p.Clone()
+	}
 	return out, nil
 }
 func (s fixedProfileStore) Count(context.Context) (int, error) { return len(s.profiles), nil }
@@ -58,22 +62,30 @@ func (s fixedProfileStore) Count(context.Context) (int, error) { return len(s.pr
 // caller (or a test) that holds an immutable profile slice rather than a store.
 // The last entry wins on a duplicate alias.
 func NewProfileCacheFromProfiles(profiles ...provider.Profile) *ProfileCache {
-	c := NewProfileCache(fixedProfileStore{profiles: profiles})
+	owned := make([]provider.Profile, len(profiles))
+	for i, p := range profiles {
+		owned[i] = p.Clone()
+	}
+	c := NewProfileCache(fixedProfileStore{profiles: owned})
 	_ = c.Load(context.Background()) // fixedProfileStore.List never errors
 	return c
 }
 
 // Load (re)populates the cache from the bound store, replacing the snapshot
 // atomically under the write-lock. An empty store yields an empty (non-nil)
-// registry, not an error.
+// registry, not an error. Whole loads are serialized (loadMu) so two reloads
+// that overlap cannot publish in reverse order and regress the cache to an older
+// store read; readers only contend on mu for the final swap.
 func (c *ProfileCache) Load(ctx context.Context) error {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
 	list, err := c.store.List(ctx)
 	if err != nil {
 		return err
 	}
 	m := make(map[string]provider.Profile, len(list))
 	for _, p := range list {
-		m[p.Alias] = p
+		m[p.Alias] = p.Clone()
 	}
 	c.mu.Lock()
 	c.byAlias = m
@@ -93,5 +105,53 @@ func (c *ProfileCache) get(alias string) (provider.Profile, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	p, ok := c.byAlias[alias]
-	return p, ok
+	return p.Clone(), ok
 }
+
+// SnapshotProfiles returns clones of the named aliases taken under ONE read-lock,
+// so every profile comes from the same registry generation: a concurrent
+// Load/Reload cannot land between two aliases and hand a run a mixed view. The
+// result is independent of the cache (callers may mutate it). An unknown alias
+// returns ErrUnknownProfile wrapped with the alias and no map.
+func (c *ProfileCache) SnapshotProfiles(aliases []string) (map[string]provider.Profile, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]provider.Profile, len(aliases))
+	for _, a := range aliases {
+		p, ok := c.byAlias[a]
+		if !ok {
+			return nil, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, a)
+		}
+		out[a] = p.Clone()
+	}
+	return out, nil
+}
+
+// PublishCommitted reloads the registry and confirms every committed
+// advancement is reconciled with the authoritative registry. A present alias
+// must have a revision no older than the commit's, and at exactly that revision
+// must carry the committed model. Later admin edits and deletions supersede the
+// commit; repair never restores them. An unconfirmed live row returns an error
+// so the caller keeps the publication pending.
+func (c *ProfileCache) PublishCommitted(ctx context.Context, advs []provider.Advancement) error {
+	if err := c.Load(ctx); err != nil {
+		return fmt.Errorf("reloading profiles for publication: %w", err)
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, a := range advs {
+		p, ok := c.byAlias[a.Alias]
+		switch {
+		case !ok:
+			// Load confirmed the authoritative deletion and removed the alias.
+			continue
+		case p.Revision < a.Revision:
+			return fmt.Errorf("publishing %q: cache revision %d older than committed %d", a.Alias, p.Revision, a.Revision)
+		case p.Revision == a.Revision && p.Model != a.ToModel:
+			return fmt.Errorf("publishing %q: cache model %q, committed %q", a.Alias, p.Model, a.ToModel)
+		}
+	}
+	return nil
+}
+
+var _ provider.AdvancementPublisher = (*ProfileCache)(nil)

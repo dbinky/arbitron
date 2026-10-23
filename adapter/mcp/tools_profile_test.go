@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
@@ -32,13 +34,16 @@ func (s *memProfileStore) Create(_ context.Context, p provider.Profile) error {
 	if _, ok := s.byAlias[p.Alias]; ok {
 		return provider.ErrProfileExists
 	}
+	p.Revision = 1 // like the real store, which owns the revision
 	s.byAlias[p.Alias] = p
 	return nil
 }
 func (s *memProfileStore) Update(_ context.Context, p provider.Profile) error {
-	if _, ok := s.byAlias[p.Alias]; !ok {
+	prior, ok := s.byAlias[p.Alias]
+	if !ok {
 		return provider.ErrProfileNotFound
 	}
+	p.Revision = prior.Revision + 1
 	s.byAlias[p.Alias] = p
 	return nil
 }
@@ -49,6 +54,25 @@ func (s *memProfileStore) Delete(_ context.Context, alias string) error {
 	delete(s.byAlias, alias)
 	return nil
 }
+func (s *memProfileStore) UpdateExpected(ctx context.Context, expected, next provider.Profile) (provider.Profile, error) {
+	current, ok := s.byAlias[expected.Alias]
+	if !ok || !reflect.DeepEqual(current, expected) || next.Alias != expected.Alias {
+		return provider.Profile{}, provider.ErrAdvanceConflict
+	}
+	if err := s.Update(ctx, next); err != nil {
+		return provider.Profile{}, err
+	}
+	return s.byAlias[next.Alias], nil
+}
+
+func (s *memProfileStore) DeleteExpected(ctx context.Context, expected provider.Profile) error {
+	current, ok := s.byAlias[expected.Alias]
+	if !ok || !reflect.DeepEqual(current, expected) {
+		return provider.ErrAdvanceConflict
+	}
+	return s.Delete(ctx, expected.Alias)
+}
+
 func (s *memProfileStore) Get(_ context.Context, alias string) (provider.Profile, error) {
 	p, ok := s.byAlias[alias]
 	if !ok {
@@ -108,6 +132,7 @@ func newProfileServer(t *testing.T, store provider.ProfileStore, reloader provid
 	t.Helper()
 	rules := profileRules()
 	svc := provider.NewProfileService(store, rules, reloader)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), anyRouteSource{})
 	deps := &adaptmcp.Deps{ProfileAdmin: svc, Capabilities: rules}
 	srv := adaptmcp.NewServerWithDeps("test-profile", "0.0.0", deps)
 	adaptmcp.RegisterProfileTools(srv)
@@ -162,7 +187,7 @@ func TestProfileCreate_InapplicableAxis(t *testing.T) {
 	store := newMemProfileStore()
 	srv := newProfileServer(t, store, &noopReloader{})
 	res := callToolAdmin(t, srv, "profile_create", map[string]any{
-		"alias": "bad", "kind": "agent", "backend": "codex", "context_window": "1m",
+		"alias": "bad", "kind": "agent", "backend": "codex", "model": "gpt-6.1-sol", "context_window": "1m",
 	})
 	require.True(t, res.IsError)
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "not applicable")
@@ -185,7 +210,7 @@ func TestProfileCreate_Duplicate(t *testing.T) {
 	store := newMemProfileStore(provider.Profile{Alias: "dup", Kind: provider.ProfileKindChat})
 	srv := newProfileServer(t, store, &noopReloader{})
 	res := callToolAdmin(t, srv, "profile_create", map[string]any{
-		"alias": "dup", "kind": "agent", "backend": "claude-code",
+		"alias": "dup", "kind": "agent", "backend": "claude-code", "model": "sonnet-4.6",
 	})
 	require.True(t, res.IsError)
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "already exists")
@@ -249,7 +274,7 @@ func TestProfileUpdate_MergesOmittedFields(t *testing.T) {
 // (empty) is distinguishable from absent at the boundary via `_, present`.
 func TestProfileUpdate_ExplicitClearApplied(t *testing.T) {
 	store := newMemProfileStore(provider.Profile{
-		Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "c", Model: "m",
+		Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "c", Model: "sonnet-4.6",
 	})
 	srv := newProfileServer(t, store, &noopReloader{})
 
@@ -263,7 +288,7 @@ func TestProfileUpdate_ExplicitClearApplied(t *testing.T) {
 	got, err := store.Get(context.Background(), "p")
 	require.NoError(t, err)
 	assert.Equal(t, "", got.ConnectionRef, "an explicit empty connection_ref clears the field")
-	assert.Equal(t, "m", got.Model, "an unrelated omitted field stays put")
+	assert.Equal(t, "sonnet-4.6", got.Model, "an unrelated omitted field stays put")
 }
 
 // profile_update on a missing alias -> "profile not found".
@@ -465,7 +490,7 @@ func TestPaired_ProfileTools_SentinelMappingFaithful(t *testing.T) {
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "authentication required", "ErrUnauthenticated sentinel mapping")
 
 	// ErrProfileExists → "profile already exists"
-	res = callToolAdmin(t, srv, "profile_create", map[string]any{"alias": "exists", "kind": "agent", "backend": "claude-code"})
+	res = callToolAdmin(t, srv, "profile_create", map[string]any{"alias": "exists", "kind": "agent", "backend": "claude-code", "model": "sonnet-4.6"})
 	require.True(t, res.IsError)
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "already exists", "ErrProfileExists sentinel mapping")
 
@@ -476,7 +501,7 @@ func TestPaired_ProfileTools_SentinelMappingFaithful(t *testing.T) {
 
 	// ErrAxisNotApplicable → err.Error() which contains "not applicable"
 	res = callToolAdmin(t, srv, "profile_create", map[string]any{
-		"alias": "bad", "kind": "agent", "backend": "codex", "context_window": "1m",
+		"alias": "bad", "kind": "agent", "backend": "codex", "model": "gpt-6.1-sol", "context_window": "1m",
 	})
 	require.True(t, res.IsError)
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "not applicable", "ErrAxisNotApplicable sentinel mapping")

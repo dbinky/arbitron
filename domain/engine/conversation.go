@@ -61,6 +61,7 @@ type conversationHandler struct {
 	queueMgr      QueueManager
 	interventions instance.InterventionRepository // optional; nil-safe attribution
 	audit         AuditRecorder                   // optional; nil-safe domain audit event
+	pinRelease    func(uuid.UUID)                 // optional; drops the run's cached model pins when a session completes
 
 	// groups and groupCompleter make a parallel_group's conflict-resolution
 	// session reachable through the interactive surfaces. Both nil (the
@@ -116,6 +117,18 @@ func NewConversationHandler(
 // no attribution row is written (the actor tag is still added to events).
 func (h *conversationHandler) SetInterventions(repo instance.InterventionRepository) {
 	h.interventions = repo
+}
+
+// SetPinCacheRelease registers the callback that drops a run's cached model
+// pins once its interactive session completes (EndSession or an LLM-completed
+// session), the same function the engine releases terminal runs through. It is
+// only a cache eviction: pins are immutable in the repository, so a later turn
+// or node reloads them. A nil callback is rejected.
+func (h *conversationHandler) SetPinCacheRelease(release func(uuid.UUID)) {
+	if release == nil {
+		panic("engine: conversation SetPinCacheRelease requires a non-nil release func")
+	}
+	h.pinRelease = release
 }
 
 // SetAuditRecorder wires the Phase-2 audit service so a lead/admin steering an
@@ -215,6 +228,10 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		return err
 	}
 
+	// Scope the rest of the turn to this instance so the PinningResolver applies
+	// the run's trigger-time model pins when the profile is resolved below.
+	ctx = ContextWithInstanceID(ctx, instanceID)
+
 	// 1a. Reject an overlapping turn for this instance. A turn resumes a single
 	// stateful provider session (claude --resume); a second concurrent send would
 	// drive that session concurrently, which claude-cli mishandles (it queues the
@@ -226,6 +243,14 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		return fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
 	}
 	defer h.turnInProgress.Delete(instanceID)
+
+	// The preliminary read can become stale before the guard is acquired (for
+	// example, EndSession may have completed). Reload authorization, state and
+	// node config under the guard before any event, resolution or session write.
+	inst, nodeID, nodeConfig, group, err = h.loadAndValidate(ctx, instanceID)
+	if err != nil {
+		return err
+	}
 
 	// 2. Load the session record. A group conflict-resolution session lives on
 	// its OWN record (identified by group run, merge and attempt), not on
@@ -286,19 +311,21 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	//    user message. WorkDir comes from the instance's seeded workspace —
 	//    or, for a conflict-resolution session, the gather's STAGING dir: the
 	//    agent never works in the parent's live area or a task's directory.
+	// The tool scope is the LIVE binding's, so an admin tool edit reaches a
+	// resumed session; a conflict-resolution session uses its agent binding too.
 	workDir, _ := inst.Variables[ReservedVarWorkspace].(string)
-	var toolScope []string
+	toolScope := binding.AllowedTools
 	if group != nil {
 		workDir = group.workDir
-		toolScope = binding.AllowedTools
 	}
 	req := ChatRequest{
-		SystemPrompt: nodeConfig.SystemPrompt,
-		Prompt:       content,
-		Model:        binding.Model,
-		SessionID:    SessionID(nodeExec.LLMConversation),
-		WorkDir:      workDir,
-		ToolScope:    toolScope,
+		SystemPrompt:         nodeConfig.SystemPrompt,
+		Prompt:               content,
+		Model:                binding.Model,
+		RequireExecutedModel: binding.RequiresModelEvidence(),
+		ToolScope:            toolScope,
+		SessionID:            SessionID(nodeExec.LLMConversation),
+		WorkDir:              workDir,
 	}
 
 	// 7. Call the provider with streaming.
@@ -368,6 +395,14 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 		return nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
 	}
 	defer h.turnInProgress.Delete(instanceID)
+
+	// Another operation may have completed between the first read and guard
+	// acquisition. Use current authorization/state and variables, so a stale
+	// EndSession cannot complete the same session twice.
+	inst, nodeID, _, group, err = h.loadAndValidate(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
 
 	// 2. Load the session record.
 	nodeExec, err := h.sessionExecution(ctx, instanceID, nodeID, group)
@@ -484,7 +519,12 @@ func (h *conversationHandler) completeSession(
 		Data:      endedData,
 	})
 
-	// 4. Notify capacity freed.
+	// 4. The session is over: drop the run's cached pins (reloaded on demand).
+	if h.pinRelease != nil {
+		h.pinRelease(instanceID)
+	}
+
+	// 5. Notify capacity freed.
 	h.queueMgr.NotifyCapacityFreed(ctx)
 
 	return nil
@@ -555,9 +595,27 @@ func (h *conversationHandler) streamChatResponse(
 	if err != nil {
 		return "", "", fmt.Errorf("conversation: stream call: %w", err)
 	}
+	if stream == nil {
+		return "", "", fmt.Errorf("conversation: stream closed without completion (nil stream)")
+	}
 
 	var responseBuilder strings.Builder
-	for chunk := range stream {
+	for {
+		var chunk ChatChunk
+		var open bool
+		select {
+		case <-ctx.Done():
+			return "", "", fmt.Errorf("conversation: stream cancelled: %w", ctx.Err())
+		case chunk, open = <-stream:
+		}
+		// Cancellation may race a buffered chunk or channel closure. It must
+		// never promote a partial response into a completed conversation turn.
+		if err := ctx.Err(); err != nil {
+			return "", "", fmt.Errorf("conversation: stream cancelled: %w", err)
+		}
+		if !open {
+			return "", "", fmt.Errorf("conversation: stream closed without completion")
+		}
 		if chunk.Error != nil {
 			return "", "", fmt.Errorf("conversation: stream error: %w", chunk.Error)
 		}
@@ -573,10 +631,9 @@ func (h *conversationHandler) streamChatResponse(
 			sessionID = chunk.SessionID
 		}
 		if chunk.Done {
-			break
+			return responseBuilder.String(), sessionID, nil
 		}
 	}
-	return responseBuilder.String(), sessionID, nil
 }
 
 // loadAndValidate loads an instance and verifies it is in the waiting state

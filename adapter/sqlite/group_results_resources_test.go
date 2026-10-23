@@ -119,7 +119,7 @@ func TestGroupResultsResources_SweepReleasesNeverStartedForksAfterAnInterruptedL
 	require.NoError(t, err)
 
 	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	parent := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "crash-parent", State: instance.StateRunning, Priority: instance.PriorityNormal}
+	parent := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: "crash-parent", State: instance.StateRunning, Priority: instance.PriorityNormal}
 	require.NoError(t, instances.Create(ctx, parent))
 	src := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(src, "seed.txt"), []byte("seed"), 0o600))
@@ -136,7 +136,9 @@ func TestGroupResultsResources_SweepReleasesNeverStartedForksAfterAnInterruptedL
 	// Task a started and was recorded; the process died before task b started.
 	node, key, rid, pid := "g", "a", run.ID, parent.ID
 	require.NoError(t, instances.Create(ctx, &instance.Instance{
-		ID: run.Tasks[0].ChildInstanceID, OwnerID: owner, WorkflowName: "crash-parent", State: instance.StateQueued,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               run.Tasks[0].ChildInstanceID, OwnerID: owner, WorkflowName: "crash-parent", State: instance.StateQueued,
 		Priority: instance.PriorityNormal, ParentInstanceID: &pid, ParentNodeID: &node, SpawnMode: instance.SpawnModeGroupTask,
 		GroupRunID: &rid, GroupTaskKey: &key, GroupTaskKind: instance.GroupTaskKindBranch,
 	}))

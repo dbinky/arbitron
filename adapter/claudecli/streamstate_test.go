@@ -3,6 +3,7 @@ package claudecli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +101,48 @@ func TestMakeSendChunk_NonBlocking(t *testing.T) {
 
 	ok := send(engine.ChatChunk{Token: "x"})
 	assert.False(t, ok)
+}
+
+func TestStreamState_PinnedModel(t *testing.T) {
+	const result = `{"type":"result","is_error":false,"result":"hi","session_id":"s","modelUsage":%s}`
+	run := func(want, usage string, withResult bool) []engine.ChatChunk {
+		st := streamState{wantModel: want}
+		sink := &recordingSink{}
+		st.Handle(`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`, sink.send)
+		if withResult {
+			st.Handle(fmt.Sprintf(result, usage), sink.send)
+		}
+		st.Finalize(nil, sink.send)
+		return sink.chunks
+	}
+	last := func(c []engine.ChatChunk) engine.ChatChunk { return c[len(c)-1] }
+
+	t.Run("pinned model present among helpers completes", func(t *testing.T) {
+		c := run("claude-x", `{"claude-haiku":{},"claude-x":{}}`, true)
+		assert.True(t, last(c).Done)
+		assert.NoError(t, last(c).Error)
+	})
+	t.Run("context-window suffix tolerated", func(t *testing.T) {
+		c := run("claude-x", `{"claude-x[1m]":{}}`, true)
+		assert.True(t, last(c).Done)
+	})
+	t.Run("fallback model fails before Done", func(t *testing.T) {
+		c := run("claude-x", `{"claude-y":{}}`, true)
+		require.Error(t, last(c).Error)
+		assert.False(t, last(c).Done)
+		assert.Contains(t, last(c).Error.Error(), "claude-x")
+	})
+	t.Run("missing modelUsage fails", func(t *testing.T) {
+		c := run("claude-x", `{}`, true)
+		require.Error(t, last(c).Error)
+	})
+	t.Run("no result event fails", func(t *testing.T) {
+		c := run("claude-x", ``, false)
+		require.Error(t, last(c).Error)
+		assert.False(t, last(c).Done)
+	})
+	t.Run("unpinned request ignores modelUsage", func(t *testing.T) {
+		c := run("", `{"anything":{}}`, true)
+		assert.True(t, last(c).Done)
+	})
 }

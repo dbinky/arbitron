@@ -78,14 +78,14 @@ func TestGroupLauncher_CancelBetweenStartsClosesLateCreationWindow(t *testing.T)
 						graph, findings := workflow.AnalyzeGroups(&wf)
 						require.Empty(t, findings)
 						node := "g"
-						parent := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: wf.Name,
+						parent := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: wf.Name,
 							WorkflowSnapshot: gtSnapshot(t, wf), State: instance.StateRunning, Priority: instance.PriorityNormal, CurrentNodeID: &node}
 						require.NoError(t, instances.Create(ctx, parent))
 						workflows := newScopeAwareRepo()
 						workflows.put(workflow.Private(owner), gtChildWorkflow("child-wf"))
 						repo := &launchCancelRepo{InstanceRepository: instances}
 						bus, qm := newMockEventBus(), newMockQueueManager()
-						eng := engine.NewEngine(workflows, repo, adaptsqlite.NewNodeExecutionRepo(db), nil, users, nil, bus, qm, nil, "")
+						eng := wireModelPins(engine.NewEngine(workflows, repo, adaptsqlite.NewNodeExecutionRepo(db), nil, users, nil, bus, qm, nil, ""))
 						eng.SetSpawnLinks(instances)
 						eng.SetGroupSupport(engine.GroupSupportResults)
 						identities := &fakeIdentityResolver{byUser: map[uuid.UUID]identity.Identity{

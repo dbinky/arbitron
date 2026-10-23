@@ -185,6 +185,9 @@ var (
 // anthropic-api maps to adapter/anthropicapi; bedrock (incl. the amazon-bedrock
 // alias) maps to adapter/bedrock. Unknown providers return ErrUnknownProvider.
 func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatProvider, error) {
+	if err := validatePinnedRoute(b, ""); err != nil {
+		return nil, err
+	}
 	// Dispatch on the domain-canonical id so the chat/agent/probe selectors and
 	// the opencode path all share ONE provider vocabulary (alias collapse lives
 	// once in domprovider.Canonicalize, not forked per selector).
@@ -258,6 +261,9 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 	// "OPENCODE") was already rejected at load and must stay unknown here so the
 	// factory and validator share one strict vocabulary (fail-closed).
 	backend := strings.TrimSpace(b.Backend)
+	if err := validatePinnedRoute(b, backend); err != nil {
+		return nil, err
+	}
 	switch backend {
 	case workflow.BackendClaudeCode:
 		// org-readiness Phase 2: when a claude agent Config is supplied, build a

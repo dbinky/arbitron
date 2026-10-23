@@ -22,11 +22,9 @@ type parsed struct {
 	tokensIn  int
 	tokensOut int
 	sessionID string
-	// failed records that an `error` / `turn.failed` event was folded. The batch
-	// path ignores it (a failed turn already surfaces via Summary), but the stream
-	// path reads it in Finalize to emit a typed error chunk rather than a clean
-	// Done — so a failed turn is never a silent partial-success on the channel.
-	failed bool
+	// A pinned batch result requires a completed turn without any failure.
+	completed bool
+	failed    bool
 }
 
 // agentStep mirrors engine.AgentStep so parse.go stays independent of the engine
@@ -116,6 +114,7 @@ func foldEvent(out *parsed, ev codexEvent) (newText string) {
 	case "item.completed":
 		return foldItem(out, ev.Item)
 	case "turn.completed":
+		out.completed = true
 		if ev.Usage != nil {
 			out.tokensIn = ev.Usage.InputTokens
 			out.tokensOut = ev.Usage.OutputTokens

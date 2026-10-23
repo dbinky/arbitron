@@ -8,6 +8,7 @@ import (
 
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,10 +158,12 @@ func TestPaired_LoadedRulesDriveProfileServiceValidation(t *testing.T) {
 	store := &inlineProfileStore{byAlias: map[string]provider.Profile{}}
 	rl := &noopReload{}
 	svc := provider.NewProfileService(store, rules, rl)
+	// Pinned writes are checked against route metadata before anything persists.
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), routeOnlySource{})
 
 	// Codex: context_tiers=[default] — requesting 200k must be rejected.
 	_, _, err = svc.Create(adminIdentity(), provider.Profile{
-		Alias: "bad-ctx", Kind: provider.ProfileKindAgent, Backend: "codex",
+		Alias: "bad-ctx", Kind: provider.ProfileKindAgent, Backend: "codex", Model: "gpt-6.1-sol",
 		ContextWindow: provider.Context200K,
 	})
 	assert.ErrorIs(t, err, provider.ErrAxisNotApplicable,
@@ -175,6 +178,23 @@ func TestPaired_LoadedRulesDriveProfileServiceValidation(t *testing.T) {
 	assert.Equal(t, provider.EffortXHigh, stored.Effort, "stored effort must be the requested value")
 	assert.Equal(t, provider.EffortHigh, eff.Effort,
 		"effective effort must be floored by the loaded sonnet-4.6 override")
+}
+
+// routeOnlySource supplies the route a pinned write is checked against. The
+// paired test never creates a following profile, so the proof methods fail.
+type routeOnlySource struct{}
+
+func (routeOnlySource) VersionRequests(_ context.Context, p provider.Profile) ([]provider.VersionRequest, error) {
+	return []provider.VersionRequest{provider.VersionRequestFor(p, "")}, nil
+}
+func (routeOnlySource) Newest(context.Context, provider.Profile) (provider.EligibleCandidate, error) {
+	return provider.EligibleCandidate{}, provider.ErrNoEligibleCandidate
+}
+func (routeOnlySource) ValidateStart(context.Context, provider.Profile) (provider.EligibleCandidate, error) {
+	return provider.EligibleCandidate{}, provider.ErrNoEligibleCandidate
+}
+func (routeOnlySource) RevalidateStart(context.Context, provider.Profile, provider.EligibleCandidate) error {
+	return provider.ErrNoEligibleCandidate
 }
 
 // inlineProfileStore is a minimal provider.ProfileStore for the paired test

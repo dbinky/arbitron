@@ -1,0 +1,2 @@
+DROP TRIGGER connections_revision_floor_on_delete;
+DROP TABLE connection_revision_floor;

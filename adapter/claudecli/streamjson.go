@@ -6,6 +6,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/arbitron/arbitron/domain/engine"
 )
 
 // maxContentBlockChars caps the length of a single text content block we
@@ -52,6 +56,9 @@ type streamEvent struct {
 	IsError   bool   // result events only
 	TokensIn  int    // result events only
 	TokensOut int    // result events only
+	// ModelUsage lists the model ids billed by a result event (the keys of the
+	// result's modelUsage object). Empty when the CLI reported none.
+	ModelUsage []string
 }
 
 // rawEnvelope is the on-the-wire shape of a stream-json line.
@@ -67,6 +74,8 @@ type rawEnvelope struct {
 	Result    string          `json:"result"`
 	Message   json.RawMessage `json:"message"`
 	Usage     *rawUsage       `json:"usage"`
+	// ModelUsage is keyed by the model ids that actually served the turn.
+	ModelUsage map[string]json.RawMessage `json:"modelUsage"`
 }
 
 type rawMessage struct {
@@ -153,6 +162,10 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 			ev.TokensIn = env.Usage.totalInput()
 			ev.TokensOut = env.Usage.OutputTokens
 		}
+		for m := range env.ModelUsage {
+			ev.ModelUsage = append(ev.ModelUsage, m)
+		}
+		sort.Strings(ev.ModelUsage)
 		return ev, true, nil
 	default:
 		return streamEvent{}, false, nil
@@ -177,4 +190,34 @@ func assistantText(msg *rawMessage) string {
 		b.WriteString(txt)
 	}
 	return b.String()
+}
+
+// executedModelMatches reports whether want is among the billed models. Helper
+// models beside it are tolerated; only the supported terminal context-window
+// suffix ("[1m]") on either side is ignored. An empty want or empty usage
+// never matches.
+func executedModelMatches(want string, used []string) bool {
+	want = baseModelID(want)
+	if want == "" {
+		return false
+	}
+	for _, m := range used {
+		if baseModelID(m) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func baseModelID(m string) string {
+	return strings.TrimSuffix(strings.TrimSpace(m), "[1m]")
+}
+
+// pinnedModel returns the model a streamed call must prove it executed, or ""
+// when the request does not require executed-model evidence.
+func pinnedModel(req engine.ChatRequest) string {
+	if !req.RequireExecutedModel {
+		return ""
+	}
+	return strings.TrimSpace(req.Model)
 }

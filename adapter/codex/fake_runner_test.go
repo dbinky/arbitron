@@ -66,6 +66,9 @@ type runScript struct {
 	// runner return a decorated *claudecli.StderrError (exit "signal: killed" +
 	// captured stderr) while runCtx is independently done.
 	ctxWaitErr error
+	// onWait, when set, runs as the process exits (before wait returns), the
+	// point at which a real codex has finished writing its rollout.
+	onWait func()
 }
 
 func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -90,6 +93,9 @@ func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan s
 		}
 	}()
 	wait := func() error {
+		if s.onWait != nil {
+			s.onWait()
+		}
 		if s.blockOnCtx {
 			if s.ctxWaitErr != nil {
 				return s.ctxWaitErr
@@ -102,4 +108,6 @@ func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan s
 }
 
 // compatibleProbe is the canned `codex --version` reply that passes the probe.
-func compatibleProbe() runScript { return runScript{lines: []string{"codex-cli " + minCodexVersion}} }
+func compatibleProbe() runScript { return runScript{lines: []string{"codex-cli 0.163.0"}} }
+
+func emptyMCPProbe() runScript { return runScript{lines: []string{`[]`}} }

@@ -31,6 +31,8 @@ func newProvenancedInstance(state instance.State, sid, wid uuid.UUID) *instance.
 		WorkflowID:       wid,
 		WorkflowName:     "wf",
 		WorkflowSnapshot: map[string]any{"name": "wf"},
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		State:            state,
 		Priority:         instance.PriorityNormal,
 		Variables:        map[string]any{},

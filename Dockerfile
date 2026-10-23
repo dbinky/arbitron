@@ -42,8 +42,10 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 # image; refresh npm pins with `npm view <pkg> version`.
 #
 # OPENCODE PIN (single source of truth — keep in sync with install.sh
-# OPENCODE_NPM_PKG). Package: opencode-ai;
-# runtime gate: >= 0.4.0 (adapter/opencode/version.go minOpencodeVersion).
+# OPENCODE_NPM_PKG). Package: opencode-ai; runtime gates (adapter/opencode/
+# version.go): missions >= minOpencodeVersion, usability probes >=
+# minOpencodeProbeVersion (D12 isolation verified on 1.19.3).
+# TestDockerfileOpencodePinMeetsProbeFloor fails the build if this drifts below.
 RUN apk add --no-cache \
         ca-certificates=20261020-r0 \
         bash=5.2.26-r0 \
@@ -58,7 +60,7 @@ RUN apk add --no-cache \
         font-noto-cjk=0_git20220127-r1 \
         font-noto-emoji=2.042-r0 \
  && npm install -g @anthropic-ai/claude-code@2.1.170 \
- && npm install -g opencode-ai@1.17.1 \
+ && npm install -g opencode-ai@1.19.3 \
  && addgroup -S arbitron \
  && adduser -S -h /home/arbitron -s /bin/sh -G arbitron arbitron \
  && mkdir -p /data /workspaces /claude-config /samples \

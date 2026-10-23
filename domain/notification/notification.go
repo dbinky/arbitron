@@ -30,6 +30,11 @@ const (
 	// TypeConflictResolution indicates a group gather needs human conflict resolution.
 	// It is tied to the parent instance.
 	TypeConflictResolution Type = "conflict_resolution"
+	// TypeProfileRefusesTriggers is raised by the boot pin preflight: a
+	// persisted fixed-mode profile names no fixed model version on its routes,
+	// so triggers of workflows using it refuse. It has no instance; the
+	// denormalized WorkflowName carries "profile <alias>".
+	TypeProfileRefusesTriggers Type = "profile_refuses_triggers"
 )
 
 // Notification represents a user-facing notification tied to a workflow instance.

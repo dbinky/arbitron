@@ -1,0 +1,2 @@
+DROP TRIGGER profiles_revision_floor_on_delete;
+DROP TABLE profile_revision_floor;

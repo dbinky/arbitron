@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/arbitron/arbitron/domain/modelcatalog"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
@@ -170,6 +171,120 @@ func (r *WorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workfl
 	}
 
 	return summaries, nil
+}
+
+// ListScopes enumerates every workflow scope that exists on disk: the shared
+// root (when present) and one private scope per users/<owner UUID> directory.
+// It is the trusted, caller-independent producer for execution-path inventory:
+// it finds owners the public registry never listed. Missing roots are valid and
+// yield no scope. A users/ entry that is an unreadable directory, is not named
+// by a non-nil UUID, or a root that cannot be read returns an error and no
+// scopes, so a partial scan is never mistaken for a complete one.
+func (r *WorkflowRepo) ListScopes(ctx context.Context) ([]workflow.Scope, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var scopes []workflow.Scope
+
+	shared, err := r.scopeRoot(workflow.Shared())
+	if err != nil {
+		return nil, err
+	}
+	switch info, err := os.Stat(shared); {
+	case err == nil && info.IsDir():
+		scopes = append(scopes, workflow.Shared())
+	case err == nil:
+		return nil, fmt.Errorf("listing scopes: %s is not a directory", shared)
+	case !os.IsNotExist(err):
+		return nil, fmt.Errorf("listing scopes: %w", err)
+	}
+
+	users := filepath.Join(r.basePath, "users")
+	entries, err := os.ReadDir(users)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return scopes, nil
+		}
+		return nil, fmt.Errorf("listing scopes: %w", err)
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		owner, err := uuid.Parse(entry.Name())
+		if err != nil || owner == uuid.Nil {
+			return nil, fmt.Errorf("listing scopes: malformed owner directory %q", entry.Name())
+		}
+		if _, err := os.ReadDir(filepath.Join(users, entry.Name())); err != nil {
+			return nil, fmt.Errorf("listing scopes: owner %s: %w", owner, err)
+		}
+		scopes = append(scopes, workflow.Private(owner))
+	}
+	return scopes, nil
+}
+
+// LoadManifests returns every workflow in scope with its raw manifest bytes. It
+// is the strict counterpart of List for execution-path inventory: a directory
+// whose workflow.json cannot be read or parsed fails the whole scan instead of
+// being skipped, so its model consumers never silently vanish. A directory with
+// no manifest, a stray file and CopyTree's own staging/backup artifacts are not
+// workflows and are skipped. A missing scope root yields no manifests.
+func (r *WorkflowRepo) LoadManifests(ctx context.Context, scope workflow.Scope) ([]modelcatalog.WorkflowManifest, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	scopeRoot, err := r.scopeRoot(scope)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(scopeRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("loading manifests: %w", err)
+	}
+
+	var out []modelcatalog.WorkflowManifest
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !entry.IsDir() || isCopyTreeArtifact(entry.Name()) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(scopeRoot, entry.Name(), "workflow.json"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("loading manifests: workflow %q: %w", entry.Name(), err)
+		}
+		var wf workflow.Workflow
+		if err := json.Unmarshal(data, &wf); err != nil {
+			return nil, fmt.Errorf("loading manifests: parsing workflow %q: %w", entry.Name(), err)
+		}
+		out = append(out, modelcatalog.WorkflowManifest{
+			Scope: scope, Name: entry.Name(), Content: data, Workflow: &wf,
+		})
+	}
+	return out, nil
+}
+
+// isCopyTreeArtifact reports whether name is a CopyTree staging (".tmp-<uuid>")
+// or swap-aside (".old-<uuid>") directory, which no run ever loads.
+func isCopyTreeArtifact(name string) bool {
+	for _, marker := range []string{".tmp-", ".old-"} {
+		if i := strings.LastIndex(name, marker); i > 0 {
+			if _, err := uuid.Parse(name[i+len(marker):]); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Create creates a new workflow directory and writes its workflow.json manifest.

@@ -74,7 +74,7 @@ func bootSubtreeStack(t *testing.T) *domainStack {
 		"queue:\n  globalcap: 5\n  perusercap: 5\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initStartedDomain(context.Background(), configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	return ds

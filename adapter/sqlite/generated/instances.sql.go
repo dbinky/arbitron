@@ -8,7 +8,57 @@ package generated
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
+
+const childCountsByParents = `-- name: ChildCountsByParents :many
+SELECT parent_instance_id, COUNT(*) AS child_count
+FROM instances
+WHERE parent_instance_id IN (/*SLICE:parent_ids*/?)
+GROUP BY parent_instance_id
+`
+
+type ChildCountsByParentsRow struct {
+	ParentInstanceID sql.NullString
+	ChildCount       int64
+}
+
+// NOTE: executed hand-written by InstanceRepo.ChildCountsByParents (the IN list
+// and the caller's visibility disjunction are both variable-arity). Kept here as
+// the readable source of truth. Parents with no visible children simply do not
+// appear in the result - absence means zero.
+func (q *Queries) ChildCountsByParents(ctx context.Context, parentIds []sql.NullString) ([]ChildCountsByParentsRow, error) {
+	query := childCountsByParents
+	var queryParams []interface{}
+	if len(parentIds) > 0 {
+		for _, v := range parentIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:parent_ids*/?", strings.Repeat(",?", len(parentIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:parent_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChildCountsByParentsRow
+	for rows.Next() {
+		var i ChildCountsByParentsRow
+		if err := rows.Scan(&i.ParentInstanceID, &i.ChildCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const clearWaitingUntil = `-- name: ClearWaitingUntil :exec
 UPDATE instances SET waiting_until = NULL, updated_at = ? WHERE id = ?
@@ -27,9 +77,9 @@ func (q *Queries) ClearWaitingUntil(ctx context.Context, arg ClearWaitingUntilPa
 }
 
 const createInstance = `-- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, model_pins, model_pins_version, model_pin_routes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, model_pins, model_pins_version, model_pin_routes
 `
 
 type CreateInstanceParams struct {
@@ -47,8 +97,19 @@ type CreateInstanceParams struct {
 	TriggerSource     string
 	ScheduleID        sql.NullString
 	WorkflowID        sql.NullString
+	ParentInstanceID  sql.NullString
+	ParentNodeID      sql.NullString
+	SpawnMode         sql.NullString
+	SpawnDepth        int64
+	ModelPins         sql.NullString
+	ModelPinsVersion  interface{}
+	ModelPinRoutes    sql.NullString
 }
 
+// NOTE: InstanceRepo.Create executes this statement HAND-WRITTEN (see
+// createInstanceSQL in instance_repo.go) so the column set can evolve without a
+// sqlc regeneration step, the same way CountActiveByWorkflowID does. This
+// definition is kept in lockstep as the readable source of truth.
 func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) (Instance, error) {
 	row := q.db.QueryRowContext(ctx, createInstance,
 		arg.ID,
@@ -65,6 +126,13 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		arg.TriggerSource,
 		arg.ScheduleID,
 		arg.WorkflowID,
+		arg.ParentInstanceID,
+		arg.ParentNodeID,
+		arg.SpawnMode,
+		arg.SpawnDepth,
+		arg.ModelPins,
+		arg.ModelPinsVersion,
+		arg.ModelPinRoutes,
 	)
 	var i Instance
 	err := row.Scan(
@@ -91,14 +159,51 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.TriggerSource,
 		&i.ScheduleID,
 		&i.WorkflowID,
+		&i.ParentInstanceID,
+		&i.ParentNodeID,
+		&i.SpawnMode,
+		&i.SpawnDepth,
+		&i.ModelPins,
+		&i.ModelPinsVersion,
+		&i.ModelPinRoutes,
 	)
 	return i, err
 }
 
-const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances WHERE id = ?
+const findChildBySpawnNode = `-- name: FindChildBySpawnNode :one
+SELECT id, state FROM instances
+WHERE parent_instance_id = ? AND parent_node_id = ? AND spawn_mode = ?
+ORDER BY created_at DESC, rowid DESC
+LIMIT 1
 `
 
+type FindChildBySpawnNodeParams struct {
+	ParentInstanceID sql.NullString
+	ParentNodeID     sql.NullString
+	SpawnMode        sql.NullString
+}
+
+type FindChildBySpawnNodeRow struct {
+	ID    string
+	State string
+}
+
+// The awaited child of ONE (parent, spawn node, mode) triple. All three key
+// parts are load-bearing: without the node id a child of a different spawn node
+// would answer; without the mode a fire-and-forget child would.
+func (q *Queries) FindChildBySpawnNode(ctx context.Context, arg FindChildBySpawnNodeParams) (FindChildBySpawnNodeRow, error) {
+	row := q.db.QueryRowContext(ctx, findChildBySpawnNode, arg.ParentInstanceID, arg.ParentNodeID, arg.SpawnMode)
+	var i FindChildBySpawnNodeRow
+	err := row.Scan(&i.ID, &i.State)
+	return i, err
+}
+
+const getInstance = `-- name: GetInstance :one
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, model_pins, model_pins_version, model_pin_routes FROM instances WHERE id = ?
+`
+
+// NOTE: executed hand-written by InstanceRepo.Get (instanceColumnsWithLink) so
+// the spawn-link columns are read in the same statement.
 func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) {
 	row := q.db.QueryRowContext(ctx, getInstance, id)
 	var i Instance
@@ -126,12 +231,51 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 		&i.TriggerSource,
 		&i.ScheduleID,
 		&i.WorkflowID,
+		&i.ParentInstanceID,
+		&i.ParentNodeID,
+		&i.SpawnMode,
+		&i.SpawnDepth,
+		&i.ModelPins,
+		&i.ModelPinsVersion,
+		&i.ModelPinRoutes,
 	)
 	return i, err
 }
 
+const listActiveChildren = `-- name: ListActiveChildren :many
+SELECT id FROM instances
+WHERE parent_instance_id = ?
+  AND state IN ('queued','running','waiting','paused')
+ORDER BY created_at ASC
+`
+
+// Every active child of a parent, REGARDLESS of spawn mode: the cancel cascade
+// covers awaited and fire-and-forget children alike.
+func (q *Queries) ListActiveChildren(ctx context.Context, parentInstanceID sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveChildren, parentInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstances = `-- name: ListInstances :many
-SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
+SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id, model_pins, model_pins_version, model_pin_routes
 FROM instances
 WHERE (?1 IS NULL OR state = ?1)
 AND (?2 IS NULL OR workflow_name = ?2)
@@ -178,17 +322,26 @@ type ListInstancesRow struct {
 	Visibility       string
 	TriggerSource    string
 	ScheduleID       sql.NullString
+	ParentInstanceID sql.NullString
+	ModelPins        sql.NullString
+	ModelPinsVersion interface{}
+	ModelPinRoutes   sql.NullString
 }
 
-// Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
-// owned by them, OR public (when include_public), OR a department run in one of
-// their departments. An admin passes owner_id=NULL, include_public=0 (false),
-// and an empty departments array, in which case the guarded `unconstrained` arm
-// admits every row.
+// NOTE: InstanceRepo.List assembles this statement in Go so the optional parent
+// narrowing can be appended without a sqlc regeneration step. This definition
+// is kept in lockstep as the readable source of truth for the RBAC clause.
 //
-// departments is a JSON array string (e.g. '["engineering","platform"]'); the
-// json_each subquery turns it into a membership test. Portable to Postgres as
-// `instances.department = ANY($departments)`.
+// Disjunctive RBAC visibility filter: a caller sees a row when it is owned by
+// them, OR public (when include_public), OR a department run in one of their
+// departments. It FAILS CLOSED: admitting every row requires the EXPLICIT
+// `unconstrained` assertion, which the engine service sets only for an admin.
+// A filter set with no owner, no departments, no public and no assertion is a
+// caller with no computed scope and matches nothing.
+//
+// The parent narrowing (parent_instance_id IS NULL for roots-only, or
+// parent_instance_id = ? for a specific parent) is appended as a further AND by
+// the Go builder, so it can only NARROW the authorized set, never widen it.
 func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([]ListInstancesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listInstances,
 		arg.State,
@@ -226,6 +379,10 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 			&i.Visibility,
 			&i.TriggerSource,
 			&i.ScheduleID,
+			&i.ParentInstanceID,
+			&i.ModelPins,
+			&i.ModelPinsVersion,
+			&i.ModelPinRoutes,
 		); err != nil {
 			return nil, err
 		}
@@ -240,8 +397,42 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 	return items, nil
 }
 
+const listOrphanedActiveChildren = `-- name: ListOrphanedActiveChildren :many
+SELECT c.id FROM instances c
+JOIN instances p ON p.id = c.parent_instance_id
+WHERE c.state IN ('queued','running','waiting','paused')
+  AND p.state = 'cancelled'
+ORDER BY c.created_at ASC
+`
+
+// The residue of an interrupted cancel cascade: every still-active run whose
+// parent is already cancelled. One level deep - a grandchild under a still-
+// active parent is reached by cancelling that parent, not by this query.
+func (q *Queries) ListOrphanedActiveChildren(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listOrphanedActiveChildren)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, model_pins, model_pins_version, model_pin_routes FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -280,6 +471,58 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.ParentInstanceID,
 			&i.ParentNodeID,
 			&i.SpawnMode,
+			&i.SpawnDepth,
+			&i.ModelPins,
+			&i.ModelPinsVersion,
+			&i.ModelPinRoutes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWaitingOnTerminalChild = `-- name: ListWaitingOnTerminalChild :many
+SELECT p.id, p.current_node_id, c.id, c.state
+FROM instances p
+JOIN instances c ON c.parent_instance_id = p.id
+WHERE p.state = 'waiting'
+  AND p.current_node_id IS NOT NULL
+  AND c.parent_node_id = p.current_node_id
+  AND c.spawn_mode = 'wait_for_child'
+  AND c.state IN ('completed','failed','cancelled')
+`
+
+type ListWaitingOnTerminalChildRow struct {
+	ID            string
+	CurrentNodeID sql.NullString
+	ID_2          string
+	State         string
+}
+
+// Startup reconciliation: parents stuck in the waiting state whose awaited
+// child is already terminal (the in-process wake was lost to a crash).
+func (q *Queries) ListWaitingOnTerminalChild(ctx context.Context) ([]ListWaitingOnTerminalChildRow, error) {
+	rows, err := q.db.QueryContext(ctx, listWaitingOnTerminalChild)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWaitingOnTerminalChildRow
+	for rows.Next() {
+		var i ListWaitingOnTerminalChildRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CurrentNodeID,
+			&i.ID_2,
+			&i.State,
 		); err != nil {
 			return nil, err
 		}

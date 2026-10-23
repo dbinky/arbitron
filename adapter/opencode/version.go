@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/procenv"
 )
 
 // minOpencodeVersion is the minimum opencode release with the 1.17.x `run`
@@ -19,6 +20,13 @@ import (
 // and `--dangerously-skip-permissions`. Verified against opencode-ai 1.17.7.
 // Package: npm install -g opencode-ai (>= 1.17.0). Binary name: `opencode`.
 const minOpencodeVersion = "1.17.0"
+
+// minOpencodeProbeVersion is the oldest opencode whose D12 probe isolation was
+// verified against the installed binary: `debug config` resolves every layer,
+// the inline OPENCODE_CONFIG_CONTENT overlay's per-server enabled:false stops
+// inherited MCP servers, and --pure stops inherited plugins. See
+// testdata/probe-restrictions.md. Ordinary missions keep minOpencodeVersion.
+const minOpencodeProbeVersion = "1.19.3"
 
 // ErrIncompatibleOpencode is returned when the resolved opencode binary is older
 // than minOpencodeVersion or reports an unparseable version.
@@ -31,25 +39,39 @@ var versionRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 // unparseable. It uses the shared CommandRunner seam so it is hermetically
 // testable with the fake runner.
 func probeVersion(ctx context.Context, runner claudecli.CommandRunner, bin string) error {
-	lines, wait, err := runner.Run(ctx, claudecli.RunSpec{Bin: bin, Args: []string{"--version"}})
+	_, err := probeVersionNumber(ctx, runner, bin, procenv.BaseEnv(), "")
+	return err
+}
+
+// probeVersionNumber is probeVersion returning the parsed version, so the
+// discovery probe can apply its own (stricter) floor. SECURITY: env and dir are
+// set explicitly on the RunSpec — a nil Env would inherit the whole server
+// environment (ARBITRON_MASTER_KEY, unrelated provider keys) into the child.
+// Callers pass the allowlisted procenv.BaseEnv(); the version check needs no
+// credential.
+func probeVersionNumber(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string, dir string) ([]int, error) {
+	if env == nil {
+		env = procenv.BaseEnv()
+	}
+	lines, wait, err := runner.Run(ctx, claudecli.RunSpec{Bin: bin, Args: []string{"--version"}, Env: env, Dir: dir})
 	if err != nil {
-		return fmt.Errorf("opencode: version probe: %w", err)
+		return nil, fmt.Errorf("opencode: version probe: %w", err)
 	}
 	var out []string
 	for l := range lines {
 		out = append(out, l)
 	}
 	if waitErr := wait(); waitErr != nil {
-		return fmt.Errorf("opencode: version probe: %w", waitErr)
+		return nil, fmt.Errorf("opencode: version probe: %w", waitErr)
 	}
 	found := parseVersion(strings.Join(out, "\n"))
 	if found == nil {
-		return fmt.Errorf("%w: could not parse version from %q (require >= %s)", ErrIncompatibleOpencode, strings.Join(out, " "), minOpencodeVersion)
+		return nil, fmt.Errorf("%w: could not parse version from %q (require >= %s)", ErrIncompatibleOpencode, strings.Join(out, " "), minOpencodeVersion)
 	}
 	if compareVersion(found, mustParseVersion(minOpencodeVersion)) < 0 {
-		return fmt.Errorf("%w: found %d.%d.%d, require >= %s", ErrIncompatibleOpencode, found[0], found[1], found[2], minOpencodeVersion)
+		return nil, fmt.Errorf("%w: found %d.%d.%d, require >= %s", ErrIncompatibleOpencode, found[0], found[1], found[2], minOpencodeVersion)
 	}
-	return nil
+	return found, nil
 }
 
 func parseVersion(s string) []int {

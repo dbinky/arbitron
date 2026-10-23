@@ -26,6 +26,10 @@ import (
 // Extras["access-key-id"], which is the (non-secret) SigV4 key identifier.
 var ErrMissingAccessKeyID = errors.New("bedrock: binding Extras[\"access-key-id\"] is empty")
 
+// ErrModelExecutionEvidenceUnavailable rejects required exact-model execution:
+// this adapter has no verified actual-model identity or mapping for Converse.
+var ErrModelExecutionEvidenceUnavailable = errors.New("bedrock: model execution evidence unavailable")
+
 // sigService is the AWS service name signed into the SigV4 credential scope.
 const sigService = "bedrock"
 
@@ -134,6 +138,10 @@ func (p *Provider) signedRequest(ctx context.Context, body []byte, stream bool) 
 // Chat POSTs a non-streaming Converse request and maps the joined assistant text
 // and usage to a ChatResponse.
 func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+	if req.RequireExecutedModel || p.binding.RequiresModelEvidence() ||
+		(p.binding.Pinned && p.binding.OpaquePinRoute != provider.CanonicalBedrock) {
+		return nil, ErrModelExecutionEvidenceUnavailable
+	}
 	ctx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
@@ -176,6 +184,10 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 // is delivered as a ChatChunk{Error} before the channel closes; the goroutine
 // always drains the body and closes the channel.
 func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	if req.RequireExecutedModel || p.binding.RequiresModelEvidence() ||
+		(p.binding.Pinned && p.binding.OpaquePinRoute != provider.CanonicalBedrock) {
+		return nil, ErrModelExecutionEvidenceUnavailable
+	}
 	streamCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
 	body, err := buildBody(req)

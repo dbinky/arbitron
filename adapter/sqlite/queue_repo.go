@@ -82,11 +82,24 @@ const listWaitingWithWebhookWithLinkSQL = `SELECT ` + instanceColumnsWithLink +
 
 func (r *QueueRepo) NextEligible(ctx context.Context, globalCap int, perUserCap int) (*instance.Instance, error) {
 	row := r.db.QueryRowContext(ctx, nextEligibleWithLinkSQL, int64(globalCap), int64(perUserCap))
-	inst, err := scanInstanceWithLink(row)
-	if err != nil {
+	inst, raw, err := scanInstanceRowWithLink(row)
+	if err != nil && raw.ID == "" {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("getting next eligible instance: %w", err)
+	}
+	// A corrupt pin record is reported, not written: the queue manager has the
+	// engine fail it through the complete terminal path, then asks again, so
+	// one bad run cannot wedge the queue.
+	if pinRecordCorrupt(raw) != nil {
+		id, perr := parseUUID(raw.ID)
+		if perr != nil {
+			return nil, fmt.Errorf("getting next eligible instance: %w", perr)
+		}
+		return nil, &instance.CorruptPinsError{IDs: []uuid.UUID{id}}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("getting next eligible instance: %w", err)
 	}
 	return inst, nil
@@ -159,18 +172,28 @@ func (r *QueueRepo) SetQueuedIfWaitingAtNode(ctx context.Context, id uuid.UUID, 
 	return n > 0, nil
 }
 
+// ListWaitingWithTimer returns the healthy rows plus an
+// *instance.CorruptPinsError when any row's pin record is corrupt.
 func (r *QueueRepo) ListWaitingWithTimer(ctx context.Context) ([]instance.Instance, error) {
-	instances, err := queryInstancesWithLink(ctx, r.db, listWaitingWithTimerWithLinkSQL)
-	if err != nil {
-		return nil, fmt.Errorf("listing waiting instances with timer: %w", err)
-	}
-	return instances, nil
+	return executionList(ctx, r.db, listWaitingWithTimerWithLinkSQL, "listing waiting instances with timer")
 }
 
+// ListWaitingWithWebhook returns the healthy rows plus an
+// *instance.CorruptPinsError when any row's pin record is corrupt.
 func (r *QueueRepo) ListWaitingWithWebhook(ctx context.Context) ([]instance.Instance, error) {
-	instances, err := queryInstancesWithLink(ctx, r.db, listWaitingWithWebhookWithLinkSQL)
+	return executionList(ctx, r.db, listWaitingWithWebhookWithLinkSQL, "listing waiting instances with webhook")
+}
+
+// executionList runs an execution read, keeping the healthy rows alongside a
+// corrupt-pin report and wrapping every other failure.
+func executionList(ctx context.Context, db *sql.DB, q, what string) ([]instance.Instance, error) {
+	instances, err := queryExecutionInstancesWithLink(ctx, db, q)
+	var corrupt *instance.CorruptPinsError
+	if errors.As(err, &corrupt) {
+		return instances, corrupt
+	}
 	if err != nil {
-		return nil, fmt.Errorf("listing waiting instances with webhook: %w", err)
+		return nil, fmt.Errorf("%s: %w", what, err)
 	}
 	return instances, nil
 }
@@ -183,13 +206,5 @@ func (r *QueueRepo) ListQueued(ctx context.Context) ([]instance.Instance, error)
 	if err != nil {
 		return nil, fmt.Errorf("listing queued instances: %w", err)
 	}
-	instances := make([]instance.Instance, 0, len(rows))
-	for _, row := range rows {
-		inst, err := rowToInstance(row)
-		if err != nil {
-			return nil, err
-		}
-		instances = append(instances, *inst)
-	}
-	return instances, nil
+	return executionInstances(ctx, r.db, rows)
 }

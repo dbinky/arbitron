@@ -1141,7 +1141,7 @@ func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
 	paths := writeGroupStack(t, 1, map[string]string{"grp-restart": manifest})
 	ctx := context.Background()
 
-	ds1, err := initDomain(ctx, paths.configPath)
+	ds1, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { gates.release(t, "a-hold"); ds1.Close(context.Background()) })
 	// Both children enqueue while their parent still owns the only slot. Give
@@ -1161,8 +1161,12 @@ func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
 	require.Equal(t, instance.StateWaiting, stateOf(t, ds1, parentID))
 
 	require.NoError(t, ds1.db.Close())
+	// The abandoned process's walkers still finish against the closed database
+	// and log through the process-wide logger; drain them inside this test so
+	// their errors never land in a later test's log.
+	t.Cleanup(func() { ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
-	ds2, err := initDomain(ctx, paths.configPath)
+	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds2.Close(context.Background()) })
 

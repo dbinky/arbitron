@@ -19,6 +19,7 @@ func TestInstanceRepo_WorkflowID_RoundTrip(t *testing.T) {
 	wfID := uuid.New()
 
 	inst := &instance.Instance{
+		ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		ID:               uuid.New(),
 		OwnerID:          uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		WorkflowID:       wfID,
@@ -44,6 +45,7 @@ func TestInstanceRepo_NilWorkflowID_RoundTripsAsNil(t *testing.T) {
 	repo := NewInstanceRepo(db.DB)
 
 	inst := &instance.Instance{
+		ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		ID:               uuid.New(),
 		OwnerID:          uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		WorkflowName:     "legacy",

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -23,6 +24,13 @@ type ProfileService struct {
 	store    ProfileStore
 	rules    CapabilityRules
 	reloader Reloader
+	versions VersionResolver
+	source   EligibleCandidateSource
+
+	advance   AdvanceStore
+	publisher AdvancementPublisher
+	journal   PublicationJournal
+	gate      *ExecutionGate
 }
 
 // NewProfileService wires the persistence port, the capability ruleset, and the
@@ -30,6 +38,18 @@ type ProfileService struct {
 // successful write so live edits take effect without a restart.
 func NewProfileService(store ProfileStore, rules CapabilityRules, reloader Reloader) *ProfileService {
 	return &ProfileService{store: store, rules: rules, reloader: reloader}
+}
+
+// SetModelSelection injects the fixed-version resolver and confirmed-candidate
+// source for following selection preparation and read-only proof revalidation.
+func (s *ProfileService) SetModelSelection(v VersionResolver, src EligibleCandidateSource) {
+	s.versions, s.source = v, src
+}
+
+// ListInternal is the trusted, unauthenticated reader for in-process refresh
+// code. It is never registered on a public surface.
+func (s *ProfileService) ListInternal(ctx context.Context) ([]Profile, error) {
+	return s.store.List(ctx)
 }
 
 // List returns all profiles. Read-open: any authenticated identity (profiles are
@@ -52,14 +72,27 @@ func (s *ProfileService) Get(ctx context.Context, alias string) (Profile, error)
 // Create persists a new profile (admin-only), after capability validation, then
 // recaches. It returns the stored profile plus the floored Effective values.
 func (s *ProfileService) Create(ctx context.Context, p Profile) (Profile, Effective, error) {
-	return s.write(ctx, p, s.store.Create)
+	return s.write(ctx, p, func(ctx context.Context, p Profile) (Profile, error) {
+		if err := s.store.Create(ctx, p); err != nil {
+			return Profile{}, err
+		}
+		// The store owns the revision; report the stored row, not the request.
+		return s.store.Get(ctx, p.Alias)
+	}, nil)
 }
 
 // Update overwrites an existing profile by alias (admin-only), with the same
 // validate-then-recache flow as Create. It is a FULL replace; UpdatePatch is the
 // merge-on-update path that preserves omitted fields.
 func (s *ProfileService) Update(ctx context.Context, p Profile) (Profile, Effective, error) {
-	return s.write(ctx, p, s.store.Update)
+	if err := requireAdmin(ctx); err != nil {
+		return Profile{}, Effective{}, err
+	}
+	prior, err := s.store.Get(ctx, p.Alias)
+	if err != nil {
+		return Profile{}, Effective{}, err
+	}
+	return s.write(ctx, p, s.updateExpected(prior), &prior)
 }
 
 // UpdatePatch is the merge-on-update path (admin-only): it loads the existing
@@ -81,23 +114,149 @@ func (s *ProfileService) UpdatePatch(ctx context.Context, alias string, patch Pr
 	if err != nil {
 		return Profile{}, Effective{}, err
 	}
+	if patch.ExpectedRevision != nil && *patch.ExpectedRevision != existing.Revision {
+		return Profile{}, Effective{}, fmt.Errorf("%w: profile %q is at revision %d, not %d", ErrAdvanceConflict, alias, existing.Revision, *patch.ExpectedRevision)
+	}
 	merged, err := patch.apply(existing)
 	if err != nil {
 		return Profile{}, Effective{}, err
 	}
-	return s.write(ctx, merged, s.store.Update)
+	return s.write(ctx, merged, s.updateExpected(existing), &existing)
 }
 
-// write is the shared admin-gated mutation path: gate → validate (NOTHING is
-// persisted on a capability rejection) → persist → recache. The effective backend
+// updateExpected keeps the original read as the persistence precondition. Never
+// fall back to unconditional CRUD when the conditional port is missing.
+func (s *ProfileService) updateExpected(prior Profile) func(context.Context, Profile) (Profile, error) {
+	return func(ctx context.Context, next Profile) (Profile, error) {
+		store, ok := s.store.(ProfileMutationStore)
+		if !ok {
+			return Profile{}, ErrProfileMutationUnavailable
+		}
+		return store.UpdateExpected(ctx, prior, next)
+	}
+}
+
+// write is the shared admin-gated path: prepare and validate capabilities, then
+// lease → revalidate proof → persist → recache. The effective backend
 // the capability ruleset is keyed on comes from the shared EffectiveBackend(p)
 // rule (claude-cli when the profile names neither a backend nor a connection),
 // the SAME rule the seed path uses so write-time validation and launch never
 // disagree.
-func (s *ProfileService) write(ctx context.Context, p Profile, persist func(context.Context, Profile) error) (Profile, Effective, error) {
+//
+// prior is the stored profile an edit replaces (nil for a create). A following
+// selection is validated and initialized only when it is new or the edit changes
+// the mode, target, model, route, axes or tools, so unchanged selections work while
+// catalog discovery is down. Nothing is fetched or probed under any store lock.
+func (s *ProfileService) write(ctx context.Context, p Profile, persist func(context.Context, Profile) (Profile, error), prior *Profile) (Profile, Effective, error) {
 	if err := requireAdmin(ctx); err != nil {
 		return Profile{}, Effective{}, err
 	}
+	changed := prior == nil || selectionChanged(*prior, p)
+	var selection PreparedSelection
+	var err error
+	if changed {
+		selection, err = ValidateSelection(ctx, p, s.versions, s.source)
+	} else {
+		selection.Profile, err = NormalizeSelection(p)
+	}
+	if err != nil {
+		return Profile{}, Effective{}, &preparationError{err}
+	}
+	p = selection.Profile
+	eff, err := s.validateAxes(p)
+	if err != nil {
+		return Profile{}, Effective{}, &preparationError{err}
+	}
+	var out Profile
+	err = s.mutate(ctx, func(ctx context.Context) error {
+		if changed {
+			out, err = s.persistPrepared(ctx, selection, prior, persist)
+		} else {
+			out, err = persist(ctx, p)
+		}
+		if err == nil {
+			s.recache(ctx)
+		}
+		return err
+	})
+	if err != nil {
+		return Profile{}, Effective{}, err
+	}
+	return out, eff, nil
+}
+
+// persistPrepared runs only under the caller's mutation lease. Following proof
+// revalidation is read-only; pinned routes need only policy-independent version
+// checks, never discovery or probing.
+func (s *ProfileService) persistPrepared(ctx context.Context, selection PreparedSelection, prior *Profile, persist func(context.Context, Profile) (Profile, error)) (Profile, error) {
+	if err := s.revalidatePrepared(ctx, selection); err != nil {
+		return Profile{}, err
+	}
+	return s.storePrepared(ctx, selection, prior, persist)
+}
+
+func (s *ProfileService) revalidatePrepared(ctx context.Context, selection PreparedSelection) error {
+	p := selection.Profile
+	if p.SelectionMode != SelectionFollowing {
+		if err := checkRouteVersions(ctx, p, s.versions, s.source); err != nil {
+			return &preparationError{err}
+		}
+		return nil
+	}
+	if selection.Candidate == nil || s.source == nil {
+		return &preparationError{ErrExecutionRevisionUnavailable}
+	}
+	if err := s.source.RevalidateStart(ctx, p.Clone(), selection.Candidate.Clone()); err != nil {
+		return &preparationError{err}
+	}
+	return nil
+}
+
+// storePrepared follows revalidation under the same lease. Separating these
+// phases lets a seed batch recheck every proof before its own inserts change
+// the installation's profile inventory.
+func (s *ProfileService) storePrepared(ctx context.Context, selection PreparedSelection, prior *Profile, persist func(context.Context, Profile) (Profile, error)) (Profile, error) {
+	if selection.Profile.SelectionMode != SelectionFollowing {
+		return persist(ctx, selection.Profile)
+	}
+	store, ok := s.store.(SelectionMutationStore)
+	if !ok {
+		return Profile{}, ErrProfileMutationUnavailable
+	}
+	if prior == nil {
+		return store.CreateValidated(ctx, selection)
+	}
+	return store.UpdateValidated(ctx, *prior, selection)
+}
+
+// preparationError marks a failure of the profile itself (selection, proof or
+// axes) as opposed to the store or the lease. It unwraps, so errors.Is on the
+// cause still works for every existing caller.
+type preparationError struct{ err error }
+
+func (e *preparationError) Error() string { return e.err.Error() }
+func (e *preparationError) Unwrap() error { return e.err }
+
+// IsInvalidProfile reports whether a write was refused because the profile
+// could not be prepared or proved, so nothing was persisted and retrying the
+// same input cannot succeed until the profile or the catalog changes.
+func IsInvalidProfile(err error) bool {
+	var pe *preparationError
+	return errors.As(err, &pe)
+}
+
+// mutate runs fn under the shared execution gate's exclusive lease when one is
+// injected (SetAdvancementDependencies). A nil gate writes directly; the root
+// wiring test proves production injects one.
+func (s *ProfileService) mutate(ctx context.Context, fn func(context.Context) error) error {
+	if s.gate == nil {
+		return fn(ctx)
+	}
+	return s.gate.WithMutation(ctx, fn)
+}
+
+// validateAxes checks capabilities before acquiring the mutation lease.
+func (s *ProfileService) validateAxes(p Profile) (Effective, error) {
 	backend := EffectiveBackend(p)
 	// Normalize the unset ("") axes to their explicit default sentinel before
 	// validating, exactly as the seed path does: an empty string is not a Valid()
@@ -106,26 +265,17 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 	// parse and surfaces ErrInvalidContextWindow / ErrInvalidEffort.
 	tier, err := ParseContextWindow(string(p.ContextWindow))
 	if err != nil {
-		return Profile{}, Effective{}, err
+		return Effective{}, err
 	}
 	effort, err := ParseEffort(string(p.Effort))
 	if err != nil {
-		return Profile{}, Effective{}, err
+		return Effective{}, err
 	}
 	effTier, effEffort, err := s.resolveAxes(p, backend, tier, effort)
 	if err != nil {
-		return Profile{}, Effective{}, err
+		return Effective{}, err
 	}
-	if err := persist(ctx, p); err != nil {
-		return Profile{}, Effective{}, err
-	}
-	// Best-effort recache: the write is already durable, so a reload failure does
-	// not fail the operation. The reload failure is NOT silently discarded — the
-	// injected Reloader is the observability seam (the wiring layer decorates it
-	// with a WARN log so a stale cache / split-brain is surfaced), which keeps the
-	// domain free of a concrete logger dependency.
-	s.recache(ctx)
-	return p, Effective{ContextWindow: effTier, Effort: effEffort}, nil
+	return Effective{ContextWindow: effTier, Effort: effEffort}, nil
 }
 
 // resolveAxes validates and floors a profile's (context, effort) axes and returns
@@ -157,11 +307,21 @@ func (s *ProfileService) Delete(ctx context.Context, alias string) error {
 	if err := requireAdmin(ctx); err != nil {
 		return err
 	}
-	if err := s.store.Delete(ctx, alias); err != nil {
+	prior, err := s.store.Get(ctx, alias)
+	if err != nil {
 		return err
 	}
-	s.recache(ctx)
-	return nil
+	store, ok := s.store.(ProfileMutationStore)
+	if !ok {
+		return ErrProfileMutationUnavailable
+	}
+	return s.mutate(ctx, func(ctx context.Context) error {
+		if err := store.DeleteExpected(ctx, prior); err != nil {
+			return err
+		}
+		s.recache(ctx)
+		return nil
+	})
 }
 
 // recache runs the best-effort post-write reload. The error is intentionally not

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -277,38 +279,62 @@ func (e *Engine) startBranchTask(ctx context.Context, req GroupTaskStartRequest,
 	if vars == nil {
 		vars = map[string]any{}
 	}
+	pins, err := e.branchTaskPins(ctx, parent, wf)
+	if err != nil {
+		return fmt.Errorf("group task %q: %w", req.TaskKey, err)
+	}
 	now := time.Now()
 
 	inst := &instance.Instance{
-		ID:                req.TaskInstanceID,
-		OwnerID:           parent.OwnerID,
-		WorkflowID:        parent.WorkflowID,
-		WorkflowName:      parent.WorkflowName,
-		WorkflowSnapshot:  variable.DeepCopyMap(parent.WorkflowSnapshot),
-		Department:        parent.Department,
-		Visibility:        parent.Visibility,
-		TriggerSource:     source,
-		ScheduleID:        scheduleID,
-		ParentInstanceID:  &parentID,
-		ParentNodeID:      &parentNode,
-		SpawnMode:         instance.SpawnModeGroupTask,
-		SpawnDepth:        link.SpawnDepth,
-		GroupRunID:        &runID,
-		GroupTaskKey:      &key,
-		GroupTaskKind:     instance.GroupTaskKindBranch,
-		State:             instance.StateQueued,
-		Priority:          parent.Priority,
-		Variables:         vars,
-		OriginalVariables: variable.DeepCopyMap(vars),
-		CurrentNodeID:     &entry,
-		QueuedAt:          &now,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ModelPins:                pins.Models,
+		ModelPinRoutes:           pins.OpaqueRoutes,
+		ModelPinRouteConnections: pins.OpaqueConnections,
+		ModelPinsVersion:         instance.ModelPinsVersionSnapshot,
+		ID:                       req.TaskInstanceID,
+		OwnerID:                  parent.OwnerID,
+		WorkflowID:               parent.WorkflowID,
+		WorkflowName:             parent.WorkflowName,
+		WorkflowSnapshot:         variable.DeepCopyMap(parent.WorkflowSnapshot),
+		Department:               parent.Department,
+		Visibility:               parent.Visibility,
+		TriggerSource:            source,
+		ScheduleID:               scheduleID,
+		ParentInstanceID:         &parentID,
+		ParentNodeID:             &parentNode,
+		SpawnMode:                instance.SpawnModeGroupTask,
+		SpawnDepth:               link.SpawnDepth,
+		GroupRunID:               &runID,
+		GroupTaskKey:             &key,
+		GroupTaskKind:            instance.GroupTaskKindBranch,
+		State:                    instance.StateQueued,
+		Priority:                 parent.Priority,
+		Variables:                vars,
+		OriginalVariables:        variable.DeepCopyMap(vars),
+		CurrentNodeID:            &entry,
+		QueuedAt:                 &now,
+		CreatedAt:                now,
+		UpdatedAt:                now,
 	}
 	if _, err := e.createAndEnqueue(ctx, inst); err != nil {
 		return fmt.Errorf("group task %q: %w", req.TaskKey, err)
 	}
 	return nil
+}
+
+// branchTaskPins is the pin record a branch task starts with. A branch runs the
+// parent's own definition, so it inherits the parent's snapshot exactly (D1: a
+// run keeps its starting versions, including its branches), as independent
+// copies. A legacy parent created before pins has none to inherit; its branch
+// is still a new instance, so it captures a fresh snapshot like any trigger.
+func (e *Engine) branchTaskPins(ctx context.Context, parent *instance.Instance, wf *workflow.Workflow) (provider.ModelPinSnapshot, error) {
+	if parent.ModelPinsVersion != instance.ModelPinsVersionSnapshot {
+		return e.captureModelPins(ctx, wf)
+	}
+	return provider.ModelPinSnapshot{
+		Models:            maps.Clone(parent.ModelPins),
+		OpaqueRoutes:      maps.Clone(parent.ModelPinRoutes),
+		OpaqueConnections: maps.Clone(parent.ModelPinRouteConnections),
+	}, nil
 }
 
 // isGroupTaskEdge reports whether the snapshot has a task edge from the group

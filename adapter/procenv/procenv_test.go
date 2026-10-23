@@ -170,3 +170,30 @@ func TestBaseEnv_UnsetParentPath(t *testing.T) {
 	assert.Contains(t, path, "/usr/local/bin") // standard dirs still present, no leading separator
 	assert.False(t, strings.HasPrefix(path, string(os.PathListSeparator)))
 }
+
+// Edge: the probe ceiling replaces only an unlimited or larger configured
+// limit; an ordinary context keeps what was configured, zero (unlimited) included.
+func TestResponseLimit(t *testing.T) {
+	ordinary := context.Background()
+	probe := procenv.WithProbeResponseLimit(ordinary)
+	for _, tc := range []struct {
+		name       string
+		ctx        context.Context
+		configured int64
+		want       int64
+	}{
+		{"ordinary unlimited stays unlimited", ordinary, 0, 0},
+		{"ordinary negative stays as configured", ordinary, -1, -1},
+		{"ordinary large limit is kept", ordinary, 256 << 20, 256 << 20},
+		{"ordinary small limit is kept", ordinary, 32, 32},
+		{"probe caps unlimited", probe, 0, procenv.ProbeResponseBytes},
+		{"probe caps negative", probe, -1, procenv.ProbeResponseBytes},
+		{"probe caps a larger limit", probe, 256 << 20, procenv.ProbeResponseBytes},
+		{"probe keeps a smaller limit", probe, 32, 32},
+		{"probe keeps the exact ceiling", probe, procenv.ProbeResponseBytes, procenv.ProbeResponseBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, procenv.ResponseLimit(tc.ctx, tc.configured))
+		})
+	}
+}

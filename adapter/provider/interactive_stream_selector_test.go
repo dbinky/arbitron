@@ -44,13 +44,19 @@ func (f *fakeChatProviderSelector) ChatProviderFor(b provider.ResolvedBinding) (
 
 // streamsByBackend assembles a fresh backend→stream map plus the per-backend
 // sentinels, so each test asserts the exact provider routed by backend.
-func streamsByBackend() (claude, codex *sentinelChatProvider, m map[string]engine.ChatProvider) {
+func streamsByBackend() (claude, codex *sentinelChatProvider, m map[string]adapterprovider.AgentStreamFactory) {
 	claude = &sentinelChatProvider{name: "claude-stream"}
 	codex = &sentinelChatProvider{name: "codex-stream"}
-	return claude, codex, map[string]engine.ChatProvider{
-		workflow.BackendClaudeCode: claude,
-		workflow.BackendCodex:      codex,
+	return claude, codex, map[string]adapterprovider.AgentStreamFactory{
+		workflow.BackendClaudeCode: staticStream(claude),
+		workflow.BackendCodex:      staticStream(codex),
 	}
+}
+
+// Dispatch-only tests use identity sentinels; binding propagation is exercised
+// through real adapters and subprocess sinks in the root tests.
+func staticStream(p engine.ChatProvider) adapterprovider.AgentStreamFactory {
+	return func(provider.ResolvedBinding) engine.ChatProvider { return p }
 }
 
 // TestInteractiveStreamSelector_ChatKind verifies that a chat-kind binding
@@ -125,9 +131,9 @@ func TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider(t *te
 	// route the codex backend to it (claude-code keeps its sentinel).
 	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{})
 	var _ engine.ChatProvider = codexInteractive // it is the wired ChatProvider
-	m := map[string]engine.ChatProvider{
-		workflow.BackendClaudeCode: claude,
-		workflow.BackendCodex:      codexInteractive,
+	m := map[string]adapterprovider.AgentStreamFactory{
+		workflow.BackendClaudeCode: staticStream(claude),
+		workflow.BackendCodex:      staticStream(codexInteractive),
 	}
 
 	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
@@ -260,7 +266,7 @@ func TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap(t *testing.T) 
 	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
 	// Build a map with ONLY claude-code; codex is deliberately absent.
 	claude := &sentinelChatProvider{name: "claude-stream"}
-	sparseMap := map[string]engine.ChatProvider{workflow.BackendClaudeCode: claude}
+	sparseMap := map[string]adapterprovider.AgentStreamFactory{workflow.BackendClaudeCode: staticStream(claude)}
 
 	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, sparseMap, workflow.BackendClaudeCode)
 
@@ -290,9 +296,9 @@ func TestInteractiveStreamSelector_CodexDualArm_DistinctTypes(t *testing.T) {
 
 	// Wire the real interactive provider exactly as the composition root does.
 	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{})
-	m := map[string]engine.ChatProvider{
-		workflow.BackendClaudeCode: &sentinelChatProvider{name: "claude-stream"},
-		workflow.BackendCodex:      codexInteractive,
+	m := map[string]adapterprovider.AgentStreamFactory{
+		workflow.BackendClaudeCode: staticStream(&sentinelChatProvider{name: "claude-stream"}),
+		workflow.BackendCodex:      staticStream(codexInteractive),
 	}
 	sel := adapterprovider.NewInteractiveStreamSelector(
 		&fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}},

@@ -243,7 +243,9 @@ func newGxFixture(t *testing.T, wf workflow.Workflow, currentNode string) *gxFix
 	instances := newMockInstanceRepo()
 	cur := currentNode
 	parent := &instance.Instance{
-		ID: uuid.New(), OwnerID: owner, WorkflowName: wf.Name, WorkflowSnapshot: gtSnapshot(t, wf),
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               uuid.New(), OwnerID: owner, WorkflowName: wf.Name, WorkflowSnapshot: gtSnapshot(t, wf),
 		State: instance.StateRunning, Priority: instance.PriorityNormal, CurrentNodeID: &cur,
 	}
 	require.NoError(t, instances.Create(context.Background(), parent))
@@ -748,7 +750,9 @@ func TestParallelGroupExecutor_NestedGroupUsesTheEnclosingTasksInstance(t *testi
 	rootID, rootNode, outerRun, key := f.parent.ID, "g", uuid.New(), "a"
 	inner := "inner"
 	child := &instance.Instance{
-		ID: uuid.New(), OwnerID: f.owner, WorkflowName: wf.Name, WorkflowSnapshot: gtSnapshot(t, wf),
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               uuid.New(), OwnerID: f.owner, WorkflowName: wf.Name, WorkflowSnapshot: gtSnapshot(t, wf),
 		State: instance.StateRunning, Priority: instance.PriorityNormal, CurrentNodeID: &inner, SpawnDepth: 1,
 		ParentInstanceID: &rootID, ParentNodeID: &rootNode, SpawnMode: instance.SpawnModeGroupTask,
 		GroupRunID: &outerRun, GroupTaskKey: &key, GroupTaskKind: instance.GroupTaskKindBranch,
@@ -789,8 +793,8 @@ func TestParallelGroupExecutor_EngineIntegration_ParentVariablesHoldOrderedResul
 	bus := newMockEventBus()
 	exec := newMockExecutor()
 	qm := newMockQueueManager()
-	eng := engine.NewEngine(wfRepo, repo, nodeExecs, adaptsqlite.NewVariableSnapshotRepo(db), users,
-		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: exec}, bus, qm, adaptsqlite.NewQueueRepo(db), "")
+	eng := wireModelPins(engine.NewEngine(wfRepo, repo, nodeExecs, adaptsqlite.NewVariableSnapshotRepo(db), users,
+		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: exec}, bus, qm, adaptsqlite.NewQueueRepo(db), ""))
 	qm.mu.Lock()
 	qm.enqueueFn = func(ctx context.Context, id uuid.UUID, _ uuid.UUID) (bool, error) {
 		if err := eng.StartInstance(ctx, id); err != nil {

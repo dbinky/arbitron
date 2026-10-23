@@ -49,12 +49,13 @@ func TestProfilesFromConfig_Mapping(t *testing.T) {
 	got := adapterconfig.ProfilesFromConfig(cfgs)
 	require.Len(t, got, 2)
 	assert.Equal(t, provider.Profile{
+		SelectionMode: provider.SelectionPinned,
 		Alias:         "a",
 		Kind:          provider.ProfileKindChat,
 		ConnectionRef: "azure-prod",
 		Model:         "m1",
 	}, got[0])
-	assert.Equal(t, provider.Profile{Alias: "b", Kind: provider.ProfileKindAgent, Model: "m2"}, got[1])
+	assert.Equal(t, provider.Profile{Alias: "b", SelectionMode: provider.SelectionPinned, Kind: provider.ProfileKindAgent, Model: "m2"}, got[1])
 }
 
 // Failure/Error: a malformed kind value flows through the loader and mapping as
@@ -116,7 +117,7 @@ profiles:
 }
 
 // Edge: with no profiles block in YAML, defaults supply the base default-chat
-// and default-agent pair (empty model preserved). The default registry also
+// and default-agent pair, both following the Anthropic sonnet tier. The default registry also
 // ships the in-repo workflow aliases (covered by
 // TestLoad_DefaultProfileRegistry_IncludesCommittedWorkflowAliases), so this
 // test asserts the base pair is present rather than an exact count.
@@ -132,8 +133,35 @@ func TestLoad_ProfilesDefaults(t *testing.T) {
 	for _, p := range cfg.Profiles {
 		byAlias[p.Alias] = p
 	}
-	assert.Equal(t, domainconfig.ProfileConfig{Alias: "default-chat", Kind: "chat", Model: ""}, byAlias["default-chat"])
-	assert.Equal(t, domainconfig.ProfileConfig{Alias: "default-agent", Kind: "agent", Model: ""}, byAlias["default-agent"])
+	sonnet := &domainconfig.FollowTargetConfig{Provider: "anthropic", Tier: "sonnet"}
+	assert.Equal(t, domainconfig.ProfileConfig{Alias: "default-chat", Kind: "chat", SelectionMode: "following", FollowTarget: sonnet}, byAlias["default-chat"])
+	assert.Equal(t, domainconfig.ProfileConfig{Alias: "default-agent", Kind: "agent", SelectionMode: "following", FollowTarget: sonnet}, byAlias["default-agent"])
+}
+
+// A deployment config.yaml with no profiles block takes the profiles from the
+// built-in defaults map, not the generated template: that copy must follow the
+// same tiers, or such an install seeds nothing.
+func TestLoad_NoProfilesBlockUsesFollowingDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	require.NoError(t, os.WriteFile(configPath, []byte("server:\n  port: 8080\n"), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+
+	tiers := map[string]string{}
+	for _, p := range cfg.Profiles {
+		assert.Equal(t, "following", p.SelectionMode, "default %q must follow a tier", p.Alias)
+		assert.Empty(t, p.Model, "default %q must not name a model that goes stale", p.Alias)
+		require.NotNil(t, p.FollowTarget, "default %q must name a follow target", p.Alias)
+		assert.Equal(t, "anthropic", p.FollowTarget.Provider, p.Alias)
+		tiers[p.Alias] = p.FollowTarget.Tier
+	}
+	assert.Equal(t, map[string]string{
+		"default-chat": "sonnet", "default-agent": "sonnet", "assessor": "sonnet",
+		"interviewer": "sonnet", "reviewer": "sonnet", "coder": "opus", "planner": "opus",
+	}, tiers)
 }
 
 // PR #18 item 1b: a profile may carry a per-profile AllowedTools allowlist

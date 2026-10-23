@@ -106,7 +106,7 @@ func bootGraphStateStack(t *testing.T) *domainStack {
 		"queue:\n  globalcap: 5\n  perusercap: 5\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initStartedDomain(context.Background(), configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	return ds
@@ -116,7 +116,7 @@ func bootGraphStateStack(t *testing.T) *domainStack {
 // (minus the per-process dashboard/MCP/notification/webhook handlers).
 func gsServeAPI(t *testing.T, ds *domainStack) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(adapthttp.NewRouterFromDeps(ds.routerDeps(nil, nil, nil, nil)))
+	srv := httptest.NewServer(adapthttp.NewRouterFromDeps(ds.httpDeps()))
 	t.Cleanup(srv.Close)
 	return srv
 }

@@ -587,8 +587,8 @@ func TestGroupResolutionIdentityOf(t *testing.T) {
 func TestEngine_EmitNotification_CreatesAndPublishes(t *testing.T) {
 	bus := newMockEventBus()
 	repo := newMockNotificationRepo()
-	eng := engine.NewEngine(nil, newMockInstanceRepo(), newMockNodeExecutionRepo(), newMockSnapshotRepo(), newMockUserRepo(),
-		map[workflow.NodeType]engine.NodeExecutor{}, bus, newMockQueueManager(), nil, "")
+	eng := wireModelPins(engine.NewEngine(nil, newMockInstanceRepo(), newMockNodeExecutionRepo(), newMockSnapshotRepo(), newMockUserRepo(),
+		map[workflow.NodeType]engine.NodeExecutor{}, bus, newMockQueueManager(), nil, ""))
 	eng.SetNotifications(repo)
 	id := uuid.New()
 
@@ -605,8 +605,8 @@ func TestEngine_EmitNotification_ErrorsDoNotPublish(t *testing.T) {
 	for _, failure := range []string{"unwired", "empty ID", "storage", "already persisted"} {
 		t.Run(failure, func(t *testing.T) {
 			bus := newMockEventBus()
-			eng := engine.NewEngine(nil, newMockInstanceRepo(), newMockNodeExecutionRepo(), newMockSnapshotRepo(), newMockUserRepo(),
-				map[workflow.NodeType]engine.NodeExecutor{}, bus, newMockQueueManager(), nil, "")
+			eng := wireModelPins(engine.NewEngine(nil, newMockInstanceRepo(), newMockNodeExecutionRepo(), newMockSnapshotRepo(), newMockUserRepo(),
+				map[workflow.NodeType]engine.NodeExecutor{}, bus, newMockQueueManager(), nil, ""))
 			t.Cleanup(eng.Shutdown)
 			repo := newMockNotificationRepo()
 			notificationID, parentID := uuid.New(), uuid.New()

@@ -28,14 +28,20 @@ type AuditEvent struct {
 }
 
 type Connection struct {
-	Name         string
-	Provider     string
-	BaseURL      string
-	Extras       string
-	APIKeyCipher []byte
-	APIKeyNonce  []byte
-	CreatedAt    string
-	UpdatedAt    string
+	Name           string
+	Provider       string
+	BaseURL        string
+	Extras         string
+	APIKeyCipher   []byte
+	APIKeyNonce    []byte
+	CreatedAt      string
+	UpdatedAt      string
+	ConfigRevision int64
+}
+
+type ConnectionRevisionFloor struct {
+	Name     string
+	Revision int64
 }
 
 type DeviceCode struct {
@@ -74,6 +80,10 @@ type Instance struct {
 	ParentInstanceID  sql.NullString
 	ParentNodeID      sql.NullString
 	SpawnMode         sql.NullString
+	SpawnDepth        int64
+	ModelPins         sql.NullString
+	ModelPinsVersion  interface{}
+	ModelPinRoutes    sql.NullString
 }
 
 type InstanceDismissal struct {
@@ -89,6 +99,81 @@ type InstanceIntervention struct {
 	Action      string
 	Detail      sql.NullString
 	CreatedAt   string
+}
+
+type ModelAnnouncementEvent struct {
+	ID          string
+	CanonicalID string
+	Payload     string
+	State       string
+	ClaimID     string
+	LeaseUntil  string
+}
+
+type ModelCatalogModel struct {
+	Provider         string
+	NativeID         string
+	CanonicalModelID string
+	ReleaseDate      string
+	SourceRef        string
+	PolicyRevision   int64
+	EntryJson        string
+}
+
+type ModelCatalogSlice struct {
+	Provider  string
+	SliceJson string
+}
+
+type ModelCatalogState struct {
+	ID               int64
+	FetchedAt        string
+	UnmatchedTargets string
+}
+
+type ModelFirstObservation struct {
+	CanonicalID string
+	Observation string
+}
+
+type ModelProbeCursor struct {
+	PathConfig string
+	Cursor     string
+}
+
+type ModelPublicationAck struct {
+	AdvancementID string
+}
+
+type ModelRefreshAdvancement struct {
+	ReportID      string
+	AdvancementID string
+}
+
+type ModelRefreshReport struct {
+	ID                 string
+	Report             string
+	PublicationPending int64
+}
+
+type ModelStateKeyVerifier struct {
+	ID       int64
+	Verifier string
+}
+
+type ModelStateMetum struct {
+	ID                int64
+	SecretInitialized int64
+}
+
+type ModelUsabilityEvidence struct {
+	CanonicalID    string
+	PathKey        string
+	ConfigRevision string
+	NativeModel    string
+	CheckedAt      string
+	ProofRef       string
+	State          string
 }
 
 type NodeExecution struct {
@@ -119,6 +204,34 @@ type Notification struct {
 	Dismissed  int64
 	CreatedAt  string
 	UpdatedAt  string
+}
+
+type Profile struct {
+	Alias          string
+	Kind           string
+	ConnectionRef  string
+	Model          string
+	Backend        string
+	AllowedTools   string
+	ContextWindow  string
+	Effort         string
+	CreatedAt      string
+	UpdatedAt      string
+	SelectionMode  string
+	FollowProvider string
+	FollowTier     string
+	Revision       int64
+}
+
+type ProfileAdvancementJournal struct {
+	ID          string
+	RefreshID   string
+	Alias       string
+	FromModel   string
+	ToModel     string
+	CanonicalID string
+	Revision    int64
+	At          string
 }
 
 type PublishedWorkflow struct {

@@ -25,6 +25,11 @@ const noBrowserSentinel = "/nonexistent/arbitron-browser-tests-are-opt-in"
 var browserGateRequired bool
 
 func TestMain(m *testing.M) {
+	// Root tests observe a settled first discovery cycle after Start, as they
+	// did when Start ran it synchronously. Production never waits (see
+	// defaultAwaitInitialDiscovery); startup_discovery_test.go disables the wait
+	// on its own stacks to prove readiness does not depend on discovery.
+	defaultAwaitInitialDiscovery = true
 	browserGateRequired = os.Getenv("ARBITRON_REQUIRE_BROWSER") == "1"
 	if !browserGateRequired {
 		// Env outranks every test's config file, so no booted server can find one.

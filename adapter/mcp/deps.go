@@ -12,9 +12,11 @@ import (
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/layout"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/schedule"
+	"github.com/arbitron/arbitron/domain/settings"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -88,6 +90,14 @@ type Deps struct {
 	FileReader  engine.FileReader
 	EventBus    engine.EventBus
 	Config      *config.Config
+	// SystemSettings persists catalog and model-announcement settings separately from run notifications.
+	SystemSettings *settings.Service
+	// IdentityPolicy is the admin-editable D2 model identity policy behind the
+	// model_identity_policy_* tools. Optional: nil makes those tools report unavailable.
+	IdentityPolicy *modelidentity.PolicyService
+	// ModelCatalog powers the admin-only model_catalog_list / model_catalog_refresh
+	// tools. Optional: nil makes those tools report unavailable.
+	ModelCatalog ModelCatalogAdmin
 	// Settings is the synchronized owner of runtime-mutable Teams settings,
 	// shared with the HTTP adapter and the Teams notifier so all three route
 	// reads/writes through one mutex. Required for the system_config and

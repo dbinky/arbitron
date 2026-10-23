@@ -382,7 +382,9 @@ func TestLayoutStdioProtocol_NonLocalDeniesAuthoring(t *testing.T) {
 					require.True(t, res.IsError, mcpE2EText(t, res))
 					want := "unauthenticated"
 					switch tc.tool {
-					case "workflow_delete", "workflow_rename", "workflow_unpublish", "workflow_archive", "workflow_unarchive", "workflow_transfer_ownership":
+					// Duplicate is admin-only (TestService_Duplicate_NoIdentity_Forbidden):
+					// authorization runs before any identity lookup.
+					case "workflow_delete", "workflow_rename", "workflow_unpublish", "workflow_archive", "workflow_unarchive", "workflow_transfer_ownership", "workflow_duplicate":
 						want = "not authorized"
 					case "workflow_group_upsert", "workflow_group_delete":
 						want = "not authenticated"

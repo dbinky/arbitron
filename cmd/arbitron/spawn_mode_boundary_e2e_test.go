@@ -27,7 +27,9 @@ func TestSpawnE2E_PublicEntryPointsRefuseGroupTaskBeforePersistence(t *testing.T
 				parentID := uuid.New()
 				nodeID := "spawn-1"
 				require.NoError(t, ds.instanceRepo.Create(ctx, &instance.Instance{
-					ID: parentID, OwnerID: localDefaultUser, WorkflowName: "spawn-parent",
+					ModelPins:        map[string]string{},
+					ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+					ID:               parentID, OwnerID: localDefaultUser, WorkflowName: "spawn-parent",
 					State: instance.StateWaiting, Priority: instance.PriorityNormal,
 					CurrentNodeID: &nodeID,
 				}))

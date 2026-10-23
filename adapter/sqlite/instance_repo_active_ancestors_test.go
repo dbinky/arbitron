@@ -27,7 +27,9 @@ func adaInst(t *testing.T, repo *InstanceRepo, owner uuid.UUID, vis instance.Vis
 	t.Helper()
 	ctx := context.Background()
 	inst := &instance.Instance{
-		ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: map[string]any{},
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: map[string]any{},
 		State: instance.StateQueued, Priority: instance.PriorityNormal, Variables: map[string]any{},
 		Visibility: vis,
 	}
@@ -140,7 +142,9 @@ func TestList_ActiveDescendantAncestors_DepartmentScopeAppliesToDescendant(t *te
 	other := adaUser(t, db)
 	p := adaInst(t, repo, adaMe, instance.VisibilityPrivate, instance.StateCompleted, nil)
 	child := &instance.Instance{
-		ID: uuid.New(), OwnerID: other, WorkflowName: "wf", WorkflowSnapshot: map[string]any{},
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               uuid.New(), OwnerID: other, WorkflowName: "wf", WorkflowSnapshot: map[string]any{},
 		State: instance.StateQueued, Priority: instance.PriorityNormal, Variables: map[string]any{},
 		Visibility: instance.VisibilityDepartment, Department: "engineering",
 	}
@@ -168,7 +172,9 @@ func TestList_ActiveDescendantAncestors_TerminatesOnCorruptParentCycle(t *testin
 	x := uuid.New()
 	y := adaInst(t, repo, adaMe, instance.VisibilityPrivate, instance.StateCompleted, &x)
 	xInst := &instance.Instance{
-		ID: x, OwnerID: adaMe, WorkflowName: "wf", WorkflowSnapshot: map[string]any{},
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               x, OwnerID: adaMe, WorkflowName: "wf", WorkflowSnapshot: map[string]any{},
 		State: instance.StateQueued, Priority: instance.PriorityNormal, Variables: map[string]any{},
 		Visibility: instance.VisibilityPrivate,
 	}

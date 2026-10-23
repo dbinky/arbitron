@@ -1,6 +1,8 @@
 package config
 
 import (
+	"slices"
+
 	domainconfig "github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -17,13 +19,23 @@ func ProfilesFromConfig(cfgs []domainconfig.ProfileConfig) []provider.Profile {
 	}
 	out := make([]provider.Profile, len(cfgs))
 	for i, c := range cfgs {
+		mode := provider.SelectionMode(c.SelectionMode)
+		if mode == "" {
+			mode = provider.SelectionPinned
+		}
+		var target *provider.FollowTarget
+		if c.FollowTarget != nil {
+			target = &provider.FollowTarget{Provider: c.FollowTarget.Provider, Tier: c.FollowTarget.Tier}
+		}
 		out[i] = provider.Profile{
+			SelectionMode: mode,
+			FollowTarget:  target,
 			Alias:         c.Alias,
 			Kind:          provider.ProfileKind(c.Kind),
 			ConnectionRef: c.ConnectionRef,
 			Model:         c.Model,
 			Backend:       c.Backend,
-			AllowedTools:  c.AllowedTools,
+			AllowedTools:  slices.Clone(c.AllowedTools),
 		}
 	}
 	return out

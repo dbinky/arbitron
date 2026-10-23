@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -687,6 +688,47 @@ func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to set waiting state")
 }
 
+// Swallowing Create's error strands a waiting run without the conversation
+// needed to resume it, and falsely publishes the first turn as complete.
+func TestInteractiveExecutor_NodeExecCreateFailureRefusesWaitingAndAllowsRetry(t *testing.T) {
+	instRepo, nodeExecRepo, llm, files, bus, queue, id := interactiveTestSetup()
+	files.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	files.files["test-wf/template.md"] = []byte("Template")
+	llm.streamCallFn = cannedStreamWithSession([]string{"First response"}, "first-session")
+	fault := errors.New("conversation storage unavailable")
+	nodeExecRepo.createErr = fault
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llm, files, bus, queue)
+	ctx := engine.ContextWithInstanceID(context.Background(), id)
+
+	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+	assert.ErrorIs(t, err, fault, "the engine must receive the persistence failure")
+	assert.Nil(t, result, "no waiting result may escape without durable history")
+	assert.Equal(t, instance.StateRunning, instRepo.get(id).State)
+	execs, err := nodeExecRepo.ListByInstance(ctx, id)
+	require.NoError(t, err)
+	assert.Empty(t, execs)
+	assert.Empty(t, bus.eventsOfType(id, engine.EventTypeInteractiveMessage))
+	assert.Zero(t, queue.notifyCount())
+
+	// Restoring storage permits a new attempt to persist its full session
+	// before accepting follow-up input or publishing turn completion.
+	nodeExecRepo.createErr = nil
+	result, err = executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsWait)
+	stored, err := nodeExecRepo.GetByInstanceAndNode(ctx, id, "interact")
+	require.NoError(t, err)
+	assert.Equal(t, "first-session", engine.SessionID(stored.LLMConversation))
+	assert.Len(t, extractMessages(t, stored.LLMConversation), 2)
+	assert.NotEmpty(t, stored.LLMConversation[engine.ConversationKeyNonce])
+	require.NotNil(t, stored.LLMModel)
+	assert.Equal(t, interactiveChatModel, *stored.LLMModel)
+	assert.Equal(t, instance.StateWaiting, instRepo.get(id).State)
+	assert.Len(t, bus.eventsOfType(id, engine.EventTypeInteractiveMessage), 1)
+	assert.Equal(t, 1, queue.notifyCount())
+}
+
 func TestInteractiveExecutor_AgentProfile_UsesAgentStreamAndBindingModel(t *testing.T) {
 	// An interactive_agent node whose model_profile resolves to an AGENT binding
 	// must stream via the agent (tool-enabled) provider, and the request model
@@ -1134,4 +1176,31 @@ func TestInteractiveExecutor_AgentProfile_ForwardsAllowedToolsAsToolScope(t *tes
 	require.Len(t, reqs, 1)
 	assert.Equal(t, wantTools, reqs[0].ToolScope,
 		"the agent stream request must carry the resolved binding's AllowedTools as ToolScope")
+}
+
+func TestInteractiveExecutor_PinnedBindingRequiresExecutedModel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver provider.ProfileResolver
+		want     bool
+	}{
+		{"pinned run", pinnedResolver{interactiveResolver()}, true},
+		{"legacy or live run", interactiveResolver(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+			fileReader.files["test-wf/orchestration.md"] = []byte("o")
+			fileReader.files["test-wf/template.md"] = []byte("t")
+			llmProvider.streamCallFn = cannedStream([]string{"hi"}, 1, 1)
+			executor := engine.NewInteractiveExecutor(instRepo, nodeExecRepo, streamSelector(llmProvider), tc.resolver, fileReader, eventBus, queueMgr)
+
+			ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+			_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+			require.NoError(t, err)
+			reqs := llmProvider.getCapturedReqs()
+			require.Len(t, reqs, 1)
+			assert.Equal(t, tc.want, reqs[0].RequireExecutedModel)
+			assert.False(t, reqs[0].SuppressTools, "a live first turn never selects the probe recipe")
+		})
+	}
 }

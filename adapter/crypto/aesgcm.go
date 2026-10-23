@@ -1,7 +1,6 @@
-// Package crypto provides the at-rest encryption adapter for connection
-// secrets: an AES-256-GCM implementation of the domain provider.Crypto port
-// plus the master-key bootstrap. The master key is held in memory only and is
-// never logged or persisted.
+// Package crypto provides AES-256-GCM encryption, connection master-key
+// bootstrap and the persisted installation model-state secret. Connection
+// master keys are held in memory only; no key material is ever logged.
 package crypto
 
 import (

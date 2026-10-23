@@ -69,16 +69,33 @@ func newLayoutE2EEnv(t *testing.T, opts layoutE2EOptions) *layoutE2EEnv {
 	// Legacy provenance tests exercise browser-independent failure; acceptance opts in
 	// through the production loader's browser environment key after constructing e.
 	cfg += fmt.Sprintf("  browserpath: %q\n", filepath.Join(e.root, "no-such-chromium"))
+	// The shipped defaults follow a tier and seed only once the catalog answers;
+	// these stacks boot offline, so pin the shipped aliases the way a healthy
+	// first boot leaves them.
+	cfg += layoutE2EPinnedProfiles
 	require.NoError(t, os.WriteFile(e.configPath, []byte(cfg), 0600))
 	return e
 }
+
+const layoutE2EPinnedProfiles = `profiles:
+  - {alias: "default-chat", kind: "chat", model: "claude-sonnet-5-5"}
+  - {alias: "default-agent", kind: "agent", model: "claude-sonnet-5-5"}
+  - {alias: "assessor", kind: "chat", model: "claude-sonnet-5-5"}
+  - {alias: "interviewer", kind: "agent", model: "claude-sonnet-5-5"}
+  - {alias: "reviewer", kind: "agent", model: "claude-sonnet-5-5"}
+  - {alias: "coder", kind: "agent", backend: "claude-code", model: "claude-opus-5-5"}
+  - {alias: "planner", kind: "agent", backend: "claude-code", model: "claude-opus-5-5"}
+`
+
 func (e *layoutE2EEnv) boot(t *testing.T) (*domainStack, func()) {
 	t.Helper()
-	ds, err := initDomain(context.Background(), e.configPath)
+	ds, err := initDomainWithModelDependencies(context.Background(), e.configPath, offlineModelDependencies())
 	require.NoError(t, err)
 	var once sync.Once
 	close := func() { once.Do(func() { ds.Close(context.Background()) }) }
 	t.Cleanup(close)
+	// Seeding, recovery and the layout worker run in Start, not initDomain.
+	require.NoError(t, ds.Start(context.Background()))
 	return ds, close
 }
 func (e *layoutE2EEnv) privatePath(name string) string {
@@ -544,6 +561,7 @@ func TestLayoutE2E_MCPAuthoringThroughRegisteredServer(t *testing.T) {
 func TestLayoutE2E_ActualCommandsJoinOnContextAndEOF(t *testing.T) {
 	for _, mode := range []string{"serve", "mcp"} {
 		t.Run(mode, func(t *testing.T) {
+			commandLikeProduction(t)
 			e := newLayoutE2EEnv(t, layoutE2EOptions{seedSample: "command-seed"})
 			old := layoutRenderReviewerFactory
 			t.Cleanup(func() { layoutRenderReviewerFactory = old })

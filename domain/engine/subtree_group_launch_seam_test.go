@@ -52,7 +52,9 @@ func TestGroupLaunchSubtreeSeam_ReservedTaskStreamsDespiteMissBeforeItsRow(t *te
 			require.False(t, bridge.InSubtree(ctx, parent.ID, control))
 			gp, gn := parent.ID, "g"
 			require.NoError(t, h.instances.Create(context.Background(), &instance.Instance{
-				ID: control, OwnerID: owner, ParentInstanceID: &gp, ParentNodeID: &gn,
+				ModelPins:        map[string]string{},
+				ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+				ID:               control, OwnerID: owner, ParentInstanceID: &gp, ParentNodeID: &gn,
 				State: instance.StateQueued, Visibility: instance.VisibilityPrivate,
 			}))
 			bus.Publish(control, engine.Event{Type: engine.EventTypeNodeStarted, Timestamp: time.Now()})

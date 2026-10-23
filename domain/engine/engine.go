@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -40,10 +42,13 @@ type Engine struct {
 	workspaceManager WorkspaceManager
 	// groupFinalizer is the optional group-task terminal hook; nil keeps the
 	// plain completion path. Configured before starting instances.
-	groupFinalizer GroupTaskFinalizer
-	publishers     workflow.PublisherLookup // optional; gates the trigger read path by visibility
-	resolver       IDResolver               // optional; workflow identity (id<->name + archived) seam
-	enricher       *InstanceEnricher        // optional; when set, ListEnriched uses it
+	groupFinalizer   GroupTaskFinalizer
+	publishers       workflow.PublisherLookup  // optional; gates the trigger read path by visibility
+	resolver         IDResolver                // optional; workflow identity (id<->name + archived) seam
+	enricher         *InstanceEnricher         // optional; when set, ListEnriched uses it
+	modelSnapshotter provider.ModelSnapshotter // optional; when set, a trigger pins every model alias the run uses
+	pinRelease       func(uuid.UUID)           // optional; drops a terminal run's cached pins
+	pinGate          ModelPinGate              // optional; serializes the pin capture against advancement and admin edits
 	// spawnLinks is the link-addressed read surface. It is NEVER nil: NewEngine
 	// installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so the cancel
 	// cascade can never be silently downgraded to a no-op by a missed wiring
@@ -150,6 +155,130 @@ func (e *Engine) executorFor(t workflow.NodeType) (NodeExecutor, bool) {
 	defer e.mu.Unlock()
 	ex, ok := e.executors[t]
 	return ex, ok
+}
+
+// SetModelSnapshotter enables trigger-time model pinning: every instance the
+// engine creates afterwards carries the models its workflow's profile aliases
+// resolved to at trigger. Triggers fail if it or the shared pin gate is missing,
+// including workflows with no model aliases. Configure both before serving.
+// Nil and typed-nil snapshotters are rejected before replacing a working one.
+func (e *Engine) SetModelSnapshotter(s provider.ModelSnapshotter) {
+	if nilPinDependency(s) {
+		panic("engine: SetModelSnapshotter requires a non-nil snapshotter")
+	}
+	e.modelSnapshotter = s
+}
+
+// Interface collaborators can carry typed nils that evade a plain nil check.
+func nilPinDependency(dependency any) bool {
+	if dependency == nil {
+		return true
+	}
+	v := reflect.ValueOf(dependency)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
+// ModelPinGate is the shared execution-gate lease a trigger holds while it
+// snapshots model aliases. provider.ExecutionGate satisfies it.
+type ModelPinGate interface {
+	WithRead(ctx context.Context, fn func(context.Context) error) error
+}
+
+// SetModelPinGate makes every trigger capture its model pins under the shared
+// execution-gate read lease. Nil and typed-nil gates are rejected. Omitting the
+// dependency also fails every new trigger before instance creation.
+func (e *Engine) SetModelPinGate(g ModelPinGate) {
+	if nilPinDependency(g) {
+		panic("engine: SetModelPinGate requires a non-nil gate")
+	}
+	e.pinGate = g
+}
+
+// SetPinCacheRelease registers the callback that drops a run's cached model
+// pins once it reaches a terminal state. It runs from OnChildTerminal, which
+// every terminal transition (and the queue manager's child-terminal hook)
+// already calls, so it composes with the spawn wake instead of replacing it.
+// Eviction is safe for paused or retryable runs: pins are immutable in the
+// repository and reload on the next read. A nil callback is rejected.
+func (e *Engine) SetPinCacheRelease(release func(uuid.UUID)) {
+	if release == nil {
+		panic("engine: SetPinCacheRelease requires a non-nil release func")
+	}
+	e.pinRelease = release
+}
+
+// workflowModelAliases returns the distinct non-empty aliases of the serialized
+// workflow's model consumers, sorted. workflow.ModelConsumers is the single
+// enumeration path_inventory and validateModelProfiles also range over, so a
+// stale model_profile on any other node type neither pins nor refuses, and the
+// parallel_group conflict resolver's alias is pinned like a node's.
+func workflowModelAliases(wf *workflow.Workflow) []string {
+	seen := map[string]struct{}{}
+	for _, c := range workflow.ModelConsumers(wf) {
+		if c.Alias != "" {
+			seen[c.Alias] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for a := range seen {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// captureModelPins snapshots the workflow's aliases through the configured
+// snapshotter. A snapshotter that omits a requested alias is a fault: a partial
+// map would leave the new run without an immutable model for that alias.
+func (e *Engine) captureModelPins(ctx context.Context, wf *workflow.Workflow) (provider.ModelPinSnapshot, error) {
+	var empty provider.ModelPinSnapshot
+	if e.modelSnapshotter == nil {
+		return empty, fmt.Errorf("pin models for %q: model snapshotter is not configured", wf.Name)
+	}
+	if e.pinGate == nil {
+		return empty, fmt.Errorf("pin models for %q: shared execution gate is not configured", wf.Name)
+	}
+	aliases := workflowModelAliases(wf)
+	var pins provider.ModelPinSnapshot
+	snapshot := func(ctx context.Context) (err error) {
+		pins, err = e.modelSnapshotter.SnapshotModels(ctx, aliases, wf)
+		return err
+	}
+	if err := e.pinGate.WithRead(ctx, snapshot); err != nil {
+		return empty, fmt.Errorf("pin models for %q: %w", wf.Name, err)
+	}
+	out := provider.ModelPinSnapshot{
+		Models:            make(map[string]string, len(aliases)),
+		OpaqueRoutes:      make(map[string]string, len(pins.OpaqueRoutes)),
+		OpaqueConnections: make(map[string]string, len(pins.OpaqueRoutes)),
+	}
+	for _, a := range aliases {
+		m, ok := pins.Models[a]
+		if !ok || m == "" {
+			return empty, fmt.Errorf("pin models for %q: snapshot returned no model for profile %q", wf.Name, a)
+		}
+		out.Models[a] = m
+	}
+	if len(pins.Models) != len(out.Models) {
+		return empty, fmt.Errorf("pin models for %q: snapshot returned unrequested profiles", wf.Name)
+	}
+	for alias, route := range pins.OpaqueRoutes {
+		conn := pins.OpaqueConnections[alias]
+		if _, ok := out.Models[alias]; !ok || conn == "" || route != provider.CanonicalAzure && route != provider.CanonicalBedrock {
+			return empty, fmt.Errorf("pin models for %q: snapshot returned invalid model pin routes for profile %q", wf.Name, alias)
+		}
+		out.OpaqueRoutes[alias] = route
+		out.OpaqueConnections[alias] = conn
+	}
+	if len(pins.OpaqueConnections) != len(out.OpaqueConnections) {
+		return empty, fmt.Errorf("pin models for %q: snapshot returned connections without model pin routes", wf.Name)
+	}
+	return out, nil
 }
 
 // SetScheduler sets the timer scheduler on the engine.
@@ -610,6 +739,15 @@ func (e *Engine) trigger(ctx context.Context, spec triggerSpec) (uuid.UUID, bool
 		}
 	}
 
+	// Pin the models BEFORE the instance exists: a version, snapshot or alias
+	// failure must leave no queued row and make no provider call. The pins are
+	// captured from the same workflow value that was just serialized into
+	// wfSnapshot, so the pinned aliases are the aliases that will execute.
+	modelPins, pinErr := e.captureModelPins(ctx, wf)
+	if pinErr != nil {
+		return uuid.Nil, false, pinErr
+	}
+
 	// A group task is created under the id its roster RESERVED before enqueue;
 	// every other trigger mints a fresh one.
 	id := spec.instanceID
@@ -618,29 +756,33 @@ func (e *Engine) trigger(ctx context.Context, spec triggerSpec) (uuid.UUID, bool
 	}
 
 	inst := &instance.Instance{
-		ID:                id,
-		OwnerID:           ownerID,
-		WorkflowID:        workflowID,
-		WorkflowName:      workflowName,
-		WorkflowSnapshot:  wfSnapshot,
-		Department:        st.Department,
-		Visibility:        st.Visibility,
-		TriggerSource:     triggerSource,
-		ScheduleID:        scheduleID,
-		ParentInstanceID:  parentInstanceID,
-		ParentNodeID:      parentNodeID,
-		SpawnMode:         spawnMode,
-		SpawnDepth:        spawnDepth,
-		GroupRunID:        groupRunID,
-		GroupTaskKey:      groupTaskKey,
-		GroupTaskKind:     groupTaskKind,
-		State:             instance.StateQueued,
-		Priority:          instance.Priority(spec.priority),
-		Variables:         snap,
-		OriginalVariables: origVars,
-		QueuedAt:          &now,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                       id,
+		OwnerID:                  ownerID,
+		WorkflowID:               workflowID,
+		WorkflowName:             workflowName,
+		WorkflowSnapshot:         wfSnapshot,
+		Department:               st.Department,
+		Visibility:               st.Visibility,
+		TriggerSource:            triggerSource,
+		ScheduleID:               scheduleID,
+		ParentInstanceID:         parentInstanceID,
+		ParentNodeID:             parentNodeID,
+		SpawnMode:                spawnMode,
+		SpawnDepth:               spawnDepth,
+		GroupRunID:               groupRunID,
+		GroupTaskKey:             groupTaskKey,
+		GroupTaskKind:            groupTaskKind,
+		ModelPins:                modelPins.Models,
+		ModelPinRoutes:           modelPins.OpaqueRoutes,
+		ModelPinRouteConnections: modelPins.OpaqueConnections,
+		ModelPinsVersion:         instance.ModelPinsVersionSnapshot,
+		State:                    instance.StateQueued,
+		Priority:                 instance.Priority(spec.priority),
+		Variables:                snap,
+		OriginalVariables:        origVars,
+		QueuedAt:                 &now,
+		CreatedAt:                now,
+		UpdatedAt:                now,
 	}
 
 	started, err := e.createAndEnqueue(ctx, inst)
@@ -918,6 +1060,19 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
+		// A corrupt pin record (or another load fault) prevents execution, but
+		// returning alone strands the row in running and holds queue capacity.
+		// SetFailed does not need to decode the row. Keep the corrupt pins intact
+		// for diagnosis, release cached pins through the normal terminal hook,
+		// and surface the load error. Cancellation belongs to its caller.
+		slog.Error("failed to load running instance", "instanceID", instanceID, "error", err)
+		if ctx.Err() == nil && e.failInstance(ctx, instanceID, "") {
+			e.eventBus.Publish(instanceID, Event{
+				Type:      EventTypeInstanceFailed,
+				Timestamp: time.Now(),
+				Data:      map[string]any{"error": fmt.Sprintf("failed to load instance: %v", err)},
+			})
+		}
 		return
 	}
 	workflowName = inst.WorkflowName
@@ -1025,7 +1180,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		// The queue live-patches its row from this event, so it carries the same
 		// binding and git ref a list refetch would compute (resolveNodeBinding /
 		// deriveGitRef are shared with the enricher).
-		nb, nbErr := resolveNodeBinding(ctx, e.profiles, node, e.defaultAgentBackend)
+		// Resolved inside the run context so a pinning resolver reports the model
+		// the node will execute on, not the profile's current one.
+		execCtx := ContextWithInstanceID(ctx, instanceID)
+		nb, nbErr := resolveNodeBinding(execCtx, e.profiles, node, e.defaultAgentBackend)
 		if nbErr != nil {
 			slog.Warn("node.started: profile resolve failed; event shows node config", "instanceID", instanceID, "nodeID", currentNodeID, "error", nbErr)
 		}
@@ -1041,7 +1199,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
 		lastNodeID = currentNodeID
-		execCtx := ContextWithInstanceID(ctx, instanceID)
 		result, nodeExec, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
 
 		if execErr != nil {
@@ -1104,6 +1261,36 @@ func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID 
 	// run context is often already cancelled at this point.
 	e.OnChildTerminal(context.Background(), instanceID)
 	return true
+}
+
+// FailCorruptRun drives a run whose stored model pin record cannot be decoded
+// (reported by a queue-admission or recovery read as an
+// instance.CorruptPinsError) through the same complete terminal path run takes
+// after a failed load: SetFailed (which does not decode pins), the
+// child-terminal hook (pin-cache release, parent wake), an instance.failed
+// event and a queue-capacity notification. The corrupt record is kept for
+// diagnosis.
+func (e *Engine) FailCorruptRun(ctx context.Context, id uuid.UUID) error {
+	return e.failCorruptRun(ctx, id, true)
+}
+
+func (e *Engine) failCorruptRun(ctx context.Context, id uuid.UUID, notifyCapacity bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !e.failInstance(ctx, id, "") {
+		return fmt.Errorf("engine: could not fail run %s with corrupt model pins", id)
+	}
+	slog.Error("instance failed: corrupt model pins", "instanceID", id)
+	e.eventBus.Publish(id, Event{
+		Type:      EventTypeInstanceFailed,
+		Timestamp: time.Now(),
+		Data:      map[string]any{"error": "corrupt model pins: the stored pin record cannot be decoded"},
+	})
+	if notifyCapacity {
+		e.queueManager.NotifyCapacityFreed(context.Background())
+	}
+	return nil
 }
 
 // handleNodeError processes a node execution failure according to the resolved
@@ -1956,9 +2143,21 @@ func (e *Engine) Shutdown() {
 // under failed parents. Dispatching here would duplicate that work and run
 // coordinator side effects before queue timers and webhooks are recovered.
 func (e *Engine) RecoverCrashedInstances() error {
-	ctx := context.Background()
+	return e.RecoverCrashedInstancesContext(context.Background())
+}
+
+// RecoverCrashedInstancesContext binds startup recovery to the serving lifecycle.
+func (e *Engine) RecoverCrashedInstancesContext(ctx context.Context) error {
 	running, err := e.instances.ListRunning(ctx)
-	if err != nil {
+	var corrupt *instance.CorruptPinsError
+	if errors.As(err, &corrupt) {
+		// Startup recovery evaluates the queue afterwards; no capacity notice.
+		for _, id := range corrupt.IDs {
+			if ferr := e.failCorruptRun(ctx, id, false); ferr != nil {
+				return ferr
+			}
+		}
+	} else if err != nil {
 		return fmt.Errorf("failed to list running instances: %w", err)
 	}
 

@@ -708,9 +708,9 @@ func TestFileGatherer_EngineRoutesGatherFailureToDownstreamSink(t *testing.T) {
 		taskOutcome, _ := vars.Get("g.taskOutcome")
 		return &engine.NodeResult{Output: map[string]any{"outcome": outcome, "taskOutcome": taskOutcome}}, nil
 	})
-	eng := engine.NewEngine(newMockWorkflowRepo(), f.instances, f.nodeExecs, newMockSnapshotRepo(), newMockUserRepo(),
+	eng := wireModelPins(engine.NewEngine(newMockWorkflowRepo(), f.instances, f.nodeExecs, newMockSnapshotRepo(), newMockUserRepo(),
 		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: exec, workflow.NodeTypeParallelGroup: f.x},
-		f.bus, f.qm, &mockQueueRepo{instRepo: f.instances}, "")
+		f.bus, f.qm, &mockQueueRepo{instRepo: f.instances}, ""))
 	t.Cleanup(eng.Shutdown)
 	require.NoError(t, f.instances.UpdateVariables(context.Background(), f.parent.ID, map[string]any{"workspace": gatherParentDir}))
 	require.NoError(t, f.instances.UpdateState(context.Background(), f.parent.ID, instance.StateQueued))

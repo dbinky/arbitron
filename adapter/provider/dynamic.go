@@ -113,6 +113,7 @@ func (r *DynamicProfileResolver) Resolve(ctx context.Context, alias string) (pro
 	store := r.store
 	return provider.ResolvedBinding{
 		Kind:          p.Kind,
+		ConnectionRef: p.ConnectionRef,
 		Provider:      conn.Provider,
 		BaseURL:       conn.BaseURL,
 		Extras:        conn.Extras,

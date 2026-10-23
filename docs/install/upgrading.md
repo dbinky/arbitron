@@ -36,15 +36,52 @@ commit, and build date).
 >
 > **If you need a rollback path, back up the database file before upgrading.**
 > To roll back, restore that backup *and* reinstall the matching older binary
-> (`ARBITRON_VERSION=<old>`). The database files are:
+> (`ARBITRON_VERSION=<old>`). Back up the database **and** its model-state key,
+> which sits beside it with the suffix `.model-state.key`. The key is created on
+> first boot and never regenerated: a database restored without its key refuses
+> to start ("model-state key ... is missing"), and the error names the file to
+> restore. The files are:
 >
-> | Scenario | Database file |
+> | Scenario | Database file (key file: same path + `.model-state.key`) |
 > |---|---|
 > | macOS / Linux local | `~/.arbitron/data/arbitron.db` |
 > | Linux shared | `/var/lib/arbitron/arbitron.db` |
 >
-> Stop the service before copying the DB file. Always review the release notes
+> Stop the service before copying the DB and key files. Always review the release notes
 > for the version you are upgrading to.
+
+### Profiles must name a fixed model version (latest-model profiles release)
+
+From this release every run pins each profile's model at trigger time. A
+**pinned** profile must name a fixed model version on its route, for example
+`claude-sonnet-5-5` on the Claude subscription. An empty model (formerly "use
+the claude-cli default") or a mutable alias such as `sonnet`, `gpt-4o` or
+`gpt-5` refuses every trigger of a workflow that uses it. The refusal names the
+spellings the route accepts.
+
+- **Boot preflight.** At every start Arbitron checks each persisted pinned
+  profile. Each profile that will refuse triggers is logged as a `WARN`
+  (`profile will refuse triggers`) with its alias, model and reason. It is also
+  raised once as a `profile_refuses_triggers` notification (and to Teams when a
+  webhook is configured). Following profiles are not checked; their selection
+  mode governs them.
+- **Fix:** update the profile with `profile_update` (or the dashboard) to a
+  fixed spelling, e.g. `{"model": "claude-sonnet-5-5"}`.
+- **Shipped defaults.** A fresh install's generated `config.yaml` now ships
+  `claude-sonnet-5-5` for `default-chat`, `default-agent`, `assessor`,
+  `interviewer` and `reviewer`. An existing `config.yaml` is never rewritten.
+  Edit its `model: ""` entries yourself.
+- **Automatic seed repair.** A config profile seed that was refused at an
+  earlier boot (e.g. an empty-model default) stays pending. If the current
+  `config.yaml` entry for that alias differs and is valid, Arbitron seeds the
+  corrected entry on the next boot. A valid pending original is never replaced.
+- **OpenRouter** accepts recognized `vendor/model` exact IDs:
+  `anthropic/claude-sonnet-4.5`, `openai/gpt-6.1-sol`,
+  `deepseek/deepseek-v4-pro`, `z-ai/glm-5.3`, `moonshotai/kimi-k2.5`.
+- **LiteLLM and local Ollama cannot run pinned workflows in this release.**
+  Their aliases and tags have no fixed-version identity (decision D13). Move
+  those profiles to a supported route before upgrading if workflows depend on
+  them.
 
 ## Reconfigure
 

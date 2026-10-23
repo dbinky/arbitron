@@ -252,3 +252,68 @@ func TestStreamAgentAdapterStreamChat(t *testing.T) {
 		assert.False(t, fr.runCalled)
 	})
 }
+
+func TestStreamAgentAdapterStreamChat_PinnedModelEvidence(t *testing.T) {
+	drain := func(usage string, req bool) []engine.ChatChunk {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
+			`{"type":"result","result":"hi","session_id":"s","modelUsage":` + usage + `}`,
+		}}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+		ch, err := a.StreamChat(context.Background(), engine.ChatRequest{
+			Prompt: "p", WorkDir: "/tmp", Model: "claude-x", SessionID: "s", RequireExecutedModel: req,
+		})
+		require.NoError(t, err)
+		var out []engine.ChatChunk
+		for c := range ch {
+			out = append(out, c)
+		}
+		// Resume argv carries --resume and the pinned --model together.
+		m, _ := argValue(fr.gotSpec.Args, "--model")
+		assert.Equal(t, "claude-x", m)
+		r, _ := argValue(fr.gotSpec.Args, "--resume")
+		assert.Equal(t, "s", r)
+		return out
+	}
+
+	t.Run("executed model proven", func(t *testing.T) {
+		out := drain(`{"claude-x":{}}`, true)
+		assert.True(t, out[len(out)-1].Done)
+	})
+	t.Run("fallback model rejected", func(t *testing.T) {
+		out := drain(`{"claude-y":{}}`, true)
+		require.Error(t, out[len(out)-1].Error)
+		for _, c := range out {
+			assert.False(t, c.Done)
+		}
+	})
+	t.Run("not required, not checked", func(t *testing.T) {
+		out := drain(`{"claude-y":{}}`, false)
+		assert.True(t, out[len(out)-1].Done)
+	})
+}
+
+// A usability probe asks the tool-enabled stream adapter for a tool-free turn:
+// the empty allowlist without skip-permissions, whatever scope the request or
+// the adapter carries, while the pinned-model evidence check stays in force.
+func TestStreamAgentAdapterStreamChat_SuppressToolsIsToolFree(t *testing.T) {
+	fr := &fakeRunner{lines: []string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}`,
+		`{"type":"result","result":"ok","session_id":"s","modelUsage":{"claude-x":{}}}`,
+	}}
+	a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr, AllowedTools: []string{"Bash", "Write"}})
+	ch, err := a.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "p", WorkDir: "/tmp", Model: "claude-x", RequireExecutedModel: true,
+		SuppressTools: true, ToolScope: []string{"Bash"},
+	})
+	require.NoError(t, err)
+	out := collectChunks(t, ch)
+	assert.True(t, out[len(out)-1].Done)
+
+	assert.NotContains(t, fr.gotSpec.Args, "--dangerously-skip-permissions")
+	val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+	require.True(t, ok)
+	assert.Equal(t, "", val)
+	m, _ := argValue(fr.gotSpec.Args, "--model")
+	assert.Equal(t, "claude-x", m)
+}

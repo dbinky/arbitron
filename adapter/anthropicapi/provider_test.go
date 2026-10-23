@@ -947,7 +947,7 @@ func TestParseSSEEvent(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var cur string
-			tok, usage, done, err := parseSSEEvent([]byte(tc.line), &cur)
+			tok, usage, _, done, err := parseSSEEvent([]byte(tc.line), &cur)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
@@ -966,7 +966,32 @@ func TestParseSSEEvent(t *testing.T) {
 
 func TestParseSSEEvent_EventLineSetsCurEvent(t *testing.T) {
 	cur := ""
-	_, _, _, err := parseSSEEvent([]byte("event: message_stop"), &cur)
+	_, _, _, _, err := parseSSEEvent([]byte("event: message_stop"), &cur)
 	require.NoError(t, err)
 	assert.Equal(t, "message_stop", cur)
+}
+
+// Folded-in check: an ordinary call keeps its configured limit (zero means
+// unlimited), while the same body under a probe context stops at the probe ceiling.
+func TestChat_OrdinaryUnlimitedWhileProbeIsCapped(t *testing.T) {
+	big := `{"content":[{"type":"text","text":"` + strings.Repeat("A", 2<<20) + `"}]}`
+	for _, probe := range []bool{false, true} {
+		ctx := context.Background()
+		if probe {
+			ctx = procenv.WithProbeResponseLimit(ctx)
+		}
+		ft := &fakeTransport{resp: jsonResponse(200, big)}
+		p := New(Config{
+			Binding:    staticBinding("https://api.anthropic.com", "m"),
+			HTTPClient: &http.Client{Transport: ft},
+		})
+		resp, err := p.Chat(ctx, engine.ChatRequest{Prompt: "x"})
+		if probe {
+			require.Error(t, err, "probe responses are capped at 1 MiB")
+			assert.Nil(t, resp)
+			continue
+		}
+		require.NoError(t, err, "an ordinary unlimited call must not inherit the probe cap")
+		require.NotNil(t, resp)
+	}
 }

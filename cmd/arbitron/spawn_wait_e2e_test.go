@@ -350,9 +350,13 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
 	// ds1.Close() would instead wait for the sleeping child to finish and
 	// shut down cleanly, which is not the scenario this test targets.)
 	require.NoError(t, ds1.db.Close())
+	// The abandoned process's walkers still finish against the closed database
+	// and log through the process-wide logger; drain them inside this test so
+	// their errors never land in a later test's log.
+	t.Cleanup(func() { ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
 	// --- Second boot: the real restart path. ---
-	ds2, err := initDomain(context.Background(), configPath)
+	ds2, err := initRecoveryTestDomain(context.Background(), configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds2.Close(context.Background()) })
 

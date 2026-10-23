@@ -5,9 +5,11 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,6 +125,16 @@ func TestNewProfileCacheFromProfiles_DuplicateAlias_LastWins(t *testing.T) {
 	assert.Equal(t, provider.ProfileKindAgent, b.Kind, "last entry must win on duplicate alias")
 }
 
+// pinnedRouteSource answers only the route question a pinned profile write asks;
+// the embedded nil source panics if a write ever asks for catalog candidates.
+type pinnedRouteSource struct {
+	provider.EligibleCandidateSource
+}
+
+func (pinnedRouteSource) VersionRequests(_ context.Context, p provider.Profile) ([]provider.VersionRequest, error) {
+	return []provider.VersionRequest{provider.VersionRequestFor(p, "")}, nil
+}
+
 // Paired integration (#17): ProfileService write → ProfileCache Reload → resolver
 // visible. The ProfileCache is passed as the Reloader to ProfileService, so a
 // service.Create triggers cache.Reload internally, and the resolver reading the
@@ -137,6 +149,7 @@ func TestPaired_ServiceWrite_RecachesResolver(t *testing.T) {
 	require.NoError(t, cache.Load(ctx))
 
 	svc := provider.NewProfileService(store, minimalCapRules(), cache)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), pinnedRouteSource{})
 	r := adapterprovider.NewDynamicProfileResolver(cache, nil)
 
 	// Before the write the alias is unknown.
@@ -145,7 +158,7 @@ func TestPaired_ServiceWrite_RecachesResolver(t *testing.T) {
 
 	// Service write triggers Reload internally; the resolver sees the new profile.
 	_, _, err = svc.Create(adminCtx(), provider.Profile{
-		Alias: "new-profile", Kind: provider.ProfileKindAgent, Backend: "claude-code",
+		Alias: "new-profile", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "sonnet-4.6",
 	})
 	require.NoError(t, err)
 
@@ -156,7 +169,7 @@ func TestPaired_ServiceWrite_RecachesResolver(t *testing.T) {
 	// A persist error must NOT recache: seed a duplicate so Create returns
 	// ErrProfileExists, then verify the resolver state is unchanged.
 	_, _, err = svc.Create(adminCtx(), provider.Profile{
-		Alias: "new-profile", Kind: provider.ProfileKindChat, Backend: "claude-code",
+		Alias: "new-profile", Kind: provider.ProfileKindChat, Backend: "claude-code", Model: "sonnet-4.6",
 	})
 	assert.ErrorIs(t, err, provider.ErrProfileExists)
 	// The Kind in the resolver must still be Agent (the original write), not Chat.
@@ -187,4 +200,56 @@ func TestProfileCache_ConcurrentReadReloadSafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// orderedListStore returns a stale list on its first List (held open until
+// released) and the fresh list on every later call, modelling a slow read that
+// started before a write while a faster reload started after it.
+type orderedListStore struct {
+	provider.ProfileStore
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+	stale   []provider.Profile
+	fresh   []provider.Profile
+}
+
+func (s *orderedListStore) List(context.Context) ([]provider.Profile, error) {
+	s.mu.Lock()
+	s.calls++
+	n := s.calls
+	s.mu.Unlock()
+	if n == 1 {
+		close(s.entered)
+		<-s.release
+		return s.stale, nil
+	}
+	return s.fresh, nil
+}
+
+// G12: two reloads that complete in reverse order must not leave the cache at
+// the older snapshot. The reload that began after the write reads fresh data;
+// the slow earlier read must not publish after it.
+func TestProfileCache_ConcurrentLoadsCannotRegressSnapshot(t *testing.T) {
+	store := &orderedListStore{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		stale:   []provider.Profile{{Alias: "a", Model: "model-x"}},
+		fresh:   []provider.Profile{{Alias: "a", Model: "model-y"}},
+	}
+	cache := adapterprovider.NewProfileCache(store)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); assert.NoError(t, cache.Load(context.Background())) }()
+	<-store.entered // slow reader is inside List with the stale snapshot
+	go func() { defer wg.Done(); assert.NoError(t, cache.Load(context.Background())) }()
+	time.Sleep(50 * time.Millisecond) // let the second reload race ahead if it can
+	close(store.release)
+	wg.Wait()
+
+	snap, err := cache.SnapshotProfiles([]string{"a"})
+	require.NoError(t, err)
+	assert.Equal(t, "model-y", snap["a"].Model, "stale read must not overwrite the newer snapshot")
 }

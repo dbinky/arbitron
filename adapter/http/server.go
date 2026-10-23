@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/settings"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -72,6 +75,8 @@ type RouterDeps struct {
 	FileReader     FileReader
 	EventBus       engine.EventBus
 	Config         *config.Config
+	// SystemSettings persists catalog and model-announcement settings separately from run notifications.
+	SystemSettings *settings.Service
 	// Settings is the synchronized owner of runtime-mutable Teams settings. When
 	// nil, NewRouterFromDeps seeds one from Config so the HTTP handler stays the
 	// sole writer; production wiring shares one store across HTTP, MCP, and the
@@ -238,7 +243,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	if settings == nil {
 		settings = config.NewSettingsStore(&d.Config.Notifications.Teams)
 	}
-	sysHandler := &SystemHandler{config: d.Config, settings: settings, queueManager: d.QueueManager, queueRepo: d.QueueRepo, backendHealth: d.BackendHealth}
+	sysHandler := &SystemHandler{config: d.Config, settings: settings, systemSettings: d.SystemSettings, queueManager: d.QueueManager, queueRepo: d.QueueRepo, backendHealth: d.BackendHealth}
 
 	var interactiveHandler *InteractiveHandler
 	if d.ConversationHandler != nil {
@@ -271,6 +276,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		meHandler := NewMeHandler(d.Config.Auth.Mode)
 		r.Get("/me", meHandler.Me)
 
+		r.Get("/system/settings", sysHandler.GetSettings)
+		r.Put("/system/settings", sysHandler.UpdateSettings)
 		r.Get("/system/config", sysHandler.GetConfig)
 		r.Put("/system/config/queue", sysHandler.UpdateQueueConfig)
 		r.Put("/system/config/teams", sysHandler.UpdateTeamsConfig)
@@ -483,20 +490,97 @@ type BackendHealthChecker interface {
 
 // SystemHandler handles system configuration endpoints.
 type SystemHandler struct {
-	mu           sync.Mutex // guards the runtime-mutable Queue caps on config
-	config       *config.Config
-	settings     *config.SettingsStore // synchronized owner of Teams settings
-	queueManager QueueManagerPort
-	queueRepo    instance.QueueRepository
+	mu             sync.Mutex // guards the runtime-mutable Queue caps on config
+	config         *config.Config
+	settings       *config.SettingsStore // synchronized owner of Teams settings
+	systemSettings *settings.Service
+	queueManager   QueueManagerPort
+	queueRepo      instance.QueueRepository
 	// backendHealth is the shared, TTL-cached backend-health component injected
 	// from the composition root. When nil, the handler omits the backends list
 	// (legacy/tests) rather than forking an uncached probe per request.
 	backendHealth BackendHealthChecker
 }
 
-// GetConfig handles GET /system/config. It marshals the shared
-// config.RedactedConfig allow-list projection (the same one the MCP
-// system_config tool uses) augmented with live queue counts.
+func writeSystemSettingsError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, identity.ErrUnauthenticated):
+		WriteError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
+	case errors.Is(err, identity.ErrForbidden):
+		WriteError(w, http.StatusForbidden, "FORBIDDEN", "admin only")
+	case errors.Is(err, settings.ErrInvalid):
+		WriteError(w, http.StatusBadRequest, "INVALID_SETTINGS", err.Error())
+	default:
+		WriteError(w, http.StatusInternalServerError, "INTERNAL", "system settings unavailable")
+	}
+}
+
+func (h *SystemHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	if h.systemSettings == nil {
+		WriteError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "system settings unavailable")
+		return
+	}
+	values, err := h.systemSettings.Get(r.Context())
+	if err != nil {
+		writeSystemSettingsError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, values)
+}
+
+func (h *SystemHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
+	if h.systemSettings == nil {
+		WriteError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "system settings unavailable")
+		return
+	}
+	// Authorize before parsing; the service also gates the final write.
+	id, ok := identity.FromContext(r.Context())
+	if !ok {
+		writeSystemSettingsError(w, identity.ErrUnauthenticated)
+		return
+	}
+	if !id.IsAdmin() {
+		writeSystemSettingsError(w, identity.ErrForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	decoder := json.NewDecoder(r.Body)
+	var fields map[string]json.RawMessage
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid settings patch")
+		return
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid settings patch")
+		return
+	}
+	var patch settings.Patch
+	for key, raw := range fields {
+		var value string
+		if string(raw) == "null" || json.Unmarshal(raw, &value) != nil {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "settings fields must be strings")
+			return
+		}
+		switch key {
+		case "catalogUrl":
+			patch.CatalogURL = &value
+		case "teamsWebhookUrl":
+			patch.TeamsWebhookURL = &value
+		default:
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "unknown settings field")
+			return
+		}
+	}
+	values, err := h.systemSettings.Update(r.Context(), patch)
+	if err != nil {
+		writeSystemSettingsError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, values)
+}
+
+// GetConfig handles GET /system/config using the shared redacted allow-list.
 func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	var running, queued, waiting int
 	if h.queueRepo != nil {

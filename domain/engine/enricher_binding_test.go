@@ -189,3 +189,58 @@ func TestEnrich_ResolvesEachProfileOncePerPage(t *testing.T) {
 		})
 	}
 }
+
+// pinnedSummary is a running row on the "coder" agent node with the given pin
+// record.
+func pinnedSummary(t *testing.T, version int, pins, routes map[string]string) instance.InstanceSummary {
+	s := summaryAt(t, instance.StateRunning, "review", "", nil, "")
+	s.ModelPinsVersion, s.ModelPins, s.ModelPinRoutes = version, pins, routes
+	return s
+}
+
+// A pinned row lists the model its run executes, not the live profile, while
+// effort, backend and provider stay live (G23). A legacy row lists the live
+// model; a missing or unreadable pin never falls back to it.
+func TestEnrich_PinnedRowShowsPinnedModel(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		summary instance.InstanceSummary
+		model   string
+	}{
+		{"snapshot pin", pinnedSummary(t, instance.ModelPinsVersionSnapshot, map[string]string{"coder": "gpt-6.0-sol"}, nil), "gpt-6.0-sol"},
+		{"legacy run", pinnedSummary(t, instance.ModelPinsVersionLegacy, nil, nil), "gpt-6.1-sol"},
+		{"snapshot without the alias", pinnedSummary(t, instance.ModelPinsVersionSnapshot, map[string]string{}, nil), ""},
+		{"unreadable pins", pinnedSummary(t, instance.ModelPinsVersionUnreadable, nil, nil), ""},
+		{"invalid native route", pinnedSummary(t, instance.ModelPinsVersionSnapshot, map[string]string{"coder": "gpt-6.0-sol"}, map[string]string{"coder": "openai"}), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := enrichOne(t, codexProfile, tc.summary)
+			assert.Equal(t, "agent_call", row.NodeType)
+			assert.Equal(t, tc.model, row.Model)
+			if tc.model != "" {
+				assert.Equal(t, "high", row.Effort)
+				assert.Equal(t, "codex", row.Backend)
+				assert.Equal(t, "litellm", row.Provider)
+			}
+		})
+	}
+}
+
+// Overlaying pins keeps the page to one live Resolve per alias, and each row
+// gets its own pin, not the first row's.
+func TestEnrich_PinnedRowsShareOneLiveLookupPerAlias(t *testing.T) {
+	r := &countingResolver{enricherProfileResolver: codexProfile, calls: map[string]int{}}
+	d := newEnricherDeps()
+	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, engine.NoopQueuePositionProvider{}, "claude-code")
+	enr.SetProfileResolver(r)
+	page := []instance.InstanceSummary{
+		pinnedSummary(t, instance.ModelPinsVersionSnapshot, map[string]string{"coder": "gpt-5.9-sol"}, nil),
+		pinnedSummary(t, instance.ModelPinsVersionSnapshot, map[string]string{"coder": "gpt-6.0-sol"}, nil),
+		pinnedSummary(t, instance.ModelPinsVersionLegacy, nil, nil),
+	}
+	got, err := enr.Enrich(context.Background(), page)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, 1, r.calls["coder"], "one live Resolve per alias per page")
+	assert.Equal(t, []string{"gpt-5.9-sol", "gpt-6.0-sol", "gpt-6.1-sol"}, []string{got[0].Model, got[1].Model, got[2].Model})
+}

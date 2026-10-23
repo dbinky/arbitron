@@ -20,6 +20,10 @@ type streamState struct {
 	tokensIn  int
 	tokensOut int
 	failed    bool
+	// wantModel, when set, is the pinned model the result's modelUsage must
+	// contain; a result without it fails the stream instead of completing.
+	wantModel string
+	sawResult bool
 }
 
 // Handle processes one parsed event line and emits zero or one chunk via
@@ -55,13 +59,29 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 			}
 		}
 	case eventResult:
+		// A pinned invocation has exactly one terminal proof, as collectResult
+		// requires for batch calls. Latch failure before later events can replace
+		// the evidence or publish Done; the caller still drains and reaps.
+		if s.wantModel != "" && s.sawResult {
+			sendChunk(engine.ChatChunk{Error: errModelExecutionEvidence})
+			s.failed = true
+			return
+		}
+		s.sawResult = true
 		s.tokensIn, s.tokensOut = ev.TokensIn, ev.TokensOut
+		if !ev.IsError && s.wantModel != "" && !executedModelMatches(s.wantModel, ev.ModelUsage) {
+			sendChunk(engine.ChatChunk{
+				Error: fmt.Errorf("claudecli: pinned model %q absent from result modelUsage", s.wantModel),
+			})
+			s.failed = true
+			return
+		}
 		if ev.IsError {
-			if !sendChunk(engine.ChatChunk{
-				Error: fmt.Errorf("claudecli: claude reported an error: %s", ev.Text),
-			}) {
-				// consumer gone
+			err := errModelExecutionEvidence
+			if s.wantModel == "" {
+				err = fmt.Errorf("claudecli: claude reported an error: %s", ev.Text)
 			}
+			sendChunk(engine.ChatChunk{Error: err})
 			s.failed = true
 		}
 	}
@@ -76,8 +96,17 @@ func (s *streamState) Finalize(waitErr error, sendChunk func(engine.ChatChunk) b
 		return
 	}
 	if waitErr != nil {
+		if s.wantModel != "" {
+			waitErr = SanitizeProcessError(waitErr)
+		}
 		sendChunk(engine.ChatChunk{
 			Error: fmt.Errorf("claudecli: claude exited with error: %w", waitErr),
+		})
+		return
+	}
+	if s.wantModel != "" && !s.sawResult {
+		sendChunk(engine.ChatChunk{
+			Error: fmt.Errorf("claudecli: no result event to confirm pinned model %q", s.wantModel),
 		})
 		return
 	}

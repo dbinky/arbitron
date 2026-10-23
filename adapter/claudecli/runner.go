@@ -10,6 +10,9 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/arbitron/arbitron/adapter/procenv"
 )
 
 // initialReadBuf is the starting capacity of the per-line read buffer. Lines
@@ -71,10 +74,15 @@ func NewExecRunner() CommandRunner { return newExecRunner() }
 // for the subprocess lifecycle (exec.CommandContext) and for early abort if
 // the response-bytes cap is exceeded (via an internal derived cancel).
 func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func() error, error) {
+	spec.MaxResponseBytes = procenv.ResponseLimit(ctx, spec.MaxResponseBytes)
 	// Derive a cancellable context so the reader goroutine can abort the
 	// subprocess on a bytes-cap overrun without affecting the caller's ctx.
 	runCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(runCtx, spec.Bin, spec.Args...)
+	configureProcessCancellation(cmd)
+	// Bound inherited stderr pipes even when a descendant escapes the process
+	// group. Stdout is read by us before Wait, so it needs its own cancellation.
+	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
 	if spec.Stdin != "" {
@@ -97,6 +105,7 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 		cancel()
 		return nil, nil, fmt.Errorf("claudecli: start %q: %w", spec.Bin, err)
 	}
+	stopClose := context.AfterFunc(runCtx, func() { _ = stdout.Close() })
 
 	lines := make(chan string)
 	// SF2: done is closed by the reader goroutine after it sets readErr.
@@ -109,35 +118,33 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 		defer close(lines)
 		defer close(done)
 
-		reader := bufio.NewReaderSize(stdout, initialReadBuf)
-		var totalBytes int64
-
+		reader := bufio.NewReaderSize(procenv.BoundedReader(stdout, spec.MaxResponseBytes), initialReadBuf)
 		for {
-			// MF8: ReadBytes has no fixed per-line ceiling. The total-bytes
-			// cap below is the runner-level backstop.
+			// Bound the reader before splitting lines: a single unterminated
+			// line cannot allocate beyond the request's total byte ceiling.
 			line, err := reader.ReadBytes('\n')
+			if errors.Is(err, procenv.ErrResponseTooLarge) {
+				readErr = ErrResponseTooLarge
+				cancel()
+				return
+			}
 			if len(line) > 0 {
-				totalBytes += int64(len(line))
-				if spec.MaxResponseBytes > 0 && totalBytes > spec.MaxResponseBytes {
-					// MF7: bytes cap exceeded. Kill the subprocess; report
-					// via readErr so wait() surfaces it. Do NOT push the
-					// over-cap line to consumers — it is unsafe to use.
-					readErr = fmt.Errorf("%w: read %d bytes, cap %d", ErrResponseTooLarge, totalBytes, spec.MaxResponseBytes)
-					cancel()
-					// Drain remaining stdout so the subprocess's writes do
-					// not block; ignore further data.
-					_, _ = io.Copy(io.Discard, reader)
-					return
-				}
 				// Trim the trailing '\n' (ReadBytes keeps it; the previous
 				// Scanner contract did not). Empty lines pass through as "".
 				if line[len(line)-1] == '\n' {
 					line = line[:len(line)-1]
 				}
-				lines <- string(line)
+				select {
+				case lines <- string(line):
+				case <-runCtx.Done():
+					readErr = runCtx.Err()
+					return
+				}
 			}
 			if err != nil {
-				if !errors.Is(err, io.EOF) {
+				if runCtx.Err() != nil {
+					readErr = runCtx.Err()
+				} else if !errors.Is(err, io.EOF) {
 					readErr = fmt.Errorf("claudecli: read stdout: %w", err)
 				}
 				return
@@ -150,6 +157,7 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 		// (SF2 happens-before).
 		<-done
 		waitErr := cmd.Wait()
+		stopClose()
 		// Always release the derived context (covers the normal-exit path).
 		cancel()
 

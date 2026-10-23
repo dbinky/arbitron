@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -132,12 +131,13 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	}
 
 	req := ChatRequest{
-		SystemPrompt: node.Config.SystemPrompt,
-		Prompt:       userMessage,
-		Model:        binding.Model,
-		MaxTokens:    node.Config.MaxTokens,
-		Temperature:  node.Config.Temperature,
-		WorkDir:      workDirStr,
+		SystemPrompt:         node.Config.SystemPrompt,
+		Prompt:               userMessage,
+		Model:                binding.Model,
+		RequireExecutedModel: binding.RequiresModelEvidence(),
+		MaxTokens:            node.Config.MaxTokens,
+		Temperature:          node.Config.Temperature,
+		WorkDir:              workDirStr,
 		// Forward the resolved profile's per-request tool scope (PR #18 item 1b).
 		// For an agent binding this bounds the tool-enabled stream to the
 		// profile's explicit minimal allowlist; a chat binding ignores it.
@@ -149,6 +149,9 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: stream call: %w", node.ID, err)
 	}
+	if stream == nil {
+		return nil, fmt.Errorf("interactive %q: stream closed without completion (nil stream)", node.ID)
+	}
 
 	// 8. Consume the stream channel.
 	var responseBuilder strings.Builder
@@ -156,7 +159,22 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	var sessionID string
 	var sawDone bool
 
-	for chunk := range stream {
+	for {
+		var chunk ChatChunk
+		var open bool
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("interactive %q: stream cancelled: %w", node.ID, ctx.Err())
+		case chunk, open = <-stream:
+		}
+		// A buffered chunk or channel closure can win the select even after
+		// cancellation. Never treat that as a successfully completed turn.
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("interactive %q: stream cancelled: %w", node.ID, err)
+		}
+		if !open {
+			break
+		}
 		if chunk.Error != nil {
 			return nil, fmt.Errorf("interactive %q: stream error: %w", node.ID, chunk.Error)
 		}
@@ -180,6 +198,11 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 			sawDone = true
 			break
 		}
+	}
+	// Publishing the last token can itself race cancellation, including when
+	// that same chunk carries Done. Check again before persisting success.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("interactive %q: stream cancelled: %w", node.ID, err)
 	}
 
 	// DATA INTEGRITY (PR #18, comment 4614891622): if the stream channel closed
@@ -232,7 +255,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		CompletedAt:     &now,
 	}
 	if err := e.nodeExecs.Create(ctx, nodeExec); err != nil {
-		slog.Error("interactive: failed to write node execution record", "instanceID", instanceID, "error", err)
+		return nil, fmt.Errorf("interactive %q: persist initial conversation: %w", node.ID, err)
 	}
 
 	// 11. Transition instance to waiting state.

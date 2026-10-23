@@ -21,8 +21,8 @@ func (q *Queries) CountConnections(ctx context.Context) (int64, error) {
 }
 
 const createConnection = `-- name: CreateConnection :exec
-INSERT INTO connections (name, provider, base_url, extras, api_key_cipher, api_key_nonce)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO connections (name, provider, base_url, extras, api_key_cipher, api_key_nonce, config_revision)
+VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT revision FROM connection_revision_floor WHERE connection_revision_floor.name = ?), 0) + 1)
 `
 
 type CreateConnectionParams struct {
@@ -32,6 +32,7 @@ type CreateConnectionParams struct {
 	Extras       string
 	APIKeyCipher []byte
 	APIKeyNonce  []byte
+	Name_2       string
 }
 
 func (q *Queries) CreateConnection(ctx context.Context, arg CreateConnectionParams) error {
@@ -42,6 +43,7 @@ func (q *Queries) CreateConnection(ctx context.Context, arg CreateConnectionPara
 		arg.Extras,
 		arg.APIKeyCipher,
 		arg.APIKeyNonce,
+		arg.Name_2,
 	)
 	return err
 }
@@ -72,17 +74,18 @@ func (q *Queries) GetConnectionCipher(ctx context.Context, name string) (GetConn
 }
 
 const getConnectionMeta = `-- name: GetConnectionMeta :one
-SELECT name, provider, base_url, extras, created_at, updated_at
+SELECT name, provider, base_url, extras, created_at, updated_at, config_revision
 FROM connections WHERE name = ?
 `
 
 type GetConnectionMetaRow struct {
-	Name      string
-	Provider  string
-	BaseURL   string
-	Extras    string
-	CreatedAt string
-	UpdatedAt string
+	Name           string
+	Provider       string
+	BaseURL        string
+	Extras         string
+	CreatedAt      string
+	UpdatedAt      string
+	ConfigRevision int64
 }
 
 func (q *Queries) GetConnectionMeta(ctx context.Context, name string) (GetConnectionMetaRow, error) {
@@ -95,22 +98,24 @@ func (q *Queries) GetConnectionMeta(ctx context.Context, name string) (GetConnec
 		&i.Extras,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConfigRevision,
 	)
 	return i, err
 }
 
 const listConnections = `-- name: ListConnections :many
-SELECT name, provider, base_url, extras, created_at, updated_at
+SELECT name, provider, base_url, extras, created_at, updated_at, config_revision
 FROM connections ORDER BY name
 `
 
 type ListConnectionsRow struct {
-	Name      string
-	Provider  string
-	BaseURL   string
-	Extras    string
-	CreatedAt string
-	UpdatedAt string
+	Name           string
+	Provider       string
+	BaseURL        string
+	Extras         string
+	CreatedAt      string
+	UpdatedAt      string
+	ConfigRevision int64
 }
 
 func (q *Queries) ListConnections(ctx context.Context) ([]ListConnectionsRow, error) {
@@ -129,6 +134,7 @@ func (q *Queries) ListConnections(ctx context.Context) ([]ListConnectionsRow, er
 			&i.Extras,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ConfigRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -143,9 +149,10 @@ func (q *Queries) ListConnections(ctx context.Context) ([]ListConnectionsRow, er
 	return items, nil
 }
 
-const updateConnectionMetadata = `-- name: UpdateConnectionMetadata :exec
+const updateConnectionMetadata = `-- name: UpdateConnectionMetadata :execrows
 UPDATE connections
 SET provider = ?, base_url = ?, extras = ?,
+    config_revision = config_revision + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
 WHERE name = ?
 `
@@ -157,19 +164,23 @@ type UpdateConnectionMetadataParams struct {
 	Name     string
 }
 
-func (q *Queries) UpdateConnectionMetadata(ctx context.Context, arg UpdateConnectionMetadataParams) error {
-	_, err := q.db.ExecContext(ctx, updateConnectionMetadata,
+func (q *Queries) UpdateConnectionMetadata(ctx context.Context, arg UpdateConnectionMetadataParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateConnectionMetadata,
 		arg.Provider,
 		arg.BaseURL,
 		arg.Extras,
 		arg.Name,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const updateConnectionWithKey = `-- name: UpdateConnectionWithKey :exec
+const updateConnectionWithKey = `-- name: UpdateConnectionWithKey :execrows
 UPDATE connections
 SET provider = ?, base_url = ?, extras = ?, api_key_cipher = ?, api_key_nonce = ?,
+    config_revision = config_revision + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
 WHERE name = ?
 `
@@ -183,8 +194,8 @@ type UpdateConnectionWithKeyParams struct {
 	Name         string
 }
 
-func (q *Queries) UpdateConnectionWithKey(ctx context.Context, arg UpdateConnectionWithKeyParams) error {
-	_, err := q.db.ExecContext(ctx, updateConnectionWithKey,
+func (q *Queries) UpdateConnectionWithKey(ctx context.Context, arg UpdateConnectionWithKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateConnectionWithKey,
 		arg.Provider,
 		arg.BaseURL,
 		arg.Extras,
@@ -192,5 +203,8 @@ func (q *Queries) UpdateConnectionWithKey(ctx context.Context, arg UpdateConnect
 		arg.APIKeyNonce,
 		arg.Name,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

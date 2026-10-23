@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
@@ -51,19 +52,20 @@ func TestProfileService_UpdatePatch_MergesOmittedFields(t *testing.T) {
 // connection_ref is distinguishable from omitting it.
 func TestProfileService_UpdatePatch_ExplicitClearIsApplied(t *testing.T) {
 	existing := provider.Profile{
-		Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "c", Model: "m",
+		Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "c", Model: "sonnet-4.6",
 	}
 	store := newMemProfileStore(existing)
 	svc := provider.NewProfileService(store, provider.NewCapabilityRules(map[string]provider.BackendCapability{
 		"claude-cli": {Backend: "claude-cli"},
 	}), &fakeReloader{})
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
 
 	stored, _, err := svc.UpdatePatch(admins(), "p", provider.ProfilePatch{
 		ConnectionRef: strptr(""), // explicit clear
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "", stored.ConnectionRef, "an explicit empty connection_ref clears the field")
-	assert.Equal(t, "m", stored.Model, "an unrelated omitted field stays put")
+	assert.Equal(t, "sonnet-4.6", stored.Model, "an unrelated omitted field stays put")
 }
 
 // Authz still gates the patch path: a non-admin is forbidden and nothing is
@@ -95,10 +97,11 @@ func TestProfileService_UpdatePatch_MissingAlias(t *testing.T) {
 // The merged result is still capability-validated: patching effort to an
 // inapplicable value is rejected and nothing is persisted.
 func TestProfileService_UpdatePatch_ValidatesMergedResult(t *testing.T) {
-	existing := provider.Profile{Alias: "c", Kind: provider.ProfileKindAgent, Backend: "codex"}
+	existing := provider.Profile{Alias: "c", Kind: provider.ProfileKindAgent, Backend: "codex", Model: "gpt-6.1-sol"}
 	store := newMemProfileStore(existing)
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, rules(), rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
 
 	// codex exposes no context knob: patching a non-default tier must be rejected.
 	cw := string(provider.Context1M)

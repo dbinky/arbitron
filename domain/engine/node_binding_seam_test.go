@@ -54,11 +54,12 @@ func interactiveSelectedBackend(t *testing.T, n workflow.Node, r provider.Profil
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	streams := map[string]*mockStreamingChatProvider{}
-	routable := map[string]engine.ChatProvider{}
+	routable := map[string]adaptprovider.AgentStreamFactory{}
 	for _, b := range seamBackends {
 		s := newMockStreamingChatProvider()
 		s.streamCallFn = cannedStream([]string{"OK"}, 1, 1)
-		streams[b], routable[b] = s, s
+		streams[b] = s
+		routable[b] = func(provider.ResolvedBinding) engine.ChatProvider { return s }
 	}
 	sel := &recordingStreamSelector{inner: adaptprovider.NewInteractiveStreamSelector(nil, routable, def)}
 

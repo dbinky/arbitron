@@ -43,7 +43,9 @@ func TestEnqueue_EvaluatorMayStartBetweenPersistenceAndEnqueue(t *testing.T) {
 	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001") // migration-seeded local owner
 	id := uuid.New()
 	require.NoError(t, instances.Create(ctx, &instance.Instance{
-		ID: id, OwnerID: owner, WorkflowName: "queued-child", State: instance.StateQueued,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               id, OwnerID: owner, WorkflowName: "queued-child", State: instance.StateQueued,
 		Priority: instance.PriorityNormal, WorkflowSnapshot: map[string]any{},
 		Variables: map[string]any{"inherited": "real-payload"},
 	}))

@@ -8,6 +8,7 @@ import (
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/arbitron/arbitron/domain/modelcatalog"
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
@@ -15,7 +16,12 @@ import (
 // write. It mirrors the provider.Profile fields the spec exposes — no secrets are
 // involved (a profile only references a connection by name).
 type profileMeta struct {
-	Alias         string   `json:"alias"`
+	Alias         string            `json:"alias"`
+	SelectionMode string            `json:"selection_mode"`
+	FollowTarget  *followTargetBody `json:"follow_target,omitempty"`
+	// Revision is the stored row revision; pass it back on profile_update to
+	// reject the edit if the profile changed since this read.
+	Revision      int64    `json:"revision"`
 	Kind          string   `json:"kind"`
 	ConnectionRef string   `json:"connection_ref,omitempty"`
 	Model         string   `json:"model,omitempty"`
@@ -25,9 +31,26 @@ type profileMeta struct {
 	Effort        string   `json:"effort,omitempty"`
 }
 
+// followTargetBody is the wire shape of provider.FollowTarget.
+type followTargetBody struct {
+	Provider string `json:"provider"`
+	Tier     string `json:"tier"`
+}
+
 func profileMetaOf(p provider.Profile) profileMeta {
+	mode := string(p.SelectionMode)
+	if mode == "" {
+		mode = string(provider.SelectionPinned)
+	}
+	var target *followTargetBody
+	if p.FollowTarget != nil {
+		target = &followTargetBody{Provider: p.FollowTarget.Provider, Tier: p.FollowTarget.Tier}
+	}
 	return profileMeta{
 		Alias:         p.Alias,
+		SelectionMode: mode,
+		FollowTarget:  target,
+		Revision:      p.Revision,
 		Kind:          string(p.Kind),
 		ConnectionRef: p.ConnectionRef,
 		Model:         p.Model,
@@ -59,6 +82,12 @@ func RegisterProfileTools(srv *Server) {
 			gomcp.WithDescription("Create a model profile (admin only). Validates context_window/effort against the backend/model capability rules and echoes the floored effective values. The response carries both profile.* (your requested axes, as stored) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling."),
 			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Unique profile alias referenced by workflow nodes")),
 			gomcp.WithString("kind", gomcp.Required(), gomcp.Description("'chat' or 'agent'")),
+			gomcp.WithString("selection_mode", gomcp.Description("'pinned' (default) keeps the model you give; 'following' tracks the newest eligible model for follow_target")),
+			gomcp.WithObject("follow_target", gomcp.Description("Required for following, forbidden for pinned: {provider, tier} catalog slugs. A following profile created without a model starts on the newest confirmed usable candidate."),
+				gomcp.Properties(map[string]any{
+					"provider": map[string]any{"type": "string"},
+					"tier":     map[string]any{"type": "string"},
+				})),
 			gomcp.WithString("connection_ref", gomcp.Description("Connection name supplying the endpoint+key; empty = claude-cli no-key subscription")),
 			gomcp.WithString("model", gomcp.Description("Model id / Azure deployment / provider-model")),
 			gomcp.WithString("backend", gomcp.Description("Agent backend (claude-code | codex | opencode); empty inherits")),
@@ -73,6 +102,13 @@ func RegisterProfileTools(srv *Server) {
 			gomcp.WithDescription("Update a model profile by alias (admin only). MERGE, not replace: omitted fields keep their stored value; pass a field (even empty) to change or clear it. The response carries both profile.* (the merged stored axes) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling."),
 			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Profile alias to update")),
 			gomcp.WithString("kind", gomcp.Description("'chat' or 'agent'; omit to keep the stored kind")),
+			gomcp.WithString("selection_mode", gomcp.Description("omit to keep the stored mode; 'pinned' keeps the model you give; 'following' tracks the newest eligible model for follow_target")),
+			gomcp.WithObject("follow_target", gomcp.Description("{provider, tier} catalog slugs; omit to keep, null to clear (pinned profiles have none)"),
+				gomcp.Properties(map[string]any{
+					"provider": map[string]any{"type": "string"},
+					"tier":     map[string]any{"type": "string"},
+				})),
+			gomcp.WithNumber("revision", gomcp.Description("Optional expected revision from profile_get; the edit is rejected if the stored profile has changed since")),
 			gomcp.WithString("connection_ref", gomcp.Description("Connection name; empty = claude-cli no-key subscription")),
 			gomcp.WithString("model", gomcp.Description("Model id / Azure deployment / provider-model")),
 			gomcp.WithString("backend", gomcp.Description("Agent backend; empty inherits")),
@@ -111,7 +147,8 @@ func RegisterProfileTools(srv *Server) {
 }
 
 // profileErrorResult maps ProfileService sentinels to stable tool error
-// messages, mirroring userErrorResult/connErrorResult.
+// messages. Never return the error chain: even a recognized sentinel can be
+// wrapped by inventory, discovery or persistence diagnostics containing secrets.
 func profileErrorResult(err error) *gomcp.CallToolResult {
 	switch {
 	case errors.Is(err, provider.ErrForbidden):
@@ -119,17 +156,39 @@ func profileErrorResult(err error) *gomcp.CallToolResult {
 	case errors.Is(err, provider.ErrUnauthenticated):
 		return gomcp.NewToolResultError("authentication required")
 	case errors.Is(err, provider.ErrAxisNotApplicable):
-		return gomcp.NewToolResultError(err.Error())
+		return gomcp.NewToolResultError("requested axis is not applicable; check provider_capabilities for the backend/model")
 	case errors.Is(err, provider.ErrProfileExists):
 		return gomcp.NewToolResultError("profile already exists")
 	case errors.Is(err, provider.ErrProfileNotFound):
 		return gomcp.NewToolResultError("profile not found")
-	case errors.Is(err, provider.ErrUnknownBackend),
-		errors.Is(err, provider.ErrInvalidEffort),
-		errors.Is(err, provider.ErrInvalidContextWindow):
-		return gomcp.NewToolResultError(err.Error())
+	case errors.Is(err, provider.ErrAdvanceConflict):
+		return gomcp.NewToolResultError("profile changed concurrently: re-read it (profile_get) and retry")
+	// Static text only: these chains carry connection names, policy revisions
+	// and store errors that a caller must not see.
+	case errors.Is(err, modelcatalog.ErrRefreshBusy):
+		return gomcp.NewToolResultError("model catalog refresh in progress; retry later")
+	case errors.Is(err, provider.ErrExecutionRevisionStale):
+		return gomcp.NewToolResultError("execution configuration changed while the profile was being prepared; retry")
+	case errors.Is(err, provider.ErrExecutionRevisionUnavailable):
+		return gomcp.NewToolResultError("execution configuration could not be verified; retry later (see server logs)")
+	case errors.Is(err, modelcatalog.ErrInventoryIncomplete):
+		return gomcp.NewToolResultError("execution-path inventory is incomplete; retry later (see server logs)")
+	case errors.Is(err, provider.ErrSelectionPortsMissing):
+		return gomcp.NewToolResultError("model selection ports not configured; contact the administrator")
+	case errors.Is(err, provider.ErrNoEligibleCandidate):
+		return gomcp.NewToolResultError("no eligible model candidate for the follow target; refresh the catalog or choose a confirmed fixed model version")
+	case errors.Is(err, provider.ErrSpecificVersionUnavailable):
+		return gomcp.NewToolResultError("no specific model version available; set the profile to a fixed model version supported on its routes")
+	case errors.Is(err, provider.ErrUnknownBackend):
+		return gomcp.NewToolResultError("unknown backend; check provider_capabilities for supported backends")
+	case errors.Is(err, provider.ErrInvalidSelection):
+		return gomcp.NewToolResultError("invalid profile selection: a pinned profile cannot have a follow target; following requires provider and tier, a confirmed fixed model and compatible routes")
+	case errors.Is(err, provider.ErrInvalidEffort):
+		return gomcp.NewToolResultError("invalid effort; check provider_capabilities for supported effort levels")
+	case errors.Is(err, provider.ErrInvalidContextWindow):
+		return gomcp.NewToolResultError("invalid context window; check provider_capabilities for supported context tiers")
 	default:
-		return gomcp.NewToolResultError(fmt.Sprintf("profile operation failed: %s", err))
+		return gomcp.NewToolResultError("profile operation failed; re-read the profile before retrying or contact the administrator")
 	}
 }
 
@@ -152,6 +211,29 @@ func stringSliceArg(raw any) ([]string, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// followTargetArg decodes the follow_target object. nil (absent or JSON null)
+// yields no target; anything but an object of string provider/tier is an error.
+func followTargetArg(raw any) (*provider.FollowTarget, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("follow_target must be an object with provider and tier")
+	}
+	target := &provider.FollowTarget{}
+	for key, dst := range map[string]*string{"provider": &target.Provider, "tier": &target.Tier} {
+		if v, present := obj[key]; present {
+			s, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("follow_target.%s must be a string", key)
+			}
+			*dst = s
+		}
+	}
+	return target, nil
 }
 
 // profileFromArgs builds a provider.Profile from the create/update arguments.
@@ -183,8 +265,22 @@ func profileFromArgs(args map[string]any) (provider.Profile, error) {
 	connRef, _ := args["connection_ref"].(string)
 	model, _ := args["model"].(string)
 	backend, _ := args["backend"].(string)
+	var mode string
+	if v, present := args["selection_mode"]; present {
+		m, ok := v.(string)
+		if !ok {
+			return provider.Profile{}, fmt.Errorf("selection_mode must be a string")
+		}
+		mode = m
+	}
+	target, err := followTargetArg(args["follow_target"])
+	if err != nil {
+		return provider.Profile{}, err
+	}
 	return provider.Profile{
 		Alias:         alias,
+		SelectionMode: provider.SelectionMode(mode),
+		FollowTarget:  target,
 		Kind:          provider.ProfileKind(kind),
 		ConnectionRef: connRef,
 		Model:         model,
@@ -210,6 +306,28 @@ func profileCreateHandler(srv *Server) server.ToolHandlerFunc {
 // not here, so a future REST surface inherits the same safe semantics.
 func patchFromArgs(args map[string]any) (provider.ProfilePatch, error) {
 	var patch provider.ProfilePatch
+	if v, present := args["selection_mode"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("selection_mode must be a string")
+		}
+		patch.SelectionMode = &s
+	}
+	if v, present := args["follow_target"]; present {
+		target, err := followTargetArg(v)
+		if err != nil {
+			return provider.ProfilePatch{}, err
+		}
+		patch.FollowTarget = &target
+	}
+	if v, present := args["revision"]; present && v != nil {
+		f, ok := v.(float64)
+		if !ok || f != float64(int64(f)) || f < 1 {
+			return provider.ProfilePatch{}, fmt.Errorf("revision must be a positive integer")
+		}
+		rev := int64(f)
+		patch.ExpectedRevision = &rev
+	}
 	if v, present := args["kind"]; present {
 		s, ok := v.(string)
 		if !ok {
@@ -280,7 +398,9 @@ func profileUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		patch, err := patchFromArgs(args)
 		if err != nil {
-			return profileErrorResult(err), nil
+			// These diagnostics are produced solely from this request's shape,
+			// before calling the service; they contain no internal error chain.
+			return gomcp.NewToolResultError(err.Error()), nil
 		}
 		stored, eff, err := srv.deps.ProfileAdmin.UpdatePatch(ctx, alias, patch)
 		if err != nil {
@@ -305,7 +425,7 @@ func profileCreateWriteHandler(srv *Server, write func(context.Context, provider
 		}
 		p, err := profileFromArgs(request.GetArguments())
 		if err != nil {
-			return profileErrorResult(err), nil
+			return gomcp.NewToolResultError(err.Error()), nil
 		}
 		stored, eff, err := write(ctx, p)
 		if err != nil {

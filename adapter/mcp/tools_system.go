@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -12,11 +13,18 @@ import (
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/notification"
+	"github.com/arbitron/arbitron/domain/settings"
 	"github.com/google/uuid"
 )
 
 // RegisterSystemTools registers all system, notification, and stats tools with the server.
 func RegisterSystemTools(srv *Server) {
+	srv.AddTool(gomcp.NewTool("system_settings_get", gomcp.WithDescription("Get persisted model catalog and announcement settings (admin only)")), systemSettingsHandler(srv, false))
+	srv.AddTool(gomcp.NewTool("system_settings_update",
+		gomcp.WithDescription("Update model catalog and announcement settings (admin only)"),
+		gomcp.WithString("catalog_url", gomcp.Description("Absolute HTTPS catalog URL; omit to retain")),
+		gomcp.WithString("teams_webhook_url", gomcp.Description("Replacement announcement webhook; omit to retain, empty to clear")),
+	), systemSettingsHandler(srv, true))
 	srv.AddTool(
 		gomcp.NewTool("system_config",
 			gomcp.WithDescription("Get the current system configuration and queue status"),
@@ -81,6 +89,54 @@ func RegisterSystemTools(srv *Server) {
 		),
 		workflowStatsHandler(srv),
 	)
+}
+
+func systemSettingsError(err error) *gomcp.CallToolResult {
+	switch {
+	case errors.Is(err, identity.ErrUnauthenticated):
+		return gomcp.NewToolResultError("authentication required")
+	case errors.Is(err, identity.ErrForbidden):
+		return gomcp.NewToolResultError("admin only")
+	case errors.Is(err, settings.ErrInvalid):
+		return gomcp.NewToolResultError(err.Error())
+	default:
+		return gomcp.NewToolResultError("system settings unavailable")
+	}
+}
+
+func systemSettingsHandler(srv *Server, update bool) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.SystemSettings == nil {
+			return gomcp.NewToolResultError("system settings unavailable"), nil
+		}
+		if !update {
+			values, err := srv.deps.SystemSettings.Get(ctx)
+			if err != nil {
+				return systemSettingsError(err), nil
+			}
+			return MarshalResult(values)
+		}
+		var patch settings.Patch
+		for key, raw := range request.GetArguments() {
+			value, ok := raw.(string)
+			if !ok {
+				return gomcp.NewToolResultError("settings fields must be strings"), nil
+			}
+			switch key {
+			case "catalog_url":
+				patch.CatalogURL = &value
+			case "teams_webhook_url":
+				patch.TeamsWebhookURL = &value
+			default:
+				return gomcp.NewToolResultError("unknown settings field"), nil
+			}
+		}
+		values, err := srv.deps.SystemSettings.Update(ctx, patch)
+		if err != nil {
+			return systemSettingsError(err), nil
+		}
+		return MarshalResult(values)
+	}
 }
 
 func systemConfigHandler(srv *Server) server.ToolHandlerFunc {

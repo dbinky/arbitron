@@ -136,7 +136,7 @@ func newLoopFixtures() *loopFixtures {
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 	}
 
-	eng := engine.NewEngine(
+	eng := wireModelPins(engine.NewEngine(
 		base.workflowRepo,
 		base.instanceRepo,
 		base.nodeExecRepo,
@@ -147,7 +147,7 @@ func newLoopFixtures() *loopFixtures {
 		base.queueManager,
 		&mockQueueRepo{instRepo: base.instanceRepo},
 		"",
-	)
+	))
 
 	base.queueManager.mu.Lock()
 	base.queueManager.enqueueFn = func(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (bool, error) {

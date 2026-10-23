@@ -27,6 +27,11 @@ import (
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
+// ErrModelExecutionEvidenceUnavailable rejects required exact-model execution:
+// an Azure deployment name is not proof of the model behind it, and this
+// adapter has no verified producer of the executed model identity (B5).
+var ErrModelExecutionEvidenceUnavailable = errors.New("azurefoundry: model execution evidence unavailable")
+
 // defaultMaxResponseBytes bounds a non-streaming response read when the caller
 // does not set Config.MaxResponseBytes.
 const defaultMaxResponseBytes int64 = 8 << 20 // 8 MiB
@@ -83,6 +88,10 @@ func (p *Provider) revealKey(ctx context.Context) (string, error) {
 // Chat performs a synchronous chat-completions request and returns the terminal
 // response with native token usage.
 func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+	if req.RequireExecutedModel || p.binding.RequiresModelEvidence() ||
+		(p.binding.Pinned && p.binding.OpaquePinRoute != provider.CanonicalAzure) {
+		return nil, ErrModelExecutionEvidenceUnavailable
+	}
 	urlStr, err := endpointURL(p.binding)
 	if err != nil {
 		return nil, err
@@ -132,6 +141,10 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 // the SSE usage frame. Any failure is delivered as a chunk with a non-nil Error
 // before the channel closes.
 func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	if req.RequireExecutedModel || p.binding.RequiresModelEvidence() ||
+		(p.binding.Pinned && p.binding.OpaquePinRoute != provider.CanonicalAzure) {
+		return nil, ErrModelExecutionEvidenceUnavailable
+	}
 	urlStr, err := endpointURL(p.binding)
 	if err != nil {
 		return nil, err

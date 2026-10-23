@@ -1,6 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { api } from './client'
 
+describe('api.system model settings', () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ catalogUrl: 'https://models.dev/api.json', teamsConfigured: true, teamsWebhookUrl: '**REDACTED**' }) } as Response)
+  })
+  afterEach(() => vi.restoreAllMocks())
+  it('reads the public shape and sends sparse patches including an explicit clear', async () => {
+    expect((await api.system.getSettings()).teamsConfigured).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/system/settings', undefined)
+    await api.system.updateSettings({ catalogUrl: 'https://catalog.test/custom.json' })
+    expect(globalThis.fetch).toHaveBeenLastCalledWith('/api/v1/system/settings', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ catalogUrl: 'https://catalog.test/custom.json' }) }))
+    await api.system.updateSettings({ teamsWebhookUrl: '' })
+    expect(globalThis.fetch).toHaveBeenLastCalledWith('/api/v1/system/settings', expect.objectContaining({ body: JSON.stringify({ teamsWebhookUrl: '' }) }))
+  })
+  it('propagates settings errors', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({ error: 'settings unavailable', code: 'INTERNAL' }) } as Response)
+    await expect(api.system.getSettings()).rejects.toThrow('settings unavailable')
+    await expect(api.system.updateSettings({})).rejects.toThrow('settings unavailable')
+  })
+})
+
 describe('api.system.updateTeamsConfig', () => {
   beforeEach(() => {
     globalThis.fetch = vi.fn().mockResolvedValue({

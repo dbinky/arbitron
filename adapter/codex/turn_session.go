@@ -50,6 +50,16 @@ type turnConfig struct {
 	// ResumeID is the codex conversation id to resume; "" starts a new
 	// conversation.
 	ResumeID string
+	// VerifyModel marks a pinned run: the turn's stored rollout must prove the
+	// session ran Model (before a resume and after the new turn), or the turn is
+	// refused with ErrModelEvidence.
+	VerifyModel bool
+	// ReadOnly runs the turn under codex's read-only sandbox with no writable
+	// root plus D10 restrictions for usability probes; false keeps the
+	// workspace-write posture pinned to WorkDir.
+	ReadOnly bool
+	// MCPOverride comes from bounded enumeration of this turn's live config.
+	MCPOverride string
 	// Effort is an optional reasoning-effort hint emitted on EVERY turn as
 	// `-c model_reasoning_effort=<e>` (buildInteractiveExecArgs); "" emits nothing.
 	// Resume turns re-send it: codex does not carry it from the persisted session.

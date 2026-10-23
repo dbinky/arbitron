@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,18 +122,21 @@ func TestBuildInteractiveExecArgs_Error_EmptyModelFresh(t *testing.T) {
 	assert.ErrorIs(t, err, ErrModelRequired)
 }
 
-// FAILURE — a resume turn without a model fails closed, exactly like a fresh one:
-// codex would otherwise run the turn on ~/.codex/config.toml's default model.
-func TestBuildInteractiveExecArgs_Failure_ResumeWithoutModelFailsClosed(t *testing.T) {
-	_, err := buildInteractiveExecArgs(turnConfig{Prompt: "p", WorkDir: "/w", ResumeID: "conv-1"})
-	assert.ErrorIs(t, err, ErrModelRequired)
+// FAILURE — a resume turn re-sends the pinned model (-m) and an empty model fails
+// closed: a pinned run must never continue on whatever model the persisted session
+// recorded, so there is no "carry from the session" default.
+func TestBuildInteractiveExecArgs_Failure_ResumeRequiresModel(t *testing.T) {
+	for _, m := range []string{"", "  "} {
+		_, err := buildInteractiveExecArgs(turnConfig{Model: m, Prompt: "p", WorkDir: "/w", ResumeID: "conv-1"})
+		assert.ErrorIs(t, err, ErrModelRequired, "resume with model %q must fail closed", m)
+	}
 }
 
 // HYGIENE (Consider #3) — a resume turn with a blank/whitespace ResumeID fails
 // closed before the malformed id reaches argv (a non-blank id passes verbatim).
 func TestBuildInteractiveExecArgs_Hygiene_BlankResumeIDFailsClosed(t *testing.T) {
 	for _, id := range []string{" ", "\t", "   \n"} {
-		_, err := buildInteractiveExecArgs(turnConfig{Prompt: "p", WorkDir: "/w", ResumeID: id})
+		_, err := buildInteractiveExecArgs(turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/w", ResumeID: id})
 		assert.ErrorIs(t, err, ErrMalformedResumeID, "blank ResumeID %q must fail closed", id)
 	}
 	// A non-blank id is accepted and passed through verbatim.
@@ -445,7 +449,7 @@ func runFold(t *testing.T, ctx context.Context, lines []string, waitErr error) t
 		}
 	}()
 	events := make(chan turnEvent, len(lines)+4)
-	foldExecStream(ctx, in, func() error { return waitErr }, events, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	foldExecStream(ctx, in, func() error { return waitErr }, events, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), nil)
 	var last turnEvent
 	got := false
 	for ev := range events {
@@ -531,4 +535,25 @@ func TestFoldExecStream_CancelledCtxEmitsNoTurnFailedForTheExitCode(t *testing.T
 
 	assert.NotEqual(t, turnFailed, last.Kind,
 		"a cancelled ctx must not report the killed process's exit code as the turn's failure")
+}
+
+// A D10 restricted probe runs under codex's
+// read-only sandbox with no writable root, fresh or resumed, and keeps egress off.
+func TestBuildInteractiveExecArgs_ReadOnlyTurnGrantsNoWritableRoot(t *testing.T) {
+	fresh, err := buildInteractiveExecArgs(turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/work", ReadOnly: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"exec", "--json", "--skip-git-repo-check",
+		"-s", "read-only",
+		"--strict-config", "-c", "features.plugins=false", "-c", "features.apps=false",
+		"-c", `web_search="disabled"`, "-c", "sandbox_workspace_write.network_access=false",
+		"-m", "gpt-5", "--cd", "/work",
+	}, fresh)
+
+	resume, err := buildInteractiveExecArgs(turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/work", ResumeID: "conv-abc", ReadOnly: true})
+	require.NoError(t, err)
+	joined := strings.Join(resume, " ")
+	assert.Contains(t, joined, `sandbox_mode="read-only"`)
+	assert.NotContains(t, joined, "workspace-write")
+	assert.NotContains(t, joined, "writable_roots")
 }

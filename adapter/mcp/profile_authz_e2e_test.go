@@ -21,6 +21,7 @@ import (
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
@@ -40,6 +41,7 @@ func newProfileAuthzServer(t *testing.T, seed ...provider.Profile) (*adaptmcp.Se
 	// The cache satisfies provider.Reloader directly, so the service reloads the
 	// SAME cache the resolver reads.
 	profileSvc := provider.NewProfileService(pstore, rules, cache)
+	profileSvc.SetModelSelection(modelidentity.NewVersionResolver(), anyRouteSource{})
 	// pstore backs the connection in-use check so a connection referenced by a
 	// seeded profile cannot be deleted out from under it.
 	connSvc := provider.NewConnectionService(connStore, pstore)
@@ -66,8 +68,8 @@ func TestProfileAuthzE2E_ProfileMutationAdminOnly(t *testing.T) {
 		tool string
 		args map[string]any
 	}{
-		{"profile_create", map[string]any{"alias": "new", "kind": "agent", "backend": "claude-code"}},
-		{"profile_update", map[string]any{"alias": "seed", "kind": "agent", "backend": "claude-code"}},
+		{"profile_create", map[string]any{"alias": "new", "kind": "agent", "backend": "claude-code", "model": "sonnet-4.6"}},
+		{"profile_update", map[string]any{"alias": "seed", "kind": "agent", "backend": "claude-code", "model": "sonnet-4.6"}},
 		{"profile_delete", map[string]any{"alias": "seed"}},
 	}
 
@@ -266,6 +268,7 @@ func TestProfileAuthzE2E_ResolverUsesRawStoreForReveal(t *testing.T) {
 		"alias":          "rev-prof",
 		"kind":           "agent",
 		"backend":        "claude-code",
+		"model":          "sonnet-4.6",
 		"connection_ref": "rev-conn",
 	})
 	require.False(t, createProf.IsError, extractText(t, createProf))

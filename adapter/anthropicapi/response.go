@@ -33,7 +33,7 @@ type contentBlock struct {
 
 // messagesResponse is the non-streaming /v1/messages response.
 type messagesResponse struct {
-	Model   string         `json:"model"`
+	messageIdentity
 	Content []contentBlock `json:"content"`
 	Usage   usageBlock     `json:"usage"`
 }
@@ -91,6 +91,7 @@ type streamEvent struct {
 	// (message_start). Both are captured.
 	Usage   *usageBlock `json:"usage"`
 	Message *struct {
+		messageIdentity
 		Usage *usageBlock `json:"usage"`
 	} `json:"message"`
 	Error *struct {
@@ -103,28 +104,29 @@ type streamEvent struct {
 // current event name through curEvent across the event:/data: line pair. The data
 // frame's self-describing `type` is authoritative; curEvent is a fallback/debug
 // aid. Returns the token delta (text_delta.Text or input_json_delta.PartialJSON),
-// a usage block when the frame carries one, done=true on message_stop, and an
-// error for a malformed data frame or an upstream `error` event. Blank lines, `:`
+// a usage block when the frame carries one, assistant identity on message_start,
+// done=true on message_stop, and an error for a malformed data frame or an
+// upstream `error` event. Blank lines, `:`
 // comments, and `event:` lines (which only update *curEvent) return all-zero.
-func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlock, done bool, err error) {
+func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlock, identity *messageIdentity, done bool, err error) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) {
-		return "", nil, false, nil
+		return "", nil, nil, false, nil
 	}
 	if bytes.HasPrefix(line, []byte("event:")) {
 		if curEvent != nil {
 			*curEvent = strings.TrimSpace(string(line[len("event:"):]))
 		}
-		return "", nil, false, nil
+		return "", nil, nil, false, nil
 	}
 	if !bytes.HasPrefix(line, []byte("data:")) {
-		return "", nil, false, nil
+		return "", nil, nil, false, nil
 	}
 	data := bytes.TrimSpace(line[len("data:"):])
 
 	var ev streamEvent
 	if uerr := json.Unmarshal(data, &ev); uerr != nil {
-		return "", nil, false, fmt.Errorf("anthropicapi: decode stream frame: %w", uerr)
+		return "", nil, nil, false, fmt.Errorf("anthropicapi: decode stream frame: %w", uerr)
 	}
 
 	if ev.Type == "error" || ev.Error != nil {
@@ -132,7 +134,7 @@ func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlo
 		if ev.Error != nil {
 			msg = ev.Error.Message
 		}
-		return "", nil, false, fmt.Errorf("anthropicapi: upstream stream error: %s", procenv.ScrubControl(msg))
+		return "", nil, nil, false, fmt.Errorf("anthropicapi: upstream stream error: %s", procenv.ScrubControl(msg))
 	}
 
 	switch ev.Type {
@@ -144,6 +146,12 @@ func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlo
 			token = ev.Delta.PartialJSON
 		}
 	case "message_start":
+		// A start with a missing message must still reach the verifier, not
+		// masquerade as a frame carrying no identity.
+		identity = &messageIdentity{}
+		if ev.Message != nil {
+			identity = &ev.Message.messageIdentity
+		}
 		if ev.Message != nil && ev.Message.Usage != nil {
 			usage = ev.Message.Usage
 		} else if ev.Usage != nil {
@@ -156,5 +164,5 @@ func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlo
 	case "message_stop":
 		done = true
 	}
-	return token, usage, done, nil
+	return token, usage, identity, done, nil
 }

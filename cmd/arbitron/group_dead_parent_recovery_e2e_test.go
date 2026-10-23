@@ -48,7 +48,7 @@ func TestGroupFilesE2E_DeadParentBeforeGatherRetriesFrozenFailure(t *testing.T) 
 				require.NoError(t, err)
 				paths := writeFilesStack(t, map[string]string{name: string(raw)})
 				ctx := context.Background()
-				ds, err := initDomain(ctx, paths.configPath)
+				ds, err := initStartedDomain(ctx, paths.configPath)
 				require.NoError(t, err)
 				t.Cleanup(func() { ds.Close(ctx) })
 				// Stop at the durable decided/actions-applied boundary, using real
@@ -94,7 +94,7 @@ BEGIN SELECT RAISE(ABORT, 'test crash boundary before parent wake'); END`)
 					_, err = db.Exec(`DROP TRIGGER test_hold_before_gather`)
 					require.NoError(t, err)
 					require.NoError(t, db.Close())
-					ds, err = initDomain(ctx, paths.configPath)
+					ds, err = initStartedDomain(ctx, paths.configPath)
 					require.NoError(t, err)
 				} else {
 					// No terminal event is emitted: only the periodic recovery input

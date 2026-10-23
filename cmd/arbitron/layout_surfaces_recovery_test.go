@@ -28,8 +28,9 @@ func TestLayoutSurfaces_RenameWriterProcess(t *testing.T) {
 	if configPath == "" {
 		return
 	}
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initDomainWithModelDependencies(context.Background(), configPath, offlineModelDependencies())
 	require.NoError(t, err)
+	require.NoError(t, ds.Start(context.Background()))
 	ds.layout.worker.Stop()
 	probe := &renameCrashProbe{layoutCrashBarrier: layoutCrashBarrier{root: filepath.Dir(configPath), stage: os.Getenv("ARBITRON_SURFACE_RENAME_STAGE")}, armed: true}
 	repo := ds.workflowRepo.(*filesystem.WorkflowRepo)

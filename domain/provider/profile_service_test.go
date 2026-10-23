@@ -3,6 +3,7 @@ package provider_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
@@ -73,6 +75,54 @@ func (s *memProfileStore) Delete(_ context.Context, alias string) error {
 	s.deletes++
 	return nil
 }
+func (s *memProfileStore) UpdateExpected(_ context.Context, expected, next provider.Profile) (provider.Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.byAlias[expected.Alias]
+	if !ok || !reflect.DeepEqual(current, expected) || next.Alias != expected.Alias {
+		return provider.Profile{}, provider.ErrAdvanceConflict
+	}
+	s.byAlias[next.Alias] = next.Clone()
+	s.updates++
+	return next.Clone(), nil
+}
+
+func checkPreparedSelection(s provider.PreparedSelection) error {
+	if s.Candidate == nil || s.Candidate.Model != s.Profile.Model || s.Candidate.CanonicalID == "" || s.Candidate.PathRevision == "" || s.Candidate.ExecutionRevision.ID != s.Candidate.PathRevision {
+		return provider.ErrExecutionRevisionUnavailable
+	}
+	return nil
+}
+
+func (s *memProfileStore) CreateValidated(ctx context.Context, selection provider.PreparedSelection) (provider.Profile, error) {
+	if err := checkPreparedSelection(selection); err != nil {
+		return provider.Profile{}, err
+	}
+	if err := s.Create(ctx, selection.Profile); err != nil {
+		return provider.Profile{}, err
+	}
+	return selection.Profile.Clone(), nil
+}
+
+func (s *memProfileStore) UpdateValidated(ctx context.Context, expected provider.Profile, selection provider.PreparedSelection) (provider.Profile, error) {
+	if err := checkPreparedSelection(selection); err != nil {
+		return provider.Profile{}, err
+	}
+	return s.UpdateExpected(ctx, expected, selection.Profile)
+}
+
+func (s *memProfileStore) DeleteExpected(_ context.Context, expected provider.Profile) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.byAlias[expected.Alias]
+	if !ok || !reflect.DeepEqual(current, expected) {
+		return provider.ErrAdvanceConflict
+	}
+	delete(s.byAlias, expected.Alias)
+	s.deletes++
+	return nil
+}
+
 func (s *memProfileStore) Get(_ context.Context, alias string) (provider.Profile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,9 +188,10 @@ func TestProfileService_CreateValidatesAndReloads(t *testing.T) {
 	store := newMemProfileStore()
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, rules(), rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
 
 	// Inapplicable axis: codex exposes no context knob.
-	_, _, err := svc.Create(admins(), provider.Profile{Alias: "bad", Kind: provider.ProfileKindAgent, Backend: "codex", ContextWindow: provider.Context1M})
+	_, _, err := svc.Create(admins(), provider.Profile{Alias: "bad", Kind: provider.ProfileKindAgent, Backend: "codex", Model: "gpt-6.1-sol", ContextWindow: provider.Context1M})
 	assert.ErrorIs(t, err, provider.ErrAxisNotApplicable)
 	assert.Equal(t, 0, store.writeCount(), "rejected write must not persist")
 	assert.Equal(t, 0, rl.calls, "no reload on rejected write")
@@ -159,6 +210,7 @@ func TestProfileService_UpdateValidatesAndReloads(t *testing.T) {
 	store := newMemProfileStore(provider.Profile{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, rules(), rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
 
 	_, _, err := svc.Update(users(), provider.Profile{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
 	assert.ErrorIs(t, err, provider.ErrForbidden)
@@ -226,8 +278,9 @@ func TestProfileService_ReloadFailureIsNonFatal(t *testing.T) {
 	store := newMemProfileStore()
 	rl := &fakeReloader{err: errors.New("boom")}
 	svc := provider.NewProfileService(store, rules(), rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
 
-	stored, _, err := svc.Create(admins(), provider.Profile{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	stored, _, err := svc.Create(admins(), provider.Profile{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "sonnet-4.6"})
 	require.NoError(t, err, "a reload failure must not fail a durable write")
 	assert.Equal(t, "ok", stored.Alias)
 	assert.Equal(t, 1, rl.calls)
@@ -272,9 +325,10 @@ func TestProfileService_CreateEmptyBackendDefaultsToCli(t *testing.T) {
 	store := newMemProfileStore()
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, cliRules, rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
 
 	stored, eff, err := svc.Create(admins(), provider.Profile{
-		Alias: "plain-chat", Kind: provider.ProfileKindChat,
+		Alias: "plain-chat", Kind: provider.ProfileKindChat, Model: "sonnet-4.6",
 		// Backend and ConnectionRef intentionally empty.
 	})
 	require.NoError(t, err, "empty backend + empty connection must validate as claude-cli (default/default)")
@@ -293,6 +347,7 @@ func TestProfileService_CreateChatConnectionDefaultAxes(t *testing.T) {
 	store := newMemProfileStore()
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, rules(), rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &ollamaRouteSource{})
 
 	stored, eff, err := svc.Create(admins(), provider.Profile{
 		Alias: "workhorse", Kind: provider.ProfileKindChat,
@@ -313,6 +368,7 @@ func TestProfileService_CreateChatConnectionDefaultAxes(t *testing.T) {
 func TestProfileService_CreateChatConnectionEffortHonored(t *testing.T) {
 	store := newMemProfileStore()
 	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &ollamaRouteSource{})
 
 	_, eff, err := svc.Create(admins(), provider.Profile{
 		Alias: "ds4", Kind: provider.ProfileKindChat,
@@ -329,6 +385,7 @@ func TestProfileService_CreateChatConnectionEffortHonored(t *testing.T) {
 func TestProfileService_CreateChatConnectionFloorsXHigh(t *testing.T) {
 	store := newMemProfileStore()
 	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &ollamaRouteSource{})
 
 	_, eff, err := svc.Create(admins(), provider.Profile{
 		Alias: "ds4x", Kind: provider.ProfileKindChat,
@@ -346,6 +403,7 @@ func TestProfileService_CreateChatConnectionNonDefaultContextRejected(t *testing
 	store := newMemProfileStore()
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, rules(), rl)
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &ollamaRouteSource{})
 
 	_, _, err := svc.Create(admins(), provider.Profile{
 		Alias: "ds4ctx", Kind: provider.ProfileKindChat,
@@ -363,10 +421,11 @@ func TestProfileService_CreateChatConnectionNonDefaultContextRejected(t *testing
 func TestProfileService_CreateAgentConnectionEmptyBackendStillRejected(t *testing.T) {
 	store := newMemProfileStore()
 	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &ollamaRouteSource{})
 
 	_, _, err := svc.Create(admins(), provider.Profile{
 		Alias: "cloud-agent", Kind: provider.ProfileKindAgent,
-		ConnectionRef: "my-conn", // backend="" conn!="" on the AGENT path
+		ConnectionRef: "my-conn", Model: "deepseek-v4-flash", // backend="" conn!="" on the AGENT path
 	})
 	assert.ErrorIs(t, err, provider.ErrUnknownBackend, "an agent profile must name a backend in the ruleset")
 	assert.Equal(t, 0, store.writeCount())
@@ -390,7 +449,8 @@ func TestProfileService_PersistErrorSuppressesReload(t *testing.T) {
 	rl := &fakeReloader{}
 	svc := provider.NewProfileService(store, rules(), rl)
 
-	_, _, err := svc.Create(admins(), provider.Profile{Alias: "dup", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), &pinnedSource{})
+	_, _, err := svc.Create(admins(), provider.Profile{Alias: "dup", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "sonnet-4.6"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, provider.ErrProfileExists)
 	assert.Equal(t, 0, rl.calls, "reloader must NOT be called when persist fails")
@@ -417,4 +477,13 @@ func TestProfileService_Capabilities(t *testing.T) {
 
 	_, err = svc.Capabilities(anon())
 	assert.ErrorIs(t, err, provider.ErrUnauthenticated)
+}
+
+// ollamaRouteSource reports the connection's route provider, as production
+// does for a connection-backed profile, so the fixed-version grammar applied is
+// the connection's and not the claude subscription's.
+type ollamaRouteSource struct{ fakeSource }
+
+func (ollamaRouteSource) VersionRequests(_ context.Context, p provider.Profile) ([]provider.VersionRequest, error) {
+	return []provider.VersionRequest{provider.VersionRequestFor(p, "ollama-cloud")}, nil
 }

@@ -107,7 +107,7 @@ type stTree struct {
 func newSTTree(t *testing.T) *stTree {
 	t.Helper()
 	tr := &stTree{store: newSTStore(), bus: eventbus.New(), owner: uuid.New()}
-	eng := engine.NewEngine(nil, &stRowsReader{s: tr.store}, nil, nil, nil, nil, newMockEventBus(), nil, nil, "")
+	eng := wireModelPins(engine.NewEngine(nil, &stRowsReader{s: tr.store}, nil, nil, nil, nil, newMockEventBus(), nil, nil, ""))
 	tr.viewer = &stViewer{inner: eng, calls: map[uuid.UUID]int{}}
 	tr.bridge = engine.NewSubtreeEventBridge(tr.bus, tr.viewer, tr.store)
 	tr.r = tr.put(nil, instance.VisibilityPrivate)

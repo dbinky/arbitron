@@ -77,6 +77,7 @@ func newGatherCancelSeam(t *testing.T, raceAtSuspend bool) *gatherCancelSeam {
 		map[string]any{"source": "g1", "target": "after", "output": "success"},
 		map[string]any{"source": "g1", "target": "fail", "output": "failure"},
 	}
+	parent.ModelPins, parent.ModelPinsVersion = map[string]string{}, instance.ModelPinsVersionSnapshot
 	require.NoError(t, repo.Create(ctx, &parent))
 
 	s := &gatherCancelSeam{gatherFixture: f, area: area, repo: repo, parentID: parent.ID, owner: owner}
@@ -89,8 +90,8 @@ func newGatherCancelSeam(t *testing.T, raceAtSuspend bool) *gatherCancelSeam {
 		return uuid.Nil
 	}
 	s.race.race = func() { require.NoError(t, s.eng.Cancel(ctxAs(owner), parent.ID)) }
-	s.eng = engine.NewEngine(nil, s.race, nodes, adaptsqlite.NewVariableSnapshotRepo(db), users,
-		map[workflow.NodeType]engine.NodeExecutor{}, f.bus, qm, queueRepo, "")
+	s.eng = wireModelPins(engine.NewEngine(nil, s.race, nodes, adaptsqlite.NewVariableSnapshotRepo(db), users,
+		map[workflow.NodeType]engine.NodeExecutor{}, f.bus, qm, queueRepo, ""))
 	s.eng.SetGroupSupport(engine.GroupSupportResultsAndFiles)
 	s.eng.SetSpawnLinks(repo)
 	t.Cleanup(s.eng.Shutdown)

@@ -83,6 +83,11 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 		return nil, err
 	}
 
+	wantModel, err := requiredExecutedModel(mission.Model, false, a.binding)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build the per-call env BEFORE any subprocess so a RevealKey / collision
 	// failure aborts the run with NO partial-env launch (fail-closed). A
 	// zero-value binding yields the subscription env (no endpoint/key); the
@@ -100,7 +105,7 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 	runCtx, cancel := procenv.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, events, err := collectResult(runCtx, a.core.runner, a.spec(mission, env))
+	result, events, err := collectResult(runCtx, a.core.runner, a.spec(mission, env), wantModel)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +127,44 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 		TokensOut: result.TokensOut,
 		SessionID: result.SessionID,
 	}, nil
+}
+
+// ProbeExecutedModel is the tool-disabled exact-model check of this agent route
+// (D3): one bounded turn through the same binary, credential and capability env
+// and --model a real agent run uses, but with probe-only tool/MCP/customization
+// restrictions and no permission bypass, in workDir. It requires an explicit model and
+// returns the binding's model and the CLI's session id only when the CLI's own
+// modelUsage reports it executed; the error never carries CLI output.
+func (a *AgentAdapter) ProbeExecutedModel(ctx context.Context, prompt, workDir string) (string, string, error) {
+	wantModel, err := requiredExecutedModel(a.binding.Model, true, a.binding)
+	if err != nil {
+		return "", "", err
+	}
+	if err := a.core.validateWorkDir(workDir); err != nil {
+		return "", "", err
+	}
+	env, err := agentEnvWithRules(ctx, a.binding, a.core.rules)
+	if err != nil {
+		return "", "", err
+	}
+	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
+	defer cancel()
+	spec := RunSpec{
+		Bin:              a.core.binPath,
+		Args:             buildProbeArgs(engine.ChatRequest{Model: wantModel}),
+		Stdin:            prompt,
+		Dir:              workDir,
+		Env:              probeEnv(env),
+		MaxResponseBytes: a.core.maxResponseBytes,
+	}
+	result, _, err := collectResult(runCtx, a.core.runner, spec, wantModel)
+	if err != nil {
+		return "", "", err
+	}
+	if result.SessionID == "" {
+		return "", "", errModelExecutionEvidence
+	}
+	return wantModel, result.SessionID, nil
 }
 
 // foldStep maps a parsed transcript event to an AgentStep for the trace.

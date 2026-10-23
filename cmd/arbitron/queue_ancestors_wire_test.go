@@ -39,6 +39,7 @@ func TestQueueAncestorsE2E_WirePagesPast500WithTimestampTies(t *testing.T) {
 			if inst.ID == parent && i > 1 && i < 501 {
 				inst.ParentInstanceID, inst.ParentNodeID, inst.SpawnMode = &root, &node, instance.SpawnModeFireAndForget
 			}
+			inst.ModelPins, inst.ModelPinsVersion = map[string]string{}, instance.ModelPinsVersionSnapshot
 			require.NoError(t, ds.instanceRepo.Create(ctx, inst))
 		}
 	}

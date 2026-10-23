@@ -13,6 +13,7 @@ import (
 func mkInst(t *testing.T, repo *InstanceRepo, owner uuid.UUID, vis instance.Visibility, dept string) uuid.UUID {
 	t.Helper()
 	inst := &instance.Instance{
+		ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		ID: uuid.New(), OwnerID: owner, WorkflowName: "wf",
 		WorkflowSnapshot: map[string]any{}, State: instance.StateRunning,
 		Priority: instance.PriorityNormal, Variables: map[string]any{},

@@ -93,15 +93,17 @@ func NewChatAdapterForBinding(cfg Config, binding provider.ResolvedBinding) *Cha
 
 // spec builds the tool-suppressed RunSpec for a chat request.
 func (a *ChatAdapter) spec(req engine.ChatRequest) RunSpec {
+	args := buildArgs(req, argsPolicy{DefaultModel: a.core.defaultModel, SuppressTools: true})
+	env := a.core.chatEnvWithBinding(a.binding)
+	if req.SuppressTools {
+		args, env = buildProbeArgs(req), probeEnv(env)
+	}
 	return RunSpec{
-		Bin: a.core.binPath,
-		Args: buildArgs(req, argsPolicy{
-			DefaultModel:  a.core.defaultModel,
-			SuppressTools: true,
-		}),
+		Bin:              a.core.binPath,
+		Args:             args,
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              a.core.chatEnvWithBinding(a.binding),
+		Env:              env,
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
 }
@@ -115,7 +117,11 @@ func (a *ChatAdapter) Chat(ctx context.Context, req engine.ChatRequest) (*engine
 	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 	defer cancel()
 
-	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req))
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, a.binding)
+	if err != nil {
+		return nil, err
+	}
+	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req), wantModel)
 	if err != nil {
 		return nil, err
 	}
@@ -138,11 +144,20 @@ func (a *ChatAdapter) StreamChat(ctx context.Context, req engine.ChatRequest) (<
 		return nil, err
 	}
 
+	// A pinned binding demands harness evidence whatever the request says, and
+	// the request may not name another model (D14); refuse before any launch.
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, a.binding)
+	if err != nil {
+		return nil, err
+	}
 	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 
 	lines, wait, err := a.core.runner.Run(runCtx, a.spec(req))
 	if err != nil {
 		cancel()
+		if wantModel != "" {
+			err = SanitizeProcessError(err)
+		}
 		return nil, fmt.Errorf("claudecli: stream call: %w", err)
 	}
 
@@ -153,7 +168,7 @@ func (a *ChatAdapter) StreamChat(ctx context.Context, req engine.ChatRequest) (<
 
 		sendChunk := makeSendChunk(runCtx, out)
 
-		var st streamState
+		st := streamState{wantModel: wantModel}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}

@@ -19,12 +19,31 @@ const (
 	ProfileKindAgent ProfileKind = "agent"
 )
 
+// SelectionMode determines whether discovery may advance a profile's model.
+type SelectionMode string
+
+const (
+	SelectionPinned    SelectionMode = "pinned"
+	SelectionFollowing SelectionMode = "following"
+)
+
+// FollowTarget identifies a stable catalog provider and capability tier,
+// independent of connection routing, backend and execution axes.
+type FollowTarget struct {
+	Provider string
+	Tier     string
+}
+
 // Profile is the registry entry an alias maps to. Phase 1 carried only
 // Alias/Kind/Model; Phase 2 widens it with ConnectionRef (the connection that
 // supplies the endpoint + key; empty means the claude-cli no-key subscription
 // path).
 type Profile struct {
 	Alias         string
+	SelectionMode SelectionMode
+	FollowTarget  *FollowTarget
+	// Revision is assigned by persistence, starting at 1, on every write.
+	Revision      int64
 	Kind          ProfileKind // chat | agent (unchanged from P1)
 	ConnectionRef string      // -> Connection.Name; empty = claude-cli no-key (subscription)
 	Model         string      // model-id, Azure deployment name, or provider/model for opencode
@@ -98,8 +117,26 @@ type ResolvedBinding struct {
 	ContextWindow ContextWindow
 	// Effort is copied verbatim from the resolved Profile by the resolver
 	// (Phase 2), consumed by Phase-3 emission. Empty == default (no-op).
-	Effort    Effort
-	RevealKey func(ctx context.Context) (string, error) // nil-safe; no-key path returns ""
+	Effort Effort
+	// Pinned is true when Model was replaced by the run's trigger-time pin
+	// (PinningResolver). Strict pins require exact execution evidence; native
+	// D8 pins instead retain the configured deployment/model ID.
+	Pinned bool
+	// OpaquePinRoute is the persisted native D8 family, set only by
+	// PinningResolver. Empty means strict exact-model enforcement.
+	OpaquePinRoute string
+	// ConnectionRef is the profile's live connection_ref ("" on the no-key
+	// subscription path). PinningResolver compares it with a D8 pin's
+	// trigger-time connection.
+	ConnectionRef string
+	RevealKey     func(ctx context.Context) (string, error) // nil-safe; no-key path returns ""
+}
+
+// RequiresModelEvidence distinguishes strict version pins from native D8
+// configured-ID pins. It never grants an exception from live routing alone.
+func (b ResolvedBinding) RequiresModelEvidence() bool {
+	return b.Pinned && (b.Model == "" || b.OpaquePinRoute != Canonicalize(b.Provider) ||
+		(b.OpaquePinRoute != CanonicalAzure && b.OpaquePinRoute != CanonicalBedrock))
 }
 
 // ProfileResolver maps a node's alias to a fully-resolved ResolvedBinding,

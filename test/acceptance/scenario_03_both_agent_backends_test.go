@@ -85,7 +85,7 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 		assert.Equal(t, "run", opencodeSpec.Args[0], "opencode uses the modern run subcommand")
 		m, ok := argValue(opencodeSpec.Args, "-m")
 		require.True(t, ok, "opencode routes the model via -m provider/model")
-		assert.Equal(t, "openrouter/qwen/qwen3-coder", m,
+		assert.Equal(t, "openrouter/deepseek/deepseek-v4-pro", m,
 			"the open-weight model is routed to the opencode provider id")
 		assert.NotEmpty(t, opencodeSpec.Dir, "opencode runs in cmd.Dir = the instance {{workspace}}")
 
@@ -113,6 +113,7 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 	// a mission through the shared fake runner on the ChatGPT subscription with no
 	// API key configured (codex authenticates via its on-disk credential).
 	t.Run("editor via codex agent with no API key", func(t *testing.T) {
+		t.Setenv("CODEX_HOME", t.TempDir()) // where the fake codex leaves its rollout
 		runner := newFakeRunner().on("exec", codexEditorLines...)
 		transport := newFakeTransport(true) // assessor (openrouter) reports done → completes
 		h := newHarness(t, codexBinding(runner, transport))
@@ -141,7 +142,7 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 		assert.Contains(t, codexSpec.Args, "--json", "codex emits the machine-readable event stream")
 		m, ok := argValue(codexSpec.Args, "-m")
 		require.True(t, ok, "codex routes the model via -m")
-		assert.Equal(t, "gpt-5-codex", m)
+		assert.Equal(t, "gpt-6.1-sol", m)
 		cd, ok := argValue(codexSpec.Args, "--cd")
 		require.True(t, ok, "codex carries the WorkDir via --cd")
 		assert.NotEmpty(t, cd, "the --cd WorkDir is the instance {{workspace}}")

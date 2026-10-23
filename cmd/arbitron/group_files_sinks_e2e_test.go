@@ -19,7 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The agent must inspect the prompt's real refs and change the real index.
+// The agent must inspect the prompt's real refs and change the real index. Like
+// the real CLI it reports the model that served the turn: the resolver alias is
+// pinned at trigger, so the pinned-call verification requires modelUsage.
 const repairingResolverScript = `#!/bin/sh
 set -eu
 prompt=$(cat)
@@ -29,13 +31,13 @@ test "$(git show MERGE_HEAD^:shared.txt)" = base
 printf 'combined\n' > shared.txt
 git add -- shared.txt
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"repairing-resolver"}'
-printf '%s\n' '{"type":"result","is_error":false,"result":"Resolved","session_id":"repairing-resolver","usage":{"input_tokens":1,"output_tokens":1}}'
+printf '%s\n' '{"type":"result","is_error":false,"result":"Resolved","session_id":"repairing-resolver","usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"claude-sonnet-4-5":{}}}'
 `
 
 func TestGroupFilesE2E_AutomaticRepairContinuesWithoutOperator(t *testing.T) {
 	paths := writeFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(repairingResolverScript), 0o700))
-	ds, err := initDomain(context.Background(), paths.configPath)
+	ds, err := initStartedDomain(context.Background(), paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	id := triggerGroupWorkflow(t, ds, "grp-files-conflict")
@@ -66,7 +68,7 @@ func TestGroupFilesE2E_AbortedResolutionRollsBackInsteadOfDroppingTaskChanges(t 
 				require.NotEqual(t, repairingResolverScript, script)
 				require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(script), 0o700))
 			}
-			ds, err := initDomain(context.Background(), paths.configPath)
+			ds, err := initStartedDomain(context.Background(), paths.configPath)
 			require.NoError(t, err)
 			t.Cleanup(func() { ds.Close(context.Background()) })
 			id := triggerGroupWorkflow(t, ds, "grp-files-conflict")
@@ -189,7 +191,7 @@ func TestGroupFilesE2E_FailedApplyRoutesFailureAndRestoresBytesAndModes(t *testi
 	wrapper := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = checkout-index ] && [ -f '" + armed + "' ]; then\n  rm '" + armed + "'\n  printf partial > private.txt\n  chmod 644 private.txt\n  exit 93\n fi\ndone\nexec '" + realGit + "' \"$@\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o700))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ds, err := initDomain(context.Background(), paths.configPath)
+	ds, err := initStartedDomain(context.Background(), paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	id := triggerGroupWorkflow(t, ds, "grp-files-conflict")

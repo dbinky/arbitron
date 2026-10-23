@@ -72,6 +72,7 @@ type Provider struct {
 	// the verdict so a failure fails closed without re-probing.
 	probeOnce sync.Once
 	probeErr  error
+	version   []int
 }
 
 var _ engine.AgentProvider = (*Provider)(nil)
@@ -122,7 +123,7 @@ const binaryName = "pi"
 // so a bare `pi --version` never inherits the engine's full parent env.
 func (p *Provider) ensureCompatible(ctx context.Context) error {
 	p.probeOnce.Do(func() {
-		p.probeErr = probeVersion(ctx, p.runner, p.binPath, procenv.BaseEnv())
+		p.version, p.probeErr = probeVersion(ctx, p.runner, p.binPath, procenv.BaseEnv())
 	})
 	return p.probeErr
 }
@@ -137,7 +138,8 @@ func (p *Provider) ensureCompatible(ctx context.Context) error {
 //
 // THE CRITICAL DIFFERENCE from the other CLI adapters: pi exits 0 even when the
 // turn failed, so a zero exit is NOT success. The stream's verdict decides, and
-// a failed turn becomes ErrTurnFailed carrying the provider's own message.
+// a failed turn becomes ErrTurnFailed. Pinned errors omit the untrusted
+// provider message, which may contain credentials.
 func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*engine.AgentResult, error) {
 	if mission.WorkDir == "" {
 		return nil, ErrWorkDirRequired
@@ -181,6 +183,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		MaxResponseBytes: p.maxResponseBytes,
 	})
 	if err != nil {
+		if p.binding.Pinned {
+			err = claudecli.SanitizeProcessError(err)
+		}
 		return nil, fmt.Errorf("pi: run (model %q): %w", model, err)
 	}
 
@@ -199,11 +204,17 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	res, parseErr := parseOutput(collected)
 
 	if waitErr != nil {
-		claudecli.LogStderrTail("pi", waitErr)
+		// A pinned run must not copy untrusted harness stderr into errors or
+		// logs; it can carry account credentials. errors.Is still classifies.
+		if p.binding.Pinned {
+			waitErr = claudecli.SanitizeProcessError(waitErr)
+		} else {
+			claudecli.LogStderrTail("pi", waitErr)
+		}
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("pi: mission timed out (model %q): %w (%v)", model, ctxErr, waitErr)
 		}
-		if parseErr == nil && res.failureMsg != "" {
+		if !p.binding.Pinned && parseErr == nil && res.failureMsg != "" {
 			return nil, fmt.Errorf("pi: mission failed (model %q): %s: %w", model, res.failureMsg, waitErr)
 		}
 		return nil, fmt.Errorf("pi: mission failed (model %q): %w", model, waitErr)
@@ -213,14 +224,22 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	}
 
 	// The exit code said success; the stream is the authority on whether the
-	// turn actually did. A failed turn here is a REFUSAL (quota, auth, provider
-	// error), not a broken binary — surface it as such, with the provider's own
-	// words when it supplied them.
+	// turn actually did. Preserve the refusal verdict, but never include an
+	// untrusted provider message in a pinned execution error.
 	if res.failed {
+		if p.binding.Pinned {
+			return nil, fmt.Errorf("%w (model %q)", ErrTurnFailed, model)
+		}
 		if res.failureMsg != "" {
 			return nil, fmt.Errorf("%w (model %q): %s", ErrTurnFailed, model, res.failureMsg)
 		}
 		return nil, fmt.Errorf("%w (model %q): pi reported a failed turn with no message", ErrTurnFailed, model)
+	}
+
+	if p.binding.Pinned {
+		if err := res.verifyExecutedModel(p.binding); err != nil {
+			return nil, err
+		}
 	}
 
 	steps := make([]engine.AgentStep, 0, len(res.steps))
@@ -235,4 +254,71 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		TokensOut: res.tokensOut,
 		SessionID: res.sessionID,
 	}, nil
+}
+
+// ProbeExecutedModel is the tool-disabled exact-model check of this agent route
+// (D5): one turn through the same binary, credential env and --model/--thinking
+// argv a real mission uses, plus the verified tool/extension/update restrictions
+// in testdata/probe-restrictions.md, with prompt on stdin
+// and workDir as cwd. It requires an explicit model and a pi whose tool-free
+// flags are verified, and returns the binding's model and pi's session id only
+// when every assistant message_end names the expected provider and model.
+// Errors never carry pi output.
+func (p *Provider) ProbeExecutedModel(ctx context.Context, prompt, workDir string) (string, string, error) {
+	if workDir == "" {
+		return "", "", ErrWorkDirRequired
+	}
+	args, err := buildArgs(p.binding)
+	if err != nil {
+		return "", "", err
+	}
+	args = append(args, noToolsFlag, noMCPFlag, noExtensionsFlag, offlineFlag)
+	env, err := piEnv(ctx, p.binding)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: credential env", ErrModelEvidence)
+	}
+	if err := p.ensureCompatible(ctx); err != nil {
+		// Version stdout and runner errors can contain account/config secrets.
+		// Discovery exposes only a static verdict, as it does for turn failures.
+		return "", "", fmt.Errorf("%w: version check", ErrModelEvidence)
+	}
+	if compareVersion(p.version, mustParseVersion(minPiToolFreeVersion)) < 0 {
+		return "", "", fmt.Errorf("%w: tool-free probe requires >= %s", ErrIncompatiblePi, minPiToolFreeVersion)
+	}
+
+	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	lines, wait, err := p.runner.Run(runCtx, claudecli.RunSpec{
+		Bin:              p.binPath,
+		Args:             args,
+		Stdin:            prompt,
+		Dir:              workDir,
+		Env:              env,
+		MaxResponseBytes: p.maxResponseBytes,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("%w: launch", ErrModelEvidence)
+	}
+	var collected []string
+	for line := range lines {
+		collected = append(collected, line)
+	}
+	if wait() != nil {
+		return "", "", fmt.Errorf("%w: exit", ErrModelEvidence)
+	}
+	res, err := parseOutput(collected)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: parse", ErrModelEvidence)
+	}
+	if res.failed {
+		return "", "", ErrTurnFailed
+	}
+	if err := res.verifyExecutedModel(p.binding); err != nil {
+		return "", "", err
+	}
+	// pi's json mode writes its session header even under --no-session.
+	if res.sessionID == "" {
+		return "", "", fmt.Errorf("%w: session", ErrModelEvidence)
+	}
+	return p.binding.Model, res.sessionID, nil
 }

@@ -38,6 +38,14 @@ const (
 	// thinkingOff is pi's spelling for "no reasoning". arbitron spells the same
 	// intent EffortNone ("none"), so the two vocabularies meet here.
 	thinkingOff = "off"
+	// Probe-only restrictions, verified against pi 1.3.0 (see
+	// testdata/probe-restrictions.md). Tool suppression alone does not prevent
+	// extension factories from executing; offline also prevents inherited
+	// missing-package installation and automatic update/catalog traffic.
+	noToolsFlag      = "--no-tools"
+	noMCPFlag        = "--no-mcp"
+	noExtensionsFlag = "--no-extensions"
+	offlineFlag      = "--offline"
 )
 
 // buildArgs assembles the argv for one pi agent mission:

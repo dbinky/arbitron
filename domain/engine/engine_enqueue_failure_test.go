@@ -62,16 +62,19 @@ func TestEngine_ChildEnqueueReloadFailureKeepsCommittedAdmission(t *testing.T) {
 				nodes := adaptsqlite.NewNodeExecutionRepo(db)
 				bus := &enqueueEvaluationBus{mockEventBus: newMockEventBus()}
 				repo := newScopeAwareRepo()
-				eng := engine.NewEngine(repo, instances, nodes, adaptsqlite.NewVariableSnapshotRepo(db),
+				eng := wireModelPins(engine.NewEngine(repo, instances, nodes, adaptsqlite.NewVariableSnapshotRepo(db),
 					adaptsqlite.NewUserRepo(db), map[workflow.NodeType]engine.NodeExecutor{
 						workflow.NodeTypeTransform: engine.NewTransformExecutor(),
-					}, bus, nil, queueRepo, "")
+					}, bus, nil, queueRepo, ""))
 				eng.SetGroupSupport(engine.GroupSupportResults)
 				reloads := &enqueueReloadFailure{InstanceRepository: instances}
 				qm := queue.NewManager(queueRepo, reloads,
 					&config.Config{Queue: config.QueueConfig{GlobalCap: 1, PerUserCap: 1}}, eng)
 				eng.SetQueueManager(qm)
-				t.Cleanup(eng.Shutdown)
+				// Stop the queue (joining its async evaluations) before draining the
+				// engine, as production Close does: an evaluation that launches a
+				// walker during Shutdown's Wait would reuse its WaitGroup.
+				t.Cleanup(func() { qm.Stop(); eng.Shutdown() })
 				owner, err := adaptsqlite.NewUserRepo(db).GetDefaultUser(ctx)
 				require.NoError(t, err)
 				ctx = ctxAs(owner)
@@ -97,7 +100,7 @@ func TestEngine_ChildEnqueueReloadFailureKeepsCommittedAdmission(t *testing.T) {
 					parentWF.Edges = parentWF.Edges[2:]
 				}
 				nodeID := "g"
-				parent := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: parentWF.Name,
+				parent := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: parentWF.Name,
 					WorkflowSnapshot: gtSnapshot(t, parentWF), State: instance.StateRunning,
 					Priority: instance.PriorityNormal, CurrentNodeID: &nodeID}
 				if evaluatorFirst {
@@ -158,6 +161,7 @@ func TestEngine_ChildEnqueueReloadFailureKeepsCommittedAdmission(t *testing.T) {
 				require.NoError(t, qm.Evaluate(ctx))
 				_, err = qm.Enqueue(ctx, childID, owner)
 				require.NoError(t, err)
+				qm.Stop()
 				eng.Shutdown()
 				stored, err = instances.Get(ctx, childID)
 				require.NoError(t, err)

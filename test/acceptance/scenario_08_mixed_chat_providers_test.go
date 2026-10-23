@@ -16,13 +16,13 @@ import (
 // committed `mixed-chat-providers` example is a linear chain of three
 // tool-suppressed chat (llm_call) nodes:
 //
-//	drafter  → ollama        (local, keyless OpenAI-compatible → adapter/openrouter)
+//	drafter  → ollama-cloud  (keyless OpenAI-compatible → adapter/openrouter)
 //	reviewer → anthropic-api (keyed Messages API            → adapter/anthropicapi)
 //	summarizer → openai      (keyed OpenAI-compatible        → adapter/openrouter)
 //
 // Each node is bound to its own provider via its own profile alias; the run is
 // asserted to drive each provider's distinct endpoint with the correct auth
-// header (keyed providers send their key; the keyless local-Ollama node sends
+// header (keyed providers send their key; the keyless Ollama-cloud-routed node sends
 // none), and the instance completes.
 func TestAcceptance_08_MixedChatProviders(t *testing.T) {
 	const anthropicKey = "sk-SENTINEL-anthropic-DO-NOT-LOG"
@@ -35,15 +35,15 @@ func TestAcceptance_08_MixedChatProviders(t *testing.T) {
 		name:         "mixed-chat-providers",
 		workflowName: "mixed-chat-providers",
 		profiles: []provider.Profile{
-			{Alias: "drafter", Kind: provider.ProfileKindChat, ConnectionRef: "ollama-local", Model: "llama3"},
-			{Alias: "reviewer", Kind: provider.ProfileKindChat, ConnectionRef: "anthropic-chat", Model: "claude-3-5-sonnet"},
-			{Alias: "summarizer", Kind: provider.ProfileKindChat, ConnectionRef: "openai-chat", Model: "gpt-4o"},
+			{Alias: "drafter", Kind: provider.ProfileKindChat, ConnectionRef: "ollama-local", Model: "deepseek-v4-flash"},
+			{Alias: "reviewer", Kind: provider.ProfileKindChat, ConnectionRef: "anthropic-chat", Model: "claude-sonnet-4-5"},
+			{Alias: "summarizer", Kind: provider.ProfileKindChat, ConnectionRef: "openai-chat", Model: "gpt-6.1-sol"},
 		},
 		connections: []seedConn{
 			{
 				// Local Ollama is keyless: an empty key seals a keyless connection
 				// (no Authorization header is sent by the OpenAI-compatible adapter).
-				conn: provider.Connection{Name: "ollama-local", Provider: "ollama", BaseURL: "http://localhost:11434/v1"},
+				conn: provider.Connection{Name: "ollama-local", Provider: "ollama-cloud", BaseURL: "https://ollama.example/v1"},
 				key:  "",
 			},
 			{
@@ -73,7 +73,7 @@ func TestAcceptance_08_MixedChatProviders(t *testing.T) {
 	var ollamaReq, anthropicReq, openaiReq *recordedRequest
 	for i := range reqs {
 		switch {
-		case strings.Contains(reqs[i].URL, "localhost:11434"):
+		case strings.Contains(reqs[i].URL, "ollama.example"):
 			ollamaReq = &reqs[i]
 		case strings.Contains(reqs[i].URL, "api.anthropic.example"):
 			anthropicReq = &reqs[i]
@@ -84,8 +84,8 @@ func TestAcceptance_08_MixedChatProviders(t *testing.T) {
 
 	// Drafter → local Ollama (OpenAI-compatible /chat/completions), keyless: no
 	// Authorization header is sent.
-	require.NotNil(t, ollamaReq, "drafter must hit the local-Ollama endpoint")
-	assert.Contains(t, ollamaReq.URL, "localhost:11434/v1/chat/completions")
+	require.NotNil(t, ollamaReq, "drafter must hit the Ollama-cloud-routed endpoint")
+	assert.Contains(t, ollamaReq.URL, "ollama.example/v1/chat/completions")
 	assert.Empty(t, ollamaReq.Auth, "keyless local Ollama sends no Authorization header")
 	assert.Empty(t, ollamaReq.APIKey)
 

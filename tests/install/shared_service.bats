@@ -65,6 +65,20 @@ _unit() { printf '%s\n' "$ARB_SYSTEMD_UNIT_PATH"; }
   grep -qF "ReadWritePaths=$ARB_LIB $ARB_LOG" "$u"
 }
 
+# G4: under ProtectSystem=strict a data root outside $ARB_LIB is read-only unless
+# listed, so the database and its model-state key could never be written.
+@test "custom SCFG_DATA_DIR is added to ReadWritePaths" {
+  export SCFG_DATA_DIR="$TEST_SANDBOX/data/custom"
+  write_systemd_unit
+  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG $TEST_SANDBOX/data/custom" "$(_unit)"
+}
+
+@test "default data root is not listed twice in ReadWritePaths" {
+  export SCFG_DATA_DIR="$ARB_LIB"
+  write_systemd_unit
+  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG" "$(_unit)"
+}
+
 @test "custom service account renders User/Group=svc-arb" {
   export ARB_SVC_USER=svc-arb
   write_systemd_unit
@@ -218,6 +232,29 @@ EOF
   [ "$status" -eq 0 ]
   grep -q "systemctl restart arbitron" "$MOCK_LOG"
   grep -qF 'KEEPME==' "$ARB_ETC/arbitron.env"
+}
+
+@test "reconfigure to a custom data root creates it and re-renders the unit before restart" {
+  cat >"$ARB_ETC/config.yaml" <<EOF
+server:
+  host: "127.0.0.1"
+  port: 8080
+EOF
+  printf 'ARBITRON_MASTER_KEY=KEEPME==\n' >"$ARB_ETC/arbitron.env"
+  export ARBITRON_AUTH_MODEL=edge-local ARBITRON_TLS_MODEL=tunnel
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_LLM_ACCESS=subscription ARBITRON_SKIP_PERMS=no
+  export ARBITRON_DATA_DIR="$TEST_SANDBOX/data/custom"
+  install_fake curl 'echo 200'
+  export ARBITRON_HEALTH_RETRIES=1 ARBITRON_HEALTH_SLEEP=0
+  run reconfigure_shared
+  [ "$status" -eq 0 ]
+  grep -qxF "install -d -m 0750 -o arbitron -g arbitron $TEST_SANDBOX/data/custom" "$MOCK_LOG"
+  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG $TEST_SANDBOX/data/custom" "$(_unit)"
+  local reload restart
+  reload="$(grep -n 'systemctl daemon-reload' "$MOCK_LOG" | head -1 | cut -d: -f1)"
+  restart="$(grep -n 'systemctl restart arbitron' "$MOCK_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$reload" ] && [ -n "$restart" ] && [ "$reload" -lt "$restart" ]
 }
 
 # --- uninstall ---------------------------------------------------------------

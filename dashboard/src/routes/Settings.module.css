@@ -50,7 +50,8 @@
   color: var(--text-secondary);
 }
 
-.numberInput {
+.numberInput,
+.urlInput {
   width: 100px;
   padding: 6px 10px;
   font-size: 13px;
@@ -63,7 +64,13 @@
   text-align: right;
 }
 
-.numberInput:focus {
+.urlInput {
+  width: 60%;
+  text-align: left;
+}
+
+.numberInput:focus,
+.urlInput:focus {
   border-color: var(--accent);
 }
 

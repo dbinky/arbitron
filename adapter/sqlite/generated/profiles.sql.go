@@ -21,21 +21,25 @@ func (q *Queries) CountProfiles(ctx context.Context) (int64, error) {
 }
 
 const createProfile = `-- name: CreateProfile :exec
-INSERT INTO profiles (alias, kind, connection_ref, model, backend, allowed_tools, context_window, effort, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO profiles (alias, kind, connection_ref, model, backend, allowed_tools, context_window, effort, selection_mode, follow_provider, follow_tier, created_at, updated_at, revision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT revision FROM profile_revision_floor WHERE profile_revision_floor.alias = ?), 0) + 1)
 `
 
 type CreateProfileParams struct {
-	Alias         string
-	Kind          string
-	ConnectionRef string
-	Model         string
-	Backend       string
-	AllowedTools  string
-	ContextWindow string
-	Effort        string
-	CreatedAt     string
-	UpdatedAt     string
+	Alias          string
+	Kind           string
+	ConnectionRef  string
+	Model          string
+	Backend        string
+	AllowedTools   string
+	ContextWindow  string
+	Effort         string
+	SelectionMode  string
+	FollowProvider string
+	FollowTier     string
+	CreatedAt      string
+	UpdatedAt      string
+	Alias_2        string
 }
 
 func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) error {
@@ -48,8 +52,12 @@ func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) er
 		arg.AllowedTools,
 		arg.ContextWindow,
 		arg.Effort,
+		arg.SelectionMode,
+		arg.FollowProvider,
+		arg.FollowTier,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.Alias_2,
 	)
 	return err
 }
@@ -67,19 +75,23 @@ func (q *Queries) DeleteProfile(ctx context.Context, alias string) (int64, error
 }
 
 const getProfile = `-- name: GetProfile :one
-SELECT alias, kind, connection_ref, model, backend, allowed_tools, context_window, effort
+SELECT alias, kind, connection_ref, model, backend, allowed_tools, context_window, effort, selection_mode, follow_provider, follow_tier, revision
 FROM profiles WHERE alias = ?
 `
 
 type GetProfileRow struct {
-	Alias         string
-	Kind          string
-	ConnectionRef string
-	Model         string
-	Backend       string
-	AllowedTools  string
-	ContextWindow string
-	Effort        string
+	Alias          string
+	Kind           string
+	ConnectionRef  string
+	Model          string
+	Backend        string
+	AllowedTools   string
+	ContextWindow  string
+	Effort         string
+	SelectionMode  string
+	FollowProvider string
+	FollowTier     string
+	Revision       int64
 }
 
 func (q *Queries) GetProfile(ctx context.Context, alias string) (GetProfileRow, error) {
@@ -94,24 +106,32 @@ func (q *Queries) GetProfile(ctx context.Context, alias string) (GetProfileRow, 
 		&i.AllowedTools,
 		&i.ContextWindow,
 		&i.Effort,
+		&i.SelectionMode,
+		&i.FollowProvider,
+		&i.FollowTier,
+		&i.Revision,
 	)
 	return i, err
 }
 
 const listProfiles = `-- name: ListProfiles :many
-SELECT alias, kind, connection_ref, model, backend, allowed_tools, context_window, effort
+SELECT alias, kind, connection_ref, model, backend, allowed_tools, context_window, effort, selection_mode, follow_provider, follow_tier, revision
 FROM profiles ORDER BY alias
 `
 
 type ListProfilesRow struct {
-	Alias         string
-	Kind          string
-	ConnectionRef string
-	Model         string
-	Backend       string
-	AllowedTools  string
-	ContextWindow string
-	Effort        string
+	Alias          string
+	Kind           string
+	ConnectionRef  string
+	Model          string
+	Backend        string
+	AllowedTools   string
+	ContextWindow  string
+	Effort         string
+	SelectionMode  string
+	FollowProvider string
+	FollowTier     string
+	Revision       int64
 }
 
 func (q *Queries) ListProfiles(ctx context.Context) ([]ListProfilesRow, error) {
@@ -132,6 +152,10 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]ListProfilesRow, error) {
 			&i.AllowedTools,
 			&i.ContextWindow,
 			&i.Effort,
+			&i.SelectionMode,
+			&i.FollowProvider,
+			&i.FollowTier,
+			&i.Revision,
 		); err != nil {
 			return nil, err
 		}
@@ -148,20 +172,23 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]ListProfilesRow, error) {
 
 const updateProfile = `-- name: UpdateProfile :execrows
 UPDATE profiles
-SET kind = ?, connection_ref = ?, model = ?, backend = ?, allowed_tools = ?, context_window = ?, effort = ?, updated_at = ?
+SET kind = ?, connection_ref = ?, model = ?, backend = ?, allowed_tools = ?, context_window = ?, effort = ?, selection_mode = ?, follow_provider = ?, follow_tier = ?, revision = revision + 1, updated_at = ?
 WHERE alias = ?
 `
 
 type UpdateProfileParams struct {
-	Kind          string
-	ConnectionRef string
-	Model         string
-	Backend       string
-	AllowedTools  string
-	ContextWindow string
-	Effort        string
-	UpdatedAt     string
-	Alias         string
+	Kind           string
+	ConnectionRef  string
+	Model          string
+	Backend        string
+	AllowedTools   string
+	ContextWindow  string
+	Effort         string
+	SelectionMode  string
+	FollowProvider string
+	FollowTier     string
+	UpdatedAt      string
+	Alias          string
 }
 
 func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (int64, error) {
@@ -173,6 +200,9 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (i
 		arg.AllowedTools,
 		arg.ContextWindow,
 		arg.Effort,
+		arg.SelectionMode,
+		arg.FollowProvider,
+		arg.FollowTier,
 		arg.UpdatedAt,
 		arg.Alias,
 	)

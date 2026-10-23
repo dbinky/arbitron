@@ -136,6 +136,17 @@ func TestMigration019_PreservesExistingExecutionHistory(t *testing.T) {
 	var output string
 	require.NoError(t, db.QueryRow(`SELECT output FROM node_executions WHERE id = ?`, executionID.String()).Scan(&output))
 	assert.JSONEq(t, `{"value":"retained"}`, output)
+	// The current repository reads the current schema: apply every later
+	// migration too, so the legacy row must also survive the rest of the chain.
+	for _, entry := range entries {
+		if entry.Name() <= "019_parallel_groups.up.sql" || !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
+		later, err := migrationsFS.ReadFile("migrations/" + entry.Name())
+		require.NoError(t, err)
+		_, err = db.Exec(string(later))
+		require.NoError(t, err, entry.Name())
+	}
 	got, err := NewInstanceRepo(db).Get(context.Background(), id)
 	require.NoError(t, err)
 	assert.Equal(t, instance.SpawnModeWaitForChild, got.SpawnMode)

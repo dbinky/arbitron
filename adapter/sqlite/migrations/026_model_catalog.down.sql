@@ -1,0 +1,10 @@
+DROP TABLE model_probe_cursors;
+DROP TABLE model_announcement_events;
+DROP TABLE model_refresh_advancements;
+DROP TABLE model_publication_acks;
+DROP TABLE model_refresh_reports;
+DROP TABLE model_first_observations;
+DROP TABLE model_usability_evidence;
+DROP TABLE model_catalog_models;
+DROP TABLE model_catalog_slices;
+DROP TABLE model_catalog_state;

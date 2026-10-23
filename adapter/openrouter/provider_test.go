@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -686,12 +687,20 @@ func TestParseSSELine(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			delta, usage, done, err := parseSSELine([]byte(tc.line))
+			frame, done, err := parseSSELine([]byte(tc.line))
 			if tc.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
+			var delta string
+			var usage *usageBlock
+			if frame != nil {
+				usage = frame.Usage
+				if len(frame.Choices) > 0 {
+					delta = frame.Choices[0].Delta.Content
+				}
+			}
 			assert.Equal(t, tc.wantDelta, delta)
 			assert.Equal(t, tc.wantDone, done)
 			if tc.wantUsage {
@@ -700,5 +709,30 @@ func TestParseSSELine(t *testing.T) {
 				assert.Nil(t, usage)
 			}
 		})
+	}
+}
+
+// Folded-in check: an ordinary call keeps its configured limit (zero means
+// unlimited), while the same body under a probe context stops at the probe ceiling.
+func TestChat_OrdinaryUnlimitedWhileProbeIsCapped(t *testing.T) {
+	big := `{"choices":[{"message":{"content":"` + strings.Repeat("A", 2<<20) + `"}}]}`
+	for _, probe := range []bool{false, true} {
+		ctx := context.Background()
+		if probe {
+			ctx = procenv.WithProbeResponseLimit(ctx)
+		}
+		ft := &fakeTransport{resp: jsonResponse(200, big)}
+		p := New(Config{
+			Binding:    staticBinding("https://router.test/v1", "m"),
+			HTTPClient: &http.Client{Transport: ft},
+		})
+		resp, err := p.Chat(ctx, engine.ChatRequest{Prompt: "x"})
+		if probe {
+			require.Error(t, err, "probe responses are capped at 1 MiB")
+			assert.Nil(t, resp)
+			continue
+		}
+		require.NoError(t, err, "an ordinary unlimited call must not inherit the probe cap")
+		require.NotNil(t, resp)
 	}
 }

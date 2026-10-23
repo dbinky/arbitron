@@ -41,6 +41,9 @@ func (e *Engine) OnChildTerminal(ctx context.Context, childID uuid.UUID) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if e.pinRelease != nil {
+		e.pinRelease(childID)
+	}
 	child, err := e.instances.Get(ctx, childID)
 	if err != nil {
 		return // an unreadable child cannot identify a parent; the reconciler covers it

@@ -19,6 +19,12 @@ import (
 // implementation time. Package: @earendil-works/pi-coding-agent; binary: `pi`.
 const minPiVersion = "0.87.0"
 
+// minPiToolFreeVersion is the earliest pi release whose tool, MCP, extension
+// and update restrictions this adapter has verified (testdata/probe-restrictions.md).
+// The tool-disabled exact-model probe refuses an older binary rather than risk
+// a turn with tools enabled; regular missions keep minPiVersion.
+const minPiToolFreeVersion = "1.3.0"
+
 // probeMaxResponseBytes caps cumulative stdout for the `--version` probe. A
 // version string is tiny, so a small ceiling is ample; it bounds the memory a
 // wedged or hostile `pi` build can grow by streaming unbounded output on a
@@ -36,15 +42,15 @@ var ErrIncompatiblePi = errors.New("pi: incompatible binary version")
 var versionRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 
 // probeVersion runs `<bin> --version`, parses the first semver-looking token,
-// and returns ErrIncompatiblePi if it is below minPiVersion or unparseable. It
-// uses the shared claudecli.CommandRunner seam so it is hermetically testable
-// with the fake runner.
+// and returns it, or ErrIncompatiblePi if it is below minPiVersion or
+// unparseable. It uses the shared claudecli.CommandRunner seam so it is
+// hermetically testable with the fake runner.
 //
 // SECURITY: env is the explicit child environment for the probe. Callers MUST
 // pass a built env, never nil — a nil Env makes os/exec INHERIT the engine's
 // full parent environment (master key, provider keys, DSNs) into a
 // user-installed `pi` binary resolved by name from PATH.
-func probeVersion(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string) error {
+func probeVersion(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string) ([]int, error) {
 	probeCtx, cancel := procenv.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
@@ -55,25 +61,25 @@ func probeVersion(ctx context.Context, runner claudecli.CommandRunner, bin strin
 		MaxResponseBytes: probeMaxResponseBytes,
 	})
 	if err != nil {
-		return fmt.Errorf("pi: version probe: %w", err)
+		return nil, fmt.Errorf("pi: version probe: %w", err)
 	}
 	var out []string
 	for l := range lines {
 		out = append(out, l)
 	}
 	if waitErr := wait(); waitErr != nil {
-		return fmt.Errorf("pi: version probe: %w", waitErr)
+		return nil, fmt.Errorf("pi: version probe: %w", waitErr)
 	}
 	found := parseVersion(strings.Join(out, "\n"))
 	if found == nil {
-		return fmt.Errorf("%w: could not parse version from %q (require >= %s)",
+		return nil, fmt.Errorf("%w: could not parse version from %q (require >= %s)",
 			ErrIncompatiblePi, strings.Join(out, " "), minPiVersion)
 	}
 	if compareVersion(found, mustParseVersion(minPiVersion)) < 0 {
-		return fmt.Errorf("%w: found %d.%d.%d, require >= %s",
+		return nil, fmt.Errorf("%w: found %d.%d.%d, require >= %s",
 			ErrIncompatiblePi, found[0], found[1], found[2], minPiVersion)
 	}
-	return nil
+	return found, nil
 }
 
 func parseVersion(s string) []int {

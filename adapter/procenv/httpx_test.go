@@ -42,16 +42,15 @@ func TestBoundedReader_NoCap(t *testing.T) {
 	}
 }
 
-// A body strictly within the cap reads fully without error. (The cap uses a
-// one-byte overflow lookahead, so a body exactly AT the cap is treated as
-// too-large — this preserves the byte-identical behavior of the forked copies
-// this helper replaces.)
+// A body within or exactly at the cap reads fully without error.
 func TestBoundedReader_WithinCap(t *testing.T) {
 	const body = "1234567890"
-	r := procenv.BoundedReader(strings.NewReader(body), int64(len(body))+1)
-	got, err := io.ReadAll(r)
-	require.NoError(t, err)
-	assert.Equal(t, body, string(got))
+	for _, max := range []int64{int64(len(body)), int64(len(body)) + 1} {
+		r := procenv.BoundedReader(strings.NewReader(body), max)
+		got, err := io.ReadAll(r)
+		require.NoError(t, err)
+		assert.Equal(t, body, string(got))
+	}
 }
 
 // A body exceeding the cap fails with ErrResponseTooLarge (hard failure, not EOF).

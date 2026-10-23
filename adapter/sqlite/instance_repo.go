@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -49,8 +50,9 @@ const createInstanceSQL = `INSERT INTO instances (
 	variables, original_variables, queued_at, department, visibility,
 	trigger_source, schedule_id, workflow_id,
 	parent_instance_id, parent_node_id, spawn_mode, spawn_depth,
+	model_pins, model_pins_version, model_pin_routes,
 	group_run_id, group_task_key, group_task_kind, current_node_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING created_at, updated_at`
 
 func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) error {
@@ -108,6 +110,19 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		}
 	}
 
+	// The pin pair rides the SAME insert as the row so a queued run can never
+	// exist without the models it was triggered on. A pair the read side would
+	// call corruption is refused before any write.
+	modelPins, modelPinsVersion, err := encodeModelPins(inst)
+	if err != nil {
+		return fmt.Errorf("creating instance: %w", err)
+	}
+
+	modelPinRoutes, err := encodeModelPinRoutes(inst)
+	if err != nil {
+		return fmt.Errorf("creating instance: %w", err)
+	}
+
 	var createdAtRaw, updatedAtRaw string
 	err = r.db.QueryRowContext(ctx, createInstanceSQL,
 		uuidToString(inst.ID),
@@ -136,6 +151,9 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		// bound on spawn recursion, so there must be no window in which a child
 		// row exists with a depth of 0 that a grandchild could read.
 		inst.SpawnDepth,
+		modelPins,
+		modelPinsVersion,
+		modelPinRoutes,
 		groupRunID,
 		groupTaskKey,
 		groupTaskKind,
@@ -291,12 +309,14 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 			department                                     sql.NullString
 			visibility, triggerSource                      string
 			scheduleIDRaw, parentIDRaw                     sql.NullString
+			pinsRaw, pinRoutesRaw                          sql.NullString
+			pinsVersionRaw                                 any
 		)
 		if err := rows.Scan(
 			&idRaw, &ownerRaw, &workflowName, &state, &priority, &currentNodeID,
 			&failedNodeID, &variablesRaw, &snapshotRaw, &createdAtRaw, &updatedAtRaw,
 			&completedAtRaw, &queuedAtRaw, &department, &visibility, &triggerSource,
-			&scheduleIDRaw, &parentIDRaw,
+			&scheduleIDRaw, &parentIDRaw, &pinsRaw, &pinsVersionRaw, &pinRoutesRaw,
 		); err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
@@ -341,26 +361,42 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: unmarshalling workflow snapshot: %w", err)
 		}
+		// A corrupt pin record cannot execute (Get refuses it), but it must not
+		// blank the whole page either: the row lists with its pins marked
+		// unreadable, so the enricher never shows the live model for it.
+		pins, pinsVersion, err := decodeStoredModelPins(pinsRaw, pinsVersionRaw)
+		var pinRoutes, pinRouteConns map[string]string
+		if err == nil {
+			pinRoutes, pinRouteConns, err = decodeModelPinRoutes(pinRoutesRaw, pins, pinsVersion)
+		}
+		if err != nil {
+			slog.Warn("listing instances: unreadable model pins", "instance", idRaw, "error", err)
+			pins, pinsVersion, pinRoutes, pinRouteConns = nil, instance.ModelPinsVersionUnreadable, nil, nil
+		}
 
 		summaries = append(summaries, instance.InstanceSummary{
-			ID:               id,
-			OwnerID:          ownerID,
-			WorkflowName:     workflowName,
-			State:            instance.State(state),
-			Priority:         instance.Priority(priority),
-			Department:       nullStringToString(department),
-			Visibility:       instance.Visibility(visibility),
-			CurrentNodeID:    nullStringToPtr(currentNodeID),
-			FailedNodeID:     nullStringToPtr(failedNodeID),
-			Variables:        variables,
-			WorkflowSnapshot: snapshot,
-			CreatedAt:        createdAt,
-			UpdatedAt:        updatedAt,
-			CompletedAt:      completedAt,
-			QueuedAt:         queuedAt,
-			TriggerSource:    instance.TriggerSource(triggerSource),
-			ScheduleID:       scheduleID,
-			ParentInstanceID: parentID,
+			ID:                       id,
+			OwnerID:                  ownerID,
+			WorkflowName:             workflowName,
+			State:                    instance.State(state),
+			Priority:                 instance.Priority(priority),
+			Department:               nullStringToString(department),
+			Visibility:               instance.Visibility(visibility),
+			CurrentNodeID:            nullStringToPtr(currentNodeID),
+			FailedNodeID:             nullStringToPtr(failedNodeID),
+			Variables:                variables,
+			WorkflowSnapshot:         snapshot,
+			CreatedAt:                createdAt,
+			UpdatedAt:                updatedAt,
+			CompletedAt:              completedAt,
+			QueuedAt:                 queuedAt,
+			TriggerSource:            instance.TriggerSource(triggerSource),
+			ScheduleID:               scheduleID,
+			ParentInstanceID:         parentID,
+			ModelPins:                pins,
+			ModelPinsVersion:         pinsVersion,
+			ModelPinRoutes:           pinRoutes,
+			ModelPinRouteConnections: pinRouteConns,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -429,12 +465,10 @@ func (r *InstanceRepo) SetCompleted(ctx context.Context, id uuid.UUID) error {
 // projection, including depth. queries/instances.sql documents the predicate.
 const listRunningWithLinkSQL = `SELECT ` + instanceColumnsWithLink + ` FROM instances WHERE state = 'running'`
 
+// ListRunning returns the healthy rows plus an *instance.CorruptPinsError when
+// any row's pin record is corrupt; crash recovery fails those through the engine.
 func (r *InstanceRepo) ListRunning(ctx context.Context) ([]instance.Instance, error) {
-	instances, err := queryInstancesWithLink(ctx, r.db, listRunningWithLinkSQL)
-	if err != nil {
-		return nil, fmt.Errorf("listing running instances: %w", err)
-	}
-	return instances, nil
+	return executionList(ctx, r.db, listRunningWithLinkSQL, "listing running instances")
 }
 
 func (r *InstanceRepo) UpdatePriority(ctx context.Context, id uuid.UUID, priority instance.Priority) error {
@@ -1001,8 +1035,11 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling variables: %w", err)
 	}
-	origVars, err := fromJSONString(row.OriginalVariables)
-	if err != nil {
+	// An empty input object is a valid trigger snapshot. Preserve it as a
+	// non-nil map: Rerun uses nil to distinguish missing original inputs and
+	// would otherwise refuse every workflow triggered without variables.
+	var origVars map[string]any
+	if err := json.Unmarshal([]byte(row.OriginalVariables), &origVars); err != nil {
 		return nil, fmt.Errorf("unmarshalling original variables: %w", err)
 	}
 
@@ -1049,43 +1086,112 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
 	// Spawn link (018), read as an ALL-OR-NONE tuple. scanInstanceWithLink
-	// overwrites it using the explicit projection. generated.Instance has no
-	// 019 group columns, so every link-aware full-row read (Get, ListRunning,
-	// NextEligible, ListWaitingWithTimer/Webhook) uses scanInstanceWithLink;
-	// rowToInstance is only the shared base conversion. ListQueued's consumer
-	// uses IDs/priorities only, not ancestry.
+	// overwrites it from its explicit projection, which also carries the 019
+	// group-task link and the pin record, so every link-aware full-row read (Get,
+	// ListRunning, NextEligible, ListWaitingWithTimer/Webhook) uses it;
+	// rowToInstance is the shared base conversion, including the immutable pin
+	// discriminator. ListQueued's consumer uses IDs/priorities only.
 	parentInstanceID, parentNodeID, spawnMode, err := nullStringToSpawnLink(
 		row.ParentInstanceID, row.ParentNodeID, row.SpawnMode)
 	if err != nil {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
 
+	pins, pinsVersion, err := decodeStoredModelPins(row.ModelPins, row.ModelPinsVersion)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row %s: %w", id, err)
+	}
+	routes, routeConns, err := decodeModelPinRoutes(row.ModelPinRoutes, pins, pinsVersion)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row %s: %w", id, err)
+	}
+
 	return &instance.Instance{
-		ID:                id,
-		OwnerID:           ownerID,
-		WorkflowID:        workflowID,
-		WorkflowName:      row.WorkflowName,
-		WorkflowSnapshot:  snapshot,
-		Department:        nullStringToString(row.Department),
-		Visibility:        instance.Visibility(row.Visibility),
-		State:             instance.State(row.State),
-		Priority:          instance.Priority(row.Priority),
-		Variables:         vars,
-		OriginalVariables: origVars,
-		CurrentNodeID:     nullStringToPtr(row.CurrentNodeID),
-		FailedNodeID:      nullStringToPtr(row.FailedNodeID),
-		CreatedAt:         createdAt,
-		UpdatedAt:         updatedAt,
-		CompletedAt:       completedAt,
-		QueuedAt:          queuedAt,
-		WaitingUntil:      waitingUntil,
-		WebhookToken:      nullStringToPtr(row.WebhookToken),
-		WebhookSecretHash: nullStringToPtr(row.WebhookSecretHash),
-		WebhookReceivedAt: webhookReceivedAt,
-		TriggerSource:     instance.TriggerSource(row.TriggerSource),
-		ScheduleID:        scheduleID,
-		ParentInstanceID:  parentInstanceID,
-		ParentNodeID:      parentNodeID,
-		SpawnMode:         spawnMode,
+		ID:                       id,
+		OwnerID:                  ownerID,
+		WorkflowID:               workflowID,
+		WorkflowName:             row.WorkflowName,
+		WorkflowSnapshot:         snapshot,
+		Department:               nullStringToString(row.Department),
+		Visibility:               instance.Visibility(row.Visibility),
+		State:                    instance.State(row.State),
+		Priority:                 instance.Priority(row.Priority),
+		Variables:                vars,
+		OriginalVariables:        origVars,
+		CurrentNodeID:            nullStringToPtr(row.CurrentNodeID),
+		FailedNodeID:             nullStringToPtr(row.FailedNodeID),
+		CreatedAt:                createdAt,
+		UpdatedAt:                updatedAt,
+		CompletedAt:              completedAt,
+		QueuedAt:                 queuedAt,
+		WaitingUntil:             waitingUntil,
+		WebhookToken:             nullStringToPtr(row.WebhookToken),
+		WebhookSecretHash:        nullStringToPtr(row.WebhookSecretHash),
+		WebhookReceivedAt:        webhookReceivedAt,
+		TriggerSource:            instance.TriggerSource(row.TriggerSource),
+		ScheduleID:               scheduleID,
+		ParentInstanceID:         parentInstanceID,
+		ParentNodeID:             parentNodeID,
+		SpawnMode:                spawnMode,
+		SpawnDepth:               int(row.SpawnDepth),
+		ModelPins:                pins,
+		ModelPinsVersion:         pinsVersion,
+		ModelPinRoutes:           routes,
+		ModelPinRouteConnections: routeConns,
 	}, nil
+}
+
+// ListExecutionSnapshots implements instance.ExecutionSnapshotSource.
+//
+// Failed legacy runs are included because Retry resolves them live. It is a
+// pure inventory read: a run with corrupt pins cannot execute (Get refuses it,
+// and the engine fails it through its normal terminal path), so it is skipped
+// and logged, never transitioned here. Healthy legacy snapshots remain visible
+// to route validation.
+func (r *InstanceRepo) ListExecutionSnapshots(ctx context.Context) ([]instance.ExecutionSnapshot, error) {
+	const q = `SELECT id, workflow_snapshot, model_pins, model_pins_version, model_pin_routes FROM instances
+  WHERE state IN ('queued','running','waiting','paused','failed')
+  ORDER BY created_at ASC, rowid ASC`
+
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("listing execution snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	out := []instance.ExecutionSnapshot{}
+	for rows.Next() {
+		var (
+			rawID, rawSnapshot string
+			rawPins, rawRoutes sql.NullString
+			pinsVersion        any
+		)
+		if err := rows.Scan(&rawID, &rawSnapshot, &rawPins, &pinsVersion, &rawRoutes); err != nil {
+			return nil, fmt.Errorf("listing execution snapshots: %w", err)
+		}
+		id, err := parseUUID(rawID)
+		if err != nil {
+			return nil, fmt.Errorf("listing execution snapshots: %w", err)
+		}
+		pins, version, err := decodeStoredModelPins(rawPins, pinsVersion)
+		if err == nil {
+			_, _, err = decodeModelPinRoutes(rawRoutes, pins, version)
+		}
+		if err != nil {
+			slog.Warn("execution snapshot inventory: skipping run with corrupt model pins", "instanceID", rawID, "error", err)
+			continue
+		}
+		if version != instance.ModelPinsVersionLegacy {
+			continue
+		}
+		snapshot, err := fromJSONString(rawSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("listing execution snapshots: instance %s: unmarshalling workflow snapshot: %w", id, err)
+		}
+		out = append(out, instance.ExecutionSnapshot{InstanceID: id, WorkflowSnapshot: snapshot})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing execution snapshots: %w", err)
+	}
+	return out, nil
 }

@@ -27,7 +27,7 @@ func TestLayoutBuild_MakeAllRequiresFreshAssetsAndBrowser(t *testing.T) {
 	// npm ci is a stamp-file prerequisite, so a dry run only shows it when
 	// package-lock.json changed; the build itself always runs.
 	ui := strings.Index(text, "cd dashboard && npm run build")
-	goTests := strings.Index(text, "go test ./...")
+	goTests := strings.Index(text, "go test -timeout 30m ./...")
 	render := strings.Index(text, "ARBITRON_REQUIRE_BROWSER=1 go test ./adapter/renderreview/ ./cmd/arbitron/")
 	require.GreaterOrEqual(t, ui, 0, "gate must rebuild embedded render.html")
 	require.Greater(t, goTests, ui, "Go tests must not see stale assets")
@@ -40,7 +40,9 @@ func TestLayoutBuild_MakeAllRequiresFreshAssetsAndBrowser(t *testing.T) {
 	cmd.Dir = filepath.Join("..", "..")
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
-	assert.Equal(t, "go test ./...", strings.TrimSpace(string(out)), "make test is the Go-only inner loop")
+	// cmd/arbitron alone runs ~7 minutes; beside the other packages it outlives
+	// go test's 10-minute default, so the targets set their own bound.
+	assert.Equal(t, "go test -timeout 30m ./...", strings.TrimSpace(string(out)), "make test is the Go-only inner loop")
 }
 
 func TestLayoutBuild_DockerShipsPinnedBrowser(t *testing.T) {

@@ -1,0 +1,26 @@
+{
+  "source": "docs/designs/2026-09-29-latest-model-profiles-decisions.md#d2-p3-identity",
+  "catalog": "https://models.dev/api.json",
+  "catalog_snapshot": "2026-09-30",
+  "models": [
+    {"provider": "anthropic", "native_id": "claude-opus-5", "tier": "opus", "order_key": "5", "specific": true},
+    {"provider": "anthropic", "native_id": "claude-opus-5-5", "tier": "opus", "order_key": "5.5", "specific": true},
+    {"provider": "anthropic", "native_id": "claude-haiku-4-5-20251001", "tier": "", "order_key": "", "specific": true},
+    {"provider": "anthropic", "native_id": "claude-opus-5-5-fast", "tier": "", "order_key": "", "specific": false},
+    {"provider": "openai", "native_id": "gpt-6-sol", "tier": "sol", "order_key": "6", "specific": true},
+    {"provider": "openai", "native_id": "gpt-6.1-sol", "tier": "sol", "order_key": "6.1", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "deepseek-v4-flash", "tier": "flash", "order_key": "4", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "deepseek-v4.1-flash", "tier": "flash", "order_key": "4.1", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "deepseek-v4-flash:0731", "tier": "", "order_key": "", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "glm-5.2", "tier": "glm", "order_key": "5.2", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "glm-5.3", "tier": "glm", "order_key": "5.3", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "kimi-k3", "tier": "kimi", "order_key": "3", "specific": true},
+    {"provider": "ollama-cloud", "native_id": "kimi-k2.7-code", "tier": "kimi-code", "order_key": "2.7", "specific": true}
+  ],
+  "newest": {
+    "anthropic/opus": "claude-opus-5-5",
+    "openai/sol": "gpt-6.1-sol",
+    "ollama-cloud/flash": "deepseek-v4.1-flash",
+    "ollama-cloud/glm": "glm-5.3"
+  }
+}

@@ -40,7 +40,7 @@ func TestDomainStackClose_WaitsForABlockedRecoveryRollbackBeforeClosingTheDB(t *
 	wg.Go(func() { sweepGroupReconciler(ctx, rec, time.Millisecond, discardLogger()) })
 	watchDone := make(chan struct{})
 	wg.Go(func() { <-ctx.Done(); close(watchDone) })
-	ds := &domainStack{logger: discardLogger(), db: db, groupSweepCancel: cancel, recoveryWG: wg, groupWatchDone: watchDone}
+	ds := &domainStack{logger: discardLogger(), db: db, lifecycleCancel: cancel, recoveryWG: wg, groupWatchDone: watchDone}
 
 	<-rec.started
 	closed := make(chan struct{})

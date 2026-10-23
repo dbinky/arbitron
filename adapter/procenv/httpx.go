@@ -40,7 +40,10 @@ type limitedReader struct {
 }
 
 func (l *limitedReader) Read(p []byte) (int, error) {
-	if l.remaining <= 0 {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if l.remaining < 0 {
 		return 0, ErrResponseTooLarge
 	}
 	if int64(len(p)) > l.remaining+1 {

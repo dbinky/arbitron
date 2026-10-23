@@ -29,12 +29,12 @@ func TestOrphanReconciler_SameSecondIntentReachesOnlyCoveredDescendants(t *testi
 				groups := adaptsqlite.NewGroupRunRepo(db)
 				owner, err := adaptsqlite.NewUserRepo(db).GetDefaultUser(ctx)
 				require.NoError(t, err)
-				root := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "parent", State: terminal, Priority: instance.PriorityNormal}
+				root := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: "parent", State: terminal, Priority: instance.PriorityNormal}
 				require.NoError(t, repo.Create(ctx, root))
 				root, err = repo.Get(ctx, root.ID)
 				require.NoError(t, err)
 				node := "group"
-				mid := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "mid", State: instance.StateCompleted,
+				mid := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: "mid", State: instance.StateCompleted,
 					Priority: instance.PriorityNormal, ParentInstanceID: &root.ID, ParentNodeID: &node, SpawnMode: instance.SpawnModeFireAndForget}
 				require.NoError(t, repo.Create(ctx, mid))
 				before, after := uuid.New(), uuid.New()
@@ -48,7 +48,7 @@ func TestOrphanReconciler_SameSecondIntentReachesOnlyCoveredDescendants(t *testi
 					require.NoError(t, groups.CreateWithTasks(ctx, run))
 				}
 				create := func(id uuid.UUID, key string) {
-					child := &instance.Instance{ID: id, OwnerID: owner, WorkflowName: "child", State: instance.StateWaiting,
+					child := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: id, OwnerID: owner, WorkflowName: "child", State: instance.StateWaiting,
 						Priority: instance.PriorityNormal, ParentInstanceID: &mid.ID, ParentNodeID: &node, SpawnMode: mode}
 					if mode == instance.SpawnModeGroupTask {
 						child.GroupRunID, child.GroupTaskKey, child.GroupTaskKind = &run.ID, &key, instance.GroupTaskKindBranch
@@ -69,7 +69,7 @@ func TestOrphanReconciler_SameSecondIntentReachesOnlyCoveredDescendants(t *testi
 				repo = adaptsqlite.NewInstanceRepo(db)
 				groups = adaptsqlite.NewGroupRunRepo(db)
 				bus := newMockEventBus()
-				eng := engine.NewEngine(nil, repo, nil, nil, nil, nil, bus, newMockQueueManager(), nil, "")
+				eng := wireModelPins(engine.NewEngine(nil, repo, nil, nil, nil, nil, bus, newMockQueueManager(), nil, ""))
 				eng.SetSpawnLinks(repo)
 				reconciler := engine.NewOrphanedChildReconciler(repo, repo, fixedIdentityResolver{}, eng)
 				for range 2 { // replay must retain the same boundary and terminal receipt

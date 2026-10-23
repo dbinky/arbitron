@@ -31,7 +31,7 @@ func TestGroupDeliveryCrashProcess(t *testing.T) {
 			os.Exit(86)
 			return nil, nil
 		}))
-	ds, err := initDomain(context.Background(), configPath)
+	ds, err := initStartedDomain(context.Background(), configPath)
 	require.NoError(t, err)
 	_, err = ds.db.Exec(`CREATE TRIGGER test_group_delivery_crash
 		BEFORE UPDATE OF variables ON instances
@@ -89,7 +89,7 @@ func TestGroupE2E_DeliveryCrashRetryConsumesFrozenOutputOnce(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 
-			ds, err := initDomain(ctx, paths.configPath)
+			ds, err := initStartedDomain(ctx, paths.configPath)
 			require.NoError(t, err)
 			t.Cleanup(func() { ds.Close(context.Background()) })
 			inst, err = ds.instanceRepo.Get(ctx, parent)

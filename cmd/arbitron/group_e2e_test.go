@@ -221,7 +221,8 @@ func writeGroupStack(t *testing.T, perUserCap int, manifests map[string]string) 
 		"workspace:\n  path: " + yamlQuote(workspaceDir) + "\n" +
 		"samples:\n  seed: false\n  sourcedir: \"\"\n" +
 		"logging:\n  level: \"error\"\n  file: " + yamlQuote(filepath.Join(root, "arbitron.log")) + "\n" +
-		"queue:\n  globalcap: 10\n  perusercap: " + strconv.Itoa(perUserCap) + "\n"
+		"queue:\n  globalcap: 10\n  perusercap: " + strconv.Itoa(perUserCap) + "\n" +
+		groupTestProfilesYAML
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 	return groupStackPaths{root: root, workspaceDir: workspaceDir, configPath: configPath}
 }
@@ -230,7 +231,7 @@ func writeGroupStack(t *testing.T, perUserCap int, manifests map[string]string) 
 func bootGroupExecStack(t *testing.T, perUserCap int, manifests map[string]string) (*domainStack, groupStackPaths) {
 	t.Helper()
 	paths := writeGroupStack(t, perUserCap, manifests)
-	ds, err := initDomain(context.Background(), paths.configPath)
+	ds, err := initStartedDomain(context.Background(), paths.configPath)
 	require.NoError(t, err, "the composition root must boot with parallel_group workflows present")
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	return ds, paths
@@ -587,7 +588,7 @@ func TestGroupE2E_StartupReconcileSettlesGroupAfterCrash(t *testing.T) {
 	paths := writeGroupStack(t, 5, map[string]string{"grp-crash": groupCrashManifest})
 	ctx := context.Background()
 
-	ds1, err := initDomain(ctx, paths.configPath)
+	ds1, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { gates.release(t, "slow"); ds1.Close(context.Background()) })
 	parentID, _, err := ds1.eng.Trigger(ctx, "grp-crash", map[string]any{"gateDir": gates.dir}, "normal")
@@ -620,8 +621,12 @@ func TestGroupE2E_StartupReconcileSettlesGroupAfterCrash(t *testing.T) {
 	require.Equal(t, instance.StateRunning, slow.State, "bounded process gate must hold the slow task at the crash boundary")
 
 	require.NoError(t, ds1.db.Close())
+	// The abandoned process's walkers still finish against the closed database
+	// and log through the process-wide logger; drain them inside this test so
+	// their errors never land in a later test's log.
+	t.Cleanup(func() { ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
-	ds2, err := initDomain(ctx, paths.configPath)
+	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds2.Close(context.Background()) })
 
@@ -660,7 +665,9 @@ func TestGroupE2E_PeriodicSweepSettlesGroupWithoutAWake(t *testing.T) {
 
 	parentID, runID, childID := uuid.New(), uuid.New(), uuid.New()
 	require.NoError(t, ds.instanceRepo.Create(ctx, &instance.Instance{
-		ID: parentID, OwnerID: localDefaultUser, WorkflowName: "grp-entry", WorkflowSnapshot: snapshot,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               parentID, OwnerID: localDefaultUser, WorkflowName: "grp-entry", WorkflowSnapshot: snapshot,
 		State: instance.StateWaiting, Priority: instance.PriorityNormal,
 		Variables: map[string]any{}, Visibility: instance.VisibilityPrivate,
 	}))
@@ -689,7 +696,9 @@ func TestGroupE2E_PeriodicSweepSettlesGroupWithoutAWake(t *testing.T) {
 	require.NoError(t, ds.groupRunRepo.MarkTaskLaunched(ctx, runID, "only"))
 	pid, node, rid, key := parentID, "group-1", runID, "only"
 	require.NoError(t, ds.instanceRepo.Create(ctx, &instance.Instance{
-		ID: childID, OwnerID: localDefaultUser, WorkflowName: "grp-entry", WorkflowSnapshot: snapshot,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               childID, OwnerID: localDefaultUser, WorkflowName: "grp-entry", WorkflowSnapshot: snapshot,
 		State: instance.StateCompleted, Priority: instance.PriorityNormal,
 		Variables: map[string]any{"only_value": "swept"}, Visibility: instance.VisibilityPrivate,
 		ParentInstanceID: &pid, ParentNodeID: &node, SpawnMode: instance.SpawnModeGroupTask, SpawnDepth: 1,

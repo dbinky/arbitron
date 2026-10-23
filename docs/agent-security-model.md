@@ -66,6 +66,16 @@ skip-permissions agent, **agents MUST run inside an isolated sandbox**:
 The provided `Dockerfile` runs as a non-root user; a production deployment is
 responsible for the egress controls and secret isolation above.
 
+**Connection keys in agent processes.** A profile with a `connection_ref`
+reveals that connection's API key into the env of the agent process it routes
+through. This has always applied to batch `agent_call` runs. From the
+latest-model profiles release it also applies to **interactive claude-code
+turns** (`interactive_agent`). Those turns previously ran with an empty
+binding. The key is therefore live in a skip-permissions process that runs
+model-chosen tools, and a prompt-injected tool call can read it. Scope such
+keys to the least privilege and spend limit the workflow needs. The container
+is the boundary, as above.
+
 ## If you want the allowlist to be a real boundary
 
 Drop `--dangerously-skip-permissions` and rely on `--allowedTools` (verified

@@ -7,6 +7,7 @@ import (
 
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	domainconfig "github.com/arbitron/arbitron/domain/config"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,8 @@ type seedFakeStore struct {
 	createErr   error // forced Create error (non-ErrProfileExists), for the error path
 	countErr    error // forced Count error, to exercise the early-abort gate
 	createCalls int
+	seedStarted bool
+	pending     []provider.Profile
 }
 
 func newSeedFakeStore(profiles ...provider.Profile) *seedFakeStore {
@@ -79,6 +82,38 @@ func (s *seedFakeStore) Count(_ context.Context) (int, error) {
 
 var _ provider.ProfileStore = (*seedFakeStore)(nil)
 
+func (s *seedFakeStore) PendingProfileSeed(ctx context.Context, candidates []provider.Profile) ([]provider.Profile, error) {
+	n, err := s.Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !s.seedStarted && n == 0 && len(candidates) > 0 {
+		s.seedStarted = true
+		s.pending = append([]provider.Profile(nil), candidates...)
+	}
+	return append([]provider.Profile(nil), s.pending...), nil
+}
+
+func (s *seedFakeStore) CompleteProfileSeed(_ context.Context, alias string) error {
+	remaining := s.pending[:0]
+	for _, p := range s.pending {
+		if p.Alias != alias {
+			remaining = append(remaining, p)
+		}
+	}
+	s.pending = remaining
+	return nil
+}
+
+func (s *seedFakeStore) ReplaceProfileSeed(_ context.Context, p provider.Profile) error {
+	for i := range s.pending {
+		if s.pending[i].Alias == p.Alias {
+			s.pending[i] = p
+		}
+	}
+	return nil
+}
+
 // testRules builds a CapabilityRules where claude-code is a known backend (with
 // the metered 1m tier + a high effort ceiling) and every other backend is
 // unknown (so a bogus backend fails Validate → is skipped by the seeder).
@@ -95,6 +130,30 @@ func testRules() provider.CapabilityRules {
 	})
 }
 
+type noopReloader struct{}
+
+func (noopReloader) Reload(context.Context) error { return nil }
+
+// testSeeder is the real ProfileService over the fake store: the seed is only
+// meaningful through the same preparation and validation an admin write gets.
+func testSeeder(store provider.ProfileStore) *provider.ProfileService {
+	svc := provider.NewProfileService(store, testRules(), noopReloader{})
+	svc.SetModelSelection(modelidentity.NewVersionResolver(), seedPinnedRoutes{})
+	svc.SetAdvancementDependencies(nil, nil, provider.NewExecutionGate())
+	return svc
+}
+
+type seedPinnedRoutes struct {
+	provider.EligibleCandidateSource
+}
+
+func (seedPinnedRoutes) VersionRequests(_ context.Context, p provider.Profile) ([]provider.VersionRequest, error) {
+	if p.FollowTarget != nil || p.ConnectionRef != "" {
+		return nil, errors.New("seed fixture has no such route")
+	}
+	return []provider.VersionRequest{provider.VersionRequestFor(p, "")}, nil
+}
+
 // Seed: an empty table seeds the valid candidates and skips invalid ones
 // (operator config never blocks boot).
 func TestSeedProfiles_EmptyTableSeedsValidSkipsInvalid(t *testing.T) {
@@ -103,7 +162,7 @@ func TestSeedProfiles_EmptyTableSeedsValidSkipsInvalid(t *testing.T) {
 		{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "opus-4.8"},
 		{Alias: "weird", Kind: provider.ProfileKindAgent, Backend: "nonexistent", ContextWindow: provider.Context1M},
 	}
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), in, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "exactly the valid candidate is seeded")
 	assert.Equal(t, 1, skipped, "the unknown-backend candidate is skipped")
@@ -117,8 +176,7 @@ func TestSeedProfiles_EmptyTableSeedsValidSkipsInvalid(t *testing.T) {
 // Seed: a non-empty table is a no-op (the DB wins on every subsequent boot).
 func TestSeedProfiles_NonEmptyTableIsNoOp(t *testing.T) {
 	store := newSeedFakeStore(provider.Profile{Alias: "existing", Kind: provider.ProfileKindChat})
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(),
-		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), []provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "no seeding when the table is non-empty")
 	assert.Equal(t, 0, skipped)
@@ -131,9 +189,9 @@ func TestSeedProfiles_NonEmptyTableIsNoOp(t *testing.T) {
 func TestSeedProfiles_DefaultBackendSubstitutedForEmpty(t *testing.T) {
 	store := newSeedFakeStore()
 	in := []provider.Profile{
-		{Alias: "default-chat", Kind: provider.ProfileKindChat}, // empty backend + empty conn
+		{Alias: "default-chat", Kind: provider.ProfileKindChat, Model: "claude-sonnet-4-6"}, // empty backend + empty conn
 	}
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), in, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	assert.Equal(t, 0, skipped)
@@ -143,8 +201,7 @@ func TestSeedProfiles_DefaultBackendSubstitutedForEmpty(t *testing.T) {
 func TestSeedProfiles_CreateErrorPropagates(t *testing.T) {
 	store := newSeedFakeStore()
 	store.createErr = assertAnError
-	_, _, err := SeedProfiles(context.Background(), store, testRules(),
-		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
+	_, _, err := SeedProfiles(context.Background(), store, testSeeder(store), []provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-sonnet-4-6"}}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, assertAnError)
 }
@@ -156,13 +213,13 @@ func TestSeedProfiles_MalformedAxisSkipped(t *testing.T) {
 	store := newSeedFakeStore()
 	in := []provider.Profile{
 		// Bad context_window — will fail ParseContextWindow.
-		{Alias: "bad-cw", Kind: provider.ProfileKindAgent, Backend: "claude-code", ContextWindow: "not-a-tier"},
+		{Alias: "bad-cw", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-sonnet-4-6", ContextWindow: "not-a-tier"},
 		// Bad effort — will fail ParseEffort.
-		{Alias: "bad-eff", Kind: provider.ProfileKindAgent, Backend: "claude-code", Effort: "not-an-effort"},
+		{Alias: "bad-eff", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-sonnet-4-6", Effort: "not-an-effort"},
 		// Valid — must still be seeded (malformed entries must not abort the loop).
-		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"},
+		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-sonnet-4-6"},
 	}
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), in, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "only the valid candidate is seeded")
 	assert.Equal(t, 2, skipped, "both malformed-axis candidates are skipped")
@@ -177,8 +234,7 @@ func TestSeedProfiles_CreateExistsIsSkipped(t *testing.T) {
 	_ = store.Create(context.Background(), provider.Profile{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
 	store.createCalls = 0 // reset the counter
 
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(),
-		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), []provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}}, nil)
 	require.NoError(t, err, "ErrProfileExists must not abort seeding")
 	assert.Equal(t, 0, n, "a duplicate is not counted as seeded")
 	assert.Equal(t, 0, skipped, "a duplicate is not counted as skipped (it is silently skipped)")
@@ -189,8 +245,7 @@ func TestSeedProfiles_CountErrorPropagates(t *testing.T) {
 	store := newSeedFakeStore()
 	store.countErr = errors.New("count: db unavailable")
 
-	_, _, err := SeedProfiles(context.Background(), store, testRules(),
-		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
+	_, _, err := SeedProfiles(context.Background(), store, testSeeder(store), []provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, store.countErr)
 	assert.Equal(t, 0, store.createCalls, "Count failure must abort before any Create is attempted")
@@ -203,10 +258,10 @@ func TestSeedProfiles_CountErrorPropagates(t *testing.T) {
 func TestSeedProfiles_EmptyBackendWithConnectionSkipped(t *testing.T) {
 	store := newSeedFakeStore()
 	in := []provider.Profile{
-		{Alias: "cloud", Kind: provider.ProfileKindAgent, ConnectionRef: "my-conn"}, // backend="" conn!=""
-		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"},      // valid
+		{Alias: "cloud", Kind: provider.ProfileKindAgent, ConnectionRef: "my-conn"},                        // backend="" conn!=""
+		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-sonnet-4-6"}, // valid
 	}
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), in, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "only the explicit-backend candidate is seeded")
 	assert.Equal(t, 1, skipped, "empty backend + non-empty connection is skipped (no substitution)")
@@ -215,7 +270,7 @@ func TestSeedProfiles_EmptyBackendWithConnectionSkipped(t *testing.T) {
 // Edge: no candidates on an empty table seeds nothing without error.
 func TestSeedProfiles_NoCandidates(t *testing.T) {
 	store := newSeedFakeStore()
-	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), nil)
+	n, skipped, err := SeedProfiles(context.Background(), store, testSeeder(store), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 	assert.Equal(t, 0, skipped)
@@ -244,6 +299,7 @@ func TestPaired_ConfigToSeedToStore(t *testing.T) {
 			Alias:   c.alias,
 			Kind:    c.kind,
 			Backend: c.backend,
+			Model:   "claude-sonnet-4-6",
 		})
 	}
 
@@ -251,7 +307,7 @@ func TestPaired_ConfigToSeedToStore(t *testing.T) {
 	assert.Len(t, profiles, 3, "ProfilesFromConfig must map all 3 entries (invalid filter happens in SeedProfiles)")
 
 	store := newSeedFakeStore()
-	n, skipped, err := SeedProfiles(ctx, store, testRules(), profiles)
+	n, skipped, err := SeedProfiles(ctx, store, testSeeder(store), profiles, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n, "exactly 2 valid profiles must be seeded")
 	assert.Equal(t, 1, skipped, "the invalid-backend profile must be skipped, not an error")
@@ -267,9 +323,9 @@ func TestPaired_ConfigToSeedToStore(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrProfileNotFound, "invalid-backend must not be in the store")
 
 	// Second boot: the store is non-empty — seed must be a complete no-op.
-	n2, skipped2, err := SeedProfiles(ctx, store, testRules(), profiles)
+	n2, skipped2, err := SeedProfiles(ctx, store, testSeeder(store), profiles, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n2, "second seed must produce zero creates (DB-wins)")
-	assert.Equal(t, 0, skipped2, "second seed must not skip any entries (no validation run)")
+	assert.Equal(t, 1, skipped2, "unfinished invalid entries are retried; completed rows are untouched")
 	assert.Equal(t, 2, len(store.byAlias), "store must still contain exactly 2 profiles after second seed")
 }

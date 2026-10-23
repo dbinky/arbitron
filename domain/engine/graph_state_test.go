@@ -157,7 +157,7 @@ func newGSFixture(t *testing.T) *gsFixture {
 	store := &gsInstanceStore{rows: map[uuid.UUID]*instance.Instance{}, getErr: map[uuid.UUID]error{}}
 	// The viewer is the REAL engine authorization predicate over the fake store,
 	// so redaction tests exercise production visibility rules.
-	eng := engine.NewEngine(nil, store, nil, nil, nil, nil, newMockEventBus(), nil, nil, "")
+	eng := wireModelPins(engine.NewEngine(nil, store, nil, nil, nil, nil, newMockEventBus(), nil, nil, ""))
 	f := &gsFixture{
 		t:      t,
 		store:  store,
@@ -243,7 +243,9 @@ func gsSnapshot(t *testing.T, wf workflow.Workflow) map[string]any {
 
 func gsRootInstance(owner uuid.UUID, name string, snap map[string]any, st instance.State, cursor string) *instance.Instance {
 	inst := &instance.Instance{
-		ID: uuid.New(), OwnerID: owner, WorkflowName: name, WorkflowSnapshot: snap,
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               uuid.New(), OwnerID: owner, WorkflowName: name, WorkflowSnapshot: snap,
 		State: st, Priority: instance.PriorityNormal, Visibility: instance.VisibilityPrivate,
 		Variables: map[string]any{},
 	}
@@ -1138,8 +1140,8 @@ func TestGraphStateReader_EngineAndSQLiteProduceAggregateSink(t *testing.T) {
 	users := adaptsqlite.NewUserRepo(db)
 	workflows := newMockWorkflowRepo()
 	bus, qm, script := newMockEventBus(), newMockQueueManager(), newMockExecutor()
-	eng := engine.NewEngine(workflows, instances, execs, adaptsqlite.NewVariableSnapshotRepo(db), users,
-		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: script}, bus, qm, adaptsqlite.NewQueueRepo(db), "")
+	eng := wireModelPins(engine.NewEngine(workflows, instances, execs, adaptsqlite.NewVariableSnapshotRepo(db), users,
+		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: script}, bus, qm, adaptsqlite.NewQueueRepo(db), ""))
 	t.Cleanup(eng.Shutdown)
 	qm.enqueueFn = func(ctx context.Context, id, _ uuid.UUID) (bool, error) {
 		err := eng.StartInstance(ctx, id)

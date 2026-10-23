@@ -51,6 +51,7 @@ type streamChoice struct {
 
 // streamFrame is a single `data: {...}` SSE frame in the stream.
 type streamFrame struct {
+	Model   string         `json:"model"`
 	Choices []streamChoice `json:"choices"`
 	Usage   *usageBlock    `json:"usage"`
 }
@@ -71,28 +72,24 @@ func decodeCompletion(body []byte) (*chatCompletion, error) {
 	return &c, nil
 }
 
-// parseSSELine interprets one line of an SSE stream. It returns the token
-// delta (possibly empty), a usage block when the frame carries one, done=true
-// for the [DONE] sentinel, and an error only for a malformed data frame.
-// Non-data lines (blank, comments, event:) are ignored (all-zero return).
-func parseSSELine(line []byte) (delta string, usage *usageBlock, done bool, err error) {
+// parseSSELine returns a data frame, the [DONE] sentinel, or an error for
+// malformed data. Non-data lines (blank, comments, event:) return nil/false.
+// Retain the response model alongside content for verification before emission.
+func parseSSELine(line []byte) (frame *streamFrame, done bool, err error) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) {
-		return "", nil, false, nil
+		return nil, false, nil
 	}
 	if !bytes.HasPrefix(line, []byte("data:")) {
-		return "", nil, false, nil
+		return nil, false, nil
 	}
 	data := bytes.TrimSpace(line[len("data:"):])
 	if string(data) == "[DONE]" {
-		return "", nil, true, nil
+		return nil, true, nil
 	}
-	var frame streamFrame
-	if err := json.Unmarshal(data, &frame); err != nil {
-		return "", nil, false, fmt.Errorf("openrouter: decode stream frame: %w", err)
+	var f streamFrame
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, false, fmt.Errorf("openrouter: decode stream frame: %w", err)
 	}
-	if len(frame.Choices) > 0 {
-		delta = frame.Choices[0].Delta.Content
-	}
-	return delta, frame.Usage, false, nil
+	return &f, false, nil
 }

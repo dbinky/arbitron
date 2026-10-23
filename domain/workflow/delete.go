@@ -85,6 +85,11 @@ func (s *Service) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name
 // registry Delete is a no-op — so the steps collapse to the prior admin-gated
 // delete of the caller's private folder.
 func (s *Service) Delete(ctx context.Context, name string) error {
+	return s.mutateAdmin(ctx, func(ctx context.Context) error { return s.delete(ctx, name) })
+}
+
+// delete is the ungated body of Delete; callers go through Delete.
+func (s *Service) delete(ctx context.Context, name string) error {
 	if s.stamper != nil {
 		return s.lockedDelete(ctx, name, false)
 	}
@@ -172,6 +177,11 @@ func (s *Service) deleteWorkflow(ctx context.Context, name string) error {
 //     dangling id whose folder is already gone, which is preferable to a reachable
 //     id that blocks re-publish under the same name.
 func (s *Service) Unpublish(ctx context.Context, name string) error {
+	return s.mutateAdmin(ctx, func(ctx context.Context) error { return s.unpublish(ctx, name) })
+}
+
+// unpublish is the ungated body of Unpublish; callers go through Unpublish.
+func (s *Service) unpublish(ctx context.Context, name string) error {
 	if s.stamper != nil {
 		return s.lockedDelete(ctx, name, true)
 	}

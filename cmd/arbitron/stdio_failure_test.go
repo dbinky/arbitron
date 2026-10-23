@@ -33,8 +33,19 @@ type stdioFailureCommand struct {
 	cobraErr bytes.Buffer
 }
 
+// commandLikeProduction makes a real command boot the way production does:
+// readiness never waits on the first catalog discovery (the root-test seam
+// defaultAwaitInitialDiscovery would otherwise hold Start on the network).
+func commandLikeProduction(t *testing.T) {
+	t.Helper()
+	prior := defaultAwaitInitialDiscovery
+	defaultAwaitInitialDiscovery = false
+	t.Cleanup(func() { defaultAwaitInitialDiscovery = prior })
+}
+
 func startStdioFailureCommand(t *testing.T, e *layoutE2EEnv, args ...string) *stdioFailureCommand {
 	t.Helper()
+	commandLikeProduction(t)
 	input, writer, err := os.Pipe()
 	require.NoError(t, err)
 	output, sink, err := os.Pipe()

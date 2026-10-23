@@ -20,6 +20,8 @@ func newLinkedInstance(link instance.SpawnLink) *instance.Instance {
 		OwnerID:          uuid.MustParse(spawnTestOwner),
 		WorkflowName:     "wf",
 		WorkflowSnapshot: map[string]any{"name": "wf"},
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
 		State:            instance.StateQueued,
 		Priority:         instance.PriorityNormal,
 		Variables:        map[string]any{},

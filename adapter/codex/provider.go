@@ -79,6 +79,7 @@ type core struct {
 	// the verdict so a failure fails closed without re-probing.
 	probeOnce sync.Once
 	probeErr  error
+	version   []int
 }
 
 // newCore builds the shared core from cfg. An empty BinaryPath is resolved from
@@ -107,7 +108,7 @@ func newCore(cfg Config) core {
 // env codexEnv() builds for the real exec launch.
 func (c *core) ensureCompatible(ctx context.Context) error {
 	c.probeOnce.Do(func() {
-		c.probeErr = probeVersion(ctx, c.runner, c.binPath, codexEnv())
+		c.version, c.probeErr = compatibleVersion(ctx, c.runner, c.binPath, codexEnv())
 	})
 	return c.probeErr
 }
@@ -196,6 +197,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	lines, wait, err := p.runner.Run(runCtx, spec)
 	if err != nil {
+		if p.binding.Pinned {
+			err = claudecli.SanitizeProcessError(err)
+		}
 		return nil, fmt.Errorf("codex: run (model %q): %w", model, err)
 	}
 
@@ -205,14 +209,13 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		collected = append(collected, line)
 	}
 	if waitErr := wait(); waitErr != nil {
-		// Log the full stderr tail (operator-only) before shaping the surfaced
-		// error, so a timeout/failure is debuggable even when the redacted
-		// summary alone is too terse. No-op unless waitErr carries a tail.
-		claudecli.LogStderrTail("codex", waitErr)
-		// On a cancel/timeout, keep the context error wrapped so callers can
-		// errors.Is against context.Canceled/DeadlineExceeded, but ALSO surface
-		// waitErr's redacted stderr summary — otherwise a hung run collapses to a
-		// bare "context deadline exceeded" with no clue why.
+		if p.binding.Pinned {
+			waitErr = claudecli.SanitizeProcessError(waitErr)
+		} else {
+			claudecli.LogStderrTail("codex", waitErr)
+		}
+		// Keep cancellation classifiable alongside the process failure. Pinned
+		// calls retain only the sanitized process error.
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("codex: mission timed out (model %q): %w (%v)", model, ctxErr, waitErr)
 		}
@@ -224,6 +227,11 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		// crash instead of collapsing to a bare "exit status 1". Best-effort:
 		// when the stream states no cause the exit error stands alone, and
 		// waitErr stays wrapped either way so callers keep unwrapping it.
+		// A pinned run must not copy untrusted harness messages into errors;
+		// they can include account credentials or tool output.
+		if p.binding.Pinned {
+			return nil, fmt.Errorf("codex: mission failed (model %q): %w", model, waitErr)
+		}
 		if cause := failureCause(collected); cause != "" {
 			return nil, fmt.Errorf("codex: mission failed (model %q): %s: %w", model, cause, waitErr)
 		}
@@ -233,6 +241,18 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	res, err := parseOutput(collected)
 	if err != nil {
 		return nil, fmt.Errorf("codex: parse output (model %q): %w", model, err)
+	}
+	if p.binding.Pinned {
+		if res.failed || !res.completed {
+			return nil, fmt.Errorf("%w: batch turn did not complete successfully", ErrModelEvidence)
+		}
+		verifier, err := newRolloutVerifier(env)
+		if err != nil {
+			return nil, err
+		}
+		if err := verifier.afterTurn(res.sessionID, model, 0); err != nil {
+			return nil, err
+		}
 	}
 	engineSteps := make([]engine.AgentStep, 0, len(res.steps))
 	for _, s := range res.steps {
@@ -247,6 +267,78 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		TokensOut: res.tokensOut,
 		SessionID: res.sessionID, // codex thread id (surfaced for the trace)
 	}, nil
+}
+
+// ProbeExecutedModel is the tool-restricted exact-model check of this agent route
+// (D4): one `codex exec` turn through the same binary, subscription env and
+// model/effort argv a real mission uses, under the read-only sandbox instead of
+// the bypass posture, with workDir as cwd. A model absent from the account's
+// models_cache.json is refused before launch (D4). It requires an explicit model and
+// returns the binding's model and the codex thread id only when that thread's
+// own stored rollout records exactly that model for every new turn. Errors never carry codex
+// output.
+func (p *Provider) ProbeExecutedModel(ctx context.Context, _ string, workDir string) (string, string, error) {
+	ctx, release := context.WithTimeout(procenv.WithProbeResponseLimit(ctx), procenv.ProbeTimeout)
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+	if workDir == "" {
+		return "", "", ErrWorkDirRequired
+	}
+	model := p.binding.Model
+	args, err := buildProbeArgs(p.binding, p.rules, workDir)
+	if err != nil {
+		return "", "", err
+	}
+	env := codexEnv()
+	// D4: probe only a model the account lists, before any launch.
+	if err := accountListsModel(env, model); err != nil {
+		return "", "", err
+	}
+	if err := p.ensureCompatible(ctx); err != nil {
+		return "", "", err
+	}
+	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	override, err := p.probeMCPOverride(runCtx, workDir)
+	if err != nil {
+		return "", "", err
+	}
+	args = append(args, "-c", override)
+	lines, wait, err := p.runner.Run(runCtx, claudecli.RunSpec{
+		Bin:              p.binPath,
+		Args:             args,
+		Stdin:            probeIdentityPrompt,
+		Dir:              workDir,
+		Env:              env,
+		MaxResponseBytes: p.maxResponseBytes,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("%w: launch", ErrModelEvidence)
+	}
+	var collected []string
+	for line := range lines {
+		collected = append(collected, line)
+	}
+	if wait() != nil {
+		return "", "", fmt.Errorf("%w: exit", ErrModelEvidence)
+	}
+	res, err := parseOutput(collected)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: parse", ErrModelEvidence)
+	}
+	if res.failed || !res.completed {
+		return "", "", fmt.Errorf("%w: probe turn did not complete successfully", ErrModelEvidence)
+	}
+	verifier, err := newRolloutVerifier(env)
+	if err != nil {
+		return "", "", err
+	}
+	if err := verifier.afterTurn(res.sessionID, model, 0); err != nil {
+		return "", "", err
+	}
+	return model, res.sessionID, nil
 }
 
 // resolveBinary returns the codex binary path. An explicit path is returned

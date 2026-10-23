@@ -64,8 +64,8 @@ func TestParallelGroupExecutor_CancelBeforeParkingNeverRevivesTheParent(t *testi
 	bus := newMockEventBus()
 	exec := newMockExecutor()
 	qm := newMockQueueManager()
-	eng := engine.NewEngine(wfRepo, repo, nodeExecs, adaptsqlite.NewVariableSnapshotRepo(db), users,
-		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: exec}, bus, qm, adaptsqlite.NewQueueRepo(db), "")
+	eng := wireModelPins(engine.NewEngine(wfRepo, repo, nodeExecs, adaptsqlite.NewVariableSnapshotRepo(db), users,
+		map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeScript: exec}, bus, qm, adaptsqlite.NewQueueRepo(db), ""))
 	qm.mu.Lock()
 	qm.enqueueFn = func(ctx context.Context, id uuid.UUID, _ uuid.UUID) (bool, error) {
 		if err := eng.StartInstance(ctx, id); err != nil {

@@ -35,6 +35,7 @@ import (
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
 	adaptoidc "github.com/arbitron/arbitron/adapter/oidc"
+	"github.com/arbitron/arbitron/adapter/outbound"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
@@ -44,10 +45,12 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/schedule"
+	settingsdomain "github.com/arbitron/arbitron/domain/settings"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -226,13 +229,48 @@ func newMCPCmd() *cobra.Command {
 	}
 }
 
-// domainStack holds all shared domain dependencies initialised by initDomain.
-// Both the HTTP serve command and the standalone MCP command reuse this struct
-// so that initialisation logic is not duplicated.
+// domainStack holds the shared dependencies constructed by initDomain.
+// HTTP and standalone MCP both call Start before serving and Close on shutdown.
 type domainStack struct {
+	lifecycleMu     sync.Mutex
+	lifecycleCancel context.CancelFunc
+	startDone       chan struct{}
+	startErr        error
+	closed          bool
+	closeOnce       sync.Once
+	background      sync.WaitGroup
+	startWork       func(context.Context) error
+	// noAutomaticDiscovery is the stdio MCP entrypoint policy
+	// (disableAutomaticDiscovery): no refresh loop is registered.
+	noAutomaticDiscovery bool
+	// awaitInitialDiscovery makes Start also wait for the background loop's
+	// first cycle. Test seam only (defaultAwaitInitialDiscovery); never set in
+	// production.
+	awaitInitialDiscovery bool
+	modelStateCrypto      provider.Crypto
+	// modelFingerprint is the keyed (HMAC) fingerprint closure the execution
+	// path inventory consumes (B4); the raw key never leaves model_state.go.
+	modelFingerprint func([]byte) string
+	// executionGate serializes execution-affecting mutations against model
+	// advancement and run-snapshot creation. It is shared by every service
+	// that edits connections, profiles, workflows or the identity policy.
+	executionGate *provider.ExecutionGate
+	// catalogStore shares the profile DB and acknowledges confirmed publication
+	// of the original advancement journal rows, including rows without reports.
+	catalogStore *adaptsqlite.ModelCatalogRepo
+	// pathInventory is the gate's revision source: every execution path an alias
+	// runs on, with the persisted revisions an advancement commit validates.
+	pathInventory *providersadapter.ExecutionPathInventory
+	// modelRefresh is the assembled catalog refresh (fetch, classify, discover,
+	// advance). It is built here and started only by serve/MCP.
+	modelRefresh   *modelRefresh
+	refreshDeps    modelRefreshDeps
+	SystemSettings *settingsdomain.Service
+	// IdentityPolicy is the persisted, admin-editable D2 identity policy. Its
+	// mutation gate is injected with the shared ExecutionGate (B4/B12); until
+	// then updates fail closed.
+	IdentityPolicy      *modelidentity.PolicyService
 	layout              *layoutStack
-	closeOnce           sync.Once
-	background          sync.WaitGroup
 	cfg                 *config.Config
 	settings            *config.SettingsStore
 	logger              *slog.Logger
@@ -253,13 +291,14 @@ type domainStack struct {
 	scheduler           *queue.Scheduler
 	schedulerCancel     context.CancelFunc
 	scheduleEval        *schedule.Evaluator
-	scheduleEvalCancel  context.CancelFunc
 	scheduleSvc         *schedule.Service
 	webhookRegistry     *adapthttp.WebhookRegistry
 	notifRepo           notification.Repository
 	dismissalRepo       instance.DismissalRepository
 	conversationHandler engine.ConversationHandler
+	pinLookup           *providersadapter.PinLookup // run-pin cache shared by the pinning resolver
 	profileChecker      workflow.ProfileChecker
+	profileResolver     provider.ProfileResolver // the live cache-backed resolver the executors use
 	connChecker         workflow.ConnectionChecker
 	connStore           provider.ConnectionStore
 	// profile-editing Phase 4: admin services exposed through the MCP profile_*
@@ -272,7 +311,7 @@ type domainStack struct {
 	capabilityRules provider.CapabilityRules
 	tracingShutdown func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
-	// authHandler and sweepCancel are nil in local mode.
+	// authHandler is nil in local mode; Start owns the org-only sweeps.
 	sessionRepo  identity.SessionRepository
 	tokenRepo    identity.TokenRepository
 	tokenSvc     *identity.TokenService
@@ -285,19 +324,16 @@ type domainStack struct {
 	dashboardSvc *domaindashboard.Service
 	authMW       *adapthttp.AuthMiddleware
 	authHandler  *adapthttp.AuthHandler
-	sweepCancel  context.CancelFunc
-	// spawnSweepCancel stops the spawn-wait / orphaned-child reconciliation
-	// ticker. It is stopped BEFORE the DB closes, like sweepCancel.
-	spawnSweepCancel context.CancelFunc
-	// Stop group recovery before closing its durable store.
-	groupSweepCancel context.CancelFunc
-	// recoveryWG joins the spawn and group sweep goroutines, and
-	// groupWatchDone the gather reconciler's event watch: Close cancels them,
-	// then waits for both before closing the database, so a recovery pass in
+	// Parallel-group recovery (#76). groupCoord and gatherReconciler are run by
+	// Start after crash recovery and then swept on recoveryWG; groupWatchDone is
+	// the gather reconciler's event watch. Close joins both, bounded by
+	// recoveryShutdownTimeout, before closing the database, so a recovery pass in
 	// flight (a rollback runs under WithoutCancel) never outlives its store.
-	recoveryWG     *sync.WaitGroup
-	groupWatchDone <-chan struct{}
-	groupRunRepo   instance.GroupRunRepository
+	groupRunRepo     instance.GroupRunRepository
+	groupCoord       *engine.GroupCoordinator
+	gatherReconciler *engine.GroupGatherReconciler
+	recoveryWG       *sync.WaitGroup
+	groupWatchDone   <-chan struct{}
 	// backendHealth is the shared, TTL-cached backend-health component (codex
 	// install/login readiness). Constructed ONCE here and injected into BOTH the
 	// HTTP SystemHandler and the MCP server so the probe forks at most once per
@@ -310,8 +346,9 @@ type domainStack struct {
 	subtreeEvents *engine.SubtreeEventBridge
 }
 
-// Close stops producers and joins background work before closing renderer, DB
-// and logging resources. It also handles partially constructed stacks.
+// Close cancels and joins startup, refresh and sweeps before draining execution,
+// stopping schedulers and finally closing renderer, tracing, storage and the
+// log sink. It also handles partially constructed stacks.
 func (ds *domainStack) Close(ctx context.Context) {
 	if ds == nil {
 		return
@@ -320,39 +357,45 @@ func (ds *domainStack) Close(ctx context.Context) {
 }
 
 func (ds *domainStack) close(ctx context.Context) {
+	ds.lifecycleMu.Lock()
+	ds.closed = true
+	cancel, done := ds.lifecycleCancel, ds.startDone
+	ds.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if ds.modelRefresh != nil {
+		ds.modelRefresh.stop()
+	}
+	if done != nil {
+		<-done
+	}
+	// Start may have installed the loop while Close was cancelling startup.
+	if ds.modelRefresh != nil {
+		ds.modelRefresh.stop()
+	}
+	ds.background.Wait()
 	// Stop the schedule evaluator FIRST (org-readiness Phase 3): no new scheduled
 	// triggers must be created once shutdown begins, so it stops before the engine
 	// drains in-flight instances.
-	if ds.scheduleEvalCancel != nil {
-		ds.scheduleEvalCancel()
-	}
 	if ds.scheduleEval != nil {
 		ds.scheduleEval.Stop()
 	}
 	if ds.schedulerCancel != nil {
 		ds.schedulerCancel()
 	}
-	if ds.scheduler != nil {
+	// Stop blocks until the scheduler loop exits, so only a scheduler Start
+	// actually ran (schedulerCancel is set there) may be stopped.
+	if ds.schedulerCancel != nil {
 		ds.scheduler.Stop()
 	}
-	// Stop the org-mode session sweep before closing the DB it writes to.
-	if ds.sweepCancel != nil {
-		ds.sweepCancel()
+	logger := ds.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	// Same for the spawn reconciliation ticker: it queries and re-queues through
-	// the DB, so it must not outlive it.
-	if ds.spawnSweepCancel != nil {
-		ds.spawnSweepCancel()
-	}
-	if ds.groupSweepCancel != nil {
-		ds.groupSweepCancel()
-	}
-	recoveryLogger := ds.logger
-	if recoveryLogger == nil {
-		recoveryLogger = slog.Default()
-	}
-	waitRecoveryWorkers(ds.recoveryWG, ds.groupWatchDone, recoveryShutdownTimeout, recoveryLogger)
-	ds.background.Wait()
+	// The lifecycle context (cancelled above) ends the spawn and group sweeps
+	// and the gather watch; join them, bounded, before closing the database.
+	waitRecoveryWorkers(ds.recoveryWG, ds.groupWatchDone, recoveryShutdownTimeout, logger)
 	// Stop the bearer last-used flusher's owned goroutine, draining any pending
 	// touches synchronously before the DB closes.
 	if ds.authMW != nil {
@@ -364,13 +407,11 @@ func (ds *domainStack) close(ctx context.Context) {
 	if ds.eng != nil {
 		ds.eng.Shutdown()
 	}
+	// The layout worker and renderer stop after execution drains, before the
+	// database they read and write closes.
 	ds.layout.stop()
 	if ds.tracingShutdown != nil {
 		if err := ds.tracingShutdown(ctx); err != nil {
-			logger := ds.logger
-			if logger == nil {
-				logger = slog.Default()
-			}
 			logger.Error("tracing shutdown error", "error", err)
 		}
 	}
@@ -385,6 +426,10 @@ func (ds *domainStack) close(ctx context.Context) {
 // mcpDeps builds the MCP adapter Deps from the shared domain stack.
 // Assign Layouts only for a non-nil query, avoiding a typed-nil interface.
 func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
+	var modelCatalog adaptmcp.ModelCatalogAdmin
+	if ds.modelRefresh != nil {
+		modelCatalog = ds.modelRefresh.admin
+	}
 	deps := &adaptmcp.Deps{
 		Engine:              ds.eng,
 		Workflows:           ds.workflowRepo,
@@ -397,6 +442,9 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		EventBus:            ds.bus,
 		Config:              ds.cfg,
 		Settings:            ds.settings,
+		SystemSettings:      ds.SystemSettings,
+		IdentityPolicy:      ds.IdentityPolicy,
+		ModelCatalog:        modelCatalog,
 		QueueManager:        ds.queueMgr,
 		QueueRepo:           ds.queueRepo,
 		Notifications:       ds.notifRepo,
@@ -419,9 +467,10 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 	return deps
 }
 
-// routerDeps supplies the same domain services to runServe and real-router tests.
-// Assign Layouts only for a non-nil query, avoiding a typed-nil interface.
-func (ds *domainStack) routerDeps(mcpHandler http.Handler, dashHandler http.Handler, notifHandler *adapthttp.NotificationHandler, webhookHandler *adapthttp.WebhookHandler) adapthttp.RouterDeps {
+// httpDeps is the production HTTP projection, shared by server assembly and wiring tests.
+func (ds *domainStack) httpDeps() adapthttp.RouterDeps {
+	notifHandler := adapthttp.NewNotificationHandler(ds.notifRepo)
+	notifHandler.SetEventBus(ds.bus)
 	deps := adapthttp.RouterDeps{
 		Service:             ds.eng,
 		Workflows:           ds.workflowRepo,
@@ -435,13 +484,12 @@ func (ds *domainStack) routerDeps(mcpHandler http.Handler, dashHandler http.Hand
 		EventBus:            ds.bus,
 		Config:              ds.cfg,
 		Settings:            ds.settings,
+		SystemSettings:      ds.SystemSettings,
 		QueueManager:        ds.queueMgr,
 		QueueRepo:           ds.queueRepo,
-		DashboardHandler:    dashHandler,
 		NotifHandler:        notifHandler,
 		ConversationHandler: ds.conversationHandler,
-		WebhookHandler:      webhookHandler,
-		MCPHandler:          mcpHandler,
+		WebhookHandler:      adapthttp.NewWebhookHandler(ds.webhookRegistry, ds.instanceRepo, ds.nodeExecRepo, ds.scheduler, ds.queueRepo, ds.queueMgr),
 		ProfileChecker:      ds.profileChecker,
 		ConnChecker:         ds.connChecker,
 		Auth:                ds.authMW,
@@ -454,6 +502,7 @@ func (ds *domainStack) routerDeps(mcpHandler http.Handler, dashHandler http.Hand
 		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
 		BackendHealth:       ds.backendHealth,
 	}
+	// Assign Layouts only for a non-nil query, avoiding a typed-nil interface.
 	if q := ds.layoutQuery(); q != nil {
 		deps.Layouts = q
 	}
@@ -506,10 +555,18 @@ func canonicalWorkspacePath(p string) (string, error) {
 	return resolved, nil
 }
 
-// initDomain performs all shared initialisation: configuration, logging,
-// database, adapters, engine, queue manager, notifications, tracing, and
-// crash recovery. The returned domainStack must be closed by the caller.
-func initDomain(_ context.Context, configPath string) (*domainStack, error) {
+// initDomain constructs configuration, storage, adapters and services without
+// seeding, recovery or background execution. The caller must Start before
+// serving and Close even when Start fails.
+func initDomain(ctx context.Context, configPath string) (*domainStack, error) {
+	return initDomainWithModelDependencies(ctx, configPath, ModelDependencies{})
+}
+
+func initDomainWithModelStateSecret(ctx context.Context, configPath string, injectedSecret []byte) (*domainStack, error) {
+	return initDomainWithModelDependencies(ctx, configPath, ModelDependencies{ModelStateSecret: injectedSecret})
+}
+
+func initDomainWithModelDependencies(ctx context.Context, configPath string, modelDeps ModelDependencies) (*domainStack, error) {
 	// 1. Load configuration from the resolved path.
 	slog.Info("loading configuration", "path", configPath)
 	cfg, err := configadapter.Load(configPath)
@@ -522,14 +579,15 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("setting up logging: %w", err)
 	}
-
-	ds := &domainStack{cfg: cfg, logger: logger, logCloser: logCloser}
-	initialized := false
+	// Every startup failure below releases what this function has opened so
+	// far; only a fully assembled stack takes ownership (domainStack.Close).
+	assembled := false
 	defer func() {
-		if !initialized {
-			ds.Close(context.Background())
+		if !assembled {
+			logCloser.Close()
 		}
 	}()
+
 	for _, warning := range cfg.LoadWarnings {
 		logger.Warn(warning)
 	}
@@ -540,7 +598,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-	ds.db = db
+	defer func() {
+		if !assembled {
+			db.Close()
+		}
+	}()
 	logger.Info("database connection established")
 
 	// 4. Run migrations.
@@ -549,6 +611,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 	logger.Info("database migrations complete")
+
+	modelStateCrypto, modelFingerprint, err := initModelState(ctx, db, cfg.Database.Path, modelDeps.ModelStateSecret)
+	if err != nil {
+		return nil, fmt.Errorf("initializing model-state secret: %w", err)
+	}
 
 	// 5. Initialize adapters.
 	instanceRepo := adaptsqlite.NewInstanceRepo(db)
@@ -590,7 +657,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// cheap no-op. A DB error here fails the boot loudly (fail-fast) rather than
 	// serving a mis-scoped/duplicated department.
 	deptRenamer := adaptsqlite.NewDepartmentRenamer(db)
-	if err := identity.ReconcileMappings(context.Background(), groupCfg, deptRenamer, logger); err != nil {
+	if err := identity.ReconcileMappings(ctx, groupCfg, deptRenamer, logger); err != nil {
 		return nil, fmt.Errorf("reconciling department mappings: %w", err)
 	}
 	logger.Info("department mapping reconcile complete")
@@ -603,7 +670,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	authMode := identity.ModeFromString(cfg.Auth.Mode)
 	var authHandler *adapthttp.AuthHandler
 	if authMode == identity.ModeOrg {
-		oidcProvider, oerr := adaptoidc.New(context.Background(), adaptoidc.Config{
+		oidcProvider, oerr := adaptoidc.New(ctx, adaptoidc.Config{
 			IssuerURL:    cfg.Auth.OIDC.IssuerURL,
 			ClientID:     cfg.Auth.OIDC.ClientID,
 			ClientSecret: cfg.Auth.OIDC.ClientSecret,
@@ -623,7 +690,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// no Arbitron login routes are mounted — sign-in/out happen at the edge.
 	var authMW *adapthttp.AuthMiddleware
 	if authMode == identity.ModeEdge {
-		edgeVerifier, eerr := adaptedge.New(context.Background(), adaptedge.Config{
+		edgeVerifier, eerr := adaptedge.New(ctx, adaptedge.Config{
 			TeamDomain: cfg.Auth.Edge.TeamDomain,
 			Audiences:  cfg.Auth.Edge.Audiences,
 			GroupClaim: cfg.Auth.RBAC.GroupClaim,
@@ -636,7 +703,12 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		authMW = adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
 	}
 
-	ds.authMW = authMW
+	defer func() {
+		if !assembled {
+			authMW.Stop()
+		}
+	}()
+
 	// Canonicalize before constructing filesystem adapters and provider pins.
 	// The deferred cleanup closes the database and log on failure.
 	canonicalWS, err := canonicalWorkspacePath(cfg.Workspace.Path)
@@ -652,7 +724,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// One-time, marker-guarded migration of any pre-existing flat workflow store
 	// into the default user's private workspace (users/<defaultUser>/). Runs
 	// after the DB migrations seed the default user and before serving begins.
-	flatMigrateUser, err := userRepo.GetDefaultUser(context.Background())
+	flatMigrateUser, err := userRepo.GetDefaultUser(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolving default user for flat-store migration: %w", err)
 	}
@@ -670,7 +742,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("constructing layout stack: %w", err)
 	}
-	ds.layout = ls
+	defer func() {
+		if !assembled {
+			ls.stop()
+		}
+	}()
 	// Raw reads of workflow.json/layout.json settle through the repository's read settler.
 	fileReader.SetSettledRepository(workflowRepo)
 	// Decide old mutations before the first seed, backfill or external graph read.
@@ -729,6 +805,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 
 	chatCfg := claudecli.Config{
+		Runner:           modelDeps.Runner,
 		BinaryPath:       cfg.LLM.BinaryPath,
 		DefaultModel:     cfg.LLM.Model,
 		WorkspaceRoot:    wsRoot,
@@ -781,7 +858,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// 8c. Fail-fast gate: refuse to start when connections exist but no master
 	// key is available, because their ciphertext could never be decrypted. A
 	// Claude-only deployment (zero connections) boots with no master key.
-	connCount, err := connStore.Count(context.Background())
+	connCount, err := connStore.Count(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("counting connections: %w", err)
 	}
@@ -802,86 +879,96 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// config-file profiles (∪ the built-in defaults the loader already merged in).
 	// Each candidate is validated against the capability ruleset; an invalid one
 	// is logged and skipped so operator config never blocks boot. After the first
-	// seed the table is non-empty and config profile entries are ignored — the DB
-	// wins.
+	// seed the DB owns the snapshot: unfinished entries retry on later boots,
+	// while completed rows and later config edits are left alone. The seed itself
+	// runs below, after the ProfileService has its candidate
+	// source (see SetModelSelection).
 	domainProfiles := configadapter.ProfilesFromConfig(cfg.Profiles)
 
 	profileRepo := adaptsqlite.NewProfileRepo(db)
-	seeded, skipped, err := SeedProfiles(context.Background(), profileRepo, capabilityRules, domainProfiles)
-	if err != nil {
-		return nil, fmt.Errorf("seeding profiles: %w", err)
-	}
-	if seeded > 0 || skipped > 0 {
-		logger.Info("seeded profiles from config", "seeded", seeded, "skipped", skipped)
-	}
 
 	// profileCache is bound to the repo at construction so it can be reloaded
 	// after a write (the Phase-4 ProfileService recache hook); keep the reference
 	// for that future wiring. Load it once before serving.
 	profileCache := providersadapter.NewProfileCache(profileRepo)
-	if err := profileCache.Load(context.Background()); err != nil {
+	if err := profileCache.Load(ctx); err != nil {
 		return nil, fmt.Errorf("loading profile cache: %w", err)
 	}
 	profileResolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
 	profileChecker := providersadapter.NewResolverChecker(profileResolver)
+	// Execution consumers resolve through the pinning decorator so a
+	// post-migration run keeps the models pinned at trigger; a legacy (NULL-pin)
+	// run and out-of-run calls resolve live. Validation (profileChecker) and the
+	// snapshotter keep the live resolver.
+	pinLookup := providersadapter.NewPinLookup(instanceRepo)
+	pinningResolver := provider.NewPinningResolver(profileResolver, pinLookup, engine.InstanceIDFromContext)
 
 	// Parallel-group writes require the same profile and owner-aware file
 	// checkers used by validation. Wire them here, once both are available.
 	workflowSvc.SetGroupCheckers(profileChecker, fileReader)
 
-	// Import writers need the live profile checker before touching any store.
-	// One-time, marker-guarded seeding of bundled sample workflows into the
-	// shared scope (public, owned by the default user). Runs after the published
-	// repo exists so the publication records can be written.
-	//
-	// Seeding is a non-essential convenience subsystem, so a seeding error is
-	// logged and tolerated rather than fatal — it must never wedge server boot.
-	// Existing trees require exact interrupted-seed proof; publisher ownership
-	// alone never authorizes adopting or rewriting a same-name folder. It runs
-	// after the boot-time mutation settlement above.
-	switch {
-	case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
-		if err := seedSampleWorkflows(context.Background(), cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, ds.layout.stamper, ds.layout.mutations, identityRepo, flatMigrateUser, logger, profileChecker); err != nil {
-			logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
-		} else {
-			logger.Info("sample workflow seeding complete")
-		}
-	case cfg.Samples.Seed:
-		// seed=true but no source dir resolved: the stock default. Make the
-		// silent no-op observable so an operator expecting samples knows why
-		// none appeared and how to fix it (set samples.sourcedir).
-		logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
-	}
-
-	// One-time startup reconciliation: register any unregistered (legacy id-less)
-	// workflow under the default user's private scope and the shared scope. Run
-	// under an admin system identity so the scan can persist backfilled ids. It is
-	// idempotent and best-effort: a failure is logged, not fatal. Invalid groups
-	// remain untouched; Load may assign an id in memory but never persists it.
-	backfillCtx := identity.WithIdentity(context.Background(), identity.Identity{
-		UserID: flatMigrateUser,
-		Role:   identity.RoleAdmin,
-	})
-	if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
-		logger.Warn("workflow registry backfill incomplete", "error", err)
-	}
-	// One-time reference backfill: stamp each reference row's resolved workflow id
-	// onto instances/schedules/published_workflows (Phase 2 task 1). It depends on
-	// the registry rows the BackfillRegistry above just reconciled, so it runs
-	// AFTER it. Additive and idempotent: names that no longer resolve stay NULL and
-	// are Warn-logged, not fatal.
 	workflowSvc.SetReferenceBackfiller(adaptsqlite.NewReferenceBackfiller(db))
-	if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
-		logger.Warn("workflow reference backfill incomplete", "error", err)
+	// seedWorkflows seeds the bundled samples and reconciles the workflow
+	// registry; every step is idempotent. It runs here, so a built stack serves
+	// the workflows already on disk, and again in Start AFTER the config profiles
+	// are seeded: group authoring validates resolver profiles against the live
+	// checker, so a group whose profiles come from config is skipped as invalid on
+	// the first pass and registered on the second.
+	seedWorkflows := func(ctx context.Context) {
+		// Import writers need the live profile checker before touching any store.
+		// One-time, marker-guarded seeding of bundled sample workflows into the
+		// shared scope (public, owned by the default user). Runs after the published
+		// repo exists so the publication records can be written.
+		//
+		// Seeding is a non-essential convenience subsystem, so a seeding error is
+		// logged and tolerated rather than fatal — it must never wedge server boot.
+		// Combined with the seeder's re-entrancy, a crash-interrupted seed self-heals
+		// on the next boot instead of permanently failing with ErrAlreadyExists.
+		switch {
+		case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
+			if err := seedSampleWorkflows(ctx, cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, ls.stamper, ls.mutations, identityRepo, flatMigrateUser, logger, profileChecker); err != nil {
+				logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
+			} else {
+				logger.Info("sample workflow seeding complete",
+					"profiles_note", "the feature-pipeline sample needs the DB-only admin profiles listed in samples/feature-pipeline/PROFILES.md; create them before running it")
+			}
+		case cfg.Samples.Seed:
+			// seed=true but no source dir resolved: the stock default. Make the
+			// silent no-op observable so an operator expecting samples knows why
+			// none appeared and how to fix it (set samples.sourcedir).
+			logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
+		}
+
+		// One-time startup reconciliation: register any unregistered (legacy id-less)
+		// workflow under the default user's private scope and the shared scope. Run
+		// under an admin system identity so the scan can persist backfilled ids. It is
+		// idempotent and best-effort: a failure is logged, not fatal. Invalid groups
+		// remain untouched; Load may assign an id in memory but never persists it.
+		backfillCtx := identity.WithIdentity(ctx, identity.Identity{
+			UserID: flatMigrateUser,
+			Role:   identity.RoleAdmin,
+		})
+		if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
+			logger.Warn("workflow registry backfill incomplete", "error", err)
+		}
+		// One-time reference backfill: stamp each reference row's resolved workflow id
+		// onto instances/schedules/published_workflows (Phase 2 task 1). It depends on
+		// the registry rows the BackfillRegistry above just reconciled, so it runs
+		// AFTER it. Additive and idempotent: names that no longer resolve stay NULL and
+		// are Warn-logged, not fatal.
+		if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
+			logger.Warn("workflow reference backfill incomplete", "error", err)
+		}
+		// One-time startup orphan self-heal (PR #44 Consider #2): reconcile any
+		// dangling workflow_id reference (a non-NULL id whose identity was deleted) back
+		// to NULL, reusing the reference-backfill machinery. Idempotent and best-effort:
+		// a failure is logged, not fatal. Runs AFTER BackfillReferences so freshly
+		// stamped ids are considered.
+		if err := workflowSvc.SweepOrphans(backfillCtx); err != nil {
+			logger.Warn("workflow orphan sweep incomplete", "error", err)
+		}
 	}
-	// One-time startup orphan self-heal (PR #44 Consider #2): reconcile any
-	// dangling workflow_id reference (a non-NULL id whose identity was deleted) back
-	// to NULL, reusing the reference-backfill machinery. Idempotent and best-effort:
-	// a failure is logged, not fatal. Runs AFTER BackfillReferences so freshly
-	// stamped ids are considered.
-	if err := workflowSvc.SweepOrphans(backfillCtx); err != nil {
-		logger.Warn("workflow orphan sweep incomplete", "error", err)
-	}
+	seedWorkflows(ctx)
 
 	// profile-editing Phase 4: the admin-facing editing services. ProfileService
 	// owns authz + capability validation + recache: the store-bound profileCache
@@ -926,6 +1013,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// callers; the transport still pools connections and pins an explicit TLS 1.2
 	// floor (see newOutboundHTTPClient).
 	httpClient := newOutboundHTTPClient(time.Duration(cfg.LLM.TimeoutSeconds) * time.Second)
+	if modelDeps.ProviderTransport != nil {
+		httpClient.Transport = modelDeps.ProviderTransport
+	}
 
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
@@ -942,13 +1032,16 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		ClaudeAgentConfig: agentCfg,
 		HTTPClient:        httpClient,
 		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		// Runner nil -> opencode/codex use the shared production os/exec runner.
-		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		Runner:            modelDeps.Runner,
+		OpencodeTimeout:   time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH
 		// (CodexBinaryPath left empty, mirroring opencode); the per-mission timeout
 		// reuses the shared LLM timeout floor. No allow-all knob: codex runs under
 		// the fixed v1 bypass posture (see adapter/codex args.go).
 		CodexTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// pi (PiBinaryPath empty: PATH plus the standard install dirs) shares the
+		// same per-mission floor, so a node without its own timeout is bounded.
+		PiTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
 		// the credential-bearing backends (openrouter, azurefoundry, anthropicapi,
 		// bedrock, opencode). Dropping this lets an attacker-pointed base_url stream
@@ -967,9 +1060,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	})
 
 	// 9. Create all node executors and build the executor map.
+	modelConsumers := newRunModelConsumers(fileReader, providerFactory, pinningResolver, cfg.LLM.DefaultAgentBackend)
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, providerFactory, profileResolver),
-		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver, cfg.LLM.DefaultAgentBackend),
+		workflow.NodeTypeLLMCall:     modelConsumers.llm,
+		workflow.NodeTypeAgentCall:   modelConsumers.agent,
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
@@ -993,8 +1087,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		cfg.LLM.DefaultAgentBackend,
 	)
 
-	ds.eng = eng
-
 	// 11a. Wire the per-instance workspace manager.
 	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
 	if err != nil {
@@ -1011,7 +1103,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 
 	// 12. Create the queue manager and wire it to the engine.
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
-	ds.queueMgr = queueMgr
 	eng.SetQueueManager(queueMgr)
 
 	// 12-pos. Wire the queue manager as the enricher's queue-position provider
@@ -1023,6 +1114,8 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// source, so a page of the run list resolves every hierarchy expander in ONE
 	// batched, post-authorization query.
 	instanceEnricher.SetSpawnLinks(instanceRepo)
+	// Live, not pinningResolver: each row overlays the pins InstanceRepo.List
+	// carries, so a page needs no per-row pin load (G23).
 	instanceEnricher.SetProfileResolver(profileResolver)
 
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
@@ -1041,6 +1134,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// webhook-timed-out child is re-queued immediately instead of waiting for the
 	// next startup reconciliation.
 	queueMgr.SetChildTerminalHook(eng.OnChildTerminal)
+	// Admission and recovery reads only report runs with corrupt model pins;
+	// the engine fails them through its complete terminal path.
+	queueMgr.SetCorruptRunHandler(eng.FailCorruptRun)
 
 	// 12-exec. Wire timer_delay and webhook_wait executors now that all deps are
 	// available. These executors are registered after engine construction because
@@ -1068,7 +1164,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// down its spawned children recursively, and so the list enricher can resolve
 	// a page's child counts in one batched call.
 	eng.SetSpawnLinks(instanceRepo)
-	eng.SetProfileResolver(profileResolver)
+	// node.started describes the model the node will run on, so it resolves
+	// through the pinning decorator inside the run context. The list enricher
+	// below keeps the live resolver (no per-row run context; see gaps G23).
+	eng.SetProfileResolver(pinningResolver)
 	// 12a-bis-2. Wire the Phase-2 audit service so a lead/admin intervention on a
 	// run they do not own emits a domain audit event (instance.lead_intervention /
 	// admin.override). *audit.Service.Record has exactly the void
@@ -1086,6 +1185,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// Retry resurfaces dismissed items on their new outcome.
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
 	eng.SetDismissals(dismissalRepo)
+	eng.SetPinCacheRelease(pinLookup.Release)
 
 	// Shared authorized layout reads/retries use manifest and snapshot policies.
 	ls.attachQuery(workflowSvc, eng)
@@ -1094,7 +1194,24 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
 	// Teams notifier so all three route reads/writes through one mutex.
 	settings := config.NewSettingsStore(&cfg.Notifications.Teams)
-
+	systemSettings := settingsdomain.NewService(adaptsqlite.NewSettingsRepo(db))
+	identityPolicy := modelidentity.NewPolicyService(adaptsqlite.NewModelIdentityPolicyRepo(db))
+	executionGate := provider.NewExecutionGate()
+	identityPolicy.SetMutationGate(executionGate)
+	// Connection and profile admin writes take the same exclusive lease, so an
+	// edit cannot interleave with an advancement or a run-snapshot capture.
+	connSvc.SetMutationGate(executionGate)
+	workflowSvc.SetMutationGate(executionGate)
+	// Automatic model advancement (B5): the SQLite store commits the CAS and the
+	// journal in one transaction, the cache confirms publication, and the shared
+	// gate rechecks path evidence first. The automatic path deliberately bypasses
+	// the loggingReloader: it must observe a reload failure, not log and continue.
+	catalogStore := adaptsqlite.NewModelCatalogRepo(db)
+	profileSvc.SetAdvancementDependencies(profileRepo, profileCache, executionGate)
+	profileSvc.SetPublicationJournal(catalogStore)
+	// A trigger snapshots its model pins under the gate's shared lease, so an
+	// admin edit cannot land halfway through one run's alias capture.
+	eng.SetModelPinGate(executionGate)
 	// 12c. Create the fan-out external notifier (log + best-effort Teams) and
 	// wire it to the engine. The Teams child reads the live webhook config
 	// through the store, so an admin toggle via the dashboard / MCP takes effect
@@ -1123,12 +1240,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// The preparer's call is tool-SUPPRESSED: it routes through the same
 	// providerFactory chat arm llm_call uses, and the Phase-1 kind guard fails
 	// closed if the node's model_profile resolves to an agent binding.
-	childInputPreparer := engine.NewChildInputPreparer(providerFactory, profileResolver)
 	eng.RegisterExecutor(workflow.NodeTypeSpawnWorkflow, engine.NewSpawnWorkflowExecutor(
 		instanceRepo,
 		nodeExecRepo,
 		instanceRepo, // *adaptsqlite.InstanceRepo also satisfies instance.SpawnWaitRepository
-		childInputPreparer,
+		modelConsumers.childInputs,
 		eng,
 		identityResolver,
 		fileReader,
@@ -1202,8 +1318,8 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// the fully-open bypass posture). An empty agent backend is floored to the SAME deployment default the
 	// batch AgentCallExecutor uses (cfg.LLM.DefaultAgentBackend); opencode and
 	// unknown backends fail closed.
-	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
-	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{
+	codexInteractiveConfig := codex.InteractiveConfig{
+		Runner: modelDeps.Runner,
 		// Codex (subscription-only): each interactive turn runs `codex exec --json`
 		// (fresh) / `codex exec resume --json` (resume); binary auto-resolved from
 		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
@@ -1217,7 +1333,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// profile-editing Phase 3: the binding's resolved effort rides the protocol
 		// body via these rules on the interactive_agent streaming path too.
 		CapabilityRules: capabilityRules,
-	})
+	}
 	// The codex exec protocol (sandbox posture, event vocabulary, exec-resume) is
 	// VERIFIED against codex-cli 0.139. The codex interactive arm stays behind an
 	// explicit operator opt-in
@@ -1225,11 +1341,17 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// absent from the stream map and the selector fails closed
 	// (ErrUnsupportedAgentBackend), so a host without a compatible codex binary
 	// cannot accidentally route interactive_agent turns to it.
-	agentStreams := map[string]engine.ChatProvider{
-		workflow.BackendClaudeCode: claudeStreamAgent,
+	agentStreams := map[string]providersadapter.AgentStreamFactory{
+		workflow.BackendClaudeCode: func(b provider.ResolvedBinding) engine.ChatProvider {
+			return claudecli.NewStreamAgentAdapterForBinding(agentCfg, b)
+		},
 	}
 	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
-		agentStreams[workflow.BackendCodex] = codexInteractive
+		agentStreams[workflow.BackendCodex] = func(b provider.ResolvedBinding) engine.ChatProvider {
+			cfg := codexInteractiveConfig
+			cfg.Binding = b
+			return codex.NewInteractiveProvider(cfg)
+		}
 		logger.Warn("codex interactive provider ENABLED via " + codexInteractiveVerifiedEnv +
 			" — codex exec protocol verified against codex-cli 0.139 (workspace-write sandbox, writable_roots pinned to WorkDir, network egress off; reads NOT confined — transcripts may contain host secrets)")
 	} else {
@@ -1242,18 +1364,74 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		cfg.LLM.DefaultAgentBackend,
 	)
 
+	// The probes launch from this directory; the inventory binds what Claude
+	// reads from it, so both must name the same path.
+	probeDir := filepath.Join(wsRoot, ".model-probe")
+	// Inventory and execution share the actual factory and stream selector,
+	// including the configured deployment floor and interactive opt-in map.
+	pathInventory, err := providersadapter.NewExecutionPathInventory(providersadapter.InventoryDeps{
+		Profiles:    profileSvc,
+		Connections: connStore,
+		Workflows:   workflowRepo,
+		ActiveRuns:  instanceRepo,
+		Policy:      identityPolicy,
+		Fingerprint: modelFingerprint,
+		Factory:     providerFactory,
+		Interactive: interactiveStreamSel,
+		Harness: providersadapter.NewHarnessFileFingerprinter(providersadapter.HarnessFilesConfig{
+			Binaries:   map[string]string{workflow.BackendClaudeCode: cfg.LLM.BinaryPath},
+			ProjectDir: probeDir,
+		}),
+		DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building execution path inventory: %w", err)
+	}
+	executionGate.SetCurrentRevision(pathInventory.Revision)
+	refreshDeps := modelRefreshDeps{
+		Settings: systemSettings, Policy: identityPolicy, Profiles: profileSvc, Inventory: pathInventory,
+		Chats: providerFactory, Agents: providerFactory, Streams: interactiveStreamSel, Store: catalogStore, Gate: executionGate, Publisher: profileCache, Logger: logger,
+		ProbeDir: probeDir, DB: db,
+		ProbeTimeout:   time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		FetchTransport: modelDeps.FetchTransport, Clock: modelDeps.Now, NewTicker: modelDeps.NewTicker,
+	}
+	if modelDeps.AnnouncementTransport != nil {
+		// Replace HTTP I/O only; the URL guard keeps wrapping the transport.
+		refreshDeps.AnnouncementClient = outbound.NewGuardedClientWithTransport(announcementTimeout, 0, modelDeps.AnnouncementTransport)
+	}
+	refresh, err := newModelRefresh(refreshDeps)
+	if err != nil {
+		return nil, fmt.Errorf("building model refresh: %w", err)
+	}
+	defer func() {
+		if !assembled {
+			refresh.stop()
+		}
+	}()
+	// Following-profile create/edit prove their model with the refresh's own
+	// candidate source; without it every following write fails closed.
+	profileSvc.SetModelSelection(modelidentity.NewVersionResolver(), refresh.candidates)
+	// Start seeds through this installed candidate source: cold prospective
+	// proof commits before the validated seed batch writes and reloads the cache.
+	// Capture one profile generation and validate it on actual deployment/node
+	// routes under the engine's shared lease, before persistence or enqueue.
+	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, modelidentity.NewVersionResolver(), pathInventory))
+
 	// Register one interactive executor instance under BOTH interactive node
 	// types. Notification creation is handled by the engine when it processes the
 	// IsWait result.
+	// These consumers always execute inside a run. Lost context must refuse a
+	// turn rather than silently resolve a live model after a profile edit.
+	interactiveResolver := pinningResolver.ForRun()
 	interactiveExec := engine.NewInteractiveExecutor(
-		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, fileReader, bus, queueMgr,
+		instanceRepo, nodeExecRepo, interactiveStreamSel, interactiveResolver, fileReader, bus, queueMgr,
 	)
 	eng.RegisterExecutor(workflow.NodeTypeInteractiveLLM, interactiveExec)
 	eng.RegisterExecutor(workflow.NodeTypeInteractiveAgent, interactiveExec)
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
-		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, bus, queueMgr,
+		instanceRepo, nodeExecRepo, interactiveStreamSel, interactiveResolver, bus, queueMgr,
 	)
 	// Wire the intervention repo so admin participation in another user's
 	// interactive session is attributed. The setter lives on the concrete type.
@@ -1262,6 +1440,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}); ok {
 		s.SetInterventions(interventionRepo)
 	}
+	// Release a run's cached model pins when its interactive session completes,
+	// through the same function the engine uses for terminal runs.
+	pinReleaser, ok := conversationHandler.(interface{ SetPinCacheRelease(func(uuid.UUID)) })
+	if !ok {
+		return nil, fmt.Errorf("conversation handler does not accept a pin cache release")
+	}
+	pinReleaser.SetPinCacheRelease(pinLookup.Release)
 	// Wire the Phase-2 audit service so a lead/admin steering an interactive
 	// session they do not own emits a domain audit event
 	// (instance.lead_intervention / admin.override) — the same accountability
@@ -1273,11 +1458,14 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		s.SetAuditRecorder(auditSvc)
 	}
 
-	// 12d-group-files. The bridge uses the same profile selector, file reader,
-	// notifier and node-addressed queue as interactive sessions. End/abandon
-	// actions reach it through the shared HTTP/MCP/WS conversation handler.
+	// 12d-group-files. The bridge uses the same run-scoped pinning resolver,
+	// profile selector, file reader, notifier and node-addressed queue as
+	// interactive sessions, so its autonomous turn and the human continuation
+	// (conversationHandler) both run the parent's trigger-time resolver model.
+	// End/abandon actions reach it through the shared HTTP/MCP/WS conversation
+	// handler.
 	groupResolution := engine.NewGroupResolutionBridge(
-		groupRunRepo, instanceRepo, nodeExecRepo, profileResolver,
+		groupRunRepo, instanceRepo, nodeExecRepo, interactiveResolver,
 		interactiveStreamSel, fileReader, eng, bus, queueRepo, queueMgr,
 		time.Duration(cfg.LLM.TimeoutSeconds)*time.Second,
 	)
@@ -1317,127 +1505,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("setting up tracing: %w", err)
 	}
 
-	ds.tracingShutdown = tracingShutdown
-
-	// 13a. Start the timer scheduler so recovery can register timers.
-	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
-	ds.scheduler, ds.schedulerCancel = scheduler, schedulerCancel
-	scheduler.Start(schedulerCtx)
-
-	// 14. Recover any instances that were running when the process last crashed.
-	logger.Info("recovering crashed instances")
-	if err := eng.RecoverCrashedInstances(); err != nil {
-		return nil, fmt.Errorf("recovering crashed instances: %w", err)
-	}
-
-	// 14-spawn. Reconcile parents stuck waiting on a child that already finished.
-	//
-	// ORDERING IS SIGNIFICANT: this runs AFTER RecoverCrashedInstances, which
-	// marks crashed CHILDREN as failed — so their parents resume through the
-	// failure port in this same startup pass instead of hanging until the next
-	// restart. A waiting parent is itself untouched by that sweep, since it is not
-	// in the running state.
-	//
-	// A failure here is logged, NOT fatal: the same posture as the timer/webhook
-	// recovery sweeps. A parent missed on this boot is picked up on the next one.
-	logger.Info("reconciling parents waiting on spawned children")
-	spawnReconciler := engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr)
-	if err := spawnReconciler.Reconcile(context.Background()); err != nil {
-		logger.Error("spawn-wait reconciliation incomplete", "error", err)
-	}
-
-	// Group recovery runs after crash recovery, so it sees crash-failed tasks and
-	// parents. It does NOT run before the queue admits work: the queue has no start
-	// gate, and any NotifyCapacityFreed (crash recovery, the spawn reconciler
-	// above) already spawns Evaluate, so a queued task can start while this pass
-	// runs. Every decision and wake is therefore idempotent (the run's own state
-	// and the continuation/actions flags guard it). A failed pass is retried by
-	// the ticker.
-	logger.Info("reconciling parallel groups")
-	if err := groupCoord.Reconcile(context.Background()); err != nil {
-		logger.Error("parallel-group reconciliation incomplete", "error", err)
-	}
-
-	// Recover file gathers after crash-failed tasks have been coordinated. A live
-	// executor may already be running (see above); the reconciler shares the
-	// executor's gather gate, so recovery and a live writer never touch the parent
-	// area together.
-	logger.Info("reconciling parallel-group file gathers")
-	if err := gatherReconciler.Reconcile(context.Background()); err != nil {
-		logger.Error("parallel-group file-gather reconciliation incomplete", "error", err)
-	}
-
-	// 14-spawn-sweep. Both spawn reconcilers then run CONTINUOUSLY on a ticker.
-	//
-	// A startup-only pass is not sufficient for either of them, because neither
-	// hole is crash-specific:
-	//
-	//   * A lost wake happens in a HEALTHY process whenever a child reaches a
-	//     terminal state before its parent's `waiting` transition is durable —
-	//     routine at the shipped per-user cap, where parent and child run
-	//     concurrently. Reconciling only at startup would leave that parent hung
-	//     until the next restart.
-	//   * The cancel cascade is a best-effort in-process walk that tolerates
-	//     partial failure by design, so a storage error on one branch strands an
-	//     active descendant under a cancelled parent, again with no restart in
-	//     sight.
-	//
-	// Errors are logged, never fatal: a transient DB error on one tick must not
-	// kill the loop. The orphan sweep cancels under the ORPHAN OWNER's
-	// reconstructed identity, through the SAME identityResolver the spawn
-	// executor and the schedule evaluator use.
-	orphanReconciler := engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng)
-	recoveryWG := &sync.WaitGroup{}
-	spawnSweepCtx, spawnSweepCancel := context.WithCancel(context.Background())
-	ds.spawnSweepCancel = spawnSweepCancel
-	ds.recoveryWG = recoveryWG
-	recoveryWG.Go(func() {
-		sweepSpawnReconcilers(spawnSweepCtx, spawnReconciler, orphanReconciler, spawnSweepInterval, logger)
-	})
-	groupSweepCtx, groupSweepCancel := context.WithCancel(context.Background())
-	ds.groupSweepCancel = groupSweepCancel
-	recoveryWG.Go(func() { sweepGroupReconciler(groupSweepCtx, groupCoord, groupSweepInterval, logger) })
-	recoveryWG.Go(func() { sweepGroupReconciler(groupSweepCtx, gatherReconciler, groupSweepInterval, logger) })
-	// Subscribe before returning: terminal events promptly abort/prune instead
-	// of waiting for the periodic sweep. Close (also the deferred init-failure
-	// cleanup) cancels both sweep and watch, then joins them before closing the
-	// database.
-	ds.groupWatchDone = gatherReconciler.Watch(groupSweepCtx)
-
-	// 14a. Recover pending timers and webhook endpoints from the database.
-	logger.Info("recovering pending timers")
-	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
-		return nil, fmt.Errorf("recovering timers: %w", err)
-	}
-	logger.Info("recovering webhook endpoints")
-	if err := queueMgr.RecoverWebhooks(context.Background()); err != nil {
-		return nil, fmt.Errorf("recovering webhooks: %w", err)
-	}
-
-	// 14c. Apply the no-backfill misfire policy ONCE (org-readiness Phase 3),
-	// AFTER timer/webhook recovery and BEFORE starting the evaluator loop, then
-	// start the loop. Recover advances schedules whose occurrences elapsed during
-	// downtime (raising a schedule_missed alert) without backfilling them.
-	if err := scheduleEval.Recover(context.Background()); err != nil {
-		logger.Error("recovering schedules", "error", err)
-	}
-	scheduleEvalCtx, scheduleEvalCancel := context.WithCancel(context.Background())
-	scheduleEval.Start(scheduleEvalCtx)
-	ls.start(logger)
-
-	// 14b. Start the org-mode session-expiry sweep (no-op in local mode), plus a
-	// device-code expiry sweep (device login is org-mode only).
-	var sweepCancel context.CancelFunc
-	if authMode == identity.ModeOrg {
-		var sweepCtx context.Context
-		sweepCtx, sweepCancel = context.WithCancel(context.Background())
-		ds.background.Go(func() {
-			adaptsqlite.SweepExpiredSessions(sweepCtx, sessionRepo,
-				time.Duration(cfg.Auth.Session.TTLSeconds)*time.Second, logger)
-		})
-		ds.background.Go(func() { sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger) })
-	}
-
 	// Shared backend-health component: ONE TTL-cached Checker, injected into both
 	// the HTTP SystemHandler and the MCP server below. A nil runner falls back to
 	// the production os/exec probe (codex.Readiness); a 0 TTL uses the package
@@ -1445,50 +1512,113 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// request-spanning lifetime.
 	backendHealthChecker := backendhealth.NewChecker(nil, 0, nil)
 
-	ds.settings = settings
-	ds.workflowRepo = workflowRepo
-	ds.workflowSvc = workflowSvc
-	ds.auditSvc = auditSvc
-	ds.publishedRepo = publishedRepo
-	ds.instanceRepo = instanceRepo
-	ds.nodeExecRepo = nodeExecRepo
-	ds.snapshotRepo = snapshotRepo
-	ds.fileReader = fileReader
-	ds.bus = bus
-	ds.queueRepo = queueRepo
-	ds.scheduleEval = scheduleEval
-	ds.scheduleEvalCancel = scheduleEvalCancel
-	ds.scheduleSvc = scheduleSvc
-	ds.webhookRegistry = webhookRegistry
-	ds.notifRepo = notifRepo
-	ds.dismissalRepo = dismissalRepo
-	ds.conversationHandler = conversationHandler
-	ds.profileChecker = profileChecker
-	ds.connChecker = connChecker
-	ds.connStore = connStore
-	ds.profileSvc = profileSvc
-	ds.connSvc = connSvc
-	ds.capabilityRules = capabilityRules
-	ds.sessionRepo = sessionRepo
-	ds.tokenRepo = tokenRepo
-	ds.tokenSvc = tokenSvc
-	ds.deviceRepo = deviceRepo
-	ds.deviceSvc = deviceSvc
-	ds.provisioner = provisioner
-	ds.userRepo = userRepo
-	ds.groupCfg = groupCfg
-	ds.userSvc = userSvc
-	ds.dashboardSvc = dashboardSvc
-	ds.authHandler = authHandler
-	ds.sweepCancel = sweepCancel
-	ds.backendHealth = backendHealthChecker
-	ds.groupRunRepo = groupRunRepo
-	ds.graphState = engine.NewGraphStateReader(eng, nodeExecRepo, groupRunRepo, instanceRepo)
+	graphState := engine.NewGraphStateReader(eng, nodeExecRepo, groupRunRepo, instanceRepo)
 	// Share a bounded ancestry cache; authorize every forwarded source anew.
 	subtreeEvents := engine.NewSubtreeEventBridge(bus, eng, instanceRepo)
 	subtreeEvents.SetGroupRuns(groupRunRepo)
-	ds.subtreeEvents = subtreeEvents
-	initialized = true
+
+	assembled = true
+	ds := &domainStack{
+		layout:                ls,
+		cfg:                   cfg,
+		modelStateCrypto:      modelStateCrypto,
+		modelFingerprint:      modelFingerprint,
+		executionGate:         executionGate,
+		pathInventory:         pathInventory,
+		modelRefresh:          refresh,
+		refreshDeps:           refreshDeps,
+		SystemSettings:        systemSettings,
+		IdentityPolicy:        identityPolicy,
+		catalogStore:          catalogStore,
+		settings:              settings,
+		logger:                logger,
+		logCloser:             logCloser,
+		db:                    db,
+		eng:                   eng,
+		workflowRepo:          workflowRepo,
+		workflowSvc:           workflowSvc,
+		auditSvc:              auditSvc,
+		publishedRepo:         publishedRepo,
+		instanceRepo:          instanceRepo,
+		nodeExecRepo:          nodeExecRepo,
+		snapshotRepo:          snapshotRepo,
+		fileReader:            fileReader,
+		bus:                   bus,
+		queueMgr:              queueMgr,
+		queueRepo:             queueRepo,
+		scheduler:             scheduler,
+		groupRunRepo:          groupRunRepo,
+		groupCoord:            groupCoord,
+		gatherReconciler:      gatherReconciler,
+		recoveryWG:            &sync.WaitGroup{},
+		scheduleEval:          scheduleEval,
+		scheduleSvc:           scheduleSvc,
+		webhookRegistry:       webhookRegistry,
+		notifRepo:             notifRepo,
+		dismissalRepo:         dismissalRepo,
+		conversationHandler:   conversationHandler,
+		pinLookup:             pinLookup,
+		profileChecker:        profileChecker,
+		profileResolver:       profileResolver,
+		connChecker:           connChecker,
+		connStore:             connStore,
+		profileSvc:            profileSvc,
+		connSvc:               connSvc,
+		capabilityRules:       capabilityRules,
+		tracingShutdown:       tracingShutdown,
+		sessionRepo:           sessionRepo,
+		tokenRepo:             tokenRepo,
+		tokenSvc:              tokenSvc,
+		deviceRepo:            deviceRepo,
+		deviceSvc:             deviceSvc,
+		provisioner:           provisioner,
+		userRepo:              userRepo,
+		userSvc:               userSvc,
+		dashboardSvc:          dashboardSvc,
+		authMW:                authMW,
+		authHandler:           authHandler,
+		backendHealth:         backendHealthChecker,
+		graphState:            graphState,
+		awaitInitialDiscovery: defaultAwaitInitialDiscovery,
+		subtreeEvents:         subtreeEvents,
+	}
+	skipSeed := func(alias string, cause error) {
+		logger.Warn("skipped config profile", "alias", alias, "error", cause)
+	}
+	// A seed left pending at boot (discovery down, proof not yet confirmed) is
+	// retried from the persisted pending journal after each completed tick. The
+	// current config candidates go along so an original that can never be
+	// prepared (an empty model frozen by an older release) is repaired by a
+	// following default here: startup cannot, since it never discovers.
+	refresh.seedPending = func(ctx context.Context) {
+		seeded, skipped, err := SeedProfiles(ctx, profileRepo, profileSvc, domainProfiles, skipSeed)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Warn("retrying pending config profile seeds", "error", err)
+			}
+			return
+		}
+		if seeded > 0 || skipped > 0 {
+			logger.Info("seeded pending profiles from config", "seeded", seeded, "skipped", skipped)
+		}
+	}
+	ds.startWork = func(ctx context.Context) error {
+		// Startup seeding never discovers: a following seed's prospective
+		// discovery would hold readiness behind catalog fetches and probes. It
+		// stays pending for the background loop's seedPending retry (serve).
+		seeded, skipped, err := SeedProfiles(provider.WithoutSeedDiscovery(ctx), profileRepo, profileSvc, domainProfiles, skipSeed)
+		if err != nil {
+			return fmt.Errorf("seeding profiles: %w", err)
+		}
+		if seeded > 0 || skipped > 0 {
+			logger.Info("seeded profiles from config", "seeded", seeded, "skipped", skipped)
+		}
+		seedWorkflows(ctx)
+		reportPinPreflight(ctx, profileSvc, notifRepo, externalNotifier, &ds.background, logger)
+		return ds.startRuntime(ctx, authMode,
+			engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr),
+			engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng))
+	}
 	return ds, nil
 }
 
@@ -1504,19 +1634,24 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer ds.Close(context.Background())
+	if err := ds.Start(ctx); err != nil {
+		// Shutdown requested while starting (signal or service stop) is a clean
+		// exit, the same as one requested while serving.
+		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	}
 
 	// 15. Create the MCP server (mounted at /mcp on the HTTP router) and
 	// the full API router with embedded dashboard.
 	mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
 	adaptmcp.RegisterAllTools(mcpSrv)
 
-	dashHandler := dashboard.Handler()
-	notifHandler := adapthttp.NewNotificationHandler(ds.notifRepo)
-	notifHandler.SetEventBus(ds.bus)
-	webhookHandler := adapthttp.NewWebhookHandler(
-		ds.webhookRegistry, ds.instanceRepo, ds.nodeExecRepo, ds.scheduler, ds.queueRepo, ds.queueMgr,
-	)
-	router := adapthttp.NewRouterFromDeps(ds.routerDeps(mcpSrv.HTTPHandler(), dashHandler, notifHandler, webhookHandler))
+	routerDeps := ds.httpDeps()
+	routerDeps.DashboardHandler = dashboard.Handler()
+	routerDeps.MCPHandler = mcpSrv.HTTPHandler()
+	router := adapthttp.NewRouterFromDeps(routerDeps)
 
 	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(ds.logger)(router)
@@ -1625,7 +1760,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ds, err := initDomain(ctx, configPath)
+	ds, err := startMCPStack(ctx, configPath, ModelDependencies{})
 	if err != nil {
 		return err
 	}
@@ -1640,6 +1775,24 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	}
 	ds.logger.Info("MCP stdio server starting")
 	return mcpSrv.ServeStdio(stdioCtx)
+}
+
+// startMCPStack is the stdio MCP initialization: the stack is built, the
+// entrypoint's discovery policy applied, then started. MCP clients enforce
+// short handshake timeouts and each launches its own process, so no catalog
+// fetch or probe may precede ServeStdio and only serve runs the automatic
+// refresh loop. On a Start failure the stack is closed.
+func startMCPStack(ctx context.Context, configPath string, deps ModelDependencies) (*domainStack, error) {
+	ds, err := initDomainWithModelDependencies(ctx, configPath, deps)
+	if err != nil {
+		return nil, err
+	}
+	ds.disableAutomaticDiscovery()
+	if err := ds.Start(ctx); err != nil {
+		ds.Close(context.Background())
+		return nil, err
+	}
+	return ds, nil
 }
 
 // scheduleCanTrigger adapts the published-workflow lookup into the

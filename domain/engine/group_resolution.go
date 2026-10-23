@@ -260,6 +260,10 @@ func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instan
 	if alias == "" {
 		return nil, fmt.Errorf("group resolution: parallel_group %q has no resolverProfile", run.NodeID)
 	}
+	// The resolver is run-scoped (it resolves the parent's trigger-time pin and
+	// refuses without a run). The gather reconciler path does not guarantee the
+	// parent's ID is on ctx, so attach it before resolving.
+	ctx = ContextWithInstanceID(ctx, parent.ID)
 	binding, err := b.resolver.Resolve(ctx, alias)
 	if err != nil {
 		return nil, fmt.Errorf("group resolution %q: resolve profile %q: %w", run.NodeID, alias, err)

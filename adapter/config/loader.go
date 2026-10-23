@@ -107,12 +107,15 @@ func defaults() map[string]interface{} {
 		// leads it has no flat default and is supplied via YAML or the
 		// ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE> env overlay below.
 		// Profile registry: alias -> capability kind + model-id. A fresh
-		// install ships a chat/agent pair so a basic workflow validates; empty
-		// model means "use the claude-cli default model" (cfg.LLM.Model).
+		// install ships a chat/agent pair so a basic workflow validates. Every
+		// shipped default FOLLOWS an Anthropic tier, so none goes stale: a
+		// pinned profile must name a fixed model version, and an empty model or
+		// a mutable alias ("sonnet") is refused.
 		//
 		// The reviewer/coder/planner/interviewer/assessor aliases are the
 		// in-repo default registry for the workflows shipped in this repo
-		// (samples/pr-review, samples/feature-pipeline). Shipping them as
+		// (samples/pr-review). samples/feature-pipeline instead needs the
+		// DB-only admin profiles in its PROFILES.md. Shipping them as
 		// defaults (overridable by the deployment config.yaml) lets a fresh
 		// clone validate those workflows honestly instead of passing
 		// workflow_validate and then dying mid-run with "unknown profile alias"
@@ -130,13 +133,13 @@ func defaults() map[string]interface{} {
 		// in (no host secrets, controlled egress). Deployment config.yaml SHOULD
 		// mirror these scopes when overriding.
 		"profiles": []map[string]interface{}{
-			{"alias": "default-chat", "kind": "chat", "model": ""},
-			{"alias": "default-agent", "kind": "agent", "model": ""},
-			{"alias": "assessor", "kind": "chat", "model": ""},
-			{"alias": "interviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
-			{"alias": "reviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}},
-			{"alias": "coder", "kind": "agent", "backend": "claude-code", "model": "opus-4.8", "allowedtools": []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}},
-			{"alias": "planner", "kind": "agent", "backend": "claude-code", "model": "opus-4.8", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
+			{"alias": "default-chat", "kind": "chat", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "sonnet"}},
+			{"alias": "default-agent", "kind": "agent", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "sonnet"}},
+			{"alias": "assessor", "kind": "chat", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "sonnet"}},
+			{"alias": "interviewer", "kind": "agent", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "sonnet"}, "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
+			{"alias": "reviewer", "kind": "agent", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "sonnet"}, "allowedtools": []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}},
+			{"alias": "coder", "kind": "agent", "backend": "claude-code", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "opus"}, "allowedtools": []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}},
+			{"alias": "planner", "kind": "agent", "backend": "claude-code", "selection_mode": "following", "follow_target": map[string]interface{}{"provider": "anthropic", "tier": "opus"}, "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
 		},
 	}
 }
@@ -212,21 +215,38 @@ script:
   #   Override via ARBITRON_SCRIPT_ENVPASSTHROUGH=NAME1,NAME2.
 profiles:
   # The profile registry maps a node's model_profile alias to a capability
-  # kind (chat | agent) and a model-id. Nodes reference a backend by alias, so
-  # a config swap repoints aliases without touching workflow.json. An empty
-  # model means "use the claude-cli default model" (llm.model). In Phase 1
-  # every profile resolves to claude-cli; chat selects the no-tool ChatAdapter,
-  # agent selects the tool-using AgentAdapter.
+  # kind (chat | agent) and a model. Nodes reference a backend by alias, so a
+  # config swap repoints aliases without touching workflow.json. Chat selects
+  # the no-tool ChatAdapter, agent selects the tool-using AgentAdapter.
+  #
+  # A profile is pinned (the default) or following. A pinned profile names one
+  # fixed model version (e.g. "claude-sonnet-5-5"); runs pin it at trigger
+  # time, so an empty model or a mutable alias such as "sonnet" refuses
+  # triggers. A following profile tracks the newest eligible model for a
+  # provider and tier; with no model it starts from the newest candidate, and a
+  # starting model it names must be confirmed usable on its own route. It needs
+  # catalog evidence, so while the catalog is unreachable it stays pending and
+  # is seeded by a later refresh. Completed entries are managed in the DB, not
+  # by later config edits. A pinned example:
+  #   - alias: "fast"
+  #     kind: "chat"
+  #     model: "claude-haiku-4-5"
+  #
+  # Every shipped default FOLLOWS an Anthropic tier on the Claude Code
+  # subscription, so a fresh install runs the bundled samples out of the box
+  # and moves to newer models with no config edits.
   - alias: "default-chat"
     kind: "chat"
-    model: ""
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "sonnet" }
   - alias: "default-agent"
     kind: "agent"
-    model: ""
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "sonnet" }
   # In-repo default registry for the workflows shipped in this repo
-  # (samples/pr-review, samples/feature-pipeline). Override the model-id
-  # per alias to repoint a persona at a specific backend; remove an alias only
-  # if you are not running its workflow.
+  # (samples/pr-review, samples/feature-pipeline). Repoint a persona at another
+  # tier or backend by editing its entry; remove an alias only if you are not
+  # running its workflow.
   #
   # SECURITY (PR #18 item 1b): each AGENT profile sets an explicit minimal
   # allowedtools allowlist so a tool-enabled agent runs bounded instead of
@@ -236,22 +256,21 @@ profiles:
   # Mirror these scopes if you override this block.
   - alias: "assessor"
     kind: "chat"
-    model: ""
-  # The DEFAULT interviewer runs on claude-code with the subscription default
-  # model (model: ""), so a fresh install runs the bundled feature-pipeline sample
-  # out of the box on the claude subscription — no extra prerequisites.
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "sonnet" }
   - alias: "interviewer"
     kind: "agent"
-    model: ""
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "sonnet" }
     allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
   #
   # MIXED-MODEL EXAMPLE (commented — NOT the default): to run the interviewer on
   # the codex backend (ChatGPT subscription, codex exec) instead of claude-code,
   # replace the interviewer block above with the one below. The backend axis is
   # INDEPENDENT of the provider/connection; repoint a persona by editing its
-  # backend/model without touching workflow.json. NOTE: codex requires the codex
+  # backend/tier without touching workflow.json. NOTE: codex requires the codex
   # CLI installed AND logged in, and the chosen model must be available on your
-  # ChatGPT plan (e.g. gpt-5.5 access is account-dependent) — see
+  # ChatGPT plan (access is account-dependent) — see
   # docs/agent-security-model.md for the bypass-approvals-and-sandbox posture and
   # docs/install/README.md for the codex prerequisites. It is shipped commented so
   # the bundled default always runs out of the box.
@@ -259,22 +278,26 @@ profiles:
   #   - alias: "interviewer"
   #     kind: "agent"
   #     backend: "codex"
-  #     model: "gpt-5.5"
+  #     selection_mode: "following"
+  #     follow_target: { provider: "openai", tier: "sol" }
   #     allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
   #
   - alias: "reviewer"
     kind: "agent"
-    model: ""
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "sonnet" }
     allowedtools: ["Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"]
   - alias: "coder"
     kind: "agent"
     backend: "claude-code"
-    model: "opus-4.8"
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "opus" }
     allowedtools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
   - alias: "planner"
     kind: "agent"
     backend: "claude-code"
-    model: "opus-4.8"
+    selection_mode: "following"
+    follow_target: { provider: "anthropic", tier: "opus" }
     allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
 logging:
   level: "info"

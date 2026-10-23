@@ -50,6 +50,10 @@ type cardAction struct {
 // Action.OpenUrl deep link is omitted and the card remains valid.
 func buildTeamsPayload(n *notification.Notification, baseURL string) ([]byte, error) {
 	title := "Workflow " + n.WorkflowName + ": " + string(n.Type)
+	if n.Type == notification.TypeProfileRefusesTriggers {
+		// WorkflowName carries "profile <alias>"; the reason is in the boot log.
+		title = n.WorkflowName + " will refuse triggers: set a fixed model version (reason in the server log)"
+	}
 
 	card := adaptiveCard{
 		Schema:  "http://adaptivecards.io/schemas/adaptive-card.json",

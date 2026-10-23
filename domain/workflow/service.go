@@ -96,6 +96,39 @@ type Service struct {
 	// require. When unset, group writes fail with GROUP_CHECKER_UNAVAILABLE.
 	groupProfiles ProfileChecker
 	groupFiles    OwnerFileChecker
+	// gate serializes execution-affecting writes with model advancement and
+	// run-snapshot capture. nil (unit tests) writes directly.
+	gate MutationGate
+}
+
+// MutationGate is the narrow view of provider.ExecutionGate this service needs;
+// the interface avoids an import cycle. Callbacks must not re-enter the gate.
+type MutationGate interface {
+	WithMutation(ctx context.Context, fn func(context.Context) error) error
+}
+
+// SetMutationGate injects the shared execution gate. Create, Update, WriteFile,
+// DeleteFile, Rename, Duplicate, TransferOwnership and Delete then hold its
+// exclusive lease for the whole write. The root wiring test proves production
+// injects the stack's one gate.
+func (s *Service) SetMutationGate(g MutationGate) { s.gate = g }
+
+// mutate runs fn under the exclusive execution lease when a gate is injected.
+func (s *Service) mutate(ctx context.Context, fn func(context.Context) error) error {
+	if s.gate == nil {
+		return fn(ctx)
+	}
+	return s.gate.WithMutation(ctx, fn)
+}
+
+// mutateAdmin is mutate for admin-only entry points: authorization runs BEFORE
+// the exclusive lease, so a forbidden caller never queues behind (or blocks)
+// run starts and model refreshes. The ungated bodies keep their own check.
+func (s *Service) mutateAdmin(ctx context.Context, fn func(context.Context) error) error {
+	if err := s.requireAdmin(ctx); err != nil {
+		return err
+	}
+	return s.mutate(ctx, fn)
 }
 
 // SetRevisionStamper enables the authoring-save protocol. A stamper requires
@@ -247,6 +280,11 @@ func (s *Service) adminSharedWrite(ctx context.Context, id identity.Identity, na
 // A workflow containing parallel_group nodes is first checked by ValidateGroups;
 // any hard finding returns *GroupValidationError before anything is written.
 func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
+	return s.mutate(ctx, func(ctx context.Context) error { return s.create(ctx, name, wf) })
+}
+
+// create is the ungated body of Create; callers go through Create.
+func (s *Service) create(ctx context.Context, name string, wf *Workflow) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -299,9 +337,23 @@ func (s *Service) Update(ctx context.Context, name string, wf *Workflow) error {
 
 // updateWithGroupFindings is the shared Update path, retaining the accepted
 // pre-write findings for callers that return a group view with the receipt.
+// It holds the execution gate's exclusive lease for the whole write, so both
+// Update and the group operations that call it directly are serialized with
+// model advancement and run-snapshot capture.
 // The group gate runs before either write protocol, so the stamped revision
 // path (production) is gated exactly like the legacy one.
 func (s *Service) updateWithGroupFindings(ctx context.Context, name string, wf *Workflow) ([]ValidationError, error) {
+	var findings []ValidationError
+	err := s.mutate(ctx, func(ctx context.Context) error {
+		var err error
+		findings, err = s.update(ctx, name, wf)
+		return err
+	})
+	return findings, err
+}
+
+// update is the ungated body of updateWithGroupFindings; callers go through it.
+func (s *Service) update(ctx context.Context, name string, wf *Workflow) ([]ValidationError, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -336,9 +388,12 @@ func (s *Service) updateWithGroupFindings(ctx context.Context, name string, wf *
 // WriteFile writes a file into the caller's private workflow directory (an admin
 // may target a shared-only workflow in place; see adminSharedWrite).
 func (s *Service) WriteFile(ctx context.Context, name, rel string, content []byte) error {
-	return s.withSupportingWrite(ctx, name, func(ctx context.Context) error { return s.writeFile(ctx, name, rel, content) })
+	return s.mutate(ctx, func(ctx context.Context) error {
+		return s.withSupportingWrite(ctx, name, func(ctx context.Context) error { return s.writeFile(ctx, name, rel, content) })
+	})
 }
 
+// writeFile is the ungated body of WriteFile; callers go through WriteFile.
 func (s *Service) writeFile(ctx context.Context, name, rel string, content []byte) error {
 	id, err := caller(ctx)
 	if err != nil {
@@ -352,6 +407,11 @@ func (s *Service) writeFile(ctx context.Context, name, rel string, content []byt
 
 // DeleteFile removes a file from the caller's private workflow directory.
 func (s *Service) DeleteFile(ctx context.Context, name, rel string) error {
+	return s.mutate(ctx, func(ctx context.Context) error { return s.deleteFile(ctx, name, rel) })
+}
+
+// deleteFile is the ungated body of DeleteFile; callers go through DeleteFile.
+func (s *Service) deleteFile(ctx context.Context, name, rel string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -616,6 +676,13 @@ func (s *Service) Stats(ctx context.Context, name string, from, to time.Time) (*
 //     must NOT delete — that would destroy the shared copy entirely (data loss).
 //     The error is surfaced loudly so the operator can retry the record.
 func (s *Service) Publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
+	return s.mutate(ctx, func(ctx context.Context) error {
+		return s.publish(ctx, privateName, publishedName, visibility, department)
+	})
+}
+
+// publish is the ungated body of Publish; callers go through Publish.
+func (s *Service) publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
 	if s.stamper != nil {
 		return s.publishRevision(ctx, privateName, publishedName, visibility, department)
 	}
@@ -725,6 +792,11 @@ func (s *Service) Publish(ctx context.Context, privateName, publishedName string
 // Copy duplicates a shared workflow into the caller's private scope. The copy
 // is fully independent — no back-link to the shared original.
 func (s *Service) Copy(ctx context.Context, sharedName, newPrivateName string) error {
+	return s.mutate(ctx, func(ctx context.Context) error { return s.copy(ctx, sharedName, newPrivateName) })
+}
+
+// copy is the ungated body of Copy; callers go through Copy.
+func (s *Service) copy(ctx context.Context, sharedName, newPrivateName string) error {
 	if s.stamper != nil {
 		return s.copyRevision(ctx, sharedName, newPrivateName)
 	}

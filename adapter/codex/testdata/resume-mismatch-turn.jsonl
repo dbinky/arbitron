@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"observed-account-secret-marker"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"answer","type":"agent_message","text":"unaccepted foreign output"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}

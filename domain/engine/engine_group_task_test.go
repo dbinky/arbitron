@@ -78,8 +78,8 @@ func newGroupTaskHarnessOn(t *testing.T, bus engine.EventBus) *groupTaskHarness 
 	instRepo := newMockInstanceRepo()
 	qm := newMockQueueManager()
 	lookups := &sentinelInstanceRepo{mockInstanceRepo: instRepo}
-	eng := engine.NewEngine(repo, lookups, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
-		newMockUserRepo(), map[workflow.NodeType]engine.NodeExecutor{}, bus, qm, &mockQueueRepo{instRepo: instRepo}, "")
+	eng := wireModelPins(engine.NewEngine(repo, lookups, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
+		newMockUserRepo(), map[workflow.NodeType]engine.NodeExecutor{}, bus, qm, &mockQueueRepo{instRepo: instRepo}, ""))
 	eng.SetGroupSupport(engine.GroupSupportResults)
 
 	h := &groupTaskHarness{
@@ -155,7 +155,7 @@ func gtSnapshot(t *testing.T, wf workflow.Workflow) map[string]any {
 	return snap
 }
 
-func (h *groupTaskHarness) seedParent(t *testing.T, owner uuid.UUID, depth int) *instance.Instance {
+func (h *groupTaskHarness) seedParent(t *testing.T, owner uuid.UUID, depth int, opts ...func(*instance.Instance)) *instance.Instance {
 	t.Helper()
 	wf := gtParentWorkflow()
 	g := "g"
@@ -163,6 +163,9 @@ func (h *groupTaskHarness) seedParent(t *testing.T, owner uuid.UUID, depth int) 
 		ID: uuid.New(), OwnerID: owner, WorkflowID: uuid.New(), WorkflowName: wf.Name,
 		WorkflowSnapshot: gtSnapshot(t, wf), Department: "engineering", Visibility: instance.VisibilityDepartment,
 		State: instance.StateRunning, Priority: instance.PriorityHigh, SpawnDepth: depth, CurrentNodeID: &g,
+	}
+	for _, opt := range opts {
+		opt(p)
 	}
 	require.NoError(t, h.instances.Create(context.Background(), p))
 	return p
@@ -610,4 +613,51 @@ func TestSpawn_AfterRefactor_LegacyLinkUnchanged(t *testing.T) {
 	assert.Nil(t, child.GroupRunID, "a legacy spawn carries no group linkage")
 	assert.Nil(t, child.GroupTaskKey)
 	assert.Equal(t, instance.GroupTaskKind(""), child.GroupTaskKind)
+}
+
+// ---------- model pins (D1) ----------
+
+// A branch task runs the parent's own definition, so it inherits the parent's
+// exact pin record: models, pinned-only routes and their connections. A model
+// advancement after the parent started must not reach its branches.
+func TestStartGroupTask_BranchKind_InheritsTheParentsPins(t *testing.T) {
+	h := newGroupTaskHarness(t)
+	owner := uuid.New()
+	parent := h.seedParent(t, owner, 0, func(p *instance.Instance) {
+		p.ModelPins = map[string]string{"worker": "model-X"}
+		p.ModelPinRoutes = map[string]string{"pinned": "azure"}
+		p.ModelPinRouteConnections = map[string]string{"pinned": "az-conn"}
+		p.ModelPinsVersion = instance.ModelPinsVersionSnapshot
+	})
+	req := gtBranchReq(parent)
+
+	require.NoError(t, h.engine.StartGroupTask(ctxAs(owner), req))
+
+	child := h.rowAtEnqueue(req.TaskInstanceID)
+	require.NotNil(t, child)
+	assert.Equal(t, instance.ModelPinsVersionSnapshot, child.ModelPinsVersion)
+	assert.Equal(t, map[string]string{"worker": "model-X"}, child.ModelPins, "not the snapshotter's current pinned-worker")
+	assert.Equal(t, parent.ModelPinRoutes, child.ModelPinRoutes)
+	assert.Equal(t, parent.ModelPinRouteConnections, child.ModelPinRouteConnections)
+
+	// Independent copies: a later write to the child cannot reach the parent.
+	child.ModelPins["worker"] = "mutated"
+	assert.Equal(t, "model-X", parent.ModelPins["worker"])
+}
+
+// EDGE — a legacy (pre-pin) parent has no record to inherit. Its branch is a new
+// instance, so it captures a fresh v1 snapshot like any other trigger.
+func TestStartGroupTask_BranchKind_LegacyParentCapturesFreshPins(t *testing.T) {
+	h := newGroupTaskHarness(t)
+	owner := uuid.New()
+	parent := h.seedParent(t, owner, 0)
+	require.Equal(t, 0, parent.ModelPinsVersion)
+	req := gtBranchReq(parent)
+
+	require.NoError(t, h.engine.StartGroupTask(ctxAs(owner), req))
+
+	child := h.rowAtEnqueue(req.TaskInstanceID)
+	require.NotNil(t, child)
+	assert.Equal(t, instance.ModelPinsVersionSnapshot, child.ModelPinsVersion)
+	assert.NotNil(t, child.ModelPins, "a v1 snapshot is a non-nil map even with no aliases")
 }

@@ -62,7 +62,7 @@ func TestAcceptance_02_AllThreeChatProviders(t *testing.T) {
 		transport := newFakeTransport(true) // assessor reports done → loop exits
 		b := binding{
 			name:     "assessor=openrouter",
-			profiles: []provider.Profile{editorProfile, {Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-r1"}},
+			profiles: []provider.Profile{editorProfile, {Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-v4-flash"}},
 			connections: []seedConn{{
 				conn: provider.Connection{Name: "openrouter-chat", Provider: "openrouter", BaseURL: "https://openrouter.example/api/v1"},
 				key:  openrouterKey,

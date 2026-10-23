@@ -57,12 +57,12 @@ build:
 # UI rebuild — it embeds the committed adapter/dashboard/dist. Use `test-all`
 # for the full gate.
 test:
-	go test ./...
+	go test -timeout 30m ./...
 
 # test-all's Go run: starts only after the embedded dist has been rebuilt and
 # proven fresh, so `make -j test-all` never compiles a half-copied dist.
 test-go-fresh-ui: check-ui-fresh
-	go test ./...
+	go test -timeout 30m ./...
 
 # Run the dashboard test suite: TypeScript type-check + Vitest. Not part of
 # `test`; kept separate because it needs Node, not Go.

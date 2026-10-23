@@ -92,7 +92,9 @@ func ssSeed(t *testing.T, ds *domainStack, parent *uuid.UUID, state instance.Sta
 	t.Helper()
 	node := "spawn"
 	inst := &instance.Instance{
-		ID: uuid.New(), OwnerID: localDefaultUser, WorkflowName: "stream-fixture",
+		ModelPins:        map[string]string{},
+		ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+		ID:               uuid.New(), OwnerID: localDefaultUser, WorkflowName: "stream-fixture",
 		WorkflowSnapshot: map[string]any{"name": "stream-fixture", "nodes": []any{
 			map[string]any{"id": "spawn", "type": "transform", "entrypoint": true},
 		}},
@@ -140,7 +142,7 @@ func TestSubtreeStreamE2E_VisibilityRevocationAndRestorationOnOneSocket(t *testi
 	child := ssSeed(t, ds, &root, instance.StateRunning)
 	// Supply a non-owner identity at the HTTP boundary, leaving the real
 	// routerDeps, Engine authorization, repositories and bridge intact.
-	deps := ds.routerDeps(nil, nil, nil, nil)
+	deps := ds.httpDeps()
 	deps.Auth = nil
 	router := adapthttp.NewRouterFromDeps(deps)
 	viewer := identity.Identity{UserID: uuid.New(), Role: identity.RoleUser}
@@ -188,7 +190,7 @@ func TestSubtreeStreamE2E_ConflictPathsReauthorizeTheTaskOnOneSocket(t *testing.
 		Tasks: []instance.GroupTask{{Key: "hidden", Kind: instance.GroupTaskKindWorkflow, Origin: "private-workflow", ChildInstanceID: child}},
 	}
 	require.NoError(t, ds.groupRunRepo.CreateWithTasks(context.Background(), run))
-	deps := ds.routerDeps(nil, nil, nil, nil)
+	deps := ds.httpDeps()
 	deps.Auth = nil
 	router := adapthttp.NewRouterFromDeps(deps)
 	viewer := identity.Identity{UserID: uuid.New(), Role: identity.RoleUser}

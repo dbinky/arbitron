@@ -3,8 +3,8 @@
 -- createInstanceSQL in instance_repo.go) so the column set can evolve without a
 -- sqlc regeneration step, the same way CountActiveByWorkflowID does. This
 -- definition is kept in lockstep as the readable source of truth.
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, group_run_id, group_task_key, group_task_kind, current_node_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, model_pins, model_pins_version, model_pin_routes, group_run_id, group_task_key, group_task_kind, current_node_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
@@ -29,7 +29,7 @@ SELECT * FROM instances WHERE id = ?;
 -- the Go builder, so it can only NARROW the authorized set, never widen it.
 -- Active-descendant discovery additionally uses a recursive CTE and appends
 -- id DESC to the created_at order, giving its offset pages a total order.
-SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id
+SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id, model_pins, model_pins_version, model_pin_routes
 FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
 AND (sqlc.narg('workflow_name') IS NULL OR workflow_name = sqlc.narg('workflow_name'))
@@ -87,7 +87,7 @@ UPDATE instances SET webhook_received_at = ?, updated_at = ? WHERE id = ?;
 -- NOTE: executed hand-written by InstanceRepo.ChildCountsByParents (the IN list
 -- and the caller's visibility disjunction are both variable-arity). Kept here as
 -- the readable source of truth. Parents with no visible children simply do not
--- appear in the result — absence means zero.
+-- appear in the result - absence means zero.
 SELECT parent_instance_id, COUNT(*) AS child_count
 FROM instances
 WHERE parent_instance_id IN (sqlc.slice('parent_ids'))

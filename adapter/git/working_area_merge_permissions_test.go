@@ -223,7 +223,9 @@ func TestGather_InterruptedApplyThenRestartRestoresBytesAndModes(t *testing.T) {
 			select {
 			case err := <-result:
 				require.Error(t, err)
-			case <-time.After(5 * time.Second):
+			// The wrapped git sleeps 30s, so returning well inside that still
+			// proves the kill; 15s leaves headroom on a loaded test host.
+			case <-time.After(15 * time.Second):
 				t.Fatal("apply did not stop")
 			}
 			restarted, err := NewWorkingArea(f.root)

@@ -50,7 +50,7 @@ func TestCancelTerminalRace_StopsDescendantsWithoutChangingTheWinningReceipt(t *
 					owner, err := adaptsqlite.NewUserRepo(db).GetDefaultUser(ctx)
 					require.NoError(t, err)
 					ctx = identity.WithIdentity(ctx, identity.Identity{UserID: owner, Role: identity.RoleUser})
-					parent := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "parent", State: instance.StateCompleted, Priority: instance.PriorityNormal}
+					parent := &instance.Instance{ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot, ID: uuid.New(), OwnerID: owner, WorkflowName: "parent", State: instance.StateCompleted, Priority: instance.PriorityNormal}
 					require.NoError(t, instances.Create(ctx, parent))
 					runID, taskID, node, key := uuid.New(), uuid.New(), "g", "branch"
 					run := &instance.GroupRun{
@@ -60,14 +60,18 @@ func TestCancelTerminalRace_StopsDescendantsWithoutChangingTheWinningReceipt(t *
 					}
 					require.NoError(t, groups.CreateWithTasks(ctx, run))
 					task := &instance.Instance{
-						ID: taskID, OwnerID: owner, WorkflowName: "parent", State: initial, Priority: instance.PriorityNormal,
+						ModelPins:        map[string]string{},
+						ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+						ID:               taskID, OwnerID: owner, WorkflowName: "parent", State: initial, Priority: instance.PriorityNormal,
 						ParentInstanceID: &parent.ID, ParentNodeID: &node, SpawnMode: instance.SpawnModeGroupTask,
 						GroupRunID: &runID, GroupTaskKey: &key, GroupTaskKind: instance.GroupTaskKindBranch,
 						Variables: map[string]any{"answer": "original"},
 					}
 					require.NoError(t, instances.Create(ctx, task))
 					leaf := &instance.Instance{
-						ID: uuid.New(), OwnerID: owner, WorkflowName: "leaf", State: instance.StateQueued, Priority: instance.PriorityNormal,
+						ModelPins:        map[string]string{},
+						ModelPinsVersion: instance.ModelPinsVersionSnapshot,
+						ID:               uuid.New(), OwnerID: owner, WorkflowName: "leaf", State: instance.StateQueued, Priority: instance.PriorityNormal,
 						ParentInstanceID: &taskID, ParentNodeID: &node, SpawnMode: instance.SpawnModeFireAndForget,
 					}
 					require.NoError(t, instances.Create(ctx, leaf))
@@ -85,7 +89,7 @@ func TestCancelTerminalRace_StopsDescendantsWithoutChangingTheWinningReceipt(t *
 						winning = fresh.Tasks[0]
 					}
 					bus := newMockEventBus()
-					eng := engine.NewEngine(nil, repo, nil, nil, nil, nil, bus, newMockQueueManager(), nil, "")
+					eng := wireModelPins(engine.NewEngine(nil, repo, nil, nil, nil, nil, bus, newMockQueueManager(), nil, ""))
 					eng.SetSpawnLinks(instances)
 					target := parent.ID
 					if direct {
@@ -135,7 +139,7 @@ func TestCancelTerminalRace_WriteFailureStillHaltsActiveOrUnauthorizedBranches(t
 					}
 				}
 			}
-			eng := engine.NewEngine(nil, repo, nil, nil, nil, nil, c.f.eventBus, c.f.queueManager, nil, "")
+			eng := wireModelPins(engine.NewEngine(nil, repo, nil, nil, nil, nil, c.f.eventBus, c.f.queueManager, nil, ""))
 			eng.SetSpawnLinks(c.links)
 			ctx := identity.WithIdentity(context.Background(), identity.Identity{
 				UserID: uuid.New(), Role: identity.RoleUser, Departments: []string{"eng", "finance"}, LedDepartments: []string{"eng"},

@@ -200,3 +200,20 @@ func TestValidateConnection_BedrockRequiresRegionAndAccessKey(t *testing.T) {
 		})
 	}
 }
+
+// Every spelling dispatch canonicalizes into the Azure or Bedrock family must
+// meet the same write-time rule, whatever its case or padding (G42).
+func TestValidateConnection_NativeSpellingsFollowCanonicalFamily(t *testing.T) {
+	for _, prov := range []string{"azure", "Azure-OpenAI", " AZURE-FOUNDRY "} {
+		err := provider.ValidateConnection(provider.Connection{Name: "az", Provider: prov})
+		assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired, "provider %q", prov)
+		ok := provider.Connection{Name: "az", Provider: prov, Extras: map[string]string{"api-version": "2024-02-01"}}
+		assert.NoError(t, provider.ValidateConnection(ok), "provider %q", prov)
+	}
+	for _, prov := range []string{"BEDROCK", "Amazon-Bedrock", " bedrock "} {
+		err := provider.ValidateConnection(provider.Connection{Name: "bd", Provider: prov})
+		assert.ErrorIs(t, err, provider.ErrBedrockCredentialsRequired, "provider %q", prov)
+		bad := provider.Connection{Name: "bd", Provider: prov, Extras: map[string]string{"region": "evil.example/x", "access-key-id": "AKID"}}
+		assert.ErrorIs(t, provider.ValidateConnection(bad), provider.ErrBedrockInvalidRegion, "provider %q", prov)
+	}
+}

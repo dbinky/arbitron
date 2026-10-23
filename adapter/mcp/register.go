@@ -7,6 +7,8 @@ func RegisterAllTools(srv *Server) {
 	RegisterInstanceTools(srv)
 	RegisterTraceTools(srv)
 	RegisterSystemTools(srv)
+	RegisterModelIdentityPolicyTools(srv)
+	RegisterModelCatalogTools(srv)
 	RegisterStreamingTools(srv)
 	RegisterInteractiveTools(srv)
 	RegisterConnectionTools(srv)

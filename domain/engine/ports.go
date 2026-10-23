@@ -184,6 +184,14 @@ type ChatRequest struct {
 	// "use the adapter's global scope". Ignored by tool-suppressed chat
 	// providers, which never emit tools.
 	ToolScope []string
+	// RequireExecutedModel asks the provider to prove the harness executed
+	// exactly Model (a pinned run's model) and to fail the call, before output
+	// is accepted, when the evidence is missing or names another model.
+	RequireExecutedModel bool
+	// SuppressTools asks a tool-enabled streaming provider for a tool-free turn
+	// (the empty allowlist, no permission bypass), whatever scope it carries.
+	// Usability probes set it so checking a model never grants it tools.
+	SuppressTools bool
 }
 
 // ChatResponse holds the result of a non-streaming LLM call.

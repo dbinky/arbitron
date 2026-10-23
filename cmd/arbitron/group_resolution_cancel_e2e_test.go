@@ -19,7 +19,7 @@ func TestGroupFilesE2E_ParentCancelledDuringAutonomousResolution(t *testing.T) {
 	// process and roll back without ever publishing an interactive session.
 	script := "#!/bin/sh\nset -eu\ncat >/dev/null\nprintf ready > resolver-ready\nexec sleep 60\n"
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(script), 0o700))
-	ds, err := initDomain(context.Background(), paths.configPath)
+	ds, err := initStartedDomain(context.Background(), paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	id := triggerGroupWorkflow(t, ds, "grp-files-conflict")

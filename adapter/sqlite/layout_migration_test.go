@@ -9,9 +9,9 @@ import (
 
 func TestLayoutMigration(t *testing.T) {
 	db := setupTestDB(t).DB
-	var version int
-	require.NoError(t, db.QueryRow(`SELECT max(version) FROM schema_migrations`).Scan(&version))
-	require.Equal(t, 22, version)
+	var applied int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = 22`).Scan(&applied))
+	require.Equal(t, 1, applied, "022_layout_revisions is applied")
 	for _, index := range []string{"idx_layout_destination", "idx_layout_claimable"} {
 		var count int
 		require.NoError(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?`, index).Scan(&count))

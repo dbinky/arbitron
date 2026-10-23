@@ -152,7 +152,7 @@ func TestConnectionValidateCmd_HasRunE(t *testing.T) {
 func TestDomainStack_Close_CancelsSessionSweep(t *testing.T) {
 	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
 	cancelled := false
-	ds := &domainStack{eng: eng, sweepCancel: func() { cancelled = true }}
+	ds := &domainStack{eng: eng, lifecycleCancel: func() { cancelled = true }}
 	assert.NotPanics(t, func() { ds.Close(context.Background()) })
 	assert.True(t, cancelled, "Close must cancel the org-mode session sweep")
 }

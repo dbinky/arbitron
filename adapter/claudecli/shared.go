@@ -89,7 +89,7 @@ func validateWorkDir(workDir, workspaceRoot string) error {
 	return nil
 }
 
-// chatEnvWithBinding builds the chat/stream-agent subprocess env: the
+// chatEnvWithBinding builds the tool-suppressed chat subprocess env: the
 // controlled base env (procenv.BaseEnv — allowlist-filtered, no engine secrets)
 // with the capability env appended via the same applyCapabilityEnv helper the
 // agent path uses, so chat and agent share ONE emission seam and cannot drift.
@@ -126,10 +126,14 @@ func (c *adapterCore) chatEnvWithBinding(binding provider.ResolvedBinding) []str
 // shared by ChatAdapter.Chat (which discards the steps) and
 // AgentAdapter.RunAgent (which folds them into AgentResult.Steps): it surfaces
 // start errors, mid-stream parse errors, process exit errors, a missing result
-// event, and an is_error result.
-func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec) (streamEvent, []streamEvent, error) {
+// event, and an is_error result. When wantModel is non-empty, exactly one
+// successful result must include it in modelUsage (D3); helper models are allowed.
+func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, wantModel string) (streamEvent, []streamEvent, error) {
 	lines, wait, err := runner.Run(ctx, spec)
 	if err != nil {
+		if wantModel != "" {
+			err = SanitizeProcessError(err)
+		}
 		return streamEvent{}, nil, fmt.Errorf("claudecli: call: %w", err)
 	}
 
@@ -150,19 +154,23 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec) (str
 			continue
 		}
 		if ev.Kind == eventResult {
+			if wantModel != "" && (haveResult || ev.IsError || !executedModelMatches(wantModel, ev.ModelUsage)) {
+				parseErr = errModelExecutionEvidence
+				continue
+			}
 			result, haveResult = ev, true
 			continue
 		}
 		steps = append(steps, ev)
 	}
 	if waitErr := wait(); waitErr != nil {
-		// Log the full stderr tail (operator-only) before shaping the surfaced
-		// error; no-op unless waitErr carries a tail.
-		LogStderrTail("claudecli", waitErr)
-		// On a cancel/timeout, wrap the context error so callers can errors.Is
-		// against context.Canceled/DeadlineExceeded, while still surfacing
-		// waitErr's redacted stderr summary — otherwise a hung run reports only
-		// the exit signal with no timeout signal for callers to branch on.
+		if wantModel != "" {
+			waitErr = SanitizeProcessError(waitErr)
+		} else {
+			LogStderrTail("claudecli", waitErr)
+		}
+		// Keep cancellation classifiable even when the process reports only its
+		// exit signal. Verified calls retain only the sanitized process error.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return streamEvent{}, nil, fmt.Errorf("claudecli: mission timed out: %w (%v)", ctxErr, waitErr)
 		}
