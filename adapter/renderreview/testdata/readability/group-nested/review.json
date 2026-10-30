@@ -9,10 +9,10 @@
     }
   ],
   "evidence": {
-    "geometryDigest": "67a12fa66b10d26036ceccb988cba6370594036f61afedf19bc1b1d4c40b937e",
-    "rendererVersion": "arranged-renderer/2",
+    "geometryDigest": "ea4e6ac57c40c80f07d79fbac45bf54aaaf2a9ae9900b16b379e63ee86f8e3ef",
+    "rendererVersion": "arranged-renderer/3",
     "contract": {
-      "version": "arranged-renderer/2",
+      "version": "arranged-renderer/3",
       "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
       "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
       "nodeLabelFontPx": 13,
@@ -36,6 +36,7 @@
       "arrowPx": 10,
       "crossingTreatment": "gap",
       "crossingGapPx": 10,
+      "cornerRadiusPx": 6,
       "forwardColor": "#8a8ab0",
       "loopReturnColor": "#7c8cf5",
       "loopReturnDash": "6 4",
@@ -59,7 +60,7 @@
       {
         "kind": "overview",
         "path": "overview.png",
-        "sha256": "5599b293d5e1007a98b2b9f24b028f00f1f02116d287fe6d14f5371d105161c0",
+        "sha256": "42dfbe85f36eb6c9678d1c5c8c095f9b38ed6f0e3c86a8b4db87414ac4608b9a",
         "region": {
           "x": 0,
           "y": 0,
@@ -71,7 +72,7 @@
       {
         "kind": "tile",
         "path": "tile-000.png",
-        "sha256": "12b3173bc9e40f9ea7036a5e432d6fc370c5998a0d4a709aebc422940a72e995",
+        "sha256": "58294bb314e99f7503c657c70621d1a6da4f8883ba173ccad276f74cd7a3449d",
         "region": {
           "x": 0,
           "y": 0,
@@ -83,7 +84,7 @@
       {
         "kind": "tile",
         "path": "tile-001.png",
-        "sha256": "e5957b7f6fe7f45cd6fbd942877f9e397ea250debe9341a2f96657d98add6edc",
+        "sha256": "2fa70c6fdaedb7145890a7e4a786140edd2e4e80cbf28138151ac208b355a396",
         "region": {
           "x": 0,
           "y": 944.4444444444445,
@@ -95,7 +96,7 @@
       {
         "kind": "tile",
         "path": "tile-002.png",
-        "sha256": "ca775f930c43c551416fe0e177e9bdd6cbbb907abcd451b4a567a04f97d07046",
+        "sha256": "f778787753b7b5f05a05ac87731bcc996d7ed47110ca63362622c26569706c2d",
         "region": {
           "x": 0,
           "y": 1832.888888888889,
@@ -105,6 +106,6 @@
         "scale": 0.9
       }
     ],
-    "reviewedAt": "2026-10-20T13:15:05.03914Z"
+    "reviewedAt": "2026-10-27T19:10:30.573755Z"
   }
 }

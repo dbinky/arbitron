@@ -1,7 +1,7 @@
 package layout
 
 // ContractVersion identifies the renderer behaviour used to arrange and review geometry.
-const ContractVersion = "arranged-renderer/2"
+const ContractVersion = "arranged-renderer/3"
 
 // RendererContract pins the typography, spacing and stroke policy shared with
 // dashboard/src/graph/arranged/contract.json.
@@ -30,6 +30,7 @@ type RendererContract struct {
 	ArrowPx              float64 `json:"arrowPx"`
 	CrossingTreatment    string  `json:"crossingTreatment"`
 	CrossingGapPx        float64 `json:"crossingGapPx"`
+	CornerRadiusPx       float64 `json:"cornerRadiusPx"`
 	ForwardColor         string  `json:"forwardColor"`
 	LoopReturnColor      string  `json:"loopReturnColor"`
 	LoopReturnDash       string  `json:"loopReturnDash"`
@@ -74,6 +75,7 @@ func DefaultContract() RendererContract {
 		ArrowPx:           10,
 		CrossingTreatment: "gap",
 		CrossingGapPx:     10,
+		CornerRadiusPx:    6,
 		ForwardColor:      "#8a8ab0",
 		LoopReturnColor:   "#7c8cf5",
 		LoopReturnDash:    "6 4",
@@ -84,4 +86,15 @@ func DefaultContract() RendererContract {
 		GroupPaddingPx:    32, GroupTaskGapPx: 24, GroupRowGapPx: 48, GroupMinWidth: 200,
 		GroupHeaderMinHeight: 80, GroupFooterMinHeight: 80, GroupTaskMinHeight: 96, GroupConnectorDash: "3 3",
 	}
+}
+
+// PreviousContracts are earlier renderer contracts whose stored layouts are
+// still valid pictures of their revision: they are shown, drawn with their own
+// contract, while they are re-arranged. Shared with
+// dashboard/src/graph/arranged/contract.previous.json.
+func PreviousContracts() []RendererContract {
+	beforeCorners := DefaultContract()
+	beforeCorners.Version = "arranged-renderer/2"
+	beforeCorners.CornerRadiusPx = 0
+	return []RendererContract{beforeCorners}
 }

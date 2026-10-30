@@ -57,7 +57,7 @@ function RoutedEdge({ data, style }: EdgeProps<RoutedEdgeType>) {
   const color = isLoop ? contract.loopReturnColor : contract.forwardColor
   const pattern = connector ? contract.groupConnectorDash : isLoop ? contract.loopReturnDash : ''
   const dash = pattern ? { onPx: firstDash(pattern), overs } : undefined
-  const d = buildRoutedPath((connector ?? route)!.points, gaps, contract.crossingGapPx, dash)
+  const d = buildRoutedPath((connector ?? route)!.points, gaps, contract.crossingGapPx, dash, { radiusPx: contract.cornerRadiusPx, overs, arrowPx: contract.arrowPx })
   const markerId = layoutInstanceId
     ? renderedID(graphInstanceId, JSON.stringify(['tile', layoutInstanceId, connector ? `arrow:${connector.id}` : `arrow:edge:${route!.ordinal}`]))
     : connector ? `${renderedID(graphInstanceId, connector.id)}-arranged-connector-arrow` : `${graphInstanceId}-arranged-arrow-${route!.ordinal}`

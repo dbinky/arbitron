@@ -159,3 +159,28 @@ func TestSamples_BranchLabelsStayNearestTheirOwnRoute(t *testing.T) {
 		}
 	}
 }
+
+// A long edge used to jog ±clearance at every rank it passed (live
+// legacy-feature-pipeline: 32 points on one edge). Only its real source fanout and
+// target fanin may still jog; dummy ranks run straight.
+func TestSamples_LongEdgesHaveNoPerRankJogs(t *testing.T) {
+	// feature-pipeline is the composable parent: its stage fan-out runs up to
+	// 18 ranks through rows packed with other long edges.
+	for _, name := range []string{"feature-pipeline", "legacy-feature-pipeline", "ralph-loop", "pr-review"} {
+		_, geo, _ := arrangeSample(t, name)
+		for _, e := range geo.Edges {
+			if e.Kind != EdgeForward {
+				continue
+			}
+			short := 0
+			for i := 1; i < len(e.Points); i++ {
+				a, b := e.Points[i-1], e.Points[i]
+				if a.Y == b.Y && math.Abs(a.X-b.X) <= 20 {
+					short++
+				}
+			}
+			assert.LessOrEqual(t, short, 2, "%s: edge %d has per-rank jogs: %v", name, e.Ordinal, e.Points)
+			assert.LessOrEqual(t, len(e.Points), 10, "%s: edge %d bends beyond its fan jogs and one shift: %v", name, e.Ordinal, e.Points)
+		}
+	}
+}

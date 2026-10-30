@@ -35,6 +35,8 @@ func NewRenderRequest(revision string, attempt int, geo Geometry, nodeTypes map[
 type RenderedSegment struct {
 	Start Point `json:"start"`
 	End   Point `json:"end"`
+	// Corner marks the chord of a rounded bend's quarter arc.
+	Corner bool `json:"corner,omitempty"`
 }
 
 // RenderedText describes actual DOM text and Range bounds, not expected text.

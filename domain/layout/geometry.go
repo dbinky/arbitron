@@ -446,6 +446,13 @@ func validateGeometryContract(c RendererContract) error {
 	if c.PracticalZoom > 1 || c.MinContrastRatio > 21 {
 		return fmt.Errorf("%w: contract zoom/contrast out of range", ErrInvalidGeometry)
 	}
+	// 0 draws sharp corners (geometry stored before the field existed). The
+	// bound is the crossing bend clearance preflight keeps; it does not by itself
+	// keep a corner off a crossing (radius + gap half + bank exceeds it), the
+	// renderer's per-bend clamp does.
+	if !finite(c.CornerRadiusPx) || c.CornerRadiusPx < 0 || c.CornerRadiusPx > c.CrossingGapPx/2+c.StrokePx {
+		return fmt.Errorf("%w: contract.cornerRadiusPx must be finite, nonnegative and within the crossing bend clearance", ErrInvalidGeometry)
+	}
 	return nil
 }
 

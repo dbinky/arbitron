@@ -92,7 +92,7 @@ describe('RenderSurface', () => {
     expect(JSON.parse(getByTestId('arranged').dataset.nodeContexts!)).toEqual(nodeContexts)
   })
   it('implements the contract.json renderer contract', () => {
-    expect(SURFACE_CONTRACT.version).toBe('arranged-renderer/2')
+    expect(SURFACE_CONTRACT.version).toBe('arranged-renderer/3')
   })
 })
 

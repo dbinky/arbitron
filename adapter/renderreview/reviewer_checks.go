@@ -124,18 +124,82 @@ const overBankPx = 1
 
 // expectedSegment is one drawn piece; restart marks a piece that begins an SVG
 // subpath, where the dash pattern starts again (Chrome restarts even at a
-// same-point move).
+// same-point move). A corner piece is the chord of a rounded bend's arc around
+// bend.
 type expectedSegment struct {
 	layout.RenderedSegment
-	restart bool
+	restart, corner bool
+	bend            layout.Point
+}
+
+// minCornerPx, minInkPx and onSegmentPx mirror routedPath.ts: a smaller corner
+// is drawn sharp, shorter ink is not drawn at all, and a crossing this near a
+// segment lies on it.
+const (
+	minCornerPx = 1
+	minInkPx    = .01
+	onSegmentPx = .5
+)
+
+// segmentsMatch requires the rendered pieces, corners included, to be exactly
+// the expected ones: a diagonal line is never a corner.
+func segmentsMatch(rendered []layout.RenderedSegment, expected []expectedSegment) bool {
+	if len(expected) == 0 || len(rendered) != len(expected) {
+		return false
+	}
+	for j, s := range rendered {
+		if s.Corner != expected[j].corner || !pointNear(s.Start, expected[j].Start, .05) || !pointNear(s.End, expected[j].End, .05) {
+			return false
+		}
+	}
+	return true
+}
+
+// arcMidpoint is the middle of a corner piece's quarter arc, bulging towards
+// its bend: the arc's centre is the bend's opposite corner of the square.
+func arcMidpoint(e expectedSegment) layout.Point {
+	c := layout.Point{X: e.Start.X + e.End.X - e.bend.X, Y: e.Start.Y + e.End.Y - e.bend.Y}
+	return layout.Point{X: c.X + (e.bend.X-c.X)/math.Sqrt2, Y: c.Y + (e.bend.Y-c.Y)/math.Sqrt2}
+}
+
+// cornerRadii mirrors routedPath.ts:cornerRadii. Each interior bend's radius is
+// at most the contract radius and half of either adjacent segment, and never
+// reaches within a bank (overBankPx) of a crossing's gap span on either
+// segment, where the under banks and the over ink are probed. The last bend
+// also leaves arrowPx of the final segment straight. Ends, reversals and
+// blocked bends get 0, a sharp bend.
+func cornerRadii(points, crossings []layout.Point, half, radius, arrowPx float64) []float64 {
+	radii := make([]float64, len(points))
+	for i := 1; i+1 < len(points); i++ {
+		a, b, c := points[i-1], points[i], points[i+1]
+		in, out := layout.RenderedSegment{Start: a, End: b}, layout.RenderedSegment{Start: b, End: c}
+		l1, l2 := segmentLength(in), segmentLength(out)
+		if l1 == 0 || l2 == 0 || math.Abs((b.X-a.X)*(c.X-b.X)+(b.Y-a.Y)*(c.Y-b.Y))/(l1*l2) > 1e-9 {
+			continue
+		}
+		r := math.Min(radius, math.Min(l1/2, l2/2))
+		if i == len(points)-2 {
+			r = math.Min(r, l2-arrowPx)
+		}
+		for _, p := range crossings {
+			if pointSegmentDistance(p, in) <= onSegmentPx || pointSegmentDistance(p, out) <= onSegmentPx {
+				r = math.Min(r, math.Hypot(p.X-b.X, p.Y-b.Y)-half-overBankPx)
+			}
+		}
+		if r >= minCornerPx {
+			radii[i] = r
+		}
+	}
+	return radii
 }
 
 // expectedSegments independently applies the persisted crossing-gap contract to
 // each orthogonal segment; gaps never get inferred from a lucky dash hole. A
 // dashed route restarts its dash one dash before each gap, so both banks are
 // inked, and in dash steps across each crossing it passes over, so its ink is
-// continuous across the gap span. This mirrors
-// dashboard/src/graph/arranged/routedPath.ts:buildRoutedPath.
+// continuous across the gap span. Each interior bend is rounded (cornerRadii)
+// and yields a corner piece; a segment's gaps and restarts run between its two
+// corners. This mirrors dashboard/src/graph/arranged/routedPath.ts:buildRoutedPath.
 func expectedSegments(geo layout.Geometry, e layout.EdgeRoute) []expectedSegment {
 	dash := ""
 	if e.Kind != layout.EdgeForward {
@@ -155,10 +219,19 @@ func expectedRouteSegments(geo layout.Geometry, points []layout.Point, key, patt
 	for _, c := range geo.Crossings {
 		crossings = append(crossings, layout.GroupCrossing{Point: c.Point, Over: layout.ManifestRouteKey(c.Over), Under: layout.ManifestRouteKey(c.Under)})
 	}
+	var own []layout.Point
+	for _, c := range crossings {
+		if c.Under == key || c.Over == key {
+			own = append(own, c.Point)
+		}
+	}
+	radii := cornerRadii(points, own, half, geo.Contract.CornerRadiusPx, geo.Contract.ArrowPx)
 	moved := true
 	for i := 1; i < len(points); i++ {
 		s := layout.RenderedSegment{Start: points[i-1], End: points[i]}
 		length := segmentLength(s)
+		// The straight piece runs from the start corner to the end corner.
+		first, last := radii[i-1], length-radii[i]
 		type event struct {
 			at  float64
 			gap bool
@@ -172,11 +245,11 @@ func expectedRouteSegments(geo layout.Geometry, points []layout.Point, key, patt
 			if c.Under == key {
 				events = append(events, event{d, true})
 				if on > 0 {
-					events = append(events, event{math.Max(0, d-half-on), false})
+					events = append(events, event{math.Max(first, d-half-on), false})
 				}
 			} else if c.Over == key && on > 0 {
 				for r := d - half - overBankPx; ; r += on {
-					events = append(events, event{math.Max(0, r), false})
+					events = append(events, event{math.Max(first, r), false})
 					if r+on >= d+half+overBankPx {
 						break
 					}
@@ -196,38 +269,54 @@ func expectedRouteSegments(geo layout.Geometry, points []layout.Point, key, patt
 			}
 			return events[a].gap && !events[b].gap
 		})
-		cursor := 0.0
+		cursor := first
 		piece := func(to float64) {
-			out = append(out, expectedSegment{layout.RenderedSegment{Start: atDistance(s, cursor), End: atDistance(s, to)}, moved})
+			out = append(out, expectedSegment{RenderedSegment: layout.RenderedSegment{Start: atDistance(s, cursor), End: atDistance(s, to)}, restart: moved})
 			moved = false
 		}
 		for _, v := range events {
 			if !v.gap {
-				if v.at >= length || v.at < cursor || (v.at == cursor && moved) {
+				if v.at >= last || v.at < cursor || (v.at == cursor && moved) {
 					continue
 				}
-				if v.at > cursor {
+				if v.at > cursor+minInkPx {
 					piece(v.at)
 				}
 				cursor, moved = v.at, true
 				continue
 			}
 			start := math.Max(cursor, v.at-half)
-			end := math.Min(length, v.at+half)
+			end := math.Min(last, v.at+half)
 			if end <= cursor {
 				continue
 			}
-			if start > cursor {
+			if start > cursor+minInkPx {
 				piece(start)
 			}
 			cursor, moved = end, true
 		}
-		if cursor < length {
-			out = append(out, expectedSegment{layout.RenderedSegment{Start: atDistance(s, cursor), End: s.End}, moved})
+		r := radii[i]
+		if cursor < last-minInkPx {
+			end := s.End
+			if r > 0 {
+				end = atDistance(s, last)
+			}
+			out = append(out, expectedSegment{RenderedSegment: layout.RenderedSegment{Start: atDistance(s, cursor), End: end}, restart: moved})
+			moved = false
+		}
+		if r > 0 {
+			next := layout.RenderedSegment{Start: points[i], End: points[i+1]}
+			out = append(out, expectedSegment{layout.RenderedSegment{Start: atDistance(s, last), End: atDistance(next, r)}, moved, true, points[i]})
 			moved = false
 		}
 	}
 	return out
+}
+
+// arcLength is the drawn length of a corner piece: a quarter circle whose
+// chord is the piece.
+func arcLength(chord layout.RenderedSegment) float64 {
+	return math.Pi / 2 * segmentLength(chord) / math.Sqrt2
 }
 func parseDash(s string) ([]float64, bool) {
 	if s == "" || s == "none" {
@@ -298,12 +387,7 @@ func checkEdges(geo layout.Geometry, rep layout.RenderReport, f *findingSet) {
 		ids := []string{want.Source, want.Target}
 		ords := []int{i}
 		expected := expectedSegments(geo, want)
-		match := len(expected) > 0 && len(e.Segments) == len(expected)
-		for j, s := range e.Segments {
-			if j >= len(expected) || !pointNear(s.Start, expected[j].Start, .05) || !pointNear(s.End, expected[j].End, .05) {
-				match = false
-			}
-		}
+		match := segmentsMatch(e.Segments, expected)
 		color, dash := geo.Contract.ForwardColor, "none"
 		loop := want.Kind != layout.EdgeForward
 		if loop {

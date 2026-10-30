@@ -185,6 +185,8 @@ func fillPixel(tiles []shot, p layout.Point, rgb [3]int) bool {
 }
 
 // routeInk respects same-point SVG subpath restarts as well as crossing gaps.
+// A rounded corner curves off its chord, so it is probed at its arc midpoint
+// instead, and advances the dash phase by its arc length as the browser draws it.
 func routeInk(ctx context.Context, tiles []shot, segs []layout.RenderedSegment, expected []expectedSegment, pattern string, rgb [3]int, stroke float64) bool {
 	dash, ok := parseDash(pattern)
 	if !ok {
@@ -194,8 +196,12 @@ func routeInk(ctx context.Context, tiles []shot, segs []layout.RenderedSegment, 
 	var prev *layout.Point
 	for j, s := range segs {
 		restart := prev != nil && !pointNear(*prev, s.Start, .05)
+		var corner *expectedSegment
 		if len(expected) == len(segs) {
 			restart = expected[j].restart
+			if expected[j].corner {
+				corner = &expected[j]
+			}
 		}
 		if restart {
 			phase = 0
@@ -205,6 +211,14 @@ func routeInk(ctx context.Context, tiles []shot, segs []layout.RenderedSegment, 
 		l := segmentLength(s)
 		if !finite(l) || l == 0 {
 			return false
+		}
+		if corner != nil {
+			arc := arcLength(s)
+			if dashPaints(phase+arc/2, dash) && !strokeInk(tiles, arcMidpoint(*corner), rgb, stroke) {
+				return false
+			}
+			phase += arc
+			continue
 		}
 		for d := 0.0; d <= l; d += corridorStepPx {
 			if ctx.Err() != nil {

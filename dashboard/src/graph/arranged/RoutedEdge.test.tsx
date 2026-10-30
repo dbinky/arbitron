@@ -52,7 +52,8 @@ describe('RoutedEdge — draws the persisted route', () => {
   it('builds d from route.points and ignores xyflow sourceX/targetX', () => {
     const { container } = renderEdge(edgeProps(forward))
     const path = container.querySelector(`[data-edge-path="${forward.ordinal}"]`) as SVGPathElement
-    expect(path.getAttribute('d')).toBe('M 140,210 L 140,235 L 130,235 L 130,260')
+    // Its 10px jog halves both rounded corners to 5px.
+    expect(path.getAttribute('d')).toBe('M 140,210 L 140,230 A 5,5 0 0 1 135,235 A 5,5 0 0 0 130,240 L 130,260')
     expect(path.getAttribute('d')).not.toContain('999')
     expect(path.getAttribute('d')).not.toContain('888')
   })
@@ -70,8 +71,9 @@ describe('RoutedEdge — draws the persisted route', () => {
     const paths = container.querySelectorAll(`[data-edge-path="${forward.ordinal}"]`)
     expect(paths).toHaveLength(1)
     const d = paths[0].getAttribute('d')!
-    expect(d).toBe(buildRoutedPath(forward.points, [gap], RENDERER_CONTRACT.crossingGapPx))
-    expect(d).toBe('M 140,210 L 140,217 M 140,227 L 140,235 L 130,235 L 130,260')
+    expect(d).toBe(buildRoutedPath(forward.points, [gap], RENDERER_CONTRACT.crossingGapPx, undefined, { radiusPx: RENDERER_CONTRACT.cornerRadiusPx, overs: [], arrowPx: RENDERER_CONTRACT.arrowPx }))
+    // The gap ends 8px above the bend, clear of that 5px corner.
+    expect(d).toBe('M 140,210 L 140,217 M 140,227 L 140,230 A 5,5 0 0 1 135,235 A 5,5 0 0 0 130,240 L 130,260')
   })
 })
 
@@ -80,8 +82,8 @@ describe('RoutedEdge — dash restarts at crossings', () => {
     const over = { x: 200, y: 330 }
     const { container } = renderEdge(edgeProps(loopReturn, { overs: [over] }))
     const d = container.querySelector(`[data-edge-path="${loopReturn.ordinal}"]`)!.getAttribute('d')!
-    expect(d).toBe(buildRoutedPath(loopReturn.points, [], RENDERER_CONTRACT.crossingGapPx, { onPx: 6, overs: [over] }))
-    expect(d).toContain('L 194,330 M 194,330 L 200,330 M 200,330 L 268,330')
+    expect(d).toBe(buildRoutedPath(loopReturn.points, [], RENDERER_CONTRACT.crossingGapPx, { onPx: 6, overs: [over] }, { radiusPx: RENDERER_CONTRACT.cornerRadiusPx, overs: [over], arrowPx: RENDERER_CONTRACT.arrowPx }))
+    expect(d).toContain('L 194,330 M 194,330 L 200,330 M 200,330 L 262,330 A 6,6 0 0 0 268,324')
   })
 
   it('restarts a loop return\'s dash one dash before its own gap', () => {

@@ -23,7 +23,7 @@ for (const node of nodes) Object.assign(node, {
     { type: 'target', position: Position.Top, x: 134, y: 0, width: 1, height: 1 },
   ],
 })
-const edges = [{ id: 'e', type: 'routedEdge', source: 'b', target: 'c', data: { route, gaps: [{ x: 300, y: 900 }], contract, graphInstanceId: 'browser-test', active: true } }]
+const edges = [{ id: 'e', type: 'routedEdge', source: 'b', target: 'c', data: { route, gaps: [{ x: 300, y: 900 }], overs: [], contract, graphInstanceId: 'browser-test', active: true } }]
 
 function App() {
   return <ReactFlowProvider><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ arrangedNode: ArrangedNode }} edgeTypes={{ routedEdge: RoutedEdge }} defaultViewport={{ x: 0, y: 0, zoom: 1 }} /></ReactFlowProvider>

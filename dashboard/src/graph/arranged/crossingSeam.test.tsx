@@ -59,21 +59,25 @@ func main() {
   }
 }
 
-type Seg = { a: Point; b: Point; from: number }
+type Seg = { a: Point; b: Point; from: number; corner: boolean }
 
-/** Subpaths of an M/L path; the dash phase restarts at every M, as in Chrome. */
+/**
+ * Subpaths of an M/L path with quarter-arc corners; the dash phase restarts at
+ * every M, as in Chrome. A corner advances the phase by its arc length.
+ */
 function subpaths(d: string): Seg[][] {
   const out: Seg[][] = []
   let at: Point | null = null
   let dist = 0
-  for (const m of d.matchAll(/([ML]) (-?[\d.]+),(-?[\d.]+)/g)) {
-    const p = { x: Number(m[2]), y: Number(m[3]) }
+  for (const m of d.matchAll(/([ML]) (-?[\d.]+),(-?[\d.]+)|A (-?[\d.]+),\4 0 0 [01] (-?[\d.]+),(-?[\d.]+)/g)) {
+    const corner = m[4] !== undefined
+    const p = corner ? { x: Number(m[5]), y: Number(m[6]) } : { x: Number(m[2]), y: Number(m[3]) }
     if (m[1] === 'M') {
       out.push([])
       dist = 0
     } else {
-      out[out.length - 1].push({ a: at!, b: p, from: dist })
-      dist += Math.hypot(p.x - at!.x, p.y - at!.y)
+      out[out.length - 1].push({ a: at!, b: p, from: dist, corner })
+      dist += corner ? (Math.PI / 2) * Number(m[4]) : Math.hypot(p.x - at!.x, p.y - at!.y)
     }
     at = p
   }
@@ -85,6 +89,8 @@ function inked(p: Point, d: string, dash: number[]): boolean {
   const period = dash.reduce((s, v) => s + v, 0)
   for (const sp of subpaths(d))
     for (const s of sp) {
+      // Crossings and their banks sit on straight ink, never on a corner.
+      if (s.corner) continue
       const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, len = Math.hypot(dx, dy)
       const along = ((p.x - s.a.x) * dx + (p.y - s.a.y) * dy) / len
       if (along < 0 || along > len || Math.abs((p.x - s.a.x) * dy - (p.y - s.a.y) * dx) / len > 0.1) continue

@@ -155,12 +155,7 @@ func checkGroups(geo layout.Geometry, rep layout.RenderReport, f *findingSet) {
 		w := geo.GroupConnectors[i]
 		ids := []string{w.GroupNodeID}
 		expected := expectedRouteSegments(geo, w.Points, w.ID, geo.Contract.GroupConnectorDash)
-		match := len(expected) > 0 && len(e.Segments) == len(expected)
-		for j, s := range e.Segments {
-			if j >= len(expected) || !pointNear(s.Start, expected[j].Start, .05) || !pointNear(s.End, expected[j].End, .05) {
-				match = false
-			}
-		}
+		match := segmentsMatch(e.Segments, expected)
 		if !match || !e.Visible || !sameColor(e.StrokeColor, geo.Contract.ForwardColor) || !near(e.StrokePx, geo.Contract.StrokePx, strokeTolerancePx) || !dashEqual(e.DashPattern, geo.Contract.GroupConnectorDash) {
 			f.block(layout.CriterionRenderMismatch, ids, nil, "connector %s actual path/style differs", w.ID)
 		}

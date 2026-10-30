@@ -16,7 +16,8 @@ func TestRun_SearchPlateauThenBetterPrefix(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		wf.Nodes = append(wf.Nodes, workflow.Node{ID: fmt.Sprint(i), Type: workflow.NodeTypeScript})
 	}
-	for _, pair := range [][2]string{{"0", "4"}, {"0", "6"}, {"0", "9"}, {"0", "11"}, {"1", "3"}, {"2", "5"}, {"2", "6"}, {"2", "9"}, {"5", "6"}, {"6", "10"}, {"8", "10"}} {
+	// 0→7 keeps a plateau now that long edges run straight through dummy ranks.
+	for _, pair := range [][2]string{{"0", "4"}, {"0", "6"}, {"0", "7"}, {"0", "9"}, {"0", "11"}, {"1", "3"}, {"2", "5"}, {"2", "6"}, {"2", "9"}, {"5", "6"}, {"6", "10"}, {"8", "10"}} {
 		wf.Edges = append(wf.Edges, workflow.Edge{Source: pair[0], Target: pair[1]})
 	}
 	o := DefaultOptions()

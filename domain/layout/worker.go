@@ -328,7 +328,15 @@ func (w *Worker) publish(ctx context.Context, fence Fence) error {
 		if err != nil {
 			return err
 		}
-		if wf.SavedRevision() != row.Revision || result.Revision != row.Revision || result.Generation != gen || !Compatible(result.Geometry, graph) {
+		if wf.SavedRevision() != row.Revision || result.Revision != row.Revision || result.Generation != gen {
+			return fmt.Errorf("layout: incompatible cache result")
+		}
+		// A previous renderer contract's result is re-arranged when viewed;
+		// there is nothing to publish until then, and nothing to report.
+		if contractStale(result.Geometry, graph) {
+			return settle()
+		}
+		if !Compatible(result.Geometry, graph) {
 			return fmt.Errorf("layout: incompatible cache result")
 		}
 		if result.Verdict != VerdictPassed && result.Verdict != VerdictNeedsAttention && result.Verdict != VerdictFailed {

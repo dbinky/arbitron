@@ -193,6 +193,32 @@ describe('actual DOM evidence (jsdom API-shaped values, not browser acceptance)'
     document.querySelector('marker')!.remove()
     expect(() => collectEdges(geo, ctx())).toThrow(/marker/)
   })
+  it('reads a rounded corner as its chord and rejects arcs the renderer never draws', () => {
+    const path = pathDOM('M 0,0 L 0,4 A 6,6 0 0 0 6,10 L 10,10')
+    // pathDOM translates the painted route by (20, 30). The corner is flagged so
+    // a diagonal L chord can never pass for it.
+    expect(collectEdges(geo, ctx())[0].segments).toEqual([
+      { start: { x: 20, y: 30 }, end: { x: 20, y: 34 } },
+      { start: { x: 20, y: 34 }, end: { x: 26, y: 40 }, corner: true },
+      { start: { x: 26, y: 40 }, end: { x: 30, y: 40 } },
+    ])
+    for (const d of [
+      'M 0,0 L 0,4 A 6,5 0 0 0 6,10',
+      'M 0,0 L 0,4 A 6,6 15 0 0 6,10',
+      'M 0,0 L 0,4 A 6,6 0 1 0 6,10',
+      'M 0,0 L 0,4 A 6,6 0 0 2 6,10',
+      // Down then right turns anticlockwise on screen: sweep 1 bulges the wrong way.
+      'M 0,0 L 0,4 A 6,6 0 0 1 6,10',
+      // The arc must leave tangent to the segment it continues.
+      'M 0,0 L 0,4 A 6,6 0 0 0 6,-2',
+      'M 0,0 L 0,4 A 6,6 0 0 0 8,10',
+      'M 0,0 L 0,4 A 6,6 0 0 0',
+      'M 0,0 A 0,0 0 0 0 0,0',
+    ]) {
+      path.setAttribute('d', d)
+      expect(() => collectEdges(geo, ctx()), d).toThrow()
+    }
+  })
   it('cannot claim a crossing from absent paths', () => {
     document.body.innerHTML = ''
     expect(() => collectCrossings({ ...geo, crossings: [{ point: { x: 10, y: 10 }, over: 0, under: 1 }] }, ctx())).toThrow()

@@ -14,7 +14,8 @@ export interface Measurements { contract: RendererContract; fontsReady: boolean;
 
 export interface RenderedText { content: string; glyphs: Rect[]; visible: boolean; box: Rect; clipped: boolean; fontPx: number; contrast: number; occluded: boolean }
 export interface RenderedNode { id: string; box: Rect; label: RenderedText; type: RenderedText }
-export interface RenderedSegment { start: Point; end: Point }
+/** `corner` marks the chord of a rounded bend's quarter arc. */
+export interface RenderedSegment { start: Point; end: Point; corner?: true }
 export interface RenderedEdge { segments: RenderedSegment[]; strokeColor: string; dashPattern: string; visible: boolean; arrowPoints: Point[]; ordinal: number; start: Point; end: Point; hasArrow: boolean; dashed: boolean; strokePx: number; label?: RenderedText }
 export interface RenderedCrossing { point: Point; over: number; under: number; underGapVisible: boolean; overContinuous: boolean }
 export interface RenderedGroupText { key: string; text: RenderedText }

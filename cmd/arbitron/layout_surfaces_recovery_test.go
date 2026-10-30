@@ -71,8 +71,9 @@ func TestLayoutSurfaces_KilledRenameRetainsReviewedGraphUntilSettlement(t *testi
 				require.NotNil(t, view.Geometry)
 				require.NotNil(t, historical.Geometry)
 				require.Equal(t, layout.GeometryDigest(*view.Geometry), layout.GeometryDigest(*historical.Geometry))
+				cache := layoutCacheFile(t, filepath.Dir(sourcePath))
 				ds.layout.worker.Stop() // no recovery sweep may win the first browser read
-				require.NoError(t, os.Remove(filepath.Join(filepath.Dir(sourcePath), "layout.json")))
+				require.NoError(t, os.Remove(cache))
 
 				var mu sync.Mutex
 				var polls []layoutPollObservation

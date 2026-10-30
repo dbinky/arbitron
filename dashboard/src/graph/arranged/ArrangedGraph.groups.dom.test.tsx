@@ -107,7 +107,8 @@ describe('ArrangedGraph actual group DOM', () => {
       const path = [...container.querySelectorAll<SVGPathElement>(`path[${route.selector}]`)].find(el => el.getAttribute(route.selector) === route.id)!
       expect(path).toBeDefined()
       const gaps = crossings.filter(c => c.under === route.key).map(c => c.point)
-      expect(path.getAttribute('d')).toBe(buildRoutedPath(route.points, gaps, f.geometry.contract.crossingGapPx, route.pattern ? { onPx: parseFloat(route.pattern), overs: crossings.filter(c => c.over === route.key).map(c => c.point) } : undefined))
+      const overs = crossings.filter(c => c.over === route.key).map(c => c.point)
+      expect(path.getAttribute('d')).toBe(buildRoutedPath(route.points, gaps, f.geometry.contract.crossingGapPx, route.pattern ? { onPx: parseFloat(route.pattern), overs } : undefined, { radiusPx: f.geometry.contract.cornerRadiusPx, overs, arrowPx: f.geometry.contract.arrowPx }))
       const marker = path.getAttribute('marker-end')!.match(/#([^)]*)/)![1]
       expect([...container.querySelectorAll('marker')].filter(m => m.id === marker)).toHaveLength(1)
     }

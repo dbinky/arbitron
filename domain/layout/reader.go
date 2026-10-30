@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -181,7 +182,14 @@ func (r *Reader) cachedFallback(ctx context.Context, wf *workflow.Workflow, v *V
 }
 
 // View reads immutable revision history only; it never repairs, requests or invalidates work.
-func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
+func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) View {
+	v, _ := r.view(ctx, wf)
+	return v
+}
+
+// view also reports a pass reviewed under a previous renderer contract, which
+// the query service re-arranges; the View itself never writes.
+func (r *Reader) view(ctx context.Context, wf *workflow.Workflow) (v View, stale bool) {
 	v = View{SavedRevision: wf.SavedRevision(), DisplayStatus: DisplayLegacy, Provenance: ProvenanceLegacy, Unreviewed: true, Available: true, Findings: []Finding{}}
 	graph, graphErr := BuildGraph(wf)
 	v.Groups = graph.Groups
@@ -204,7 +212,7 @@ func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
 	if v.SavedRevision == "" {
 		retained := retainedFor(wf)
 		v.Retained = &retained
-		return v
+		return v, stale
 	}
 	r.fallback(ctx, wf, &v)
 	row, err := r.store.Get(ctx, v.SavedRevision)
@@ -218,7 +226,7 @@ func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
 			entries, jerr := r.journal.List(ctx)
 			if jerr != nil {
 				rejectView(&v, storeReason(v.SavedRevision, "revision journal", jerr), true)
-				return v
+				return v, stale
 			}
 			for _, entry := range entries {
 				if entry.Revision == v.SavedRevision {
@@ -227,14 +235,14 @@ func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
 				}
 			}
 		}
-		return v
+		return v, stale
 	}
 	if err != nil {
 		rejectView(&v, storeReason(v.SavedRevision, "stored status", err), !errors.Is(err, ErrStoreCorrupt))
 		if errors.Is(err, ErrStoreUnavailable) {
 			r.cachedFallback(ctx, wf, &v)
 		}
-		return v
+		return v, stale
 	}
 	v.JobGeneration = row.JobGeneration
 	v.ResultGeneration = row.ResultGeneration
@@ -249,13 +257,13 @@ func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
 	v.RetryEligible = row.State == StateNeedsAttention || row.State == StateFailed || row.State == StateSuperseded && row.Verdict != VerdictPassed
 	if row.Revision != v.SavedRevision {
 		rejectView(&v, "stored row identity does not match revision", false)
-		return v
+		return v, stale
 	}
 	if row.ResultGeneration < 1 {
 		if row.State == StatePassed || row.State == StateSuperseded {
 			rejectView(&v, "stored revision has no reviewed result", false)
 		}
-		return v
+		return v, stale
 	}
 	result, err := r.store.Result(ctx, v.SavedRevision, row.ResultGeneration)
 	if err != nil {
@@ -263,11 +271,14 @@ func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
 		if errors.Is(err, ErrStoreUnavailable) {
 			r.cachedFallback(ctx, wf, &v)
 		}
-		return v
+		return v, stale
+	}
+	if graphErr == nil && result.Revision == v.SavedRevision && result.Generation == row.ResultGeneration && contractStale(result.Geometry, graph) {
+		return v, retainStale(&v, row, result)
 	}
 	if graphErr != nil || result.Revision != v.SavedRevision || result.Generation != row.ResultGeneration || !Compatible(result.Geometry, graph) {
 		rejectView(&v, "stored geometry is incompatible with this revision", false)
-		return v
+		return v, stale
 	}
 	v.Geometry = &result.Geometry
 	c := result.Geometry.Contract
@@ -288,7 +299,32 @@ func (r *Reader) View(ctx context.Context, wf *workflow.Workflow) (v View) {
 			rejectView(&v, problem, false)
 		}
 	}
-	return v
+	return v, stale
+}
+
+// contractStale is geometry that is valid for its graph but was arranged and
+// reviewed under a previous renderer contract of this product. Any other
+// contract is not stale but incompatible.
+func contractStale(g Geometry, gr Graph) bool {
+	return slices.Contains(PreviousContracts(), g.Contract) && g.Validate(gr) == nil
+}
+
+// retainStale shows a result from an older renderer contract as unreviewed
+// retained geometry, drawn with the contract it was reviewed under. It is not
+// this build's arrangement, so a stale pass is flagged for re-arrangement and
+// is not reported complete; while that job runs the old layout stays visible.
+func retainStale(v *View, row Record, result StoredResult) bool {
+	v.Geometry = &result.Geometry
+	c := result.Geometry.Contract
+	v.Contract = &c
+	v.Provenance = ProvenanceRetainedGeometry
+	v.Unreviewed = true
+	v.Evidence = nil
+	if row.State == StatePassed || row.State == StateSuperseded && row.Verdict == VerdictPassed {
+		rejectView(v, "stored layout predates the current renderer contract", false)
+		return true
+	}
+	return false
 }
 
 // storeReason is the fixed, viewer-safe category for a storage failure; the

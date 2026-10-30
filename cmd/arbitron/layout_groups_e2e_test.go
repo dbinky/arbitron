@@ -188,15 +188,12 @@ func TestLayoutGroups_RealRootSavedRevisionReachesReviewedSink(t *testing.T) {
 				latest := checkpoint(wf, true)
 				// Terminal SQLite state precedes best-effort cache publication.
 				// Let the producer publish before shutting down its worker.
-				require.Eventually(t, func() bool {
-					_, err := os.Stat(filepath.Join(filepath.Dir(env.privatePath(wf.Name)), "layout.json"))
-					return err == nil
-				}, time.Second, 10*time.Millisecond)
+				cache := layoutCacheFile(t, filepath.Dir(env.privatePath(wf.Name)))
 				if process != nil {
 					process.finish(t, true)
 				}
 				ds.layout.stop()
-				require.NoError(t, os.Remove(filepath.Join(filepath.Dir(env.privatePath(wf.Name)), "layout.json")))
+				require.NoError(t, os.Remove(cache))
 				require.Equal(t, latest, surfaceView(t, router, "/api/v1/workflows/"+wf.Name+"/layout"))
 				require.Equal(t, originalView, surfaceView(t, router, "/api/v1/instances/"+id.String()+"/layout"))
 			})

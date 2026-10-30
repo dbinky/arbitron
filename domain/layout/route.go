@@ -5,12 +5,15 @@ import (
 	"sort"
 )
 
-// A hop crosses one channel. Negative items mark a fixed gutter endpoint.
+// A hop crosses one channel. Negative items mark a fixed gutter endpoint. A
+// direct endpoint is a dummy that runs straight to or from its track: only real
+// nodes fan out to transit columns to separate their attachment lanes.
 type channelHop struct {
 	ord, from, to                        int
 	sx, tx, sourceTransit, targetTransit float64
 	fanout, track, fanin                 float64
 	straight                             bool
+	directSource, directTarget           bool
 }
 
 type routeChannel struct {
@@ -103,10 +106,18 @@ func (p *placement) channels() []routeChannel {
 			if h.straight {
 				continue
 			}
-			if h.from >= 0 {
+			// A dummy column is already reserved, and a dummy's row neighbours sit a
+			// node gap away, so its vertical joins its track without a fan jog.
+			h.directSource = p.isDummy(h.from) && !nearEndpoint(hops, h, h.sx, true, clearance)
+			h.directTarget = p.isDummy(h.to) && !nearEndpoint(hops, h, h.tx, false, clearance)
+			if h.directSource {
+				h.sourceTransit = h.sx
+			} else if h.from >= 0 {
 				endpoints = append(endpoints, endpoint{h, true, h.sx})
 			}
-			if h.to >= 0 {
+			if h.directTarget {
+				h.targetTransit = h.tx
+			} else if h.to >= 0 {
 				endpoints = append(endpoints, endpoint{h, false, h.tx})
 			}
 		}
@@ -169,10 +180,10 @@ func (p *placement) channels() []routeChannel {
 		for _, h := range channel.hops {
 			if !h.straight {
 				tracks = append(tracks, h)
-				if h.from >= 0 {
+				if h.from >= 0 && !h.directSource {
 					sources = append(sources, h)
 				}
-				if h.to >= 0 {
+				if h.to >= 0 && !h.directTarget {
 					targets = append(targets, h)
 				}
 			}
@@ -242,6 +253,21 @@ func (p *placement) channels() []routeChannel {
 		}
 	}
 	return channels
+}
+
+func (p *placement) isDummy(id int) bool { return id >= 0 && p.layers.items[id].node < 0 }
+
+// nearEndpoint reports another hop's same-side endpoint within clearance of x.
+func nearEndpoint(hops []*channelHop, h *channelHop, x float64, source bool, clearance float64) bool {
+	for _, other := range hops {
+		if other == h {
+			continue
+		}
+		if (source && other.from >= 0 && math.Abs(other.sx-x) < clearance) || (!source && other.to >= 0 && math.Abs(other.tx-x) < clearance) {
+			return true
+		}
+	}
+	return false
 }
 
 // fanLess groups by direction before comparing endpoint position. Mixing
@@ -314,12 +340,16 @@ func (p *placement) route() Geometry {
 				if h.from < 0 {
 					start.Y = base + h.track
 					points = append(points, start)
+				} else if h.directSource {
+					points = append(points, start, Point{h.sx, base + h.track})
 				} else {
 					points = append(points, start, Point{h.sx, base + h.fanout}, Point{h.sourceTransit, base + h.fanout}, Point{h.sourceTransit, base + h.track})
 				}
 				points = append(points, Point{h.targetTransit, base + h.track})
 				if h.to < 0 {
 					end = Point{h.tx, base + h.track}
+				} else if h.directTarget {
+					points = append(points, end)
 				} else {
 					points = append(points, Point{h.targetTransit, base + h.fanin}, Point{h.tx, base + h.fanin}, end)
 				}

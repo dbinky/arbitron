@@ -75,6 +75,8 @@ export interface RendererContract {
   arrowPx: number
   crossingTreatment: string
   crossingGapPx: number
+  /** Radius (px) of the arc drawn at each interior bend: 0 (sharp) to crossingGapPx / 2 + strokePx. */
+  cornerRadiusPx: number
   forwardColor: string
   loopReturnColor: string
   loopReturnDash: string

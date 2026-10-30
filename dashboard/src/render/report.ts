@@ -190,35 +190,67 @@ function screenPoint(p: Point, path: SVGGraphicsElement, ctx: CollectContext): P
   const s = transform(p, m), root = ctx.root.getBoundingClientRect()
   return { x: (s.x - root.left) / ctx.zoom + ctx.origin.x, y: (s.y - root.top) / ctx.zoom + ctx.origin.y }
 }
-/** Only the renderer's explicit M/L route and closed polygon marker grammar is supported. */
-/** `subpathStarts[i]` marks a segment that begins a subpath, where SVG restarts the dash pattern. */
-function pathPoints(d: string, closed = false): { points: Point[]; segments: RenderedSegment[]; subpathStarts: boolean[] } {
-  const tokens = d.match(/[MLZ]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?/gi) ?? []
-  if (!tokens.length || d.replace(/[MLZ]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?|[\s,]/gi, '')) throw new Error('render surface: unsupported SVG path')
-  const points: Point[] = [], segments: RenderedSegment[] = [], subpathStarts: boolean[] = []
+/** Only the renderer's explicit M/L route, its quarter-arc corners and closed polygon marker grammar are supported. */
+/**
+ * `subpathStarts[i]` marks a segment that begins a subpath, where SVG restarts the dash pattern.
+ * A rounded corner (`A r,r 0 0 sweep x,y`, a quarter circle) is reported as its chord;
+ * `lengths[i]` is the drawn length, the arc's for a corner, which advances the dash phase.
+ */
+function pathPoints(d: string, closed = false): { points: Point[]; segments: RenderedSegment[]; subpathStarts: boolean[]; lengths: number[]; corners: boolean[] } {
+  const tokens = d.match(/[MLAZ]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?/gi) ?? []
+  if (!tokens.length || d.replace(/[MLAZ]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:e[-+]?\d+)?|[\s,]/gi, '')) throw new Error('render surface: unsupported SVG path')
+  const points: Point[] = [], segments: RenderedSegment[] = [], subpathStarts: boolean[] = [], lengths: number[] = [], corners: boolean[] = []
   let current: Point | null = null, start: Point | null = null, moved = false
+  // Unit direction the stroke is travelling at `current`; unknown after a move.
+  let heading: Point | null = null
   for (let i = 0; i < tokens.length;) {
     const cmd = tokens[i++]
     if (cmd === 'Z' && closed && current && start) { current = start; continue }
-    if (cmd !== 'M' && cmd !== 'L') throw new Error('render surface: unsupported SVG command')
+    if (cmd !== 'M' && cmd !== 'L' && cmd !== 'A') throw new Error('render surface: unsupported SVG command')
+    const arc = cmd === 'A' ? tokens.slice(i, i += 5).map(Number) : []
     const x = Number(tokens[i++]), y = Number(tokens[i++])
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('render surface: invalid SVG point')
     const p = { x, y }
-    if (cmd === 'L') {
+    if (cmd === 'A') {
+      const [rx, ry, rotation, large, sweep] = arc
+      // Rounded to 2 decimals, a quarter circle's chord spans its radius on both axes.
+      const quarter = (v: number) => Math.abs(Math.abs(v) - rx) <= 0.02
+      if (arc.length !== 5 || !(rx > 0) || rx !== ry || rotation !== 0 || large !== 0 || (sweep !== 0 && sweep !== 1) || !current || closed || !quarter(p.x - current.x) || !quarter(p.y - current.y))
+        throw new Error('render surface: unsupported SVG arc')
+      // The corner continues the stroke's heading into its bend, then turns a
+      // quarter towards the end point, clockwise exactly when sweep is 1. A
+      // corner straight after a move (a gap ending at it) has no known heading.
+      if (heading) {
+        const turn: Point = { x: p.x - (current.x + heading.x * rx), y: p.y - (current.y + heading.y * rx) }
+        const cross = heading.x * turn.y - heading.y * turn.x
+        if (Math.abs(heading.x * turn.x + heading.y * turn.y) > 0.02 || !quarter(Math.hypot(turn.x, turn.y)) || (cross > 0 ? 1 : 0) !== sweep)
+          throw new Error('render surface: SVG arc does not round its bend')
+        heading = { x: turn.x / rx, y: turn.y / rx }
+      }
+      segments.push({ start: current, end: p, corner: true })
+      subpathStarts.push(moved)
+      lengths.push((Math.PI / 2) * rx)
+      corners.push(true)
+      moved = false
+    } else if (cmd === 'L') {
       if (!current || samePoint(current, p, 0)) throw new Error('render surface: empty SVG segment')
       segments.push({ start: current, end: p })
       subpathStarts.push(moved)
+      lengths.push(Math.hypot(p.x - current.x, p.y - current.y))
+      heading = { x: (p.x - current.x) / lengths[lengths.length - 1], y: (p.y - current.y) / lengths[lengths.length - 1] }
+      corners.push(false)
       moved = false
     } else {
       start = p
       moved = true
+      heading = null
     }
     current = p
     points.push(p)
   }
   if (!segments.length) throw new Error('render surface: empty SVG path')
   if (closed && tokens[tokens.length - 1] !== 'Z') throw new Error('render surface: open marker outline')
-  return { points, segments, subpathStarts }
+  return { points, segments, subpathStarts, lengths, corners }
 }
 function routePath(ordinal: number, ctx: CollectContext): SVGPathElement {
   const found = [...ctx.root.querySelectorAll<SVGPathElement>('path[data-edge-path]')].filter(p => p.getAttribute('data-edge-path') === String(ordinal))
@@ -278,7 +310,7 @@ function markerOutline(path: SVGPathElement, end: Point, previous: Point, stroke
 function collectRoute(path: SVGPathElement, ctx: CollectContext): Omit<RenderedGroupConnector, 'id'> {
     const cs = ctx.win.getComputedStyle(path)
     const raw = pathPoints(path.getAttribute('d') ?? '')
-    const segments = raw.segments.map(s => ({ start: screenPoint(s.start, path, ctx), end: screenPoint(s.end, path, ctx) }))
+    const segments: RenderedSegment[] = raw.segments.map(s => ({ start: screenPoint(s.start, path, ctx), end: screenPoint(s.end, path, ctx), ...(s.corner ? { corner: true as const } : {}) }))
     const total = path.getTotalLength()
     if (!Number.isFinite(total) || total <= 0) throw new Error('render surface: empty edge length')
     const first = path.getPointAtLength(0), last = path.getPointAtLength(total)
@@ -346,6 +378,8 @@ function strokeAt(p: Point, path: SVGPathElement, ctx: CollectContext): boolean 
   let distance = 0
   for (const [i, s] of raw.segments.entries()) {
     if (raw.subpathStarts[i]) distance = 0
+    // A corner's ink curves off its chord; it only advances the dash phase.
+    if (raw.corners[i]) { distance += raw.lengths[i]; continue }
     const a = screenPoint(s.start, path, ctx), b = screenPoint(s.end, path, ctx)
     const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy)
     const along = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len
@@ -357,7 +391,7 @@ function strokeAt(p: Point, path: SVGPathElement, ctx: CollectContext): boolean 
       if (period) for (let i = 0; i < dash.length; i++) { if (phase <= dash[i]) { on = i % 2 === 0; break } phase -= dash[i] }
       return on
     }
-    distance += Math.hypot(s.end.x - s.start.x, s.end.y - s.start.y)
+    distance += raw.lengths[i]
   }
   return false
 }

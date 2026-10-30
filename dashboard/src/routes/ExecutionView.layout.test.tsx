@@ -15,7 +15,7 @@ import { getViewportForBounds } from '@xyflow/react'
 import { FOLLOW_BOUNDS_PADDING } from '../graph/constants'
 
 const fonts = vi.hoisted(() => ({ load: vi.fn(async (doc: Document, texts: readonly string[], contract: { version: string }) => {
-  if (doc !== document || !texts.includes('Start') || !texts.includes('again') || contract.version !== 'arranged-renderer/2') throw new Error('wrong font input')
+  if (doc !== document || !texts.includes('Start') || !texts.includes('again') || contract.version !== 'arranged-renderer/3') throw new Error('wrong font input')
   return { fontsReady: true, fontFamilyResolved: true }
 }) }))
 vi.mock('../graph/arranged/fonts', () => ({ ensureBundledTextFonts: fonts.load }))
@@ -212,7 +212,7 @@ describe('ExecutionView grouped snapshot tiles through real routes', () => {
     graphState!.contexts.push({ instanceId: 'child-a-task-0', parentInstanceId: 'child-a', kind: 'workflow', state: 'running', blocking: false, redacted: false,
       graph: { nodes: [{ id: 'busy', label: activity }], edges: [] }, nodes: [{ instanceId: 'child-a-task-0', nodeId: 'busy', state: 'running' }] })
     fonts.load.mockImplementation(async (_doc, texts, contract) => {
-      if (!texts.some(t => t.startsWith('Parallel ')) || contract.version !== 'arranged-renderer/2') throw new Error('missing group texts')
+      if (!texts.some(t => t.startsWith('Parallel ')) || contract.version !== 'arranged-renderer/3') throw new Error('missing group texts')
       return { fontsReady: true, fontFamilyResolved: true }
     })
     await open(); await settle(POLL_INTERVAL_MS)
@@ -221,7 +221,7 @@ describe('ExecutionView grouped snapshot tiles through real routes', () => {
       expect(scoped(tileId, '[data-arranged-group-element]')).toHaveLength(fixture.geometry.groupElements!.length)
       const dy = i * (fixture.geometry.canvas.h + fixture.geometry.contract.groupRowGapPx)
       const route = fixture.geometry.edges[0]
-      expect(scoped(tileId, '[data-edge-path]')[0].getAttribute('d')).toBe(buildRoutedPath(route.points.map(p => ({ ...p, y: p.y + dy })), [], fixture.geometry.contract.crossingGapPx))
+      expect(scoped(tileId, '[data-edge-path]')[0].getAttribute('d')).toBe(buildRoutedPath(route.points.map(p => ({ ...p, y: p.y + dy })), [], fixture.geometry.contract.crossingGapPx, undefined, { radiusPx: fixture.geometry.contract.cornerRadiusPx, overs: [], arrowPx: fixture.geometry.contract.arrowPx }))
       const status = i === 0 ? 'running' : i === 1 ? 'queued' : 'waiting'
       expect(scoped(tileId, '[data-group-text]').map(el => el.textContent)).toContain(status)
       expect(scoped(tileId, '[data-group-text]').map(el => el.textContent)).toContain(`winner: ${Object.values(fixture.groups.groups)[0].config.tasks[0].key}`)

@@ -1,10 +1,17 @@
 import contractJSON from './contract.json'
+import previousContractsJSON from './contract.previous.json'
 import type { GroupGraph } from '../../api/types'
 import { groupElementID, groupGeometryIssues } from './groupValidate'
 import type { WorkflowDefinition } from '../types'
 import type { EdgeRoute, Geometry, LayoutView, Point, Rect, RendererContract } from './types'
 
 export const RENDERER_CONTRACT: RendererContract = contractJSON
+/**
+ * Earlier contracts whose stored layouts are shown, drawn with their own
+ * contract, only as retained geometry while they are re-arranged. Shared with
+ * domain/layout/contract.go:PreviousContracts.
+ */
+export const PREVIOUS_RENDERER_CONTRACTS: RendererContract[] = previousContractsJSON
 export const GEOMETRY_FORMAT = 'arbitron.layout/v2'
 
 // Keep coordinate tolerance/quantization aligned with domain/layout/geometry.go.
@@ -37,10 +44,10 @@ const normalized = (v: string | undefined) => v || ''
 const describeValue = (v: unknown): string =>
   v !== null && (typeof v === 'object' || typeof v === 'function') ? '[invalid value]' : String(v)
 
-function contractIssues(value: unknown, prefix: string): string[] {
+function contractIssues(value: unknown, prefix: string, bundled: RendererContract = RENDERER_CONTRACT): string[] {
   if (!object(value)) return [`${prefix} is missing or malformed`]
   const issues: string[] = []
-  for (const [key, expected] of Object.entries(RENDERER_CONTRACT)) {
+  for (const [key, expected] of Object.entries(bundled)) {
     if (value[key] !== expected) {
       issues.push(
         key === 'version'
@@ -50,7 +57,7 @@ function contractIssues(value: unknown, prefix: string): string[] {
     }
   }
   for (const key of Object.keys(value)) {
-    if (!Object.prototype.hasOwnProperty.call(RENDERER_CONTRACT, key))
+    if (!Object.prototype.hasOwnProperty.call(bundled, key))
       issues.push(`${prefix} has unknown field ${key}`)
   }
   return issues
@@ -207,9 +214,12 @@ export function validateGeometry(
   const result = () => ({ ok: issues.length === 0, issues })
   if (!object(geo)) return { ok: false, issues: ['geometry is missing'] }
   if (!validWorkflow(def)) return { ok: false, issues: ['workflow is missing or malformed'] }
+  // The expected contract is the bundled one or, for retained display only, a
+  // previous one; the geometry must carry exactly the expected contract.
+  const expected = PREVIOUS_RENDERER_CONTRACTS.find(c => contractIssues(contract, '', c).length === 0) ?? RENDERER_CONTRACT
   issues.push(
-    ...contractIssues(contract, 'expected renderer contract'),
-    ...contractIssues(geo.contract, 'renderer contract'),
+    ...contractIssues(contract, 'expected renderer contract', expected),
+    ...contractIssues(geo.contract, 'renderer contract', expected),
   )
   if (geo.format !== GEOMETRY_FORMAT)
     issues.push(`format "${describeValue(geo.format)}" is not ${GEOMETRY_FORMAT}`)
@@ -376,7 +386,9 @@ export function resolveDisplayGeometry(
       issues:
         view.displayStatus === 'complete' ? ['missing reviewed geometry for complete layout'] : [],
     }
-  const validation = validateGeometry(def, view.geometry, RENDERER_CONTRACT,view.groups)
+  const version = object(view.geometry) && object(view.geometry.contract) ? view.geometry.contract.version : undefined
+  const previous = view.provenance === 'retained_geometry' ? PREVIOUS_RENDERER_CONTRACTS.find(c => c.version === version) : undefined
+  const validation = validateGeometry(def, view.geometry, previous ?? RENDERER_CONTRACT, view.groups)
   return {
     geometry: validation.ok ? view.geometry : null,
     issues: validation.issues,

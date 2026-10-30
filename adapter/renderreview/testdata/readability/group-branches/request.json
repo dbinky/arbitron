@@ -4,7 +4,7 @@
   "geometry": {
     "format": "arbitron.layout/v2",
     "contract": {
-      "version": "arranged-renderer/2",
+      "version": "arranged-renderer/3",
       "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
       "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
       "nodeLabelFontPx": 13,
@@ -28,6 +28,7 @@
       "arrowPx": 10,
       "crossingTreatment": "gap",
       "crossingGapPx": 10,
+      "cornerRadiusPx": 6,
       "forwardColor": "#8a8ab0",
       "loopReturnColor": "#7c8cf5",
       "loopReturnDash": "6 4",

@@ -189,6 +189,9 @@ func TestGeometry_ValidateContractFields(t *testing.T) {
 			bad = []any{0, -1, 99, 901}
 		case reflect.Float64:
 			bad = []any{0.0, -1.0, math.NaN(), math.Inf(1), math.Inf(-1)}
+			if name == "CornerRadiusPx" {
+				bad = bad[1:] // 0 means sharp corners
+			}
 		}
 		for _, value := range bad {
 			t.Run(name+"/"+fmt.Sprint(value), func(t *testing.T) {

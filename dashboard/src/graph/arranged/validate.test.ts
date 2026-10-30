@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import {
   validateGeometry,
   resolveDisplayGeometry,
+  PREVIOUS_RENDERER_CONTRACTS,
   RENDERER_CONTRACT,
   GEOMETRY_FORMAT,
 } from './validate'
@@ -23,10 +24,12 @@ const def = fixtureWorkflow()
 
 describe('validateGeometry', () => {
   it('uses the bundled renderer contract and accepts complete manifest-ordered geometry', () => {
-    expect(RENDERER_CONTRACT.version).toBe('arranged-renderer/2')
+    expect(RENDERER_CONTRACT.version).toBe('arranged-renderer/3')
     expect(RENDERER_CONTRACT.fontFamily).toBe('Inter, Noto Sans SC, Noto Emoji')
     expect(RENDERER_CONTRACT.nodeTextMaxWidth).toBe(240)
     expect(RENDERER_CONTRACT.loopReturnDash).toBe('6 4')
+    // Bounded by the bend clearance preflight keeps; cornerRadii clamps each corner off crossings.
+    expect(RENDERER_CONTRACT.cornerRadiusPx).toBeLessThanOrEqual(RENDERER_CONTRACT.crossingGapPx / 2 + RENDERER_CONTRACT.strokePx)
     expect(GEOMETRY_FORMAT).toBe('arbitron.layout/v2')
     expect(validateGeometry(def, fixtureGeometry(), RENDERER_CONTRACT)).toEqual({
       ok: true,
@@ -40,7 +43,7 @@ describe('validateGeometry', () => {
       g => {
         g.contract.version = 'arranged-renderer/1'
       },
-      'renderer contract version "arranged-renderer/1" does not match "arranged-renderer/2"',
+      'renderer contract version "arranged-renderer/1" does not match "arranged-renderer/3"',
     ],
     [
       'format',
@@ -634,6 +637,36 @@ describe('malformed JSON scalar fields', () => {
 })
 
 describe('resolveDisplayGeometry', () => {
+  // A layout stored under a previous renderer contract is shown, drawn with
+  // that contract, only as retained geometry while it is re-arranged.
+  describe('previous renderer contract', () => {
+    const previous = () => {
+      const geo = fixtureGeometry()
+      geo.contract = { ...PREVIOUS_RENDERER_CONTRACTS[0] }
+      return geo
+    }
+
+    it('is the pre-corner contract: sharp corners under the old version', () => {
+      expect(PREVIOUS_RENDERER_CONTRACTS).toEqual([{ ...RENDERER_CONTRACT, version: 'arranged-renderer/2', cornerRadiusPx: 0 }])
+    })
+
+    it('displays retained geometry from a previous contract', () => {
+      const geo = previous()
+      expect(resolveDisplayGeometry(def, fixtureView({ geometry: geo, provenance: 'retained_geometry', unreviewed: true, displayStatus: 'pending' })))
+        .toEqual({ geometry: geo, issues: [] })
+    })
+
+    it('never accepts a previous contract as this build\'s arrangement', () => {
+      expect(resolveDisplayGeometry(def, fixtureView({ geometry: previous() })).geometry).toBeNull()
+    })
+
+    it('rejects retained geometry from an unknown contract', () => {
+      const geo = previous()
+      geo.contract.version = 'arranged-renderer/1'
+      expect(resolveDisplayGeometry(def, fixtureView({ geometry: geo, provenance: 'retained_geometry' })).geometry).toBeNull()
+    })
+  })
+
   it.each([0, false, ''])(
     'reports malformed present geometry instead of silently treating %j as absent',
     value => {

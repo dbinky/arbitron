@@ -41,10 +41,11 @@ func TestLayoutSurfaces_HTTPRecoveryRetainsGraphAndBacksOff(t *testing.T) {
 	row := layoutRenderWaitTerminal(t, ds, rev, time.Minute)
 	require.Equal(t, layout.StatePassed, row.State)
 	id := surfaceSnapshot(t, ds, saved)
+	cache := layoutCacheFile(t, filepath.Dir(e.privatePath(name)))
 	ds.layout.worker.Stop() // only explicit settlement below may clear the intent
 	// Exclude the disposable cache as a source of outage geometry: retention
 	// must come from the previously fetched view in the mounted real hook.
-	require.NoError(t, os.Remove(filepath.Join(filepath.Dir(e.privatePath(name)), "layout.json")))
+	require.NoError(t, os.Remove(cache))
 
 	var mu sync.Mutex
 	observations := map[string][]layoutPollObservation{}

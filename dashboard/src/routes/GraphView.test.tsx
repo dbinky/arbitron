@@ -61,7 +61,7 @@ vi.mock('@xyflow/react', async () => {
 // by P3T5/P3T14. Success requires nonempty actual text and the exact bundled contract;
 // tests replace this method with a rejection/deferred promise for font sink cases.
 const fontBoundary = vi.hoisted(() => ({ load: vi.fn(async (_doc: Document, texts: readonly string[], contract: {version: string; fontFamily: string}) => {
-  if (!texts.length || !texts.every(t => typeof t === 'string') || contract.version !== 'arranged-renderer/2' || contract.fontFamily !== 'Inter, Noto Sans SC, Noto Emoji') throw new Error('invalid font request')
+  if (!texts.length || !texts.every(t => typeof t === 'string') || contract.version !== 'arranged-renderer/3' || contract.fontFamily !== 'Inter, Noto Sans SC, Noto Emoji') throw new Error('invalid font request')
   return { fontsReady: true, fontFamilyResolved: true }
 }) }))
 vi.mock('../graph/arranged/fonts', () => ({ ensureBundledTextFonts: fontBoundary.load }))
@@ -466,7 +466,7 @@ describe('GraphView — font readiness sinks', () => {
     expect(document.querySelector('[data-layout-mode="fallback"]')).not.toBeNull()
     expect(lastReactFlowProps!.nodes.every(n => n.type !== 'arrangedNode')).toBe(true)
     expect(fontBoundary.load).toHaveBeenCalledWith(document,
-      expect.arrayContaining(['Start', 'again']), expect.objectContaining({ version: 'arranged-renderer/2' }))
+      expect.arrayContaining(['Start', 'again']), expect.objectContaining({ version: 'arranged-renderer/3' }))
   })
 })
 

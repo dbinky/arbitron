@@ -47,3 +47,28 @@ func TestWorkerCache_IncompatibleStoredResultIsNeverPublished(t *testing.T) {
 	require.Empty(t, r.cache.Published(row.Destination))
 	require.Zero(t, r.row(t, req.Revision).CacheGeneration)
 }
+
+// A result from a previous renderer contract is never published to the cache,
+// but it is not an error either: it settles once, quietly, instead of failing
+// every reconcile pass until someone views and re-arranges the revision.
+func TestWorkerCache_PreviousContractResultSettlesWithoutPublishing(t *testing.T) {
+	r := newWorkerRig(t, 1)
+	req := r.request(t)
+	r.reviewer.SetScript(blockingScript())
+	r.cache.SetPublishErr(errors.New("disk full"))
+	require.ErrorContains(t, r.worker.ProcessRevision(context.Background(), req.Revision), "disk full")
+	row := r.row(t, req.Revision)
+	stored, err := r.store.Result(context.Background(), req.Revision, row.ResultGeneration)
+	require.NoError(t, err)
+	stored.Geometry.Contract = layout.PreviousContracts()[0]
+
+	r.cache.SetPublishErr(nil)
+	cfg := r.cfg
+	cfg.Store = corruptResultStore{Store: r.store, result: stored}
+	w, err := layout.NewWorker(cfg)
+	require.NoError(t, err)
+	require.NoError(t, w.ReconcileCache(context.Background()))
+	require.Empty(t, r.cache.Published(row.Destination))
+	require.Equal(t, row.ResultGeneration, r.row(t, req.Revision).CacheGeneration, "settled, so later passes skip it")
+	require.NoError(t, w.ReconcileCache(context.Background()))
+}

@@ -70,6 +70,8 @@ test('two real ArrangedGraphs retain their own visible arrows after first unmoun
     async function snapshot(names) {
       const scenes = await evaluate(`(async () => {
         const { expected } = await import('/tests/arranged-markers-fixture.tsx')
+        const { buildRoutedPath } = await import('/src/graph/arranged/routedPath.ts')
+        const { RENDERER_CONTRACT: contract } = await import('/src/graph/arranged/validate.ts')
         return ${JSON.stringify(names)}.map(name => {
           const section = document.querySelector('[data-graph="' + name + '"]')
           return { name, edges: expected[name].map(edge => {
@@ -80,7 +82,7 @@ test('two real ArrangedGraphs retain their own visible arrows after first unmoun
             const end = edge.points.at(-1)
             const tip = new DOMPoint(end.x, end.y).matrixTransform(path.getScreenCTM())
             return { id, own: marker != null && path.parentElement.contains(marker), color: marker?.querySelector('path')?.getAttribute('fill'),
-              expectedColor: edge.color, d: path.getAttribute('d'), expectedD: edge.points.map((p,i) => (i ? 'L ' : 'M ') + p.x + ',' + p.y).join(' '), tip: { x: tip.x, y: tip.y } }
+              expectedColor: edge.color, d: path.getAttribute('d'), expectedD: buildRoutedPath(edge.points, [], contract.crossingGapPx, undefined, { radiusPx: contract.cornerRadiusPx, overs: [], arrowPx: contract.arrowPx }), tip: { x: tip.x, y: tip.y } }
           }) }
         })
       })()`)

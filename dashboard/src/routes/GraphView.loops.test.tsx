@@ -14,7 +14,7 @@ import { fixtureView, fixtureWorkflow } from '../graph/arranged/testFixtures'
 // by P3T5/P3T14. Success requires nonempty actual text and the exact bundled contract;
 // tests replace this method with a rejection/deferred promise for font sink cases.
 const fontBoundary = vi.hoisted(() => ({ load: vi.fn(async (_doc: Document, texts: readonly string[], contract: {version: string; fontFamily: string}) => {
-  if (!texts.length || !texts.every(t => typeof t === 'string') || contract.version !== 'arranged-renderer/2' || contract.fontFamily !== 'Inter, Noto Sans SC, Noto Emoji') throw new Error('invalid font request')
+  if (!texts.length || !texts.every(t => typeof t === 'string') || contract.version !== 'arranged-renderer/3' || contract.fontFamily !== 'Inter, Noto Sans SC, Noto Emoji') throw new Error('invalid font request')
   return { fontsReady: true, fontFamilyResolved: true }
 }) }))
 vi.mock('../graph/arranged/fonts', () => ({ ensureBundledTextFonts: fontBoundary.load }))
@@ -130,7 +130,7 @@ describe('GraphView — arranged loop returns (routed-edge DOM contract)', () =>
     expect(forward.style.strokeDasharray).toBe('')
     expect(forward.style.stroke).toBe('rgb(138, 138, 176)') // #8a8ab0
     // The persisted route is drawn exactly, with its own arrowhead.
-    expect(loop.getAttribute('d')).toBe('M 130,312 L 130,330 L 268,330 L 268,116 L 140,116 L 140,140')
+    expect(loop.getAttribute('d')).toBe('M 130,312 L 130,324 A 6,6 0 0 0 136,330 L 262,330 A 6,6 0 0 0 268,324 L 268,122 A 6,6 0 0 0 262,116 L 146,116 A 6,6 0 0 0 140,122 L 140,140')
     expect(loop.getAttribute('marker-end')).toMatch(/-arranged-arrow-2\)$/)
   })
 
@@ -168,7 +168,7 @@ describe('GraphView — arranged loop returns (routed-edge DOM contract)', () =>
     expect(container.querySelector('[data-edge-overlay="1"]')).not.toBeNull()
     expect(container.querySelector('[data-edge-overlay="0"]')).toBeNull()
     const main = container.querySelector('path[data-edge-path="1"]') as SVGPathElement
-    expect(main.getAttribute('d')).toBe('M 140,210 L 140,235 L 130,235 L 130,260')
+    expect(main.getAttribute('d')).toBe('M 140,210 L 140,230 A 5,5 0 0 1 135,235 A 5,5 0 0 0 130,240 L 130,260')
     expect(main.getAttribute('marker-end')).toMatch(/-arranged-arrow-1\)$/)
   })
 

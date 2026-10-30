@@ -8,7 +8,7 @@ import { fixtureGeometryWithBoxes, fixtureView, fixtureWorkflow } from './arrang
 import CalloutConnector from './CalloutConnector'
 
 vi.mock('./arranged/fonts', () => ({ ensureBundledTextFonts: async (doc: Document, texts: readonly string[], contract: { version: string }) => {
-  if (doc !== document || !texts.includes('Start') || !texts.includes('again') || contract.version !== 'arranged-renderer/2') throw new Error('wrong font input')
+  if (doc !== document || !texts.includes('Start') || !texts.includes('again') || contract.version !== 'arranged-renderer/3') throw new Error('wrong font input')
   return { fontsReady: true, fontFamilyResolved: true }
 } }))
 const saved = new Map<string, PropertyDescriptor | undefined>()

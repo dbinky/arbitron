@@ -518,7 +518,7 @@ func surfaceGroupHistoryControls(t *testing.T, page context.Context, ds *domainS
 	_, err := ds.db.Exec("DELETE FROM layout_results WHERE revision=?", baseline[second].SavedRevision)
 	require.NoError(t, err)
 	for _, name := range []string{root.Name, "ownership-child-first", "ownership-child-second"} {
-		require.NoError(t, os.Remove(filepath.Join(filepath.Dir(env.privatePath(name)), "layout.json")))
+		require.NoError(t, os.Remove(layoutCacheFile(t, filepath.Dir(env.privatePath(name)))))
 	}
 	require.NoError(t, chromedp.Do(page, chromedp.Evaluate[chromedp.Void](`window.dispatchEvent(new Event('focus'))`), chromedp.Poll[chromedp.Void](rail+`?.textContent.includes('Retry arrangement')`, chromedp.WithPollingTimeout(15*time.Second))))
 	click := rail + `.querySelector('button').click()`

@@ -165,9 +165,84 @@ func TestExpectedSegments_DashRestartsMirrorTheRenderer(t *testing.T) {
 	geo := layout.Geometry{Contract: layout.DefaultContract(), Crossings: []layout.Crossing{under(8)}}
 	geo.Crossings[0].Point.Y = 100
 	e := layout.EdgeRoute{Ordinal: 1, Kind: layout.EdgeLoopReturn, Points: []layout.Point{{X: 0, Y: 0}, {X: 0, Y: 100}, {X: 100, Y: 100}}}
-	var flags []bool
+	var flags, corners []bool
 	for _, s := range expectedSegments(geo, e) {
 		flags = append(flags, s.restart)
+		corners = append(corners, s.corner)
 	}
-	assert.Equal(t, []bool{true, true, true}, flags, "segment 1 restarts at its bend, then after the gap")
+	// The gap 3..13 past the bend leaves a 2px corner and a 1px bank, which
+	// restarts its dash right after the corner.
+	assert.Equal(t, []bool{true, false, true, true}, flags, "the corner continues segment 0; the bank and the far side restart")
+	assert.Equal(t, []bool{false, true, false, false}, corners)
+}
+
+// Rounded bends mirror routedPath.ts:cornerRadii: each interior bend becomes a
+// corner piece (the arc's chord) clamped to half of either segment and kept
+// off every gap span and over-crossing ink span.
+func TestExpectedSegments_RoundedCornersMirrorTheRenderer(t *testing.T) {
+	type piece struct {
+		a, b   layout.Point
+		corner bool
+	}
+	pieces := func(points []layout.Point, kind layout.EdgeKind, crossings ...layout.Crossing) []piece {
+		geo := layout.Geometry{Contract: layout.DefaultContract(), Crossings: crossings}
+		var out []piece
+		for _, s := range expectedSegments(geo, layout.EdgeRoute{Ordinal: 1, Kind: kind, Points: points}) {
+			out = append(out, piece{s.Start, s.End, s.corner})
+		}
+		return out
+	}
+	p := func(x, y float64) layout.Point { return layout.Point{X: x, Y: y} }
+	assert.Equal(t, []piece{{p(0, 0), p(0, 44), false}, {p(0, 44), p(6, 50), true}, {p(6, 50), p(34, 50), false}, {p(34, 50), p(40, 56), true}, {p(40, 56), p(40, 100), false}},
+		pieces([]layout.Point{p(0, 0), p(0, 50), p(40, 50), p(40, 100)}, layout.EdgeForward), "full radius")
+	assert.Equal(t, []piece{{p(0, 0), p(0, 47), false}, {p(0, 47), p(3, 50), true}, {p(3, 50), p(6, 53), true}, {p(6, 53), p(6, 100), false}},
+		pieces([]layout.Point{p(0, 0), p(0, 50), p(6, 50), p(6, 100)}, layout.EdgeForward), "a short jog halves both corners")
+	assert.Equal(t, []piece{{p(0, 0), p(39, 0), false}, {p(39, 0), p(40, 1), true}, {p(40, 1), p(40, 2), false}, {p(40, 12), p(40, 100), false}},
+		pieces([]layout.Point{p(0, 0), p(40, 0), p(40, 100)}, layout.EdgeForward, layout.Crossing{Point: p(40, 7), Over: 0, Under: 1}), "gap 2..12 past the bend keeps a straight bank")
+	assert.Equal(t, []piece{{p(0, 0), p(37, 0), false}, {p(37, 0), p(40, 3), true}, {p(40, 3), p(40, 100), false}},
+		pieces([]layout.Point{p(0, 0), p(40, 0), p(40, 100)}, layout.EdgeForward, layout.Crossing{Point: p(31, 0), Over: 1, Under: 0}), "solid over ink stays straight")
+	assert.Equal(t, []piece{{p(0, 0), p(0, 20), false}, {p(0, 20), p(0, 10), false}},
+		pieces([]layout.Point{p(0, 0), p(0, 20), p(0, 10)}, layout.EdgeForward), "a reversal stays sharp")
+	for _, s := range pieces([]layout.Point{p(0, 0), p(0, 100), p(100, 100)}, layout.EdgeForward, layout.Crossing{Point: p(0, 100), Over: 0, Under: 1}) {
+		assert.False(t, s.corner, "a gap on the bend keeps it sharp")
+	}
+}
+
+// The final corner leaves arrowPx of the last segment straight under the
+// arrowhead, and a crossing within half a pixel of a segment counts as on it,
+// exactly as routedPath.ts decides.
+func TestExpectedSegments_CornerClampsMirrorTheRenderer(t *testing.T) {
+	p := func(x, y float64) layout.Point { return layout.Point{X: x, Y: y} }
+	geo := layout.Geometry{Contract: layout.DefaultContract()}
+	var got []layout.RenderedSegment
+	for _, s := range expectedSegments(geo, layout.EdgeRoute{Ordinal: 1, Kind: layout.EdgeForward, Points: []layout.Point{p(0, 0), p(30, 0), p(30, 30), p(16, 30)}}) {
+		got = append(got, s.RenderedSegment)
+	}
+	assert.Equal(t, []layout.RenderedSegment{{Start: p(0, 0), End: p(24, 0)}, {Start: p(24, 0), End: p(30, 6)}, {Start: p(30, 6), End: p(30, 26)}, {Start: p(30, 26), End: p(26, 30)}, {Start: p(26, 30), End: p(16, 30)}}, got, "a 14px return keeps 10px straight for the arrow")
+
+	geo.Crossings = []layout.Crossing{{Point: p(31, 0.4), Over: 1, Under: 0}}
+	segs := expectedSegments(geo, layout.EdgeRoute{Ordinal: 1, Kind: layout.EdgeForward, Points: []layout.Point{p(0, 0), p(40, 0), p(40, 100)}})
+	require.Len(t, segs, 3)
+	assert.InDelta(t, 36.99, segs[0].End.X, .01, "an over crossing 0.4px off the segment still clamps the corner")
+}
+
+// A rendered corner must be flagged as one: a diagonal L chord with the same
+// end points is not a rounded bend.
+func TestSegmentsMatch_RequiresCornerFlags(t *testing.T) {
+	p := func(x, y float64) layout.Point { return layout.Point{X: x, Y: y} }
+	geo := layout.Geometry{Contract: layout.DefaultContract()}
+	expected := expectedSegments(geo, layout.EdgeRoute{Ordinal: 1, Kind: layout.EdgeForward, Points: []layout.Point{p(0, 0), p(0, 50), p(40, 50)}})
+	var rendered []layout.RenderedSegment
+	for _, s := range expected {
+		r := s.RenderedSegment
+		r.Corner = s.corner
+		rendered = append(rendered, r)
+	}
+	assert.True(t, segmentsMatch(rendered, expected))
+	rendered[1].Corner = false
+	assert.False(t, segmentsMatch(rendered, expected), "an unflagged chord")
+	rendered[1].Corner = true
+	rendered[0].Corner = true
+	assert.False(t, segmentsMatch(rendered, expected), "a straight piece flagged as a corner")
+	assert.False(t, segmentsMatch(rendered[:2], expected), "a missing piece")
 }

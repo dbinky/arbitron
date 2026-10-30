@@ -193,7 +193,7 @@ func surfaceRect(t *testing.T, want, got layout.Rect) {
 // Independently derive the expected M/L route, including every persisted gap.
 // surfacePath independently models dashboard routedPath.ts:buildRoutedPath,
 // including the dash restarts a loop return gets before its gaps and across the
-// crossings it passes over.
+// crossings it passes over, and the quarter-arc corner at every interior bend.
 func surfacePath(geo layout.Geometry, edge layout.EdgeRoute) string {
 	pattern := ""
 	if edge.Kind != layout.EdgeForward {
@@ -214,13 +214,16 @@ func surfaceRoutePath(geo layout.Geometry, key string, points []layout.Point, pa
 	}
 	cmds := []string{"M " + xy(points[0])}
 	fresh := true
-	gaps, overs := []layout.Point{}, []layout.Point{}
+	gaps, overs, own := []layout.Point{}, []layout.Point{}, []layout.Point{}
 	for _, c := range geo.GroupCrossings {
 		if c.Under == key {
 			gaps = append(gaps, c.Point)
 		}
 		if c.Over == key && on > 0 {
 			overs = append(overs, c.Point)
+		}
+		if c.Under == key || c.Over == key {
+			own = append(own, c.Point)
 		}
 	}
 	for _, c := range geo.Crossings {
@@ -230,6 +233,38 @@ func surfaceRoutePath(geo layout.Geometry, key string, points []layout.Point, pa
 		if fmt.Sprintf("edge:%d", c.Over) == key && on > 0 {
 			overs = append(overs, c.Point)
 		}
+		if fmt.Sprintf("edge:%d", c.Under) == key || fmt.Sprintf("edge:%d", c.Over) == key {
+			own = append(own, c.Point)
+		}
+	}
+	// A corner is at most the contract radius and half of either segment, stops a
+	// bank (1px) short of any crossing gap span on either segment (a crossing
+	// within 0.5px of a segment lies on it), and the last one leaves the arrow's
+	// length of the final segment straight.
+	near := func(p, a, b layout.Point) bool {
+		l2 := (b.X-a.X)*(b.X-a.X) + (b.Y-a.Y)*(b.Y-a.Y)
+		t := math.Max(0, math.Min(1, ((p.X-a.X)*(b.X-a.X)+(p.Y-a.Y)*(b.Y-a.Y))/l2))
+		return math.Hypot(p.X-a.X-t*(b.X-a.X), p.Y-a.Y-t*(b.Y-a.Y)) <= 0.5
+	}
+	radii := make([]float64, len(points))
+	for i := 1; i+1 < len(points); i++ {
+		a, b, c := points[i-1], points[i], points[i+1]
+		l1, l2 := math.Hypot(b.X-a.X, b.Y-a.Y), math.Hypot(c.X-b.X, c.Y-b.Y)
+		if l1 == 0 || l2 == 0 || (b.X-a.X)*(c.X-b.X)+(b.Y-a.Y)*(c.Y-b.Y) != 0 {
+			continue
+		}
+		r := math.Min(geo.Contract.CornerRadiusPx, math.Min(l1, l2)/2)
+		if i == len(points)-2 {
+			r = math.Min(r, l2-geo.Contract.ArrowPx)
+		}
+		for _, p := range own {
+			if near(p, a, b) || near(p, b, c) {
+				r = math.Min(r, math.Hypot(p.X-b.X, p.Y-b.Y)-half-1)
+			}
+		}
+		if r >= 1 {
+			radii[i] = r
+		}
 	}
 	for i := 1; i < len(points); i++ {
 		a, b := points[i-1], points[i]
@@ -237,6 +272,7 @@ func surfaceRoutePath(geo layout.Geometry, key string, points []layout.Point, pa
 		if length == 0 {
 			continue
 		}
+		first, last := radii[i-1], length-radii[i]
 		at := func(d float64) layout.Point {
 			return layout.Point{X: a.X + (b.X-a.X)*d/length, Y: a.Y + (b.Y-a.Y)*d/length}
 		}
@@ -261,12 +297,12 @@ func surfaceRoutePath(geo layout.Geometry, key string, points []layout.Point, pa
 		for _, cut := range take(&gaps) {
 			events = append(events, event{cut, true})
 			if on > 0 {
-				events = append(events, event{math.Max(0, cut-half-on), false})
+				events = append(events, event{math.Max(first, cut-half-on), false})
 			}
 		}
 		for _, cut := range take(&overs) {
 			for r := cut - half - 1; ; r += on {
-				events = append(events, event{math.Max(0, r), false})
+				events = append(events, event{math.Max(first, r), false})
 				if r+on >= cut+half+1 {
 					break
 				}
@@ -284,13 +320,13 @@ func surfaceRoutePath(geo layout.Geometry, key string, points []layout.Point, pa
 			}
 			return events[i].gap && !events[j].gap
 		})
-		cursor := 0.0
+		cursor := first
 		for _, e := range events {
 			if !e.gap {
-				if e.at >= length || e.at < cursor || (e.at == cursor && fresh) {
+				if e.at >= last || e.at < cursor || (e.at == cursor && fresh) {
 					continue
 				}
-				if e.at > cursor {
+				if e.at > cursor+.01 {
 					cmds = append(cmds, "L "+xy(at(e.at)))
 				}
 				cmds = append(cmds, "M "+xy(at(e.at)))
@@ -298,18 +334,34 @@ func surfaceRoutePath(geo layout.Geometry, key string, points []layout.Point, pa
 				continue
 			}
 			start := math.Max(cursor, e.at-half)
-			end := math.Min(length, e.at+half)
+			end := math.Min(last, e.at+half)
 			if end <= cursor {
 				continue
 			}
-			if start > cursor {
+			if start > cursor+.01 {
 				cmds = append(cmds, "L "+xy(at(start)))
 			}
 			cmds = append(cmds, "M "+xy(at(end)))
 			cursor, fresh = end, true
 		}
-		if cursor < length {
-			cmds = append(cmds, "L "+xy(b))
+		r := radii[i]
+		if cursor < last-.01 {
+			if r > 0 {
+				cmds = append(cmds, "L "+xy(at(last)))
+			} else {
+				cmds = append(cmds, "L "+xy(b))
+			}
+			fresh = false
+		}
+		if r > 0 {
+			c := points[i+1]
+			out := math.Hypot(c.X-b.X, c.Y-b.Y)
+			sweep := "0"
+			if (b.X-a.X)*(c.Y-b.Y)-(b.Y-a.Y)*(c.X-b.X) > 0 {
+				sweep = "1"
+			}
+			f := strconv.FormatFloat(math.Round(r*100)/100, 'f', -1, 64)
+			cmds = append(cmds, "A "+f+","+f+" 0 0 "+sweep+" "+xy(layout.Point{X: b.X + (c.X-b.X)*r/out, Y: b.Y + (c.Y-b.Y)*r/out}))
 			fresh = false
 		}
 	}

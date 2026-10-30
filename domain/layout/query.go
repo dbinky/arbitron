@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 	"time"
@@ -85,7 +86,7 @@ func (q *QueryService) WorkflowLayout(ctx context.Context, name string) (View, e
 	if err := q.ready(access, false); err != nil {
 		return View{}, err
 	}
-	wf, _, err := access.LoadForLayout(ctx, name)
+	wf, scope, err := access.LoadForLayout(ctx, name)
 	if err != nil {
 		return View{}, err
 	}
@@ -95,7 +96,10 @@ func (q *QueryService) WorkflowLayout(ctx context.Context, name string) (View, e
 	if err := queryDefinition(wf); err != nil {
 		return View{}, err
 	}
-	return q.reader.View(ctx, wf), nil
+	v, stale := q.reader.view(ctx, wf)
+	return q.refreshStale(ctx, wf, v, stale, func() error {
+		return q.rearrangeWorkflow(ctx, access, wf, scope, name)
+	}), nil
 }
 
 func (q *QueryService) InstanceLayout(ctx context.Context, id uuid.UUID) (View, error) {
@@ -113,7 +117,49 @@ func (q *QueryService) InstanceLayout(ctx context.Context, id uuid.UUID) (View, 
 	if err := queryDefinition(wf); err != nil {
 		return View{}, err
 	}
-	return q.reader.View(ctx, wf), nil
+	v, stale := q.reader.view(ctx, wf)
+	return q.refreshStale(ctx, wf, v, stale, func() error {
+		snapshot := workflow.MutationTarget{Scope: workflow.ScopeFromPresentation(wf.Presentation), Name: wf.Presentation.Name}
+		_, err := q.retryHistorical(ctx, wf, snapshot, false)
+		return err
+	}), nil
+}
+
+// refreshStale re-arranges a pass reviewed under an older renderer contract,
+// once, when it is viewed, and returns the refreshed view. It is a system
+// action: rearrange skips user retry authorization but takes the same locks and
+// revision checks as a Retry. Only a pass is stale, so a re-arrange that fails
+// settles as ordinary needs-attention and is never queued again; a concurrent
+// viewer's requeue simply wins.
+func (q *QueryService) refreshStale(ctx context.Context, wf *workflow.Workflow, v View, stale bool, rearrange func() error) View {
+	if !stale || q.requester == nil || queryNil(q.requester.store) || queryNil(q.mutations) {
+		return v
+	}
+	rev := wf.SavedRevision()
+	if err := rearrange(); err != nil {
+		if !errors.Is(err, ErrRetryConflict) && !errors.Is(err, ErrRevisionConflict) {
+			slog.Warn("layout: re-arranging a layout from an older renderer contract failed", "revision", rev, "error", err)
+		}
+	} else {
+		slog.Info("layout: re-arranging a layout from an older renderer contract", "revision", rev)
+	}
+	return q.reader.View(ctx, wf)
+}
+
+// rearrangeWorkflow requeues the viewed revision under its resolved
+// destination lock, provided the name still resolves to the same scope.
+func (q *QueryService) rearrangeWorkflow(ctx context.Context, access WorkflowAccess, wf *workflow.Workflow, scope workflow.Scope, name string) error {
+	return q.mutations.WithMutations(ctx, []workflow.MutationTarget{{Scope: scope, Name: name}}, func(locked context.Context) error {
+		current, resolved, err := access.LoadForLayout(locked, name)
+		if err != nil {
+			return err
+		}
+		if current == nil || resolved != scope {
+			return ErrRevisionConflict
+		}
+		_, err = q.retry(locked, current, scope, name, wf.SavedRevision(), false)
+		return err
+	})
 }
 
 func checkExpected(wf *workflow.Workflow, expected string) error {
@@ -203,8 +249,16 @@ func (q *QueryService) RetryInstance(ctx context.Context, id uuid.UUID, expected
 		return RetryAck{}, fmt.Errorf("%w: mutation coordinator is unavailable", ErrStoreUnavailable)
 	}
 	snapshot := workflow.MutationTarget{Scope: workflow.ScopeFromPresentation(wf.Presentation), Name: wf.Presentation.Name}
-	if err := workflow.AuthorizeRetryDestination(ctx, snapshot); err != nil {
-		return RetryAck{}, err
+	return q.retryHistorical(ctx, wf, snapshot, true)
+}
+
+// retryHistorical retries a snapshot revision under its locator and committed
+// destination locks. authorize is false only for a system re-arrangement.
+func (q *QueryService) retryHistorical(ctx context.Context, wf *workflow.Workflow, snapshot workflow.MutationTarget, authorize bool) (RetryAck, error) {
+	if authorize {
+		if err := workflow.AuthorizeRetryDestination(ctx, snapshot); err != nil {
+			return RetryAck{}, err
+		}
 	}
 	for range historicalLockAttempts {
 		destination, err := q.historicalDestination(ctx, wf, snapshot)
@@ -224,10 +278,12 @@ func (q *QueryService) RetryInstance(ctx context.Context, id uuid.UUID, expected
 			if current != destination {
 				return errHistoricalRelocated
 			}
-			if err := workflow.AuthorizeRetryDestination(locked, current); err != nil {
-				return err
+			if authorize {
+				if err := workflow.AuthorizeRetryDestination(locked, current); err != nil {
+					return err
+				}
 			}
-			ack, err = q.retry(locked, wf, snapshot.Scope, snapshot.Name, expectedRevision, true)
+			ack, err = q.retry(locked, wf, snapshot.Scope, snapshot.Name, wf.SavedRevision(), true)
 			return err
 		})
 		if !errors.Is(err, errHistoricalRelocated) {

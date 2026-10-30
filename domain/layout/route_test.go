@@ -2,6 +2,7 @@ package layout
 
 import (
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -200,4 +201,193 @@ func TestRouteContacts_LabelsNodesAndBoundaryDirection(t *testing.T) {
 	assert.Positive(t, costOf(Geometry{Contract: c, Nodes: []NodeBox{node}, Edges: []EdgeRoute{label}}).contacts)
 	foreign := NodeBox{ID: "other", Box: Rect{X: 40, Y: 120, W: 20, H: 20}}
 	assert.Positive(t, costOf(Geometry{Contract: c, Nodes: []NodeBox{node, foreign}, Edges: []EdgeRoute{path}}).contacts)
+}
+
+// verticalSpan reports whether one vertical segment of pts runs from above y1
+// to below y2 without a jog: a long edge passing dummy items stays straight.
+func verticalSpan(pts []Point, y1, y2 float64) bool {
+	for i := 1; i < len(pts); i++ {
+		a, b := pts[i-1], pts[i]
+		if a.X == b.X && math.Min(a.Y, b.Y) < y1 && math.Max(a.Y, b.Y) > y2 {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRoute_LongEdgeRunsStraightThroughAlignedDummies(t *testing.T) {
+	g := edgeGraph(t, [2]string{"a", "b"}, [2]string{"b", "c"}, [2]string{"c", "d"}, [2]string{"d", "e"}, [2]string{"a", "e"})
+	geo := arrangeFor(t, g, DefaultOptions())
+	long := geo.Edges[4]
+	require.Equal(t, EdgeForward, long.Kind)
+	assert.True(t, verticalSpan(long.Points, boxOf(geo, "b").Y, boxOf(geo, "d").Bottom()), "one vertical run past b, c and d: %v", long.Points)
+	// Source fanout and target fanin keep their lane-separation jog; nothing else bends.
+	assert.LessOrEqual(t, len(long.Points)-2, 8, "%v", long.Points)
+	assertDistinguishablePaths(t, geo)
+	assertNoRouteThroughUnrelatedNodes(t, geo)
+}
+
+func TestRoute_TwoRankEdgeKeepsItsFanJogs(t *testing.T) {
+	g := edgeGraph(t, [2]string{"a", "b"}, [2]string{"a", "c"}, [2]string{"b", "d"}, [2]string{"c", "d"})
+	geo := arrangeFor(t, g, DefaultOptions())
+	for _, e := range geo.Edges {
+		// port, fanout, source transit, track, target transit, fanin, port
+		assert.Len(t, e.Points, 8, "real fanout and fanin columns still separate lanes: edge %d %v", e.Ordinal, e.Points)
+	}
+	assertDistinguishablePaths(t, geo)
+}
+
+// dummyPlacement arranges a→e beside a four-node spine, so the long edge owns
+// one dummy in each of ranks 1..3.
+func dummyPlacement(t *testing.T) (*placement, Graph, []int) {
+	t.Helper()
+	g := edgeGraph(t, [2]string{"a", "b"}, [2]string{"b", "c"}, [2]string{"c", "d"}, [2]string{"d", "e"}, [2]string{"a", "e"})
+	c, o := DefaultContract(), DefaultOptions()
+	kinds := classifyEdges(g)
+	ranks := assignRanks(g, kinds)
+	l := buildLayering(g, kinds, ranks)
+	m := measured(t, g)
+	labels, err := edgeLabelSizes(g, m, c, o)
+	require.NoError(t, err)
+	sizes, err := nodeSizes(g, kinds, m, c, o, labels)
+	require.NoError(t, err)
+	p := newPlacement(g, kinds, ranks, l, sizes, labels, c, o)
+	chain := l.chains[4]
+	require.Len(t, chain, 5)
+	return p, g, chain[1:4]
+}
+
+func TestRoute_ShiftedDummyChainMakesOneCleanJog(t *testing.T) {
+	p, g, dummies := dummyPlacement(t)
+	// Rank 3's dummy is pushed sideways: the chain must jog once, between ranks 2 and 3.
+	p.x[dummies[2]] += 40
+	geo := p.route()
+	require.NoError(t, geo.Validate(g))
+	long := geo.Edges[4]
+	b, c, d := boxOf(geo, "b"), boxOf(geo, "c"), boxOf(geo, "d")
+	assert.True(t, verticalSpan(long.Points, b.Y, c.Bottom()), "aligned ranks 1..2 stay one run: %v", long.Points)
+	jogs := 0
+	for i := 1; i < len(long.Points); i++ {
+		a, z := long.Points[i-1], long.Points[i]
+		if a.Y == z.Y && a.Y > c.Bottom() && a.Y < d.Y {
+			jogs++
+			assert.InDelta(t, 40, math.Abs(z.X-a.X), geomEps, "the jog spans the shift exactly")
+		}
+	}
+	assert.Equal(t, 1, jogs, "one clean jog in the shifted channel: %v", long.Points)
+	assertDistinguishablePaths(t, geo)
+}
+
+func chainShifts(p *placement, dummies []int) int {
+	shifts := 0
+	for i := 1; i < len(dummies); i++ {
+		if p.itemX(dummies[i]) != p.itemX(dummies[i-1]) {
+			shifts++
+		}
+	}
+	return shifts
+}
+
+func TestStraightenChains_RealignsADisplacedDummy(t *testing.T) {
+	p, _, dummies := dummyPlacement(t)
+	want := p.itemX(dummies[0])
+	p.x[dummies[2]] += 40
+	p.straightenChains()
+	for _, d := range dummies {
+		assert.Equal(t, want, p.itemX(d), "every dummy returns to the shared column")
+	}
+}
+
+func TestStraightenChains_MovesTheFewestDummies(t *testing.T) {
+	p, _, dummies := dummyPlacement(t)
+	want := p.itemX(dummies[1])
+	p.x[dummies[0]] -= 200
+	p.straightenChains()
+	assert.Zero(t, chainShifts(p, dummies))
+	assert.Equal(t, want, p.itemX(dummies[0]), "the displaced dummy joins the others, not the reverse")
+	for r, row := range p.layers.rows {
+		for i := 1; i < len(row); i++ {
+			assert.GreaterOrEqual(t, p.x[row[i]]+geomEps, p.x[row[i-1]]+p.widths[row[i-1]]+p.options.NodeSpacing, "row %d keeps order and gap", r)
+		}
+	}
+}
+
+func TestStraightenChains_NeverOverlapsAWedgedNeighbour(t *testing.T) {
+	p, _, dummies := dummyPlacement(t)
+	r := p.layers.items[dummies[1]].rank
+	row := p.layers.rows[r]
+	require.Len(t, row, 2)
+	// Put the row's node exactly where the shared column would need its slot.
+	node := row[0]
+	if node == dummies[1] {
+		node = row[1]
+	}
+	target := p.itemX(dummies[0])
+	p.x[dummies[1]] += 300
+	if row[0] == node {
+		p.x[node] = target - p.anchors[dummies[1]] - p.options.NodeSpacing - p.widths[node] + 50
+	} else {
+		p.x[node] = target - p.anchors[dummies[1]] + p.widths[dummies[1]] + p.options.NodeSpacing - 50
+	}
+	wedged := p.itemX(dummies[1])
+	p.straightenChains()
+	for i := 1; i < len(row); i++ {
+		assert.GreaterOrEqual(t, p.x[row[i]]+geomEps, p.x[row[i-1]]+p.widths[row[i-1]]+p.options.NodeSpacing)
+	}
+	// The wedged dummy cannot reach the old column, so the free ones join it.
+	assert.Equal(t, wedged, p.itemX(dummies[1]), "the wedged dummy stays put")
+	for _, d := range dummies {
+		assert.Equal(t, wedged, p.itemX(d), "every dummy shares the wedged column")
+	}
+}
+
+// Two long edges packed beside a spine whose middle node is wider: the block
+// sits against each row's node, so it steps out and back. The inner chain can
+// only straighten on the outward column if the outer chain is pushed outward
+// too; no real node ever moves.
+func TestStraightenChains_PushesPackedDummiesOutward(t *testing.T) {
+	g := edgeGraph(t, [2]string{"a", "b"}, [2]string{"b", "c"}, [2]string{"c", "d"}, [2]string{"d", "e"}, [2]string{"a", "e"}, [2]string{"a", "e"})
+	c, o := DefaultContract(), DefaultOptions()
+	kinds := classifyEdges(g)
+	ranks := assignRanks(g, kinds)
+	l := buildLayering(g, kinds, ranks)
+	m := measured(t, g)
+	labels, err := edgeLabelSizes(g, m, c, o)
+	require.NoError(t, err)
+	sizes, err := nodeSizes(g, kinds, m, c, o, labels)
+	require.NoError(t, err)
+	p := newPlacement(g, kinds, ranks, l, sizes, labels, c, o)
+	inner, outer := l.chains[4][1:4], l.chains[5][1:4]
+	// Lay each row out as [spine node, inner dummy, outer dummy], packed.
+	for r := 1; r <= 3; r++ {
+		row := l.rows[r]
+		node := row[slices.IndexFunc(row, func(id int) bool { return l.items[id].node >= 0 })]
+		l.rows[r] = []int{node, inner[r-1], outer[r-1]}
+		if r == 2 {
+			p.widths[node] += 40 // the wider middle spine node
+		}
+		p.x[node] = 0
+		p.x[inner[r-1]] = p.widths[node] + o.NodeSpacing
+		p.x[outer[r-1]] = p.x[inner[r-1]] + p.widths[inner[r-1]] + o.NodeSpacing
+	}
+	require.Equal(t, 2, chainShifts(p, inner))
+	require.Equal(t, 2, chainShifts(p, outer))
+	nodes := map[int]float64{}
+	for id, it := range l.items {
+		if it.node >= 0 {
+			nodes[id] = p.x[id]
+		}
+	}
+	p.straightenChains()
+	assert.Zero(t, chainShifts(p, inner), "inner chain straight")
+	assert.Zero(t, chainShifts(p, outer), "outer chain pushed out and straight")
+	for id, x := range nodes {
+		assert.Equal(t, x, p.x[id], "real nodes are walls, never pushed")
+	}
+	for r := 1; r <= 3; r++ {
+		row := l.rows[r]
+		for i := 1; i < len(row); i++ {
+			assert.GreaterOrEqual(t, p.x[row[i]]+geomEps, p.x[row[i-1]]+p.widths[row[i-1]]+o.NodeSpacing, "row %d keeps order and gap", r)
+		}
+	}
 }

@@ -1,0 +1,674 @@
+{
+  "revision": "rev-1",
+  "attempt": 1,
+  "geometryDigest": "b2959d29ee96cd0eec495de7829d6c9a7d1f8d3c721457f23b7d8b2bf13f83ed",
+  "report": {
+    "surfaceVersion": "arranged-renderer/3",
+    "contract": {
+      "version": "arranged-renderer/3",
+      "fontFamily": "Inter, Noto Sans SC, Noto Emoji",
+      "fontPackage": "@fontsource/inter@5;@fontsource/noto-sans-sc@5.3.1;@fontsource/noto-emoji@5.3.2",
+      "nodeLabelFontPx": 13,
+      "nodeLabelWeight": 600,
+      "nodeTypeFontPx": 10,
+      "nodeTypeWeight": 700,
+      "edgeLabelFontPx": 11,
+      "edgeLabelWeight": 500,
+      "lineHeight": 1.35,
+      "nodePaddingX": 12,
+      "nodePaddingY": 8,
+      "nodeBorderPx": 2,
+      "nodeTypeBarPx": 4,
+      "nodeTextGapPx": 2,
+      "nodeMinWidth": 180,
+      "nodeTextMaxWidth": 240,
+      "edgeLabelPaddingX": 6,
+      "edgeLabelPaddingY": 3,
+      "edgeLabelMaxWidth": 160,
+      "strokePx": 2,
+      "arrowPx": 10,
+      "crossingTreatment": "gap",
+      "crossingGapPx": 10,
+      "cornerRadiusPx": 6,
+      "forwardColor": "#8a8ab0",
+      "loopReturnColor": "#7c8cf5",
+      "loopReturnDash": "6 4",
+      "practicalZoom": 0.9,
+      "minReadableTextPx": 9,
+      "minContrastRatio": 4.5,
+      "minClearancePx": 4,
+      "groupPaddingPx": 32,
+      "groupTaskGapPx": 24,
+      "groupRowGapPx": 48,
+      "groupMinWidth": 200,
+      "groupHeaderMinHeight": 80,
+      "groupFooterMinHeight": 80,
+      "groupTaskMinHeight": 96,
+      "groupConnectorDash": "3 3"
+    },
+    "fontsReady": true,
+    "fontFamilyResolved": true,
+    "zoom": 0.9,
+    "canvas": {
+      "x": 0,
+      "y": 0,
+      "w": 560,
+      "h": 320
+    },
+    "nodes": [
+      {
+        "id": "a",
+        "box": {
+          "x": 40,
+          "y": 40,
+          "w": 200,
+          "h": 60
+        },
+        "label": {
+          "content": "Start",
+          "glyphs": [
+            {
+              "x": 53.999998304578995,
+              "y": 69.49999915228949,
+              "w": 30.56249830457899,
+              "h": 15.999997456868488
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 53.999998304578995,
+            "y": 69.49999915228949,
+            "w": 30.56249830457899,
+            "h": 17.546874152289497
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "agent call",
+          "glyphs": [
+            {
+              "x": 53.999998304578995,
+              "y": 53.999998304578995,
+              "w": 73.203125,
+              "h": 11.999999152289496
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 53.999998304578995,
+            "y": 53.999998304578995,
+            "w": 73.203125,
+            "h": 13.500001695421007
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "b",
+        "box": {
+          "x": 40,
+          "y": 200,
+          "w": 200,
+          "h": 60
+        },
+        "label": {
+          "content": "Review",
+          "glyphs": [
+            {
+              "x": 53.999998304578995,
+              "y": 229.49998643663193,
+              "w": 45.20311991373698,
+              "h": 16.000010172526043
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 53.999998304578995,
+            "y": 229.49998643663193,
+            "w": 45.20311991373698,
+            "h": 17.546878390842014
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "agent call",
+          "glyphs": [
+            {
+              "x": 53.999998304578995,
+              "y": 213.99998982747394,
+              "w": 73.203125,
+              "h": 12.000003390842014
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 53.999998304578995,
+            "y": 213.99998982747394,
+            "w": 73.203125,
+            "h": 13.500010172526041
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      },
+      {
+        "id": "c",
+        "box": {
+          "x": 300,
+          "y": 200,
+          "w": 200,
+          "h": 60
+        },
+        "label": {
+          "content": "Ship",
+          "glyphs": [
+            {
+              "x": 314.000006781684,
+              "y": 229.49998643663193,
+              "w": 27.937486436631943,
+              "h": 16.000010172526043
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 314.000006781684,
+            "y": 229.49998643663193,
+            "w": 27.937486436631943,
+            "h": 17.546878390842014
+          },
+          "clipped": false,
+          "fontPx": 13,
+          "contrast": 12.25567385873378,
+          "occluded": false
+        },
+        "type": {
+          "content": "transform",
+          "glyphs": [
+            {
+              "x": 314.000006781684,
+              "y": 213.99998982747394,
+              "w": 73.34374321831596,
+              "h": 12.000003390842014
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 314.000006781684,
+            "y": 213.99998982747394,
+            "w": 73.34374321831596,
+            "h": 13.500010172526041
+          },
+          "clipped": false,
+          "fontPx": 10,
+          "contrast": 7.966831219191241,
+          "occluded": false
+        }
+      }
+    ],
+    "edges": [
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 139.99999629126654,
+              "y": 99.99999735090468
+            },
+            "end": {
+              "x": 139.99999629126654,
+              "y": 199.99999470180936
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 144.99999615881177,
+            "y": 189.99999496671887
+          },
+          {
+            "x": 139.99999629126654,
+            "y": 199.99999470180936
+          },
+          {
+            "x": 134.9999964237213,
+            "y": 189.99999496671887
+          }
+        ],
+        "ordinal": 0,
+        "start": {
+          "x": 139.99999629126654,
+          "y": 99.99999735090468
+        },
+        "end": {
+          "x": 139.99999629126654,
+          "y": 199.99999470180936
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936,
+        "label": {
+          "content": "yes",
+          "glyphs": [
+            {
+              "x": 155.99999321831598,
+              "y": 138.99999830457898,
+              "w": 18.515625,
+              "h": 13.999998304578993
+            }
+          ],
+          "visible": true,
+          "box": {
+            "x": 150,
+            "y": 135.99999321831598,
+            "w": 33.99998982747396,
+            "h": 22.000003390842014
+          },
+          "clipped": false,
+          "fontPx": 11,
+          "contrast": 12.921514369638777,
+          "occluded": false
+        }
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 209.9999944368998,
+              "y": 259.9999931123522
+            },
+            "end": {
+              "x": 209.9999944368998,
+              "y": 278.99999260902405
+            }
+          },
+          {
+            "start": {
+              "x": 209.9999944368998,
+              "y": 278.99999260902405
+            },
+            "end": {
+              "x": 215.9999942779541,
+              "y": 284.9999924500783
+            },
+            "corner": true
+          },
+          {
+            "start": {
+              "x": 215.9999942779541,
+              "y": 284.9999924500783
+            },
+            "end": {
+              "x": 263.99999300638837,
+              "y": 284.9999924500783
+            }
+          },
+          {
+            "start": {
+              "x": 263.99999300638837,
+              "y": 284.9999924500783
+            },
+            "end": {
+              "x": 269.9999928474426,
+              "y": 278.99999260902405
+            },
+            "corner": true
+          },
+          {
+            "start": {
+              "x": 269.9999928474426,
+              "y": 278.99999260902405
+            },
+            "end": {
+              "x": 269.9999928474426,
+              "y": 160.9999957349565
+            }
+          },
+          {
+            "start": {
+              "x": 269.9999928474426,
+              "y": 160.9999957349565
+            },
+            "end": {
+              "x": 269.9999928474426,
+              "y": 154.99999589390225
+            }
+          },
+          {
+            "start": {
+              "x": 269.9999928474426,
+              "y": 144.99999615881177
+            },
+            "end": {
+              "x": 269.9999928474426,
+              "y": 25.999999311235214
+            }
+          },
+          {
+            "start": {
+              "x": 269.9999928474426,
+              "y": 25.999999311235214
+            },
+            "end": {
+              "x": 263.99999300638837,
+              "y": 19.999999470180935
+            },
+            "corner": true
+          },
+          {
+            "start": {
+              "x": 263.99999300638837,
+              "y": 19.999999470180935
+            },
+            "end": {
+              "x": 145.99999613232083,
+              "y": 19.999999470180935
+            }
+          },
+          {
+            "start": {
+              "x": 145.99999613232083,
+              "y": 19.999999470180935
+            },
+            "end": {
+              "x": 139.99999629126654,
+              "y": 25.999999311235214
+            },
+            "corner": true
+          },
+          {
+            "start": {
+              "x": 139.99999629126654,
+              "y": 25.999999311235214
+            },
+            "end": {
+              "x": 139.99999629126654,
+              "y": 39.99999894036187
+            }
+          }
+        ],
+        "strokeColor": "rgb(124, 140, 245)",
+        "dashPattern": "6px, 4px",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 144.99999615881177,
+            "y": 29.9999992052714
+          },
+          {
+            "x": 139.99999629126654,
+            "y": 39.99999894036187
+          },
+          {
+            "x": 134.9999964237213,
+            "y": 29.9999992052714
+          }
+        ],
+        "ordinal": 1,
+        "start": {
+          "x": 209.9999944368998,
+          "y": 259.9999931123522
+        },
+        "end": {
+          "x": 139.99999629126654,
+          "y": 39.99999894036187
+        },
+        "hasArrow": true,
+        "dashed": true,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 199.99999470180936,
+              "y": 99.99999735090468
+            },
+            "end": {
+              "x": 199.99999470180936,
+              "y": 143.99999618530273
+            }
+          },
+          {
+            "start": {
+              "x": 199.99999470180936,
+              "y": 143.99999618530273
+            },
+            "end": {
+              "x": 205.99999454286362,
+              "y": 149.99999602635702
+            },
+            "corner": true
+          },
+          {
+            "start": {
+              "x": 205.99999454286362,
+              "y": 149.99999602635702
+            },
+            "end": {
+              "x": 393.9999895625644,
+              "y": 149.99999602635702
+            }
+          },
+          {
+            "start": {
+              "x": 393.9999895625644,
+              "y": 149.99999602635702
+            },
+            "end": {
+              "x": 399.9999894036187,
+              "y": 155.9999958674113
+            },
+            "corner": true
+          },
+          {
+            "start": {
+              "x": 399.9999894036187,
+              "y": 155.9999958674113
+            },
+            "end": {
+              "x": 399.9999894036187,
+              "y": 199.99999470180936
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 404.99998927116394,
+            "y": 189.99999496671887
+          },
+          {
+            "x": 399.9999894036187,
+            "y": 199.99999470180936
+          },
+          {
+            "x": 394.9999895360735,
+            "y": 189.99999496671887
+          }
+        ],
+        "ordinal": 2,
+        "start": {
+          "x": 199.99999470180936,
+          "y": 99.99999735090468
+        },
+        "end": {
+          "x": 399.9999894036187,
+          "y": 199.99999470180936
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936
+      },
+      {
+        "segments": [
+          {
+            "start": {
+              "x": 109.99999708599515,
+              "y": 99.99999735090468
+            },
+            "end": {
+              "x": 109.99999708599515,
+              "y": 199.99999470180936
+            }
+          }
+        ],
+        "strokeColor": "rgb(138, 138, 176)",
+        "dashPattern": "none",
+        "visible": true,
+        "arrowPoints": [
+          {
+            "x": 114.99999695354037,
+            "y": 189.99999496671887
+          },
+          {
+            "x": 109.99999708599515,
+            "y": 199.99999470180936
+          },
+          {
+            "x": 104.9999972184499,
+            "y": 189.99999496671887
+          }
+        ],
+        "ordinal": 3,
+        "start": {
+          "x": 109.99999708599515,
+          "y": 99.99999735090468
+        },
+        "end": {
+          "x": 109.99999708599515,
+          "y": 199.99999470180936
+        },
+        "hasArrow": true,
+        "dashed": false,
+        "strokePx": 1.9999999470180936
+      }
+    ],
+    "crossings": [
+      {
+        "point": {
+          "x": 270,
+          "y": 150
+        },
+        "over": 2,
+        "under": 1,
+        "underGapVisible": true,
+        "overContinuous": true
+      }
+    ],
+    "states": [
+      {
+        "state": "pending",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "running",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "completed",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "failed",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "waiting",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "skipped",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      },
+      {
+        "state": "selected",
+        "nodeBoxesStable": true,
+        "labelsReadable": true
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "kind": "overview",
+      "path": "overview.png",
+      "sha256": "88d0b2e3c7be19d4aa1cd4f9da78e485cdfa40102b86628eb2bec62bee229362",
+      "region": {
+        "x": 0,
+        "y": 0,
+        "w": 560,
+        "h": 320
+      },
+      "scale": 0.9
+    },
+    {
+      "kind": "tile",
+      "path": "tile-000.png",
+      "sha256": "c992c032560c709a5f653ec61a515f24beb2913bb2313fada84345f7753df6f6",
+      "region": {
+        "x": 0,
+        "y": 0,
+        "w": 400,
+        "h": 288.88888888888886
+      },
+      "scale": 0.9
+    },
+    {
+      "kind": "tile",
+      "path": "tile-001.png",
+      "sha256": "38518ea90e45289a3b1f726a0d25a6fc6d775ca67668125767685a170c9cb335",
+      "region": {
+        "x": 160,
+        "y": 0,
+        "w": 400,
+        "h": 288.88888888888886
+      },
+      "scale": 0.9
+    },
+    {
+      "kind": "tile",
+      "path": "tile-002.png",
+      "sha256": "c5c0dc3b4fec17424e447fe9305fa1ae8931a47073d35deeb2faae0061312d84",
+      "region": {
+        "x": 0,
+        "y": 31.111111111111143,
+        "w": 400,
+        "h": 288.88888888888886
+      },
+      "scale": 0.9
+    },
+    {
+      "kind": "tile",
+      "path": "tile-003.png",
+      "sha256": "fbf1e3e2ff6b34a3c6779d36e6a3d5f95e1b2995e85d87b2492b7b944016fd8c",
+      "region": {
+        "x": 160,
+        "y": 31.111111111111143,
+        "w": 400,
+        "h": 288.88888888888886
+      },
+      "scale": 0.9
+    }
+  ],
+  "renderedAt": "2026-10-27T19:10:15.26295Z"
+}

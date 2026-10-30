@@ -311,6 +311,49 @@ func (h *queryHarness) completePassed(t *testing.T, wf *workflow.Workflow, scope
 	return geo
 }
 
+// legacyContract is the renderer contract before rounded corners: what a
+// layout stored by the previous build decodes to.
+func legacyContract() layout.RendererContract {
+	c := layout.DefaultContract()
+	c.Version = "arranged-renderer/2"
+	c.CornerRadiusPx = 0
+	return c
+}
+
+// completePassedStale stores a passed result reviewed under legacyContract.
+func (h *queryHarness) completePassedStale(t *testing.T, wf *workflow.Workflow, scope workflow.Scope) layout.Geometry {
+	t.Helper()
+	fence := h.claim(t, wf, scope)
+	g, err := layout.BuildGraph(wf)
+	require.NoError(t, err)
+	c := legacyContract()
+	geo, err := layout.Arrange(context.Background(), g, layouttest.Measurements(g, c), c, layout.DefaultOptions())
+	require.NoError(t, err)
+	res := layout.StoredResult{
+		Revision: wf.SavedRevision(), Generation: fence.Generation, Geometry: geo,
+		Review: &layout.Review{Rendered: true, Findings: []layout.Finding{}, Evidence: layout.Evidence{
+			GeometryDigest: layout.GeometryDigest(geo), RendererVersion: c.Version,
+			Contract: c, FontsReady: true, Zoom: c.PracticalZoom,
+			Tiles: 1, Artifacts: layouttest.Artifacts(geo), ReviewedAt: queryNow,
+		}},
+		Verdict: layout.VerdictPassed, Score: layout.ScoreOf(1, nil, len(geo.Crossings)), CreatedAt: queryNow,
+	}
+	require.NoError(t, h.store.Complete(context.Background(), fence, layout.Completion{
+		State: layout.StatePassed, AttemptsUsed: 1, Result: &res, ReplaceBest: true,
+	}, queryNow))
+	return geo
+}
+
+// failActive completes the revision's queued job as failed, with no new result.
+func (h *queryHarness) failActive(t *testing.T, rev string) {
+	t.Helper()
+	rec, err := h.store.Claim(context.Background(), rev, "query-test", queryNow, queryNow.Add(time.Minute))
+	require.NoError(t, err)
+	require.NoError(t, h.store.Complete(context.Background(), layout.Fence{Revision: rev, Generation: rec.JobGeneration}, layout.Completion{
+		State: layout.StateFailed, AttemptsUsed: 1, FailureStage: layout.StageRendering, FailureReason: "renderer unavailable",
+	}, queryNow))
+}
+
 func (h *queryHarness) completeFailed(t *testing.T, wf *workflow.Workflow, scope workflow.Scope) {
 	t.Helper()
 	fence := h.claim(t, wf, scope)
@@ -737,4 +780,104 @@ func TestQueryService_RetryInstance_UnknownInstance_NotFound(t *testing.T) {
 	h := newQueryHarness(t)
 	_, err := h.q.RetryInstance(context.Background(), uuid.New(), queryRev1)
 	assert.ErrorIs(t, err, instance.ErrNotFound)
+}
+
+// --- contract drift ----------------------------------------------------------
+
+// A pass reviewed under an older renderer contract is re-arranged on view as a
+// system action: no retry authorization, and the previous geometry stays on
+// screen (with its own contract) while the new job runs.
+func TestQueryService_WorkflowLayout_ContractStalePassRequeuesAndRetainsGeometry(t *testing.T) {
+	h := newQueryHarness(t)
+	scope := workflow.Private(queryOwner)
+	wf := queryStamped("wf", queryRev1, workflow.ScopeLabelPrivate, "a", "b")
+	h.workflows.readable["wf"] = queryAccessEntry{wf, scope}
+	old := h.completePassedStale(t, wf, scope)
+	before := h.get(t, queryRev1)
+
+	v, err := h.q.WorkflowLayout(context.Background(), "wf")
+	require.NoError(t, err)
+	assert.Equal(t, before.JobGeneration+1, v.JobGeneration, "requeued once")
+	assert.Equal(t, layout.StatePending, v.State)
+	assert.Equal(t, layout.DisplayPending, v.DisplayStatus)
+	assert.True(t, v.Available)
+	assert.Equal(t, layout.ProvenanceRetainedGeometry, v.Provenance)
+	assert.True(t, v.Unreviewed)
+	require.NotNil(t, v.Geometry)
+	assert.Equal(t, layout.GeometryDigest(old), layout.GeometryDigest(*v.Geometry), "the previous layout stays visible")
+	require.NotNil(t, v.Contract)
+	assert.Equal(t, legacyContract(), *v.Contract, "served with the contract it was reviewed under")
+	assert.Empty(t, h.workflows.retryCalls, "a system requeue never uses user retry authorization")
+
+	again, err := h.q.WorkflowLayout(context.Background(), "wf")
+	require.NoError(t, err)
+	assert.Equal(t, v.JobGeneration, again.JobGeneration, "an active requeue is not queued again")
+	assert.Equal(t, layout.ProvenanceRetainedGeometry, again.Provenance)
+}
+
+// A failed re-arrange falls back to ordinary needs-attention: no requeue loop.
+func TestQueryService_WorkflowLayout_ContractStaleRequeueFailureDoesNotLoop(t *testing.T) {
+	h := newQueryHarness(t)
+	scope := workflow.Private(queryOwner)
+	wf := queryStamped("wf", queryRev1, workflow.ScopeLabelPrivate, "a", "b")
+	h.workflows.readable["wf"] = queryAccessEntry{wf, scope}
+	old := h.completePassedStale(t, wf, scope)
+	v, err := h.q.WorkflowLayout(context.Background(), "wf")
+	require.NoError(t, err)
+	h.failActive(t, queryRev1)
+
+	for range 2 {
+		after, err := h.q.WorkflowLayout(context.Background(), "wf")
+		require.NoError(t, err)
+		assert.Equal(t, v.JobGeneration, after.JobGeneration, "no further requeue")
+		assert.Equal(t, layout.DisplayFailed, after.DisplayStatus)
+		assert.True(t, after.RetryEligible)
+		require.NotNil(t, after.Geometry)
+		assert.Equal(t, layout.GeometryDigest(old), layout.GeometryDigest(*after.Geometry))
+		assert.Equal(t, layout.ProvenanceRetainedGeometry, after.Provenance)
+	}
+}
+
+func TestQueryService_InstanceLayout_ContractStalePassRequeuesWithoutAuthorization(t *testing.T) {
+	h := newQueryHarness(t)
+	scope := workflow.Private(queryOwner)
+	r1 := queryStamped("wf", queryRev1, workflow.ScopeLabelPrivate, "a", "b")
+	old := h.completePassedStale(t, r1, scope)
+	id := uuid.New()
+	h.instances.viewable[id] = querySnapshotCopy(t, r1)
+	h.instances.retryErr[id] = errors.New("viewer may not retry")
+	before := h.get(t, queryRev1)
+
+	v, err := h.q.InstanceLayout(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, before.JobGeneration+1, v.JobGeneration)
+	assert.Equal(t, layout.DisplayPending, v.DisplayStatus)
+	require.NotNil(t, v.Geometry)
+	assert.Equal(t, layout.GeometryDigest(old), layout.GeometryDigest(*v.Geometry))
+	assert.Zero(t, h.workflows.calls(), "an instance requeue never consults the current workflow")
+}
+
+// Only a pass that is stale purely by contract is requeued; a current pass and
+// an old needs-attention result are left alone.
+func TestQueryService_ContractCurrentOrUnpassedResultsAreNotRequeued(t *testing.T) {
+	h := newQueryHarness(t)
+	scope := workflow.Private(queryOwner)
+	wf := queryStamped("wf", queryRev1, workflow.ScopeLabelPrivate, "a", "b")
+	h.workflows.readable["wf"] = queryAccessEntry{wf, scope}
+	h.completePassed(t, wf, scope)
+	before := h.get(t, queryRev1)
+	v, err := h.q.WorkflowLayout(context.Background(), "wf")
+	require.NoError(t, err)
+	assert.Equal(t, before.JobGeneration, v.JobGeneration)
+	assert.Equal(t, layout.DisplayComplete, v.DisplayStatus)
+
+	h2 := newQueryHarness(t)
+	h2.workflows.readable["wf"] = queryAccessEntry{wf, scope}
+	h2.completePassedStale(t, wf, scope)
+	rec := h2.get(t, queryRev1)
+	require.NoError(t, h2.store.InvalidateResult(context.Background(), layout.Fence{Revision: queryRev1, Generation: rec.JobGeneration}, rec.ResultGeneration, "reviewer blocked", queryNow))
+	v, err = h2.q.WorkflowLayout(context.Background(), "wf")
+	require.NoError(t, err)
+	assert.Equal(t, rec.JobGeneration, v.JobGeneration, "needs-attention is the user's to retry")
+	assert.Equal(t, layout.DisplayNeedsAttention, v.DisplayStatus)
 }

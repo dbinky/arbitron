@@ -2,6 +2,7 @@ package layout
 
 import (
 	"math"
+	"slices"
 	"sort"
 )
 
@@ -86,9 +87,12 @@ func newPlacement(g Graph, kinds []EdgeKind, ranks []int, l *layering, sizes []n
 		}
 	}
 	p.alignRows()
-	p.left, p.right = math.Inf(1), math.Inf(-1)
 	for i := range p.x {
 		p.x[i] = roundPx(p.x[i])
+	}
+	p.straightenChains()
+	p.left, p.right = math.Inf(1), math.Inf(-1)
+	for i := range p.x {
 		p.left = math.Min(p.left, p.x[i])
 		p.right = math.Max(p.right, p.x[i]+p.widths[i])
 	}
@@ -136,6 +140,120 @@ func (p *placement) alignRows() {
 	}
 	for r := 1; r < len(l.rows); r++ {
 		place(r, l.up)
+	}
+}
+
+// straightenPasses bounds the straightening sweeps; each kept move strictly
+// lowers the total shift count, so sweeps stop early once nothing improves.
+const straightenPasses = 8
+
+// straightenChains moves each long edge's dummies onto one shared column, so
+// the edge runs straight instead of stepping at every rank. Rows crowded with
+// dummies are packed against their real nodes, whose widths differ by rank, so
+// a dummy may push the dummies beside it outward to make room. A real node is
+// a wall and never moves, and row order and node spacing always hold. A move
+// is kept only when it lowers the total number of shifts over every chain.
+func (p *placement) straightenChains() {
+	l := p.layers
+	gap := p.options.NodeSpacing
+	slot := make([]int, len(l.items))
+	for _, row := range l.rows {
+		for i, id := range row {
+			slot[id] = i
+		}
+	}
+	ords := make([]int, 0, len(l.chains))
+	for ord, chain := range l.chains {
+		if len(chain) > 3 {
+			ords = append(ords, ord)
+		}
+	}
+	sort.Ints(ords)
+	total := func() int {
+		n := 0
+		for _, ord := range ords {
+			dummies := l.chains[ord][1 : len(l.chains[ord])-1]
+			for i := 1; i < len(dummies); i++ {
+				if p.itemX(dummies[i]) != p.itemX(dummies[i-1]) {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	// moveTo puts id's column at x, pushing dummies on the side it moves
+	// towards just far enough to keep the gap. It restores the row and reports
+	// false when a real node is in the way.
+	moveTo := func(id int, x float64) bool {
+		row := l.rows[l.items[id].rank]
+		saved := make([]float64, len(row))
+		for j, other := range row {
+			saved[j] = p.x[other]
+		}
+		blocked := false
+		i := slot[id]
+		p.x[id] = roundPx(x - p.anchors[id])
+		for j := i - 1; j >= 0 && !blocked; j-- {
+			limit := p.x[row[j+1]] - gap - p.widths[row[j]]
+			if p.x[row[j]] <= limit+geomEps {
+				break
+			}
+			blocked = l.items[row[j]].node >= 0
+			p.x[row[j]] = math.Floor(limit/geomEps) * geomEps
+		}
+		for j := i + 1; j < len(row) && !blocked; j++ {
+			limit := p.x[row[j-1]] + p.widths[row[j-1]] + gap
+			if p.x[row[j]] >= limit-geomEps {
+				break
+			}
+			blocked = l.items[row[j]].node >= 0
+			p.x[row[j]] = math.Ceil(limit/geomEps) * geomEps
+		}
+		if blocked {
+			for j, other := range row {
+				p.x[other] = saved[j]
+			}
+		}
+		return !blocked
+	}
+	for range straightenPasses {
+		improved := false
+		for _, ord := range ords {
+			dummies := l.chains[ord][1 : len(l.chains[ord])-1]
+			before := slices.Clone(p.x)
+			base := total()
+			var best []float64
+			bestTotal, bestMove := base, 0.0
+			var columns []float64
+			for _, id := range dummies {
+				if x := p.itemX(id); !slices.Contains(columns, x) {
+					columns = append(columns, x)
+				}
+			}
+			for _, column := range columns {
+				copy(p.x, before)
+				for _, id := range dummies {
+					if p.itemX(id) != column {
+						moveTo(id, column)
+					}
+				}
+				n, move := total(), 0.0
+				for i := range p.x {
+					move += math.Abs(p.x[i] - before[i])
+				}
+				if n < bestTotal || n == bestTotal && best != nil && move < bestMove {
+					best, bestTotal, bestMove = slices.Clone(p.x), n, move
+				}
+			}
+			copy(p.x, before)
+			if best != nil {
+				copy(p.x, best)
+				improved = true
+			}
+		}
+		if !improved {
+			break
+		}
 	}
 }
 

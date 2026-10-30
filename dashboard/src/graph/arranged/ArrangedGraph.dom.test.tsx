@@ -86,7 +86,7 @@ describe('ArrangedGraph DOM contract', () => {
     expect(container.querySelector('[data-arranged-node="b"]')!.getAttribute('data-state')).toBe('running')
     expect(container.querySelector('[data-edge-overlay="1"]')).not.toBeNull()
     expect(container.querySelector('[data-edge-overlay="0"]')).toBeNull()
-    expect(container.querySelector('[data-edge-path="1"]')!.getAttribute('d')).toBe('M 140,210 L 140,235 L 130,235 L 130,260')
+    expect(container.querySelector('[data-edge-path="1"]')!.getAttribute('d')).toBe('M 140,210 L 140,230 A 5,5 0 0 1 135,235 A 5,5 0 0 0 130,240 L 130,260')
     for (const route of geo.edges) {
       const path = container.querySelector(`[data-edge-path="${route.ordinal}"]`)!
       expect(path.getAttribute('data-edge-kind')).toBe(route.kind)

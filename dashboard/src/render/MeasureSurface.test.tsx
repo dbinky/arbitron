@@ -77,6 +77,6 @@ describe('runMeasureJob', () => {
     expect(Object.keys(m.items).sort()).toEqual(['edge:0', 'node:a:label'])
     expect(m.items['edge:0']).toEqual({ width: 0, height: 0, lines: 0 })
     expect(m.fontsReady).toBe(false) // jsdom has no FontFaceSet
-    expect(m.contract.version).toBe('arranged-renderer/2')
+    expect(m.contract.version).toBe('arranged-renderer/3')
   })
 })

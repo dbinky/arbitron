@@ -50,6 +50,20 @@ func layoutRenderWaitTerminal(t *testing.T, ds *domainStack, revision string, wi
 	return rec
 }
 
+// layoutCacheFile waits for the worker's cache publish of a settled revision
+// and returns the cache path. The row turns terminal before PublishCache writes
+// layout.json, so a test that removes the cache must wait first, and before it
+// stops the worker, whose cancellation would abandon the publish.
+func layoutCacheFile(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "layout.json")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}, 10*time.Second, 20*time.Millisecond, "the worker never published %s", path)
+	return path
+}
+
 func assertDownwardArrangement(t *testing.T, geo layout.Geometry) {
 	t.Helper()
 	require.NotEmpty(t, geo.Nodes)

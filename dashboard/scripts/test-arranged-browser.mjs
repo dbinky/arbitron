@@ -54,7 +54,7 @@ test('real Chrome uses shared font classes, wrap widths and invariant runtime bo
     for (const snapshot of result.snapshots) {
       assert.deepEqual(snapshot.boxes, result.before)
       assert.equal(snapshot.opacity, '1')
-      assert.equal(snapshot.path, 'M 174,840 L 174,900 L 295,900 M 305,900 L 534,900 L 534,840')
+      assert.equal(snapshot.path, 'M 174,840 L 174,894 A 6,6 0 0 0 180,900 L 295,900 M 305,900 L 528,900 A 6,6 0 0 0 534,894 L 534,840')
     }
   } finally {
     await server.close()
