@@ -52,6 +52,9 @@ func (s *Service) Rename(ctx context.Context, name, newName string) error {
 
 // rename is the ungated body of Rename; callers go through Rename.
 func (s *Service) rename(ctx context.Context, name, newName string) error {
+	if err := rejectReservedName(newName); err != nil {
+		return err
+	}
 	if s.stamper != nil {
 		return s.renameRevision(ctx, name, newName)
 	}

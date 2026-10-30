@@ -1,0 +1,349 @@
+{
+  "id": "7b2e9c4d-1a58-4f63-8d07-e5c3a9b6d204",
+  "name": "design",
+  "description": "Standalone design stage. Checks out an existing pipeline branch, runs an interactive phased implementation-design brainstorm over the approved spec (with the optional idea doc as implementation-shape context), verifies the run-dated design docs on disk, aligns them to the spec unattended, then pushes and records design_paths[] in the pipeline manifest.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "Repo to clone.",
+      "required": true
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "Existing remote branch to check out and commit the designs on.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug. Kept as given; the design stage never re-slugs.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Recorded as the manifest's top-level base_branch when this stage's finish creates the manifest. Empty leaves it unset.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Teams webhook URL, accepted for parity with the other stages. Leave empty in the committed sample.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_path",
+      "type": "string",
+      "description": "Path of the approved spec on the branch. Falls back to the pipeline manifest's spec entry when empty.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "idea_path",
+      "type": "string",
+      "description": "Optional path of an idea doc on the branch; supplies implementation shape as extra design context.",
+      "default": "",
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--checkout"
+        ],
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url and add a worktree at ./work on the existing remote branch.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "entrypoint": true
+    },
+    {
+      "id": "promote",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init.work_dir}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init.run_date}}"
+          },
+          {
+            "variable": "design_glob",
+            "operation": "set",
+            "value": "docs/designs/{{init.run_date}}-{{slug}}-design-phase-*.md"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift work_dir and run_date to top-level vars and compute the run-dated design glob from the given slug.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "resolve-inputs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-read.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--explicit",
+          "spec_path,idea_path",
+          "--require",
+          "spec_path",
+          "--optional",
+          "idea_path="
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Resolve inputs",
+      "description": "Explicit spec_path/idea_path win; otherwise spec_path comes from the manifest's spec entry (required) and idea_path defaults to empty.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "clear-designs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/clear-owned-docs.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--message",
+          "docs: clear {{slug}} designs for regeneration",
+          "{{design_glob}}"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Clear this run's earlier designs",
+      "description": "Reconciles this stage's owned file set before generating: removes today's design_glob matches (git rm + commit; history keeps them) so a same-day rerun with fewer phases cannot leave the first run's extra designs for finalize-docs to commit and the manifest to publish. Refuses any pattern that is not a design output.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 350
+      }
+    },
+    {
+      "id": "brainstorm-design",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/brainstorm-design.md",
+        "orchestrationFile": "orchestration/brainstorm-design.orch.md",
+        "model_profile": "interviewer-opus-high",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "design_paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "design_paths"
+          ]
+        }
+      },
+      "label": "Brainstorm: design",
+      "description": "Interactive phased design brainstorm over the spec (plus optional idea doc). Writes ./work/docs/designs/<date>-<slug>-design-phase-N.md and commits locally. Not on a cycle; never pushes.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "checkpoint-push-brainstorm",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push session",
+      "description": "Pushes the approved design session before finalize-designs, so even a misnamed design file survives a later failure: an unpushed design lives only in a workspace that is deleted when the run ends.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "finalize-designs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/finalize-docs.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--message",
+          "docs: add {{slug}} phased designs",
+          "{{design_glob}}"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Finalize designs",
+      "description": "Verify the run-dated design files exist on disk and are non-empty; commit them if still uncommitted. Emits paths[].",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "checkpoint-push-designs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push designs",
+      "description": "Pushes the finalized designs before align-designs, so an align agent that exhausts its retries cannot strand the approved designs.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "align-designs",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-designs.md",
+        "model_profile": "reviewer-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align designs",
+      "description": "Unattended: read spec + designs, fix alignment and data-provenance gaps in place, commit locally.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 980
+      }
+    },
+    {
+      "id": "finalize-aligned",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/finalize-docs.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--message",
+          "docs: align {{slug}} designs",
+          "{{design_glob}}"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Finalize aligned",
+      "description": "Re-verify the design files on disk after alignment and commit any leftover edits. Emits the final paths[].",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 1120
+      }
+    },
+    {
+      "id": "finish",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-append.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--workflow",
+          "design",
+          "design",
+          "done",
+          "{design_paths: .[\"finalize-aligned\"].paths}"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Record stage",
+      "description": "Push the branch, then commit and push the design entry to .arbitron/pipeline/<slug>.json. design_paths stays a typed array. Its outputs are the stage contract.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1260
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init",
+      "target": "promote"
+    },
+    {
+      "source": "promote",
+      "target": "resolve-inputs"
+    },
+    {
+      "source": "resolve-inputs",
+      "target": "clear-designs"
+    },
+    {
+      "source": "clear-designs",
+      "target": "brainstorm-design"
+    },
+    {
+      "source": "brainstorm-design",
+      "target": "checkpoint-push-brainstorm"
+    },
+    {
+      "source": "checkpoint-push-brainstorm",
+      "target": "finalize-designs"
+    },
+    {
+      "source": "finalize-designs",
+      "target": "checkpoint-push-designs"
+    },
+    {
+      "source": "checkpoint-push-designs",
+      "target": "align-designs"
+    },
+    {
+      "source": "align-designs",
+      "target": "finalize-aligned"
+    },
+    {
+      "source": "finalize-aligned",
+      "target": "finish"
+    }
+  ],
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  }
+}

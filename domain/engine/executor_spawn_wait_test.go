@@ -330,6 +330,8 @@ func TestSpawnWait_MissingSuccessPort_FailsBeforeCreatingChild(t *testing.T) {
 
 func TestSpawnWait_PreparationFailure_NoChildAndNoSuspension(t *testing.T) {
 	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	// The child must have an unmapped required input, or no preparation happens.
+	f.spawner.inputsByWorkflow["child"] = []workflow.InputField{{Name: "repo", Type: "string", Required: true}}
 	f.preparer.err = errors.New("missing required input(s): repo")
 
 	res, err := f.run(t)

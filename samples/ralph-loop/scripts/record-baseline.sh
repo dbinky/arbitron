@@ -42,7 +42,13 @@ WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
 # last-pass-head: that one drives record-pass-commit's progress counting, and in
 # feature-pipeline this runs BEFORE implementation, whose commits must not count
 # as the first refine pass's progress.
-if BH="$(git -C "$WORK" rev-parse HEAD 2>/dev/null)"; then
+# An IMPORTED baseline (import-baseline.sh left baseline-imported) measured some
+# earlier commit, not this HEAD: stamping HEAD would hide every change since the
+# measurement from the first verification. Remove any stale baseline-head
+# instead, so verify-tests runs its first pass as a full sweep.
+if [ -f "$WS/baseline-imported" ]; then
+  rm -f "$WS/baseline-head"
+elif BH="$(git -C "$WORK" rev-parse HEAD 2>/dev/null)"; then
   printf '%s' "$BH" > "$WS/baseline-head"
 fi
 F="$WS/test-baseline.json"
@@ -68,8 +74,16 @@ fi
 # baseline-tests on a partly-refined branch would record the previous run's own
 # fixes as "pre-existing", permanently blinding the regression gate to anything
 # it had already broken.
-if [ -n "${WORK:-}" ] && [ -d "$WORK/docs/reference" ]; then
-  cp "$F" "$WORK/docs/reference/test-baseline.json" 2>/dev/null || true
+# The file is COMMITTED (R3), so the baseline is in history before the first
+# pass-mark and survives a checkpoint push. A resumed run's restored file is
+# already committed and identical, so nothing changes and no commit is made.
+REL="docs/reference/test-baseline.json"
+mkdir -p "$WORK/docs/reference"
+cp "$F" "$WORK/$REL"
+if [ -n "$(git -C "$WORK" status --porcelain -- "$REL")" ]; then
+  git -C "$WORK" add -- "$REL" 1>&2
+  git -C "$WORK" commit --quiet -m "chore(ralph): record branch-point baseline" -- "$REL" 1>&2 || \
+    { echo "record-baseline: commit failed (git identity?)" >&2; exit 1; }
 fi
 
 BASELINE="$(jq -c '.' "$F")"

@@ -18,6 +18,7 @@ import (
 // the outstanding group. A process gate holds one real task until we inspect
 // the parked parent, then the normal terminal callback completes the same run.
 func TestGroupE2E_PostLaunchWriteFailureBlocksErrorBehaviorUntilRecovered(t *testing.T) {
+	t.Parallel()
 	faults := []struct {
 		name string
 		sql  string

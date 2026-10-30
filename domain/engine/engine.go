@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -518,6 +519,12 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		ctx = context.Background()
 	}
 
+	// An omitted priority (MCP instance_trigger without the argument) means
+	// normal; the store CHECKs priority and refuses an empty value. A
+	// whitespace-only value is as absent as an empty one.
+	if strings.TrimSpace(priority) == "" {
+		priority = string(instance.PriorityNormal)
+	}
 	spec := triggerSpec{
 		workflowName:       workflowName,
 		variables:          variables,
@@ -609,6 +616,14 @@ func (e *Engine) trigger(ctx context.Context, spec triggerSpec) (uuid.UUID, bool
 		if archived {
 			return uuid.Nil, false, fmt.Errorf("%w: %s", workflow.ErrArchived, workflowName)
 		}
+	}
+
+	// Refuse a parent whose spawn nodes map inputs the published child does not
+	// declare (an upgraded install can hold a new parent beside an old child)
+	// BEFORE anything is stamped, created or enqueued: otherwise the run fails
+	// at the spawn node, after every upstream stage has already been paid for.
+	if err := e.preflightSpawnChildren(ctx, owner, wf, filter); err != nil {
+		return uuid.Nil, false, err
 	}
 
 	// Stamp the run's audience from the resolved publication (private when the

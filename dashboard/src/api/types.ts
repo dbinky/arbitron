@@ -405,6 +405,13 @@ export interface GroupTask {
   inputs?: Record<string, unknown>
 }
 
+/** Config of a spawn_workflow node (all fields optional on the wire). */
+export interface SpawnConfig {
+  childWorkflow?: string
+  spawnMode?: 'fire_and_forget' | 'wait_for_child'
+  inputs?: Record<string, unknown>
+}
+
 export interface GroupConfig {
   form: GroupForm
   tasks: GroupTask[]

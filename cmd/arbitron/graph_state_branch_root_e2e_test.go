@@ -87,6 +87,7 @@ func gsExpectedBodyState(inst *instance.Instance, execs []instance.NodeExecution
 // parent. Each body node's state must equal the branch instance's own cursor
 // and trace, never pending and never the parent's.
 func TestGraphStateE2E_LaunchedBranchTaskOwnsItsBodyAsRootAndAsNestedContext(t *testing.T) {
+	t.Parallel()
 	ds := bootGraphStateStack(t)
 	srv := gsServeAPI(t, ds)
 	ctx := context.Background()

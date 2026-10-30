@@ -99,6 +99,9 @@ type Service struct {
 	// gate serializes execution-affecting writes with model advancement and
 	// run-snapshot capture. nil (unit tests) writes directly.
 	gate MutationGate
+	// library backs the @lib methods (library_service.go). nil reports
+	// ErrLibraryUnavailable.
+	library LibraryStore
 }
 
 // MutationGate is the narrow view of provider.ExecutionGate this service needs;
@@ -285,6 +288,9 @@ func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
 
 // create is the ungated body of Create; callers go through Create.
 func (s *Service) create(ctx context.Context, name string, wf *Workflow) error {
+	if err := rejectReservedName(name); err != nil {
+		return err
+	}
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -683,6 +689,9 @@ func (s *Service) Publish(ctx context.Context, privateName, publishedName string
 
 // publish is the ungated body of Publish; callers go through Publish.
 func (s *Service) publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
+	if err := rejectReservedName(publishedName); err != nil {
+		return err
+	}
 	if s.stamper != nil {
 		return s.publishRevision(ctx, privateName, publishedName, visibility, department)
 	}
@@ -797,6 +806,9 @@ func (s *Service) Copy(ctx context.Context, sharedName, newPrivateName string) e
 
 // copy is the ungated body of Copy; callers go through Copy.
 func (s *Service) copy(ctx context.Context, sharedName, newPrivateName string) error {
+	if err := rejectReservedName(newPrivateName); err != nil {
+		return err
+	}
 	if s.stamper != nil {
 		return s.copyRevision(ctx, sharedName, newPrivateName)
 	}

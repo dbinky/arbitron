@@ -422,7 +422,7 @@ func TestLayoutSurfaces_PRReviewWorkflowAndInstanceUseReviewedGeometry(t *testin
 // branch labels that pr-review lacks, so both routes must reproduce the
 // gap-split, dash-restarted routes the reviewer actually passed (P3T14 Step 1).
 func TestLayoutSurfaces_FeaturePipelineWorkflowAndInstanceUseReviewedGeometry(t *testing.T) {
-	surfaceWorkflowAndInstanceParity(t, "feature-pipeline")
+	surfaceWorkflowAndInstanceParity(t, "legacy-feature-pipeline")
 }
 
 // samplePROFILESRow matches a PROFILES.md table row: | alias | kind | ...
@@ -478,16 +478,16 @@ func surfaceWorkflowAndInstanceParity(t *testing.T, name string) {
 		surfaceReady(t, ctx, s.URL+route, "Layout reviewed")
 		surfaceAssertGeometry(t, ctx, view, "Layout reviewed")
 	}
-	if name == "feature-pipeline" {
+	if name == "legacy-feature-pipeline" {
 		// Guard the fixture: without these the test would not exercise gaps or dashes.
-		require.NotEmpty(t, result.Geometry.Crossings, "feature-pipeline must reach the routes with persisted crossings")
+		require.NotEmpty(t, result.Geometry.Crossings, "legacy-feature-pipeline must reach the routes with persisted crossings")
 		loops := 0
 		for _, edge := range result.Geometry.Edges {
 			if edge.Kind != layout.EdgeForward {
 				loops++
 			}
 		}
-		require.Positive(t, loops, "feature-pipeline must reach the routes with dashed loop returns")
+		require.Positive(t, loops, "legacy-feature-pipeline must reach the routes with dashed loop returns")
 	}
 }
 
@@ -615,7 +615,7 @@ func TestLayoutSurfaces_NeedsAttentionShowsFindingsNotReviewed(t *testing.T) {
 	}
 	ds, _ := e.boot(t)
 	s := surfaceServer(t, ds)
-	const name = "feature-pipeline"
+	const name = "legacy-feature-pipeline"
 	wf := layoutE2EManifest(t, filepath.Join("..", "..", "samples", name, "workflow.json"))
 	surfaceAuthor(t, s.Config.Handler, wf)
 	rev := layoutE2ESavedRevision(t, e.privatePath(name))

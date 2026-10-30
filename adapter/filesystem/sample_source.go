@@ -50,7 +50,7 @@ func (s *SampleSource) List(_ context.Context) ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || workflow.IsReservedWorkflowName(e.Name()) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(s.root, e.Name(), "workflow.json")); err == nil {
@@ -128,4 +128,52 @@ func (s *SampleSource) Read(_ context.Context, name string) (*workflow.Workflow,
 		return nil, nil, fmt.Errorf("reading sample files for %q: %w", name, err)
 	}
 	return &wf, files, nil
+}
+
+// libFolder is the reserved sample subdirectory shipping the shared library.
+const libFolder = "_lib"
+
+// ReadLibrary gathers the shipped shared-library files (library-relative path
+// -> content). An absent library folder is an empty map. Like Read it skips
+// dot-prefixed entries, non-regular files (symlinks are never followed) and
+// test files.
+func (s *SampleSource) ReadLibrary(_ context.Context) (map[string][]byte, error) {
+	dir := filepath.Join(s.root, libFolder)
+	files := map[string][]byte{}
+	if info, err := os.Lstat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return files, nil
+		}
+		return nil, fmt.Errorf("reading sample library: %w", err)
+	} else if !info.IsDir() {
+		return files, nil
+	}
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if base := d.Name(); base != "." && strings.HasPrefix(base, ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || !d.Type().IsRegular() || isTestFile(d.Name()) {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = content
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading sample library files: %w", err)
+	}
+	return files, nil
 }

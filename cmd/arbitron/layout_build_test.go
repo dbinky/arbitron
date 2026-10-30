@@ -159,7 +159,7 @@ func TestLayoutBuild_TestAllIsGatePlusFontPortability(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	require.NoError(t, err)
 	assert.Regexp(t, regexp.MustCompile(`(?m)^test-all: test-gate test-font-portability$`), string(raw))
-	assert.Regexp(t, regexp.MustCompile(`(?m)^test-gate: check-ui-fresh test-go-fresh-ui test-ui test-render test-dashboard-browser$`), string(raw))
+	assert.Regexp(t, regexp.MustCompile(`(?m)^test-gate: check-ui-fresh test-go-fresh-ui test-ui test-scripts test-render test-dashboard-browser$`), string(raw))
 }
 
 // Plain `go test ./...` skips every real-browser test (see browser_gate_test.go),

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
+import { render, screen, within, fireEvent, act, cleanup } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -903,5 +903,44 @@ describe('WorkflowReview — errors', () => {
 
     await settle(POLL_INTERVAL_MS * 5)
     expect(count('GET', LAYOUT_URL)).toBe(2)
+  })
+})
+
+describe('WorkflowReview — spawn node inspector', () => {
+  const withSpawnB = (): WorkflowDefinition => {
+    const def = fixtureWorkflow()
+    def.nodes = def.nodes.map((n) =>
+      n.id === 'b'
+        ? {
+            ...n,
+            type: 'spawn_workflow',
+            config: {
+              childWorkflow: 'stage',
+              spawnMode: 'wait_for_child',
+              inputs: { topic: '{{a.out}}' },
+            },
+          }
+        : n,
+    )
+    return def
+  }
+
+  it('shows the inputs mapping together with the raw Config block for a spawn node', async () => {
+    server.workflow = [withSpawnB()]
+    server.layout = [fixtureView()]
+    await open()
+    fireEvent.click(screen.getByTestId('node-b'))
+    const details = screen.getByTestId('review-spawn-details')
+    expect(within(details).getByRole('link', { name: 'stage' }).getAttribute('href')).toBe('/workflows/stage')
+    expect(within(details).getByText('reference')).toBeInTheDocument()
+    expect(screen.getByText('Config')).toBeInTheDocument()
+  })
+
+  it('does not show it for a non-spawn node', async () => {
+    server.workflow = [withSpawnB()]
+    server.layout = [fixtureView()]
+    await open()
+    fireEvent.click(screen.getByTestId('node-a'))
+    expect(screen.queryByTestId('review-spawn-details')).toBeNull()
   })
 })

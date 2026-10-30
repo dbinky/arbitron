@@ -49,6 +49,7 @@ func (s ssResolver) StreamChat(_ context.Context, req engine.ChatRequest) (<-cha
 // Removing either emitter provenance or the roster guard must expose resolver
 // text at this actual wire sink, including text about a NON-conflicting task.
 func TestSubtreeStreamE2E_ResolverReauthorizesAllContributorsAndHistory(t *testing.T) {
+	t.Parallel()
 	ds := bootGraphStateStack(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -116,6 +117,12 @@ func TestSubtreeStreamE2E_ResolverReauthorizesAllContributorsAndHistory(t *testi
 		}
 	}
 	barrier := func() { ssPublish(ds, parent.ID, engine.EventTypeNodeStarted, "barrier") }
+	// Hydration is written after the upgrade, so Dial can return before it
+	// runs. A live barrier is queued behind it: once both sockets have seen it,
+	// a session opened below cannot be picked up by connect-time hydration.
+	barrier()
+	require.Empty(t, drain(viewerConn))
+	require.Empty(t, drain(ownerConn))
 	ref, err := bridge.StartResolution(ctx, run, parent, engine.ResolutionRequest{
 		Handle: engine.GatherHandle{StagingDir: llm.workDir}, MergeIndex: 0, Attempt: 1,
 		TaskKey: "conflicting", ConflictPaths: []string{"public/path.txt"},

@@ -253,7 +253,7 @@ func TestSeedSampleWorkflows_RevisionWiring(t *testing.T) {
 	require.NoError(t, err)
 	mutations := &helperSeedMutations{}
 	owner := uuid.New()
-	require.NoError(t, seedSampleWorkflows(context.Background(), source, workspace, repo, pub, stamper, mutations, registry, owner, logger))
+	require.NoError(t, seedSampleWorkflows(context.Background(), source, workspace, repo, pub, stamper, mutations, registry, nil, nil, owner, logger))
 	require.Len(t, requester.requests, 1)
 	req := requester.requests[0]
 	require.NotEqual(t, uuid.Nil, req.WorkflowID)
@@ -269,6 +269,6 @@ func TestSeedSampleWorkflows_RevisionWiring(t *testing.T) {
 	ledger, err := filesystem.NewSeedLedger(workspace).Seeded(context.Background())
 	require.NoError(t, err)
 	assert.True(t, ledger["sample"])
-	require.NoError(t, seedSampleWorkflows(context.Background(), source, workspace, repo, pub, stamper, mutations, registry, owner, logger))
+	require.NoError(t, seedSampleWorkflows(context.Background(), source, workspace, repo, pub, stamper, mutations, registry, nil, nil, owner, logger))
 	assert.Len(t, requester.requests, 1)
 }

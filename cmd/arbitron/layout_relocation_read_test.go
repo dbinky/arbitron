@@ -25,6 +25,7 @@ import (
 // the instance read resolves through the workflow's current name or destination
 // (not-found after rename, C after recreate) or if relocation drops A's row.
 func TestLayoutRelocationRead_HistoricalInstanceKeepsSnapshotRevision(t *testing.T) {
+	t.Parallel()
 	ds := bootQueryStack(t)
 	router := newLayoutE2ERouter(t, ds)
 	srv := newLayoutE2EMCPServer(t, ds)

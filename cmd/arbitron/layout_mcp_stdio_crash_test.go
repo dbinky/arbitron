@@ -108,10 +108,12 @@ func mcpStdioUpdate(t *testing.T, p *layoutStdioProcess, e *layoutE2EEnv, ds *do
 }
 
 func TestLayoutMCPStdio_SharedPeerCrash(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	binary := buildLayoutStdioBinary(t)
 	for _, boundary := range []string{"before-proof", "after-proof"} {
 		for _, first := range []string{"workflow_read_file", "workflow_get", "workflow_update", "workflow_layout_retry"} {
 			t.Run(boundary+"/"+first, func(t *testing.T) {
+				t.Parallel()
 				e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 				ds, _ := e.boot(t)
 				ctx := adminCtxForLocalUser(t, ds)
@@ -186,10 +188,12 @@ func TestLayoutMCPStdio_SharedPeerCrash(t *testing.T) {
 }
 
 func TestLayoutMCPStdio_RenamePeerCrash(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	binary := buildLayoutStdioBinary(t)
 	for _, kind := range []string{"private", "shared"} {
 		for _, boundary := range []string{"before-identity", "after-identity"} {
 			t.Run(kind+"/"+boundary, func(t *testing.T) {
+				t.Parallel()
 				e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 				ds, _ := e.boot(t)
 				ds.layout.worker.Stop()

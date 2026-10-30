@@ -31,9 +31,11 @@ func (m *groupImportBoundary) WithMutations(ctx context.Context, targets []workf
 // Missing snapshot comparison must fail even when an external edit preserves
 // the saved revision, or adds groups to an originally ordinary definition.
 func TestServiceRevisionE2E_GroupImportRejectsChangedSource(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, op := range []string{"publish", "copy", "duplicate", "rename"} {
 		for _, sourceKind := range []string{"group", "legacy-group", "ordinary"} {
 			t.Run(op+"/"+sourceKind, func(t *testing.T) {
+				t.Parallel()
 				e := newLayoutE2EEnv(t, layoutE2EOptions{})
 				ds, _ := e.boot(t)
 				ctx := adminCtxForLocalUser(t, ds)
@@ -144,7 +146,7 @@ func TestServiceRevisionE2E_GroupSeedUsesValidatedSnapshot(t *testing.T) {
 		require.NoError(t, os.WriteFile(support, []byte("unvalidated replacement"), 0600))
 	}}
 	require.NoError(t, seedSampleWorkflows(ctx, sourceDir, e.workspaceDir, ds.workflowRepo, ds.publishedRepo,
-		ds.layout.stamper, locks, adaptsqlite.NewWorkflowIdentityRepo(ds.db), localDefaultUser, ds.logger, ds.profileChecker))
+		ds.layout.stamper, locks, adaptsqlite.NewWorkflowIdentityRepo(ds.db), nil, nil, localDefaultUser, ds.logger, ds.profileChecker))
 	saved := layoutE2EManifest(t, e.sharedPath(parent.Name))
 	require.Equal(t, parent.Nodes, saved.Nodes, "only the definition validated before locking may be saved")
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(e.sharedPath(parent.Name)), "support.txt"))

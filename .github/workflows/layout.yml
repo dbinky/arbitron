@@ -50,6 +50,11 @@ jobs:
       - name: Allow Chrome's user-namespace sandbox
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # bubblewrap: the harden sandbox refuses to run repository code on Linux
+      # without it, and its script tests exercise the real sandbox.
+      - name: Install script-test tools
+        run: sudo apt-get install -y shellcheck bats bubblewrap
+
       - name: Test all surfaces with a real browser
         env:
           ARBITRON_LAYOUT_BROWSERPATH: ${{ steps.chrome.outputs.chrome-path }}

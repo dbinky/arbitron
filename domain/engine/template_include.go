@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
 
@@ -73,9 +74,21 @@ type includeBudget struct {
 // escape it or reach another workflow's files. Total expansion is bounded by
 // maxIncludeBytes and maxIncludeCount so a small fan-out graph cannot exhaust
 // server memory; exceeding either fails closed with ErrTemplateInclude.
+//
+// BASES: content is workflow-based unless it came from an @lib file. A directive
+// naming @lib/<rel> reads the library from any base. A plain directive in a
+// workflow-based file reads the workflow; in a lib-based file it is rewritten to
+// @lib/<path> and so stays in the library and is held to ParseLibPath's
+// strictness (./x and sub/../x are rejected there). A lib file can never reach
+// a workflow file.
 func expandIncludes(fr FileReader, owner uuid.UUID, workflowName, content string) (string, error) {
+	return expandIncludesBase(fr, owner, workflowName, content, false)
+}
+
+// expandIncludesBase is expandIncludes with the base of content made explicit.
+func expandIncludesBase(fr FileReader, owner uuid.UUID, workflowName, content string, libBase bool) (string, error) {
 	budget := &includeBudget{bytes: maxIncludeBytes, includes: maxIncludeCount}
-	return expandIncludesDepth(fr, owner, workflowName, content, nil, 0, budget)
+	return expandIncludesDepth(fr, owner, workflowName, content, nil, 0, budget, libBase)
 }
 
 // expandIncludesDepth carries the active include stack so a cycle is reported
@@ -83,7 +96,7 @@ func expandIncludes(fr FileReader, owner uuid.UUID, workflowName, content string
 // shared budget so total output stays bounded.
 func expandIncludesDepth(
 	fr FileReader, owner uuid.UUID, workflowName, content string, stack []string, depth int,
-	budget *includeBudget,
+	budget *includeBudget, libBase bool,
 ) (string, error) {
 	if !strings.Contains(content, includeOpen) {
 		return content, nil // fast path: the overwhelming majority of templates
@@ -115,9 +128,26 @@ func expandIncludesDepth(
 		if incPath == "" {
 			return "", fmt.Errorf("%w: directive names no file", ErrTemplateInclude)
 		}
-		// Key the cycle check on the cleaned path so a.md, ./a.md and
-		// sub/../a.md are recognized as the same file.
+		// Decide which file the directive names and which base its content is
+		// in. Lib files are keyed "@lib/"+rel, workflow files by cleaned path, so
+		// a.md, ./a.md and sub/../a.md are recognized as the same workflow file
+		// and the same name in two bases is not a cycle.
+		readPath, childLib := incPath, false
+		if _, isLib, perr := workflow.ParseLibPath(incPath); perr != nil {
+			return "", fmt.Errorf("%w: %q: %w", ErrTemplateInclude, incPath, perr)
+		} else if isLib {
+			childLib = true
+		} else if libBase {
+			readPath = workflow.LibraryPathPrefix + incPath
+			if _, _, perr := workflow.ParseLibPath(readPath); perr != nil {
+				return "", fmt.Errorf("%w: %q in library file: %w", ErrTemplateInclude, incPath, perr)
+			}
+			childLib = true
+		}
 		key := path.Clean(incPath)
+		if childLib {
+			key = readPath
+		}
 		for _, seen := range stack {
 			if seen == key {
 				return "", fmt.Errorf("%w: cycle %s -> %s",
@@ -130,7 +160,7 @@ func expandIncludesDepth(
 			return "", fmt.Errorf("%w: more than %d includes resolved (at %q)",
 				ErrTemplateInclude, maxIncludeCount, incPath)
 		}
-		raw, err := fr.ReadFile(owner, workflowName, incPath)
+		raw, err := fr.ReadFile(owner, workflowName, readPath)
 		if err != nil {
 			return "", fmt.Errorf("%w: reading %q: %w", ErrTemplateInclude, incPath, err)
 		}
@@ -143,7 +173,7 @@ func expandIncludesDepth(
 		}
 		// The stack is per-BRANCH, not global: the same file included twice at
 		// the same level is repetition, not a cycle, and must expand both times.
-		nested, err := expandIncludesDepth(fr, owner, workflowName, string(raw), append(stack, key), depth+1, budget)
+		nested, err := expandIncludesDepth(fr, owner, workflowName, string(raw), append(stack, key), depth+1, budget, childLib)
 		if err != nil {
 			return "", err
 		}
@@ -161,5 +191,9 @@ func loadTemplate(fr FileReader, owner uuid.UUID, workflowName, templateFile str
 	if err != nil {
 		return "", err
 	}
-	return expandIncludes(fr, owner, workflowName, string(raw))
+	_, isLib, perr := workflow.ParseLibPath(templateFile)
+	if perr != nil {
+		return "", fmt.Errorf("%w: %q: %w", ErrTemplateInclude, templateFile, perr)
+	}
+	return expandIncludesBase(fr, owner, workflowName, string(raw), isLib)
 }

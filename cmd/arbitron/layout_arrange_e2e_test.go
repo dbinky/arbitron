@@ -18,7 +18,7 @@ import (
 // in the real result/view rather than hiding structurally valid geometry.
 func TestLayoutArrange_RealBrowserSavedSamplesReachView(t *testing.T) {
 	browser := requireBrowserE2E(t)
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			env := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "5", realSample: name})
 			useLayoutE2EBrowser(t, browser)

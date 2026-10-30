@@ -151,6 +151,7 @@ func branchVariable(t *testing.T, ds *domainStack, id uuid.UUID) any {
 // This test also proves the ordering invariant: with a per-user cap of 1 the
 // child cannot start until the parent's waiting transition frees the slot.
 func TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess(t *testing.T) {
+	t.Parallel()
 	ds := bootWaitStack(t, "complete")
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
@@ -179,6 +180,7 @@ func TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess(t *testing.T) {
 
 // A FAILED child routes the parent through the failure branch.
 func TestSpawnWaitE2E_FailedChildRoutesParentThroughFailure(t *testing.T) {
+	t.Parallel()
 	ds := bootWaitStack(t, "fail")
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
@@ -197,6 +199,7 @@ func TestSpawnWaitE2E_FailedChildRoutesParentThroughFailure(t *testing.T) {
 // A CANCELLED child routes through the SAME failure branch — the spec's
 // explicit no-separate-cancellation-path requirement, asserted at the sink.
 func TestSpawnWaitE2E_CancelledChildRoutesParentThroughFailure(t *testing.T) {
+	t.Parallel()
 	ds := bootWaitStack(t, "complete")
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
@@ -231,6 +234,7 @@ func TestSpawnWaitE2E_CancelledChildRoutesParentThroughFailure(t *testing.T) {
 // still active proves the cascade reaches the real, still-running child
 // through the composition root, not just a fake in a unit test.
 func TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoot(t *testing.T) {
+	t.Parallel()
 	ds := bootWaitStack(t, "complete")
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
@@ -257,6 +261,7 @@ func TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoo
 // The parent's node-execution record is written on the WAIT path, where
 // executeWithRetry deliberately writes none.
 func TestSpawnWaitE2E_NodeExecutionRecordWrittenOnTheWaitPath(t *testing.T) {
+	t.Parallel()
 	ds := bootWaitStack(t, "complete")
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
@@ -391,6 +396,7 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
 // under a loaded machine's inverted write ordering) if the executor's
 // post-suspend re-read were absent or unwired.
 func TestSpawnWaitE2E_ChildFinishingBeforeTheParentSuspends_StillWakesIt(t *testing.T) {
+	t.Parallel()
 	ds := bootWaitStackWith(t, "complete", 5, "")
 
 	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")

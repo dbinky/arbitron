@@ -112,26 +112,87 @@ func unknownChildWorkflow(groupID string, t GroupTask) ValidationError {
 	}
 }
 
-// checkTaskInputs checks one task's explicit inputs against its child's
-// declared fields. Keys are visited in sorted order so findings are stable.
-func checkTaskInputs(groupID string, t GroupTask, fields []InputField) []ValidationError {
+// childTypeProblem is one explicit input whose literal does not fit the
+// child's declared type.
+type childTypeProblem struct {
+	key     string
+	field   InputField
+	problem string
+}
+
+// childInputFindings is the outcome of checking an explicit input map against
+// a child's declared fields. It is shared by workflows-form group tasks and
+// spawn_workflow nodes; each wraps it in its own codes and messages.
+type childInputFindings struct {
+	unknown          []string           // sorted
+	mismatches       []childTypeProblem // sorted by key
+	unmappedRequired []InputField       // author order
+}
+
+// checkChildInputMap checks inputs against fields. The reserved "workspace"
+// key is skipped (each caller's config pass reports it). Keys are visited in
+// sorted order so findings are stable.
+func checkChildInputMap(fields []InputField, inputs map[string]any) childInputFindings {
 	declared := make(map[string]InputField, len(fields))
 	for _, f := range fields {
 		declared[f.Name] = f
 	}
-	keys := make([]string, 0, len(t.Inputs))
-	for k := range t.Inputs {
+	keys := make([]string, 0, len(inputs))
+	for k := range inputs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var out childInputFindings
+	for _, k := range keys {
+		if k == groupReservedInputName {
+			continue
+		}
+		f, ok := declared[k]
+		if !ok {
+			out.unknown = append(out.unknown, k)
+			continue
+		}
+		if problem := groupLiteralTypeProblem(f, inputs[k]); problem != "" {
+			out.mismatches = append(out.mismatches, childTypeProblem{key: k, field: f, problem: problem})
+		}
+	}
+	for _, f := range fields {
+		if !f.Required {
+			continue
+		}
+		if _, mapped := inputs[f.Name]; mapped {
+			continue
+		}
+		out.unmappedRequired = append(out.unmappedRequired, f)
+	}
+	return out
+}
+
+// checkTaskInputs checks one task's explicit inputs against its child's
+// declared fields, emitting the GROUP_* findings in sorted-key order.
+func checkTaskInputs(groupID string, t GroupTask, fields []InputField) []ValidationError {
+	found := checkChildInputMap(fields, t.Inputs)
+	unknown := make(map[string]bool, len(found.unknown))
+	for _, k := range found.unknown {
+		unknown[k] = true
+	}
+	mismatch := make(map[string]childTypeProblem, len(found.mismatches))
+	for _, m := range found.mismatches {
+		mismatch[m.key] = m
+	}
+	keys := make([]string, 0, len(unknown)+len(mismatch))
+	for k := range unknown {
+		keys = append(keys, k)
+	}
+	for k := range mismatch {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	var errs []ValidationError
 	for _, k := range keys {
-		if k == groupReservedInputName {
-			continue // GROUP_RESERVED_INPUT already reported by the config pass
-		}
-		f, ok := declared[k]
-		if !ok {
+		if unknown[k] {
 			errs = append(errs, ValidationError{
 				Code: "GROUP_UNKNOWN_CHILD_INPUT",
 				Message: "parallel_group " + groupID + " task " + strconv.Quote(t.Key) + " sets input " + strconv.Quote(k) +
@@ -141,24 +202,17 @@ func checkTaskInputs(groupID string, t GroupTask, fields []InputField) []Validat
 			})
 			continue
 		}
-		if problem := groupLiteralTypeProblem(f, t.Inputs[k]); problem != "" {
-			errs = append(errs, ValidationError{
-				Code: "GROUP_INPUT_TYPE_MISMATCH",
-				Message: "parallel_group " + groupID + " task " + strconv.Quote(t.Key) + " input " + strconv.Quote(k) +
-					" " + problem + "; child workflow " + strconv.Quote(t.Workflow) + " declares it as " + f.Type,
-				NodeID:  groupID,
-				TaskKey: t.Key,
-			})
-		}
+		m := mismatch[k]
+		errs = append(errs, ValidationError{
+			Code: "GROUP_INPUT_TYPE_MISMATCH",
+			Message: "parallel_group " + groupID + " task " + strconv.Quote(t.Key) + " input " + strconv.Quote(k) +
+				" " + m.problem + "; child workflow " + strconv.Quote(t.Workflow) + " declares it as " + m.field.Type,
+			NodeID:  groupID,
+			TaskKey: t.Key,
+		})
 	}
 
-	for _, f := range fields {
-		if !f.Required {
-			continue
-		}
-		if _, mapped := t.Inputs[f.Name]; mapped {
-			continue
-		}
+	for _, f := range found.unmappedRequired {
 		errs = append(errs, ValidationError{
 			Code: "GROUP_REQUIRED_INPUT_RUNTIME",
 			Message: "parallel_group " + groupID + " task " + strconv.Quote(t.Key) + " does not map required input " +

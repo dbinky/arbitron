@@ -24,6 +24,12 @@ type fakeSource struct {
 	wf      map[string]*workflow.Workflow
 	files   map[string]map[string][]byte
 	readErr map[string]error
+	lib     map[string][]byte
+	libErr  error
+}
+
+func (f *fakeSource) ReadLibrary(context.Context) (map[string][]byte, error) {
+	return f.lib, f.libErr
 }
 
 func (f *fakeSource) List(context.Context) ([]string, error) { return f.names, f.listErr }

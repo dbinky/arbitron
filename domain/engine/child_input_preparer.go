@@ -88,7 +88,7 @@ func (p *LLMChildInputPreparer) Prepare(ctx context.Context, req ChildInputReque
 	// which reads like a registry problem rather than a missing config field.
 	if req.ProfileAlias == "" {
 		return nil, fmt.Errorf(
-			"spawn_workflow %q: child workflow %q declares %d input(s), so this node must set a model_profile to prepare them",
+			"spawn_workflow %q: child workflow %q has %d unmapped required input(s) without a default, so this node must set a model_profile to prepare them",
 			req.NodeID, req.ChildWorkflow, len(req.Inputs))
 	}
 

@@ -774,6 +774,8 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	auditSvc := audit.NewService(auditRepo)
 	auditSvc.SetLogger(logger)
 	workflowSvc.SetAudit(auditSvc)
+	// @lib file store behind the service's library methods.
+	libStore := wireLibrary(workflowSvc, cfg.Workspace.Path)
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -926,11 +928,11 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		// on the next boot instead of permanently failing with ErrAlreadyExists.
 		switch {
 		case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
-			if err := seedSampleWorkflows(ctx, cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, ls.stamper, ls.mutations, identityRepo, flatMigrateUser, logger, profileChecker); err != nil {
+			if err := seedSampleWorkflows(ctx, cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, ls.stamper, ls.mutations, identityRepo, libStore, fileReader, flatMigrateUser, logger, profileChecker); err != nil {
 				logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
 			} else {
 				logger.Info("sample workflow seeding complete",
-					"profiles_note", "the feature-pipeline sample needs the DB-only admin profiles listed in samples/feature-pipeline/PROFILES.md; create them before running it")
+					"profiles_note", "the feature-pipeline stage samples need the DB-only admin profiles listed in each stage's samples/<stage>/PROFILES.md (legacy-feature-pipeline: samples/legacy-feature-pipeline/PROFILES.md); create them before running it")
 			}
 		case cfg.Samples.Seed:
 			// seed=true but no source dir resolved: the stock default. Make the

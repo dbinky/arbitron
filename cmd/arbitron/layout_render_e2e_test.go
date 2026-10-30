@@ -113,7 +113,7 @@ func assertEvidenceOnDisk(t *testing.T, env *layoutE2EEnv, ev layout.Evidence) {
 
 func TestLayoutRender_RealBrowserAcceptance(t *testing.T) {
 	browser := requireBrowserE2E(t)
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+	for _, name := range []string{"pr-review", "legacy-feature-pipeline", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			assertSampleReviewed(t, browser, name)
 		})
@@ -155,7 +155,7 @@ func assertSampleReviewed(t *testing.T, browser, name string) {
 		assert.Len(t, geo.Nodes, 19)
 		assert.Len(t, geo.Edges, 19)
 	}
-	if name == "feature-pipeline" {
+	if name == "legacy-feature-pipeline" {
 		assert.Len(t, geo.Nodes, 66)
 		assert.Len(t, geo.Edges, 79)
 	}

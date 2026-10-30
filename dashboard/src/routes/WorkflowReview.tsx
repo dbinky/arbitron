@@ -13,6 +13,7 @@ import { selectAnchorNodeId } from '../graph/selectAnchorNodeId'
 import { useLayoutStatus } from '../hooks/useLayoutStatus'
 import { gatherText, ruleText, unfinishedText } from '../graph/groupText'
 import ResizablePanel from '../components/ResizablePanel'
+import { SpawnDetails } from '../components/SpawnDetails'
 import UsageStats from '../components/UsageStats'
 import SchedulesPanel from '../components/SchedulesPanel'
 import TriggerModal from '../components/TriggerModal'
@@ -123,6 +124,7 @@ function ReviewSidePanel({
               )}
             </div>
             {groupScope && <GroupDetails scope={groupScope} />}
+            {selectedNode.type === 'spawn_workflow' && <SpawnDetails config={selectedNode.config} />}
             {Object.keys(selectedNode.config).length > 0 && (
               <div className={styles.configBlock}>
                 <div className={styles.sectionTitle}>Config</div>

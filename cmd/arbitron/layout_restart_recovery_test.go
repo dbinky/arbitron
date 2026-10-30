@@ -26,8 +26,10 @@ import (
 // rolls forward; an admin shared Update ("edit") is decided by its tree backup
 // and exact proof exactly like a re-publish.
 func TestLayoutE2E_RestartSettlesThenWorkerRecovers(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, stage := range []string{"private/prepare", "private/receipt", "private/visible", "shared/before-proof", "shared/after-proof", "edit/before-proof", "edit/after-proof"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			e := newLayoutE2EEnv(t, layoutE2EOptions{})
 			ds, closeFirst := e.boot(t)
 			ctx := adminCtxForLocalUser(t, ds)

@@ -24,6 +24,7 @@ import (
 // the stream handler, the upgrade is refused with 501 and Dial fails. The sink
 // is the WebSocket frame sequence a live view consumes.
 func TestSubtreeStreamE2E_ParentStreamSeesBranchesAndClosesOnlyWhenSubtreeInactive(t *testing.T) {
+	t.Parallel()
 	ds := bootGraphStateStack(t)
 	srv := gsServeAPI(t, ds)
 

@@ -24,11 +24,18 @@ const commonMarker = "# Shared setup (read once per persona)"
 // reader — the same containment-checked adapter production wires — and every
 // template that includes _common.md must come out carrying its content.
 func TestSamplePromptFiles_ExpandThroughRealFileReader(t *testing.T) {
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+	for _, name := range []string{
+		"pr-review", "legacy-feature-pipeline", "ralph-loop", "harness-update",
+		"ideate", "spec", "design", "plan", "implement", "harden", "feature-pipeline",
+	} {
 		t.Run(name, func(t *testing.T) {
 			base := t.TempDir()
 			src := filepath.Join("..", "..", "samples", name)
 			require.NoError(t, os.CopyFS(filepath.Join(base, "shared", name), os.DirFS(src)))
+			// @lib/<rel> templates resolve to the shared library, which the
+			// seeder lays down from samples/_lib.
+			lib := filepath.Join("..", "..", "samples", workflow.LibraryFolder)
+			require.NoError(t, os.CopyFS(filepath.Join(base, "shared", workflow.LibraryFolder), os.DirFS(lib)))
 			fr := filesystem.NewFileReader(base)
 
 			raw, err := os.ReadFile(filepath.Join(src, "workflow.json"))
@@ -45,7 +52,11 @@ func TestSamplePromptFiles_ExpandThroughRealFileReader(t *testing.T) {
 					require.NoError(t, err, "node %q: %s must expand", n.ID, file)
 					assert.NotContains(t, out, includeOpen, "node %q: %s left a directive unexpanded", n.ID, file)
 
-					src, err := os.ReadFile(filepath.Join(base, "shared", name, file))
+					srcPath := filepath.Join(base, "shared", name, file)
+					if rel, isLib, _ := workflow.ParseLibPath(file); isLib {
+						srcPath = filepath.Join(base, "shared", workflow.LibraryFolder, rel)
+					}
+					src, err := os.ReadFile(srcPath)
 					require.NoError(t, err)
 					if strings.Contains(string(src), "{{include:_common.md}}") {
 						assert.Contains(t, out, commonMarker, "node %q: %s must carry _common.md", n.ID, file)

@@ -129,8 +129,10 @@ func TestLayoutE2E_CrashProcess(t *testing.T) {
 }
 
 func TestLayoutE2E_KillAndImmediatePeerRead(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, stage := range []string{"private/prepare", "private/visible", "private/receipt", "private/enqueue", "create/prepare", "create/visible", "shared/before-proof", "shared/after-proof"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			e := newLayoutE2EEnv(t, layoutE2EOptions{})
 			ds, _ := e.boot(t)
 			ctx := adminCtxForLocalUser(t, ds)

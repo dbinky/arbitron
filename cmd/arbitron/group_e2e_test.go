@@ -347,6 +347,7 @@ func groupRosterTask(t *testing.T, run *instance.GroupRun, key string) instance.
 // on the success port, never merge variables or files into the parent, and the
 // parent continues exactly once — decided in-process by the coordinator.
 func TestGroupE2E_BranchesAllSucceedGatherResultsInAuthorOrder(t *testing.T) {
+	t.Parallel()
 	gates := newGroupProcessGates(t)
 	manifest := gateOrderedManifest(t, groupBranchesManifest, []string{"a-run", "b-run"}, gates, false)
 	ds, _ := bootGroupExecStack(t, 5, map[string]string{"grp-branches": manifest})
@@ -436,6 +437,7 @@ func TestGroupE2E_BranchesAllSucceedGatherResultsInAuthorOrder(t *testing.T) {
 // completion), inherit the parent's starting variables, and the children are
 // linked group tasks of this run.
 func TestGroupE2E_WorkflowsFormRepeatsOneChildWithDistinctOrderedResults(t *testing.T) {
+	t.Parallel()
 	gates := newGroupProcessGates(t)
 	childManifest := gateOrderedManifest(t, groupEchoChildManifest, []string{"echo"}, gates, true)
 	ds, _ := bootGroupExecStack(t, 5, map[string]string{
@@ -584,6 +586,7 @@ func TestGroupE2E_PublishesGroupLifecycleEventsOnTheParent(t *testing.T) {
 // from the live process, because a graceful Close would drain the running task
 // to completion.
 func TestGroupE2E_StartupReconcileSettlesGroupAfterCrash(t *testing.T) {
+	t.Parallel()
 	gates := newGroupProcessGates(t)
 	paths := writeGroupStack(t, 5, map[string]string{"grp-crash": groupCrashManifest})
 	ctx := context.Background()
@@ -623,8 +626,10 @@ func TestGroupE2E_StartupReconcileSettlesGroupAfterCrash(t *testing.T) {
 	require.NoError(t, ds1.db.Close())
 	// The abandoned process's walkers still finish against the closed database
 	// and log through the process-wide logger; drain them inside this test so
-	// their errors never land in a later test's log.
-	t.Cleanup(func() { ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
+	// their errors never land in a later test's log. Release the held gate
+	// first: Shutdown waits on that walker, which otherwise idles out the
+	// gate's full 60s bound before it can exit.
+	t.Cleanup(func() { gates.release(t, "slow"); ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
 	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
@@ -717,6 +722,7 @@ func TestGroupE2E_PeriodicSweepSettlesGroupWithoutAWake(t *testing.T) {
 // Exercise the sample's src/ + linked work/ layout through initDomain, not a
 // substitute launcher. Gates keep the sibling idle while the first task commits.
 func TestGroupE2E_ResultsLinkedWorktreeMetadataIsolation(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("linked-worktree fixture uses Unix shell tools")
 	}

@@ -67,3 +67,18 @@ func TestPinningSelectorsRejectIncompatibleLiveRoute(t *testing.T) {
 	assert.Same(t, selected, stream)
 	assert.Equal(t, 1, builds)
 }
+
+// A no-connection pi profile arrives with the subscription stamp "claude-cli";
+// the live-route preflight must judge its model by pi's vendor prefix, not by
+// the Claude subscription grammar.
+func TestPinningSelectorsAcceptPiSubscriptionRoute(t *testing.T) {
+	factory := adapterprovider.NewFactory(adapterprovider.Deps{})
+	b := domprovider.ResolvedBinding{Kind: domprovider.ProfileKindAgent, Provider: "claude-cli", Backend: "pi", Model: "openai-codex/gpt-6.1-sol", Pinned: true}
+	_, err := factory.AgentProviderFor(b)
+	assert.NotErrorIs(t, err, modelidentity.ErrSpecificVersionUnavailable)
+
+	b.Model = "openai-codex/gpt-6-latest"
+	p, err := factory.AgentProviderFor(b)
+	assert.ErrorIs(t, err, modelidentity.ErrSpecificVersionUnavailable)
+	assert.Nil(t, p)
+}

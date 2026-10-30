@@ -60,6 +60,12 @@ teardown() {
   [ "$(grep -c "  arbitron_samples_${TEST_VERSION}\.tar\.gz$" "${REPO_ROOT}/dist/SHA256SUMS")" -eq 1 ]
 }
 
+@test "samples tarball ships the _lib library folder" {
+  run tar -tzf "${REPO_ROOT}/dist/arbitron_samples_${TEST_VERSION}.tar.gz"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx './_lib/README.md'
+}
+
 @test "checksums verify from inside dist/" {
   cd "${REPO_ROOT}/dist" || return 1
   run sha_check SHA256SUMS

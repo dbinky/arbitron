@@ -405,9 +405,15 @@ func waitForOpenResolution(t *testing.T, ds *domainStack, parentID uuid.UUID) *i
 		if err != nil || r == nil || r.Gather == nil || r.Gather.ActiveSession == nil {
 			return false
 		}
+		// The session is recorded before the parent parks for its operator; an
+		// EndSession sent in between is refused as not yet waiting.
+		parent, err := ds.instanceRepo.Get(context.Background(), parentID)
+		if err != nil || parent.State != instance.StateWaiting {
+			return false
+		}
 		run = r
 		return true
-	}, 20*time.Second, 100*time.Millisecond, "the resolution session must be recorded on the run")
+	}, 20*time.Second, 100*time.Millisecond, "the resolution session must be recorded on the run while the parent waits on it")
 	return run
 }
 
@@ -496,6 +502,7 @@ func gatherTaskReport(t *testing.T, run *instance.GroupRun, key string) instance
 
 // HAPPY PATH. Wiring lines 3, 4, 7, 8, 13 are load-bearing here.
 func TestGroupFilesE2E_AllSucceedGathersEveryTaskIntoTheParentInAuthorOrder(t *testing.T) {
+	t.Parallel()
 	ds, paths := bootFilesStack(t, map[string]string{"grp-files-all": filesAllManifest})
 
 	parentID := triggerGroupWorkflow(t, ds, "grp-files-all")
@@ -539,6 +546,7 @@ func TestGroupFilesE2E_AllSucceedGathersEveryTaskIntoTheParentInAuthorOrder(t *t
 }
 
 func TestGroupFilesE2E_FirstSuccessMergesOnlyTheWinnerAndALateLoserNeverReachesTheParent(t *testing.T) {
+	t.Parallel()
 	gates := newGroupProcessGates(t)
 	var wf map[string]any
 	require.NoError(t, json.Unmarshal([]byte(filesFirstManifest), &wf))
@@ -617,6 +625,7 @@ func TestGroupFilesE2E_FirstSuccessMergesOnlyTheWinnerAndALateLoserNeverReachesT
 }
 
 func TestGroupFilesE2E_FailedGroupMergesNothingAndRetainsDebuggingContent(t *testing.T) {
+	t.Parallel()
 	ds, paths := bootFilesStack(t, map[string]string{"grp-files-failed": filesFailedManifest})
 
 	parentID := triggerGroupWorkflow(t, ds, "grp-files-failed")
@@ -650,6 +659,7 @@ func TestGroupFilesE2E_FailedGroupMergesNothingAndRetainsDebuggingContent(t *tes
 // Recreating the vanished task area at finalization used to publish an empty
 // tree as a successful candidate, allowing a gather to delete the parent's files.
 func TestGroupFilesE2E_VanishedTaskWorkspaceFailsWithoutDeletingParentFiles(t *testing.T) {
+	t.Parallel()
 	var manifest map[string]any
 	require.NoError(t, json.Unmarshal([]byte(filesFailedManifest), &manifest))
 	var checkArgs any
@@ -710,6 +720,7 @@ func TestGroupFilesE2E_VanishedTaskWorkspaceFailsWithoutDeletingParentFiles(t *t
 
 // Wiring lines 1 and 6 are load-bearing here.
 func TestGroupFilesE2E_ConflictOpensAPersistedSessionAndWaitsUntilResolved(t *testing.T) {
+	t.Parallel()
 	ds, _ := bootFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	ctx := context.Background()
 
@@ -758,6 +769,7 @@ func TestGroupFilesE2E_ConflictOpensAPersistedSessionAndWaitsUntilResolved(t *te
 // terminal, so completion order is b, a; author order (a, b) must still decide
 // the merge. Were the gatherer to merge in terminal order, a would conflict.
 func TestGroupFilesE2E_OverlappingEditsMergeInAuthorOrderEvenWhenTheLaterTaskFinishesFirst(t *testing.T) {
+	t.Parallel()
 	slowA := strings.Replace(filesConflictManifest,
 		`printf 'from-a\\n' > \"$1/shared.txt\"`, `sleep 2; printf 'from-a\\n' > \"$1/shared.txt\"`, 1)
 	require.NotEqual(t, filesConflictManifest, slowA, "the a-run command must have been delayed")
@@ -780,6 +792,7 @@ func TestGroupFilesE2E_OverlappingEditsMergeInAuthorOrderEvenWhenTheLaterTaskFin
 
 // Named by P3-T9. Wiring line 6 is load-bearing here.
 func TestGroupFilesE2E_ConflictAbandon_RoutesFailureAndRestoresParentFiles(t *testing.T) {
+	t.Parallel()
 	ds, _ := bootFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 
 	parentID := triggerGroupWorkflow(t, ds, "grp-files-conflict")
@@ -806,6 +819,7 @@ func TestGroupFilesE2E_ConflictAbandon_RoutesFailureAndRestoresParentFiles(t *te
 
 // Wiring line 13 (Watch) is load-bearing here: the sweep is 60s away.
 func TestGroupFilesE2E_ParentCancelledMidSession_AbortsAndStaysCancelled(t *testing.T) {
+	t.Parallel()
 	ds, _ := bootFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	ctx := context.Background()
 
@@ -834,6 +848,7 @@ func TestGroupFilesE2E_ParentCancelledMidSession_AbortsAndStaysCancelled(t *test
 }
 
 func TestGroupFilesE2E_NestedGroupGathersIntoItsImmediateParent(t *testing.T) {
+	t.Parallel()
 	ds, paths := bootFilesStack(t, map[string]string{"grp-files-nested-gather": filesNestedGatherManifest})
 
 	parentID := triggerGroupWorkflow(t, ds, "grp-files-nested-gather")
@@ -862,6 +877,7 @@ func TestGroupFilesE2E_NestedGroupGathersIntoItsImmediateParent(t *testing.T) {
 }
 
 func TestGroupFilesE2E_ResultsOnlyModeCopiesStartingFilesWithoutMerging(t *testing.T) {
+	t.Parallel()
 	ds, paths := bootFilesStack(t, map[string]string{"grp-branches": groupBranchesManifest})
 
 	parentID := triggerGroupWorkflow(t, ds, "grp-branches")
@@ -885,6 +901,7 @@ func TestGroupFilesE2E_ResultsOnlyModeCopiesStartingFilesWithoutMerging(t *testi
 
 // Wiring line 11 (startup gather reconcile) is load-bearing here.
 func TestGroupFilesE2E_RestartRestoresAnInterruptedResolution(t *testing.T) {
+	t.Parallel()
 	paths := writeFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	gates := newGroupProcessGates(t)
 	resolver := strings.Replace(fakeResolverScript, "cat >/dev/null", "cat >/dev/null\n"+strings.ReplaceAll(groupGateScript, `printf '{"key":"%s"}' "$2"`, ":"), 1)

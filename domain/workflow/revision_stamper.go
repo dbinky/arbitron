@@ -58,6 +58,9 @@ func validateStampDestination(scope Scope, name string, reason SaveReason) error
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\\\x00") {
 		return ErrInvalidName
 	}
+	if err := rejectReservedName(name); err != nil {
+		return err
+	}
 	switch reason {
 	case SaveReasonCreate, SaveReasonUpdate, SaveReasonPublish, SaveReasonCopy, SaveReasonDuplicate, SaveReasonRename, SaveReasonSeed:
 		return nil

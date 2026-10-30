@@ -723,6 +723,7 @@ func waitForLiveStatus(t *testing.T, ds *domainStack, parentID uuid.UUID, nodeID
 // never claims a confirmed cancellation), while the LIVE status later becomes
 // cancelled — and the frozen output does not change when it does.
 func TestGroupBehaviorsE2E_FirstSuccessCancelUnfinished(t *testing.T) {
+	t.Parallel()
 	ds, gates := bootGatedBehaviorStack(t, 5, map[string]string{"grp-fs-cancel": fsCancelManifest},
 		map[string][]string{"grp-fs-cancel": {"slow-hold", "fast-set"}})
 
@@ -764,6 +765,7 @@ func TestGroupBehaviorsE2E_FirstSuccessCancelUnfinished(t *testing.T) {
 // its own. Its late result never reaches the frozen output, and the parent is
 // continued EXACTLY once.
 func TestGroupBehaviorsE2E_FirstSuccessFinishIndependently(t *testing.T) {
+	t.Parallel()
 	ds, gates := bootGatedBehaviorStack(t, 5, map[string]string{"grp-fs-indep": fsIndependentManifest},
 		map[string][]string{"grp-fs-indep": {"slow-hold", "fast-set"}})
 
@@ -898,6 +900,7 @@ func TestGroupBehaviorsE2E_AllSucceedCancelUnfinishedFailsFast(t *testing.T) {
 // wait_for_remaining: after the failure the group must not decide while slow
 // is gated. Its eventual result must reach the failure port's frozen output.
 func TestGroupBehaviorsE2E_AllSucceedWaitForRemaining(t *testing.T) {
+	t.Parallel()
 	ds, gates := bootGatedBehaviorStack(t, 5, map[string]string{"grp-as-wait": asWaitManifest},
 		map[string][]string{"grp-as-wait": {"slow-hold", "bad-run"}})
 
@@ -944,6 +947,7 @@ func TestGroupBehaviorsE2E_AllSucceedWaitForRemaining(t *testing.T) {
 // nested group completes within its enclosing task, and the outer group
 // gathers the child's final variables.
 func TestGroupBehaviorsE2E_NestedBranchesInsideWorkflowChild(t *testing.T) {
+	t.Parallel()
 	ds, _ := bootGroupExecStack(t, 5, map[string]string{
 		"grp-nest-wf-parent":    nestWorkflowParentManifest,
 		"grp-nest-branch-child": nestBranchChildManifest,
@@ -1136,6 +1140,7 @@ func TestGroupBehaviorsE2E_CancelReachesIndependentTaskBelowCompletedBranch(t *t
 // first process, so the crash is simulated by severing the DB, exactly like
 // TestSpawnWaitE2E_RestartReconcilesParentAfterCrash.
 func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
+	t.Parallel()
 	gates := newGroupProcessGates(t)
 	manifest := gateBehaviorManifest(t, restartManifest, gates, "a-hold")
 	paths := writeGroupStack(t, 1, map[string]string{"grp-restart": manifest})
@@ -1163,8 +1168,10 @@ func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
 	require.NoError(t, ds1.db.Close())
 	// The abandoned process's walkers still finish against the closed database
 	// and log through the process-wide logger; drain them inside this test so
-	// their errors never land in a later test's log.
-	t.Cleanup(func() { ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
+	// their errors never land in a later test's log. Release the held gate
+	// first: Shutdown waits on that walker, which otherwise idles out the
+	// gate's full 60s bound before it can exit.
+	t.Cleanup(func() { gates.release(t, "a-hold"); ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
 	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
@@ -1189,6 +1196,7 @@ func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
 
 // A nested files group gathers into its enclosing results-mode branch.
 func TestGroupBehaviorsE2E_NestedFilesGroupInsideResultsBranchRuns(t *testing.T) {
+	t.Parallel()
 	requireHostGit(t)
 	ds, _ := bootGroupExecStack(t, 5, map[string]string{
 		"grp-files-nested": filesNestedManifest,
@@ -1212,6 +1220,7 @@ func TestGroupBehaviorsE2E_NestedFilesGroupInsideResultsBranchRuns(t *testing.T)
 
 // A results-mode parent can launch a workflow containing its own files group.
 func TestGroupBehaviorsE2E_FilesChildWorkflowRunsUnderResultsParent(t *testing.T) {
+	t.Parallel()
 	requireHostGit(t)
 	ds, _ := bootGroupExecStack(t, 5, map[string]string{
 		"grp-files-parent": filesParentManifest,

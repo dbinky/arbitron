@@ -2,8 +2,11 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -53,6 +56,18 @@ func NewSpawnWorkflowExecutor(
 
 var _ NodeExecutor = (*SpawnWorkflowExecutor)(nil)
 
+// ErrSpawnUnknownChildInput is returned when a spawn node's inputs map names a
+// key the child workflow does not declare.
+var ErrSpawnUnknownChildInput = errors.New("engine: spawn maps an input the child workflow does not declare")
+
+// Provenance of each value handed to a spawned child, recorded in the node
+// output as inputSources (names only, never values).
+const (
+	inputSourceMapped   = "mapped"
+	inputSourceDefault  = "default"
+	inputSourcePrepared = "prepared"
+)
+
 // Execute runs one spawn node.
 //
 // Every failure below returns a plain error; the engine then applies the node's
@@ -78,19 +93,19 @@ func (e *SpawnWorkflowExecutor) Execute(ctx context.Context, node workflow.Node,
 	mode := cfg.Mode
 
 	if mode == workflow.SpawnModeWaitForChild {
-		return e.executeWait(ctx, node, vars, workflowName, instanceID)
+		return e.executeWait(ctx, node, cfg, vars, workflowName, instanceID)
 	}
-	return e.executeFireAndForget(ctx, node, vars, workflowName, instanceID)
+	return e.executeFireAndForget(ctx, node, cfg, vars, workflowName, instanceID)
 }
 
 // executeFireAndForget starts the child and returns a NORMAL result so the
 // engine advances along the node's single unnamed edge.
-func (e *SpawnWorkflowExecutor) executeFireAndForget(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string, instanceID uuid.UUID) (*NodeResult, error) {
-	childID, err := e.prepareAndSpawn(ctx, node, vars, workflowName, instanceID, instance.SpawnModeFireAndForget)
+func (e *SpawnWorkflowExecutor) executeFireAndForget(ctx context.Context, node workflow.Node, cfg workflow.SpawnConfig, vars *variable.VariableStore, workflowName string, instanceID uuid.UUID) (*NodeResult, error) {
+	childID, sources, err := e.prepareAndSpawn(ctx, node, cfg, vars, workflowName, instanceID, instance.SpawnModeFireAndForget)
 	if err != nil {
 		return nil, err
 	}
-	return &NodeResult{Output: spawnOutput(childID, node.Config.ChildWorkflow, workflow.SpawnModeFireAndForget)}, nil
+	return &NodeResult{Output: spawnOutput(childID, node.Config.ChildWorkflow, workflow.SpawnModeFireAndForget, sources)}, nil
 }
 
 // executeWait implements the wait-for-child path.
@@ -98,7 +113,7 @@ func (e *SpawnWorkflowExecutor) executeFireAndForget(ctx context.Context, node w
 // On re-entry it SHORT-CIRCUITS on the LINK rather than on node-execution
 // status: the spawn node needs to know HOW the child ended in order to choose a
 // port, and the child's persisted state is the single authority for that.
-func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string, instanceID uuid.UUID) (*NodeResult, error) {
+func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.Node, cfg workflow.SpawnConfig, vars *variable.VariableStore, workflowName string, instanceID uuid.UUID) (*NodeResult, error) {
 	link, err := e.spawnWaits.FindChildBySpawnNode(ctx, instanceID, node.ID, instance.SpawnModeWaitForChild)
 	if err != nil {
 		// A storage failure must NOT be mistaken for "no child yet", which would
@@ -132,12 +147,12 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	// parent's waiting transition releases the slot. Skipping the notify, or
 	// transitioning before the child is enqueued, produces a stall that looks
 	// like a hung workflow rather than an error.
-	childID, err := e.prepareAndSpawn(ctx, node, vars, workflowName, instanceID, instance.SpawnModeWaitForChild)
+	childID, sources, err := e.prepareAndSpawn(ctx, node, cfg, vars, workflowName, instanceID, instance.SpawnModeWaitForChild)
 	if err != nil {
 		return nil, err
 	}
 
-	output := spawnOutput(childID, node.Config.ChildWorkflow, workflow.SpawnModeWaitForChild)
+	output := spawnOutput(childID, node.Config.ChildWorkflow, workflow.SpawnModeWaitForChild, sources)
 
 	// executeWithRetry deliberately skips writing a node-execution record on the
 	// wait path, so the executor writes its own — otherwise the awaited spawn
@@ -256,7 +271,7 @@ func (e *SpawnWorkflowExecutor) recoverLostWake(ctx context.Context, node workfl
 // the failure port as well as success: what a failed child produced before it
 // stopped is often exactly what the parent needs in order to recover.
 func (e *SpawnWorkflowExecutor) resumeFromLink(ctx context.Context, node workflow.Node, link *instance.ChildLink) (*NodeResult, error) {
-	output := spawnOutput(link.ChildID, node.Config.ChildWorkflow, node.Config.SpawnMode)
+	output := spawnOutput(link.ChildID, node.Config.ChildWorkflow, node.Config.SpawnMode, nil)
 	output["childState"] = string(link.ChildState)
 
 	if !link.ChildState.IsTerminal() {
@@ -284,12 +299,14 @@ func (e *SpawnWorkflowExecutor) resumeFromLink(ctx context.Context, node workflo
 }
 
 // prepareAndSpawn is the sequence both modes share: reconstruct the parent
-// owner's identity, load the child's declared inputs through it, read optional
-// guidance, prepare the startup values, and create the linked child.
-func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string, instanceID uuid.UUID, mode instance.SpawnMode) (uuid.UUID, error) {
+// owner's identity, load the child's declared inputs through it, classify them
+// against the node's explicit inputs map, resolve the mapped values, ask the
+// preparer only for unmapped required inputs without a default, and create the
+// linked child. It returns the origin of each spawned value (names only).
+func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workflow.Node, cfg workflow.SpawnConfig, vars *variable.VariableStore, workflowName string, instanceID uuid.UUID, mode instance.SpawnMode) (uuid.UUID, map[string]string, error) {
 	parent, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("spawn_workflow %q: load parent instance: %w", node.ID, err)
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: load parent instance: %w", node.ID, err)
 	}
 
 	// Reconstruct the PARENT OWNER's identity. A resolution failure is NOT
@@ -297,44 +314,122 @@ func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workfl
 	// workflows are visible to the spawn and could widen reach beyond the owner.
 	ownerIdentity, err := e.identities.IdentityForUser(ctx, parent.OwnerID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("spawn_workflow %q: resolve owner identity: %w", node.ID, err)
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: resolve owner identity: %w", node.ID, err)
 	}
 	childCtx := identity.WithIdentity(ctx, ownerIdentity)
 
 	// If the parent's owner cannot see the child workflow this returns not-found
 	// and the node fails — fail closed, with no existence leak.
-	inputs, err := e.spawner.ChildInputs(childCtx, node.Config.ChildWorkflow)
+	fields, err := e.spawner.ChildInputs(childCtx, cfg.ChildWorkflow)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("spawn_workflow %q: load child workflow %q: %w",
-			node.ID, node.Config.ChildWorkflow, err)
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: load child workflow %q: %w",
+			node.ID, cfg.ChildWorkflow, err)
 	}
 
-	guidance := ""
-	if node.Config.TemplateFile != "" {
-		text, rerr := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
-		if rerr != nil {
-			return uuid.Nil, fmt.Errorf("spawn_workflow %q: read guidance %q: %w",
-				node.ID, node.Config.TemplateFile, rerr)
+	plan := workflow.PlanChildInputs(fields, cfg.Inputs)
+	if len(plan.Unknown) > 0 {
+		declared := make([]string, 0, len(fields))
+		for _, f := range fields {
+			declared = append(declared, f.Name)
 		}
-		guidance = variable.Resolve(text, vars)
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: %w: child workflow %q has no input(s) %s; declared inputs: %s",
+			node.ID, ErrSpawnUnknownChildInput, cfg.ChildWorkflow,
+			strings.Join(plan.Unknown, ", "), strings.Join(declared, ", "))
 	}
 
-	workDir, _ := WorkDirFromVars(vars)
-	values, err := e.preparer.Prepare(childCtx, ChildInputRequest{
-		NodeID:        node.ID,
-		ChildWorkflow: node.Config.ChildWorkflow,
-		Inputs:        inputs,
-		ParentContext: vars.Snapshot(),
-		Guidance:      guidance,
-		ProfileAlias:  node.Config.ModelProfile,
-		WorkDir:       workDir,
-	})
+	// Mapped values are resolved from the parent store and never pass through the
+	// preparer, so the preparer's parent-context truncation cannot touch them. A
+	// missing reference fails the node; the LLM is never a fallback.
+	resolved, err := variable.ResolveTypedMap(cfg.Inputs, vars)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("spawn_workflow %q: prepare child inputs: %w", node.ID, err)
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: resolve inputs: %w", node.ID, err)
+	}
+	for _, f := range fields {
+		if v, mapped := resolved[f.Name]; mapped && v == nil && f.Required {
+			return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: %w: mapped input %q of child %q resolved to null",
+				node.ID, ErrChildContractUnsatisfied, f.Name, cfg.ChildWorkflow)
+		}
+	}
+
+	var prepared map[string]any
+	if len(plan.Prepare) > 0 {
+		guidance := ""
+		if node.Config.TemplateFile != "" {
+			text, rerr := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
+			if rerr != nil {
+				return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: read guidance %q: %w",
+					node.ID, node.Config.TemplateFile, rerr)
+			}
+			guidance = variable.Resolve(text, vars)
+		}
+
+		workDir, _ := WorkDirFromVars(vars)
+		values, perr := e.preparer.Prepare(childCtx, ChildInputRequest{
+			NodeID:        node.ID,
+			ChildWorkflow: cfg.ChildWorkflow,
+			Inputs:        plan.Prepare,
+			ParentContext: vars.Snapshot(),
+			Guidance:      guidance,
+			ProfileAlias:  node.Config.ModelProfile,
+			WorkDir:       workDir,
+		})
+		if perr != nil {
+			return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: prepare child inputs: %w", node.ID, perr)
+		}
+
+		// Keep only what was asked for: a model must not be able to override a
+		// mapped value or inject an undeclared one.
+		requested := make(map[string]struct{}, len(plan.Prepare))
+		for _, f := range plan.Prepare {
+			requested[f.Name] = struct{}{}
+		}
+		prepared = make(map[string]any, len(plan.Prepare))
+		var dropped []string
+		for k, v := range values {
+			if _, ok := requested[k]; ok {
+				prepared[k] = v
+			} else {
+				dropped = append(dropped, k)
+			}
+		}
+		if len(dropped) > 0 {
+			sort.Strings(dropped)
+			slog.Debug("spawn_workflow: dropped preparer keys that were not requested",
+				"nodeID", node.ID, "keys", dropped)
+		}
+		if verr := validateChildInputs(cfg.ChildWorkflow, plan.Prepare, prepared); verr != nil {
+			return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: %w", node.ID, verr)
+		}
+	}
+
+	// Precedence mapped > default > prepared. The sets are disjoint by
+	// construction; applying them in this order is defence in depth.
+	values := make(map[string]any, len(prepared)+len(plan.Defaults)+len(resolved))
+	sources := make(map[string]string, len(prepared)+len(plan.Defaults)+len(resolved))
+	for k, v := range prepared {
+		values[k] = v
+		sources[k] = inputSourcePrepared
+	}
+	for k, v := range plan.Defaults {
+		values[k] = v
+		sources[k] = inputSourceDefault
+	}
+	for k, v := range resolved {
+		values[k] = v
+		sources[k] = inputSourceMapped
+	}
+
+	// The assembled values are what the child will receive, whichever way each
+	// one arrived (mapped, default or prepared). Hold them to the same declared-
+	// type contract a parallel_group workflow task is held to before enqueue, so
+	// a whole-reference mapping that resolves to the wrong type (an array into a
+	// string input) fails here instead of reaching a child that misreads it.
+	if cerr := checkChildContract(cfg.ChildWorkflow, fields, values); cerr != nil {
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: %w", node.ID, cerr)
 	}
 
 	childID, err := e.spawner.Spawn(childCtx, SpawnRequest{
-		ChildWorkflow: node.Config.ChildWorkflow,
+		ChildWorkflow: cfg.ChildWorkflow,
 		Variables:     values,
 		Priority:      string(parent.Priority),
 		Link: instance.SpawnLink{
@@ -344,20 +439,33 @@ func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workfl
 		},
 	})
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("spawn_workflow %q: %w", node.ID, err)
+		return uuid.Nil, nil, fmt.Errorf("spawn_workflow %q: %w", node.ID, err)
 	}
-	return childID, nil
+	return childID, sources, nil
 }
 
 // spawnOutput is the ONE shape of a spawn node's output. Recording the child id
 // makes the child addressable from the parent's variable store, so downstream
 // nodes and the trace can reference the spawned run.
-func spawnOutput(childID uuid.UUID, childWorkflow string, mode string) map[string]any {
-	return map[string]any{
+//
+// inputSources is nil on the resume path, which rebuilds its output from the
+// link and so omits the key.
+func spawnOutput(childID uuid.UUID, childWorkflow string, mode string, inputSources map[string]string) map[string]any {
+	out := map[string]any{
 		"childInstanceId": childID.String(),
 		"childWorkflow":   childWorkflow,
 		"spawnMode":       mode,
 	}
+	if inputSources != nil {
+		// map[string]any, not map[string]string: variable.walk only traverses
+		// map[string]any, so a typed map would be unreadable downstream.
+		src := make(map[string]any, len(inputSources))
+		for k, v := range inputSources {
+			src[k] = v
+		}
+		out["inputSources"] = src
+	}
+	return out
 }
 
 // childOutput copies a finished child's final variables for the parent, minus

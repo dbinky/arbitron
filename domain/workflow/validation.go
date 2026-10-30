@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -159,6 +160,12 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 
 	if o.workflows != nil {
 		errs = append(errs, validateChildWorkflowReferences(wf, o.workflows)...)
+	}
+
+	// spawn_workflow input contract checks against the child's declared inputs
+	// (validation_spawn_inputs.go). Never gates writes.
+	if o.children != nil {
+		errs = append(errs, validateSpawnChildInputs(wf, o)...)
 	}
 
 	// parallel_group checks (validation_group.go). A no-op without groups, so
@@ -511,34 +518,32 @@ func validateInputTypes(wf *Workflow) []ValidationError {
 }
 
 // validateFileReferences checks that templateFile, scriptFile, and
-// orchestrationFile values reference files that actually exist on disk.
+// orchestrationFile values reference files that actually exist on disk. A
+// malformed @lib path is INVALID_LIB_PATH and never reaches the checker.
 func validateFileReferences(wf *Workflow, checker FileChecker) []ValidationError {
 	var errs []ValidationError
 
 	for _, n := range wf.Nodes {
-		if n.Config.TemplateFile != "" {
-			if !checker.FileExists(wf.Name, n.Config.TemplateFile) {
+		for _, ref := range []struct{ field, path string }{
+			{"templateFile", n.Config.TemplateFile},
+			{"scriptFile", n.Config.ScriptFile},
+			{"orchestrationFile", n.Config.OrchestrationFile},
+		} {
+			if ref.path == "" {
+				continue
+			}
+			if _, isLib, err := ParseLibPath(ref.path); isLib && err != nil {
 				errs = append(errs, ValidationError{
-					Code:    "MISSING_FILE",
-					Message: "node " + n.ID + " references missing templateFile: " + n.Config.TemplateFile,
+					Code:    "INVALID_LIB_PATH",
+					Message: "node " + n.ID + " references invalid library path " + ref.field + ": " + ref.path + " (" + libPathReason(err) + ")",
 					NodeID:  n.ID,
 				})
+				continue
 			}
-		}
-		if n.Config.ScriptFile != "" {
-			if !checker.FileExists(wf.Name, n.Config.ScriptFile) {
+			if !checker.FileExists(wf.Name, ref.path) {
 				errs = append(errs, ValidationError{
 					Code:    "MISSING_FILE",
-					Message: "node " + n.ID + " references missing scriptFile: " + n.Config.ScriptFile,
-					NodeID:  n.ID,
-				})
-			}
-		}
-		if n.Config.OrchestrationFile != "" {
-			if !checker.FileExists(wf.Name, n.Config.OrchestrationFile) {
-				errs = append(errs, ValidationError{
-					Code:    "MISSING_FILE",
-					Message: "node " + n.ID + " references missing orchestrationFile: " + n.Config.OrchestrationFile,
+					Message: "node " + n.ID + " references missing " + ref.field + ": " + ref.path,
 					NodeID:  n.ID,
 				})
 			}
@@ -546,6 +551,11 @@ func validateFileReferences(wf *Workflow, checker FileChecker) []ValidationError
 	}
 
 	return errs
+}
+
+// libPathReason strips the ErrInvalidLibPath prefix from a ParseLibPath error.
+func libPathReason(err error) string {
+	return strings.TrimPrefix(err.Error(), ErrInvalidLibPath.Error()+": ")
 }
 
 // validateNodeIDs checks that no node has an empty ID.
@@ -760,6 +770,14 @@ func validateSpawnWorkflowNode(node Node, edges []Edge, workflowName string) []V
 	// instance executes from a WorkflowSnapshot that may PREDATE this validation
 	// — so both sides must check, and must check identically.
 	_, cfgErr := ParseSpawnConfig(node.Config)
+	if errors.Is(cfgErr, ErrSpawnReservedInput) {
+		errs = append(errs, ValidationError{
+			Code: "SPAWN_RESERVED_INPUT",
+			Message: "spawn_workflow node " + node.ID + " sets input " + strings.Join(reservedSpawnInputs(node.Config.Inputs), ", ") +
+				", which the engine seeds for every run; remove it from inputs",
+			NodeID: node.ID,
+		})
+	}
 	if errors.Is(cfgErr, ErrSpawnChildWorkflowMissing) {
 		errs = append(errs, ValidationError{
 			Code:    "MISSING_REQUIRED_CONFIG",
@@ -941,4 +959,16 @@ func validateGitVariable(wf *Workflow) []ValidationError {
 		Code:    "invalid_git_variable",
 		Message: fmt.Sprintf("gitVariable %q is not a valid variable path (e.g. branch or node-id.field)", wf.GitVariable),
 	}}
+}
+
+// reservedSpawnInputs returns the reserved names present in inputs, sorted.
+func reservedSpawnInputs(inputs map[string]any) []string {
+	var out []string
+	for k := range inputs {
+		if reservedInputNames[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

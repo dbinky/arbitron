@@ -967,3 +967,29 @@ func (r *sgRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, srcNam
 	}
 	return r.Update(ctx, dst, dstName, wf)
 }
+
+// Spawn input findings are advisory to the write path: the group write gate
+// filters to GROUP_* codes. The workflow ALSO carries a valid parallel_group so
+// groupFindings genuinely runs (without one the gate is never consulted).
+func TestService_UpdateNotGatedBySpawnInputFindings(t *testing.T) {
+	f := newSGFixture(t, true)
+	f.repo.seed(workflow.Private(sgAlice), sgChild("child", sgTopic))
+	mk := func() *workflow.Workflow {
+		w := sgBranches("wf")
+		w.Nodes = append(w.Nodes, workflow.Node{ID: "sp", Type: workflow.NodeTypeSpawnWorkflow, Config: workflow.NodeConfig{
+			ChildWorkflow: "child", SpawnMode: workflow.SpawnModeFireAndForget,
+			Inputs: map[string]any{"topic": "x", "tpoic": "typo"},
+		}})
+		w.Edges = append(w.Edges, workflow.Edge{Source: "done", Target: "sp"})
+		return w
+	}
+	ctx := ctxWith(sgAlice, false)
+	f.repo.seed(workflow.Private(sgAlice), sgBranches("wf"))
+
+	// The pass really runs on this workflow with the service's reader.
+	all := workflow.Validate(mk(), nil, nil, nil, workflow.WithChildContractReader(f.svc.ChildContracts(ctx)))
+	require.Contains(t, sgCodes(all), "SPAWN_UNKNOWN_CHILD_INPUT")
+
+	require.NoError(t, f.svc.Update(ctx, "wf", mk()))
+	assert.Equal(t, 1, f.repo.updates)
+}

@@ -51,6 +51,7 @@ func cancelViaMCP(t *testing.T, ds *domainStack, id uuid.UUID) (bool, map[string
 // SQLite-backed cascade. A completed parent whose independent task is still
 // running is stopped, and the parent's outcome is not reopened.
 func TestGroupCancelAdaptersE2E_CompletedParentStopsIndependentTask(t *testing.T) {
+	t.Parallel()
 	channels := map[string]func(*testing.T, *domainStack, uuid.UUID) (bool, map[string]string){
 		"http": func(t *testing.T, ds *domainStack, id uuid.UUID) (bool, map[string]string) {
 			code, body := cancelViaHTTP(t, ds, id)
@@ -119,6 +120,7 @@ func TestGroupCancelAdaptersE2E_HTTPCancelCascadesThroughNestedGroups(t *testing
 // through the adapters (HTTP 409), so the "cancelled" response is never a lie
 // about a no-op.
 func TestGroupCancelAdaptersE2E_TerminalParentWithNothingActiveIsRefused(t *testing.T) {
+	t.Parallel()
 	ds := bootSubtreeStack(t)
 	midID, _, err := ds.eng.Trigger(context.Background(), "cs-mid", map[string]any{}, "normal")
 	require.NoError(t, err)

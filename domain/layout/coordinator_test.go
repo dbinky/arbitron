@@ -439,7 +439,7 @@ func TestRun_CancelledMidRenderRetainsBestSoFar(t *testing.T) {
 func TestRun_IsDeterministic(t *testing.T) {
 	run := func() Result {
 		rv := &scriptedReviewer{steps: map[int]reviewStep{1: {findings: []Finding{reviewFinding(CriterionMergedLines)}}}}
-		return newCoord(t, newScriptedRenderer(), rv).Run(context.Background(), Job{Revision: "r", Manifest: loadSample(t, "feature-pipeline"), MaxAttempts: 5}, nil)
+		return newCoord(t, newScriptedRenderer(), rv).Run(context.Background(), Job{Revision: "r", Manifest: loadSample(t, "legacy-feature-pipeline"), MaxAttempts: 5}, nil)
 	}
 	a, b := run(), run()
 	require.NotNil(t, a.Best)

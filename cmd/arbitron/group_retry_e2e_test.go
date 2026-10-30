@@ -12,6 +12,7 @@ import (
 // Removing the Retry group-task guard must expose both the raw terminal-trigger
 // error and the variable/cursor/dismissal mutations that happen before it.
 func TestGroupE2E_RetryFailedTaskIsRejectedWithoutSideEffects(t *testing.T) {
+	t.Parallel()
 	ds, gates := bootGatedBehaviorStack(t, 5, map[string]string{"grp-as-wait": asWaitManifest},
 		map[string][]string{"grp-as-wait": {"slow-hold", "bad-run"}})
 	ctx := context.Background()

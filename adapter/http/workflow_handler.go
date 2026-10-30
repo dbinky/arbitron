@@ -659,7 +659,7 @@ func (h *WorkflowHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	files, err := h.wfSvc.ListFiles(r.Context(), name)
 	if err != nil {
-		if errors.Is(err, workflow.ErrNotFound) {
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrInvalidName) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -688,7 +688,11 @@ func (h *WorkflowHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.fileReader.ReadFile(callerOwner(r.Context()), name, filePath)
 	if err != nil {
-		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) || errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, workflow.ErrInvalidLibPath) {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid library path: "+filePath)
+			return
+		}
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) || errors.Is(err, workflow.ErrInvalidName) || errors.Is(err, os.ErrNotExist) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}
@@ -732,6 +736,10 @@ func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
+		if errors.Is(err, workflow.ErrInvalidName) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
 		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
@@ -767,7 +775,7 @@ func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 			return
 		}
-		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) || errors.Is(err, workflow.ErrInvalidName) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}

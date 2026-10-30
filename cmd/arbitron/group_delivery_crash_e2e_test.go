@@ -48,6 +48,7 @@ func TestGroupDeliveryCrashProcess(t *testing.T) {
 // Refusing to replay a delivered run, returning empty output, or changing the
 // frozen port must fail at downstream consumers, not merely at a wake marker.
 func TestGroupE2E_DeliveryCrashRetryConsumesFrozenOutputOnce(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, workflow, node, manifest, port string
 	}{

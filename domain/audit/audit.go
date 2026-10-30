@@ -24,7 +24,10 @@ const (
 	ActionWorkflowRename           = "workflow.rename"
 	ActionWorkflowDuplicate        = "workflow.duplicate"
 	ActionWorkflowEditShared       = "workflow.edit_shared"
-	ActionAdminOverride            = "admin.override"
+	// ActionLibEditShared is emitted when an admin writes or deletes a file in
+	// the shared @lib library. Detail: {"path":..., "op":"write"|"delete"}.
+	ActionLibEditShared = "lib.edit_shared"
+	ActionAdminOverride = "admin.override"
 	// ActionLeadIntervention is emitted when a department lead (not an admin)
 	// intervenes on a run they do not own. Declared here, the single home for the
 	// audit vocabulary, so the engine that emits it and any forensic query that

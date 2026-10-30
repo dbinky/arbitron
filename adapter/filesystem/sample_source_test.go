@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/arbitron/arbitron/adapter/filesystem"
 )
 
@@ -136,4 +138,53 @@ func keys(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestSampleSourceList_SkipsLib(t *testing.T) {
+	root := t.TempDir()
+	writeSample(t, root, "real", `{"name":"real","nodes":[]}`, nil)
+	// A workflow.json INSIDE _lib proves the skip is deliberate, not an
+	// accident of the folder lacking a manifest.
+	writeSample(t, root, "_lib", `{"name":"_lib","nodes":[]}`, nil)
+
+	names, err := filesystem.NewSampleSource(root).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != "real" {
+		t.Fatalf("List = %v, want [real]", names)
+	}
+}
+
+func TestSampleSourceReadLibrary_ExcludesTestFiles(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "_lib")
+	require.NoError(t, os.MkdirAll(filepath.Join(lib, "sub"), 0o755))
+	for rel, c := range map[string]string{
+		"README.md":     "readme",
+		"sub/tool.sh":   "tool",
+		"x_test.sh":     "test",
+		"sub/y_test.sh": "test",
+		".DS_Store":     "junk",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(lib, rel), []byte(c), 0o644))
+	}
+	require.NoError(t, os.Symlink(filepath.Join(lib, "README.md"), filepath.Join(lib, "link.md")))
+
+	got, err := filesystem.NewSampleSource(root).ReadLibrary(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string][]byte{"README.md": []byte("readme"), "sub/tool.sh": []byte("tool")}, got)
+}
+
+func TestSampleSourceReadLibrary_AbsentIsEmpty(t *testing.T) {
+	got, err := filesystem.NewSampleSource(t.TempDir()).ReadLibrary(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+}
+
+func TestSampleSourceReadLibrary_MissingRootIsEmpty(t *testing.T) {
+	got, err := filesystem.NewSampleSource(filepath.Join(t.TempDir(), "nope")).ReadLibrary(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, got)
 }

@@ -198,6 +198,25 @@ a decision; an omission that is silent is a coverage gap nobody can audit. If th
 budget forces you to drop a real seam, list it here as `DEFERRED (budget)` with its
 SHARED and BREAK stated, so a later pass can promote it.
 
+## Seeded focus items
+
+**Seed file:** `{{focus_seed}}`. If that value is empty, skip this section: the run
+has no seed. If it names a file, this section is mandatory.
+
+A seed is a survivors file from an earlier hardening stage: test gaps a mutation
+run proved real. Its items must not be lost in the plan.
+
+1. Read `./work/{{focus_seed}}`. Each entry under `focus_items` has an `id`.
+2. Make every id a named area, or name it inside an existing area. Either way,
+   write its **exact id string** in `./work/docs/reference/focus-areas.md`. The
+   verifier greps for each id verbatim and fails the plan if one is missing.
+3. Use each item's `mutants` (its surviving mutants) as **Review-1 evidence** for
+   the area that holds it, so the wiring review starts from a proven gap rather
+   than rediscovering it.
+4. Seeded areas count against the pass budget (the verifier's CHECK 2) like any
+   other area. Merge seeded items into existing behaviours where the merge test
+   allows it, rather than giving each its own area.
+
 ## The plan must fit the budget it will run under
 
 **This is a hard constraint, not advice.** A paired row costs a whole pass: the
@@ -281,7 +300,7 @@ different model families. The first independent look at an area.*
 
 **Step B** — Record a recommendation; tick NOTHING. The approver ticks Review 1 Status in `docs/reference/focus-areas.md`.
 
-**Step C** — Commit and push. Your work is valuable regardless of review status.
+**Step C** — Commit, and never push: the workflow pushes the pass once the tamper gate has ruled on it. Your work is valuable regardless of review status.
 
 **Step D** — One line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly what did not advance and why. The progress assessor has no tools and sees only your response.
 
@@ -318,7 +337,7 @@ difference is the entire reason two approvals exist.*
 
 **Step B** — Record a recommendation; tick NOTHING. The approver ticks Review 2 Status in `docs/reference/focus-areas.md`.
 
-**Step C** — Commit and push. Your work is valuable regardless of review status.
+**Step C** — Commit, and never push: the workflow pushes the pass once the tamper gate has ruled on it. Your work is valuable regardless of review status.
 
 **Step D** — One line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly what did not advance and why. The progress assessor has no tools and sees only your response.
 
@@ -355,7 +374,7 @@ different model families.*
 
 **Step B** — Record a recommendation per row; tick NOTHING. The approver ticks each row it can verify in `docs/reference/paired-reviews.md`, each cited separately.
 
-**Step C** — Commit and push. Your work is valuable regardless of review status.
+**Step C** — Commit, and never push: the workflow pushes the pass once the tamper gate has ruled on it. Your work is valuable regardless of review status.
 
 **Step D** — One line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly what did not advance and why. The progress assessor has no tools and sees only your response.
 

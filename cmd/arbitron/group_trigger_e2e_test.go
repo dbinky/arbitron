@@ -33,6 +33,7 @@ func instancesNamed(t *testing.T, ds *domainStack, name string) []instance.Insta
 
 // Phase 3 admits both modes through direct, MCP and legacy-spawn triggers.
 func TestGroupTriggerE2E_Phase3RunsBothGatherModes(t *testing.T) {
+	t.Parallel()
 	requireHostGit(t)
 	ds, _ := bootGroupAuthoringStack(t)
 	ctx := adminCtxForLocalUser(t, ds)

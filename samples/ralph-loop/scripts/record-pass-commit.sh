@@ -58,9 +58,17 @@
 # closes. A genuinely discovering pass simply scores no-progress and the next
 # pass acts on it; two in a row escalate to the rescue, which is the intended
 # behaviour rather than a failure.
+#   tamper_voided     bool    — the tamper gate voided THIS pass (see below)
 #   head_sha          string
 #   commit_stat       string  — git log --stat for those commits (truncated)
 #   summary           string  — one line for humans reading the trace
+#
+# TAMPER: when tamper-verdict or tamper-void reports voided:true AND that output's
+# pass_id equals pass-mark.pass_id, the pass was voided: its work was reverted or
+# judged tampering, so it scores progress_evidence:false and boxes_ticked:0. The
+# pass_id match is what ties a void to THIS pass. A reset-void restores the sha,
+# so the next clean pass can land on the very same HEAD; a stale void from the
+# earlier pass carries the earlier pass_id and is ignored.
 #
 # NEVER fails the run: a missing repo or unreadable git history emits a
 # conservative "no evidence" verdict and exits 0, leaving the assessor to fall
@@ -113,8 +121,8 @@ else
   LOGARGS="-1"
 fi
 
-CHANGED="$(git -C "$WORK" log $LOGARGS --name-only --pretty=format: 2>/dev/null | sed '/^$/d' | sort -u || true)"
-STAT="$(git -C "$WORK" log $LOGARGS --stat --pretty='commit %h%n    %s' 2>/dev/null || true)"
+CHANGED="$(git -C "$WORK" log "$LOGARGS" --name-only --pretty=format: 2>/dev/null | sed '/^$/d' | sort -u || true)"
+STAT="$(git -C "$WORK" log "$LOGARGS" --stat --pretty='commit %h%n    %s' 2>/dev/null || true)"
 [ -n "$STAT" ] || STAT="(no new commits since the previous pass)"
 
 # Truncate: a large refactor's --stat can be thousands of lines, and this is
@@ -152,6 +160,15 @@ fi
 : "${PREV_BOXES:=0}" "${PREV_GAPS:=0}"
 TICKED=$((NOW_BOXES - PREV_BOXES)); [ "$TICKED" -gt 0 ] || TICKED=0
 CLOSED=$((NOW_GAPS - PREV_GAPS));   [ "$CLOSED" -gt 0 ] || CLOSED=0
+
+# A void counts only when its pass_id is this pass's pass_id (null never matches).
+VOIDED="$(printf '%s' "$IN" | jq -r '
+  (.["pass-mark"].pass_id // null) as $pid
+  | if $pid == null then false
+    else any([.["tamper-verdict"], .["tamper-void"]][]; . != null and .voided == true and .pass_id == $pid)
+    end' 2>/dev/null || echo false)"
+case "$VOIDED" in true) ;; *) VOIDED=false ;; esac
+if [ "$VOIDED" = true ]; then TICKED=0; CLOSED=0; fi
 printf '%s %s' "$NOW_BOXES" "$NOW_GAPS" > "$BOXSTATE"
 
 # --- second axis: are approvals actually accumulating? -----------------------
@@ -177,7 +194,10 @@ else
   STALLED=false
 fi
 
-if [ "$COUNT" -eq 0 ]; then
+if [ "$VOIDED" = true ]; then
+  EVIDENCE=false
+  SUMMARY="NO PROGRESS (tamper): the tamper gate voided this pass, so its $COUNT commit(s) and any ticked boxes do not count. Score it as churn."
+elif [ "$COUNT" -eq 0 ]; then
   EVIDENCE=false
   SUMMARY="NO new commits this pass — nothing was committed since the previous pass"
 elif [ "$STALLED" = true ]; then
@@ -195,9 +215,9 @@ printf '%s' "$HEAD" > "$STATE"
 
 jq -n --argjson n "$COUNT" --argjson t "$TRACKING" --argjson e "$EVIDENCE" \
       --argjson cc "$CODE_CHANGED" --argjson bt "$TICKED" --argjson gc "$CLOSED" \
-      --argjson psa "$PSA" --argjson st "$STALLED" \
+      --argjson psa "$PSA" --argjson st "$STALLED" --argjson tv "$VOIDED" \
       --arg h "$HEAD" --arg c "$STAT" --arg s "$SUMMARY" \
   '{new_commit_count:$n, tracking_touched:$t, progress_evidence:$e,
     code_changed:$cc, boxes_ticked:$bt, gaps_closed:$gc,
-    passes_since_approval:$psa, approval_stalled:$st,
+    passes_since_approval:$psa, approval_stalled:$st, tamper_voided:$tv,
     head_sha:$h, commit_stat:$c, summary:$s}'

@@ -48,6 +48,7 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 # TestDockerfileOpencodePinMeetsProbeFloor fails the build if this drifts below.
 RUN apk add --no-cache \
         ca-certificates=20261020-r0 \
+        bubblewrap=0.10.0-r0 \
         bash=5.2.26-r0 \
         coreutils=9.5-r2 \
         nodejs=20.15.1-r0 \

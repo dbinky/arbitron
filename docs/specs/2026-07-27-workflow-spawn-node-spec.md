@@ -49,3 +49,12 @@ Add a first-class `spawn workflow` capability so workflow authors can compose la
 - This spec does not require static field-by-field startup mapping between parent and child workflows.
 
 - This spec does not define recursion limits, loop prevention, scheduling policy, storage design, APIs, or implementation architecture.
+
+## Amendment 2026-10-23
+
+See `docs/superpowers/specs/2026-10-23-fp-next-engine-prereqs-design.md` (section 3). Narrowed startup-value semantics:
+
+- A spawn node may carry an explicit `inputs` map; mapped values are passed as given and win over LLM preparation.
+- The LLM prepares only required child inputs that are unmapped and have no default; defaults are passed explicitly and optional inputs are never LLM-filled.
+- A mapped reference that cannot be resolved fails closed. A fully mapped spawn makes no LLM call and needs no model profile.
+- The node output records `inputSources` (`mapped`, `default`, `prepared`) per input name. It is readable downstream (`{{spawn-1.inputSources.topic}}`) for `fire_and_forget` spawns; for awaited (`wait_for_child`) spawns it is trace-only, present on the first execution record but not in the resumed node output.

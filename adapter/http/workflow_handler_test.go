@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -2203,4 +2206,111 @@ func (r *mockWorkflowRepo) CopyTreeStamped(ctx context.Context, src workflow.Sco
 
 func (r *errWorkflowRepo) CopyTreeStamped(ctx context.Context, src workflow.Scope, sn string, dst workflow.Scope, dn string, overwrite bool, stamp func(*workflow.Workflow) error) error {
 	return r.err
+}
+
+func TestValidateEndpoint_LibRefResolvesThroughFileReader(t *testing.T) {
+	validate := func(t *testing.T, root string) []workflow.ValidationError {
+		t.Helper()
+		repo := newMockWorkflowRepo()
+		wf := &workflow.Workflow{
+			Name: "lib-wf",
+			Nodes: []workflow.Node{
+				{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true, Config: workflow.NodeConfig{ScriptFile: "@lib/x.md"}},
+			},
+		}
+		repo.workflows["lib-wf"] = wf
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, filesystem.NewFileReader(root), nil)
+
+		req := httptest.NewRequest(http.MethodPost, "/workflows/lib-wf/validate", nil)
+		req = withChiURLParam(req, "name", "lib-wf")
+		w := httptest.NewRecorder()
+		h.Validate(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp struct {
+			Errors []workflow.ValidationError `json:"errors"`
+		}
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		return resp.Errors
+	}
+	codes := func(errs []workflow.ValidationError) []string {
+		var out []string
+		for _, e := range errs {
+			out = append(out, e.Code)
+		}
+		return out
+	}
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "shared", "_lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "shared", "_lib", "x.md"), []byte("lib"), 0o644))
+	assert.NotContains(t, codes(validate(t, root)), "MISSING_FILE")
+
+	// Control: without the library file the same reference is reported missing.
+	assert.Contains(t, codes(validate(t, t.TempDir())), "MISSING_FILE")
+}
+
+// REST file routes never learn about @lib: the reserved names are plain
+// not-found workflows there, and nothing is created on disk.
+func TestRESTFiles_ReservedNamesUnchanged(t *testing.T) {
+	root := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(root)
+	h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, filesystem.NewFileReader(root), nil)
+
+	for _, name := range []string{"nonexistent", "_lib", "@lib"} {
+		req := withChiURLParam(httptest.NewRequest(http.MethodGet, "/workflows/"+name+"/files", nil), "name", name)
+		w := httptest.NewRecorder()
+		h.ListFiles(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "list %s", name)
+
+		req = withChiURLParam(httptest.NewRequest(http.MethodPut, "/workflows/"+name+"/files/x", strings.NewReader("data")), "name", name)
+		chi.RouteContext(req.Context()).URLParams.Add("*", "x")
+		w = httptest.NewRecorder()
+		h.WriteFile(w, req)
+		assert.Contains(t, []int{http.StatusNotFound, http.StatusBadRequest}, w.Code, "write %s", name)
+
+		req = withChiURLParam(httptest.NewRequest(http.MethodDelete, "/workflows/"+name+"/files/x", nil), "name", name)
+		chi.RouteContext(req.Context()).URLParams.Add("*", "x")
+		w = httptest.NewRecorder()
+		h.DeleteFile(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "delete %s", name)
+	}
+
+	var created []string
+	require.NoError(t, filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && !strings.Contains(p, ".arbitron-locks") {
+			created = append(created, p)
+		}
+		return err
+	}))
+	assert.Empty(t, created, "no file created by the reserved-name writes")
+}
+
+func TestRESTReadFile_ReservedNamesAreNotFound(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "shared", "_lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "shared", "_lib", "x.md"), []byte("lib"), 0o644))
+	h := adapthttp.NewWorkflowHandler(filesystem.NewWorkflowRepo(root), &mockWorkflowService{}, filesystem.NewFileReader(root), nil)
+
+	for _, name := range []string{"_lib", "@lib"} {
+		req := withChiURLParam(httptest.NewRequest(http.MethodGet, "/workflows/"+name+"/files/x.md", nil), "name", name)
+		chi.RouteContext(req.Context()).URLParams.Add("*", "x.md")
+		w := httptest.NewRecorder()
+		h.ReadFile(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code, "read %s", name)
+	}
+}
+
+func TestRESTReadFile_MalformedLibPathIsBadRequest(t *testing.T) {
+	root := t.TempDir()
+	h := adapthttp.NewWorkflowHandler(filesystem.NewWorkflowRepo(root), &mockWorkflowService{}, filesystem.NewFileReader(root), nil)
+
+	for _, p := range []string{"@lib/../x", "@lib/a//b", "@lib/"} {
+		req := withChiURLParam(httptest.NewRequest(http.MethodGet, "/workflows/some-wf/files/x", nil), "name", "some-wf")
+		chi.RouteContext(req.Context()).URLParams.Add("*", p)
+		w := httptest.NewRecorder()
+		h.ReadFile(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "path %q: %s", p, w.Body.String())
+		assert.NotContains(t, w.Body.String(), root)
+	}
 }

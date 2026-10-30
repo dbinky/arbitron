@@ -19,6 +19,7 @@ import (
 // the link moves to the fresh attempt and the earlier session is closed, so
 // neither history hydration nor controls can reach it.
 func TestGroupFilesE2E_PanelSessionLinkFollowsTheOpenAttempt(t *testing.T) {
+	t.Parallel()
 	ds, _ := bootFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	srv := gsServeAPI(t, ds)
 	ctx := context.Background()

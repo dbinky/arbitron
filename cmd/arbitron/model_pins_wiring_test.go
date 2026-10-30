@@ -157,6 +157,7 @@ func countInstances(t *testing.T, ds *domainStack) int {
 // queues behind it, then persists a version-1 pin. Dropping eng.SetModelPinGate
 // from main.go lets the trigger finish while the lease is held.
 func TestModelPinsTriggerWaitsOnSharedGate(t *testing.T) {
+	t.Parallel()
 	ds := bootPinStack(t)
 	ctx := adminCtxForLocalUser(t, ds)
 	_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "pin-alias", Kind: provider.ProfileKindChat, Model: "claude-opus-4-1"})

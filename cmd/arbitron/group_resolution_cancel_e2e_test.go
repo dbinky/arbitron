@@ -13,6 +13,7 @@ import (
 )
 
 func TestGroupFilesE2E_ParentCancelledDuringAutonomousResolution(t *testing.T) {
+	t.Parallel()
 	paths := writeFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	// The marker is written from inside the real staging area, only after the
 	// CLI adapter launched the autonomous turn. Cancellation must kill the

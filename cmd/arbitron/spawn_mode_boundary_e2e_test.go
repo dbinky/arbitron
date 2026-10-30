@@ -15,6 +15,7 @@ import (
 // a complete link has no roster and cannot finish; a partial link can silently
 // become an unlinked root. Removing public-mode rejection breaks this test.
 func TestSpawnE2E_PublicEntryPointsRefuseGroupTaskBeforePersistence(t *testing.T) {
+	t.Parallel()
 	for _, entry := range []string{"Spawn", "Trigger", "TriggerWithDepartment"} {
 		for _, complete := range []bool{true, false} {
 			name := entry + "/complete"

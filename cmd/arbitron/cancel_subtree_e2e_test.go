@@ -95,6 +95,7 @@ func onlyChild(t *testing.T, ds *domainStack, parentID uuid.UUID) uuid.UUID {
 // cancelling the parent, and the parent's own outcome is untouched — through
 // the real SQLite ListChildren the composition root installs.
 func TestCancelSubtreeE2E_CompletedParentStopsRunningChildThroughCompositionRoot(t *testing.T) {
+	t.Parallel()
 	ds := bootSubtreeStack(t)
 
 	midID, _, err := ds.eng.Trigger(context.Background(), "cs-mid", map[string]any{}, "normal")
@@ -129,6 +130,7 @@ func TestCancelSubtreeE2E_CompletedParentStopsRunningChildThroughCompositionRoot
 // filtered terminal rows (or an engine still walking ListActiveChildren) never
 // lists the completed mid and the leaf keeps running.
 func TestCancelSubtreeE2E_CascadeCrossesCompletedIntermediateThroughCompositionRoot(t *testing.T) {
+	t.Parallel()
 	ds := bootSubtreeStack(t)
 
 	rootID, _, err := ds.eng.Trigger(context.Background(), "cs-root", map[string]any{}, "normal")
@@ -148,6 +150,7 @@ func TestCancelSubtreeE2E_CascadeCrossesCompletedIntermediateThroughCompositionR
 
 // A completed run with nothing left running keeps the old refusal.
 func TestCancelSubtreeE2E_TerminalRunWithNothingActiveStillRefuses(t *testing.T) {
+	t.Parallel()
 	ds := bootSubtreeStack(t)
 
 	leafless, _, err := ds.eng.Trigger(context.Background(), "cs-mid", map[string]any{}, "normal")

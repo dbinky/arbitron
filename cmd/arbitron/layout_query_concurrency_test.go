@@ -137,8 +137,10 @@ func queryStartMutation(t *testing.T, e *layoutE2EEnv, mode string) (start func(
 }
 
 func TestLayoutQueryE2E_RetryCrossProcessSaveFence(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, ordering := range []string{"save-first", "retry-first", "private-shadow", "shadow-retry-first", "rename-first", "shared-only"} {
 		t.Run(ordering, func(t *testing.T) {
+			t.Parallel()
 			e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 			ds, _ := e.boot(t)
 			ctx := adminCtxForLocalUser(t, ds)

@@ -10,6 +10,8 @@ You are the **only** agent permitted to tick a box in
 
 Working **unattended** in the worktree at `./work`.
 
+If `{{workspace}}/tamper/must-fix.md` exists, address it before anything else this pass.
+
 ## What you are judging
 
 - **Work item:** `{{select-work.target_id}}` — {{select-work.target_label}}
@@ -138,8 +140,10 @@ you withheld, exactly which check of your lens failed and what would have to be
 true next time. Be specific enough that the next pass can act without
 rediscovering it, and short enough that it will actually be read.
 
-**Step C** — Commit and push **only if you changed something on disk**:
-`git -C ./work add -A && git -C ./work commit -m "approve({{slug}}): {{select-work.target_id}} — <ticked | withheld: why>" && git -C ./work push --quiet -u origin HEAD`
+**Step C** — Commit **only if you changed something on disk**:
+`git -C ./work add -A && git -C ./work commit -m "approve({{slug}}): {{select-work.target_id}} — <ticked | withheld: why>"`
+Commit only — never push. The workflow pushes the pass once the tamper gate has
+ruled on it.
 If you ticked nothing and recorded nothing, **do not commit** — an empty
 bookkeeping commit is counted as churn and buys nothing.
 

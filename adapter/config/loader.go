@@ -114,7 +114,7 @@ func defaults() map[string]interface{} {
 		//
 		// The reviewer/coder/planner/interviewer/assessor aliases are the
 		// in-repo default registry for the workflows shipped in this repo
-		// (samples/pr-review). samples/feature-pipeline instead needs the
+		// (samples/pr-review). samples/legacy-feature-pipeline instead needs the
 		// DB-only admin profiles in its PROFILES.md. Shipping them as
 		// defaults (overridable by the deployment config.yaml) lets a fresh
 		// clone validate those workflows honestly instead of passing
@@ -244,7 +244,7 @@ profiles:
     selection_mode: "following"
     follow_target: { provider: "anthropic", tier: "sonnet" }
   # In-repo default registry for the workflows shipped in this repo
-  # (samples/pr-review, samples/feature-pipeline). Repoint a persona at another
+  # (samples/pr-review, samples/legacy-feature-pipeline). Repoint a persona at another
   # tier or backend by editing its entry; remove an alias only if you are not
   # running its workflow.
   #

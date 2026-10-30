@@ -123,6 +123,7 @@ func bootGatedGroup(t *testing.T) (*domainStack, groupProcessGates, uuid.UUID, *
 }
 
 func TestGroupE2E_FirstSuccessUsesCommitOrderWithinOneTimestamp(t *testing.T) {
+	t.Parallel()
 	ds, _, parent, run := bootGatedGroup(t)
 	stamp := "2026-10-16T10:00:00Z"
 	// Raw terminal writes use the production table triggers, but deliberately
@@ -150,6 +151,7 @@ func TestGroupE2E_FirstSuccessUsesCommitOrderWithinOneTimestamp(t *testing.T) {
 }
 
 func TestGroupE2E_CancelledTaskCannotPublishLateSuccess(t *testing.T) {
+	t.Parallel()
 	ds, _, parent, run := bootGatedGroup(t)
 	a, b := groupRosterTask(t, run, "a"), groupRosterTask(t, run, "b")
 	ctx := context.Background()
@@ -204,6 +206,7 @@ func TestGroupE2E_TerminalStorageFailureCannotPublishSuccess(t *testing.T) {
 }
 
 func TestGroupE2E_ResultsFormsIsolateLinkedWorktreeMetadata(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not installed on this host")
 	}

@@ -1,0 +1,1049 @@
+{
+  "id": "47693efb-eb10-40eb-9ace-1062a8a9dc6d",
+  "name": "harden",
+  "description": "Standalone mutation-hardening stage. Checks out an existing pipeline branch, mutation-tests only the source changed since the merge-base, and scores the result. Below the gate it runs up to max_rounds strengthen rounds: a Sonnet agent writes tests (test files only) aimed at the surviving mutants, every round crosses the tests-only tamper gate with a GPT judge, equivalent-mutant claims go to a GPT judge, and only the remaining survivors are rescored. Records result, score, gate_passed and the survivors file (the refine stage's focus seed) in the pipeline manifest; a miss or a skip is still done.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "Repo to clone.",
+      "required": true
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "Existing remote branch to check out and harden.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug. Names .arbitron/pipeline/<slug>.harden.json and <slug>.survivors.json.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Recorded as the manifest's top-level base_branch when this stage's finish creates the manifest. Empty leaves it unset.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Teams webhook URL, accepted for parity with the other stages. Leave empty in the committed sample.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "base_ref",
+      "type": "string",
+      "description": "Diff base for mutation scoping. Empty falls back to the manifest base_branch.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "baseline_path",
+      "type": "string",
+      "description": "Committed test baseline (relative to ./work) whose suite commands are used. Empty falls back to implement's baseline_path, else the registry default command.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "gate_threshold",
+      "type": "number",
+      "description": "Mutation score (percent) that passes the gate.",
+      "default": 80,
+      "required": false
+    },
+    {
+      "name": "max_rounds",
+      "type": "number",
+      "description": "Strengthen round cap. A miss after it is recorded, not failed.",
+      "default": 3,
+      "required": false
+    },
+    {
+      "name": "harden_round",
+      "type": "number",
+      "description": "Round counter; leave at 0.",
+      "default": 0,
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--checkout"
+        ],
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url and add a worktree at ./work on the existing remote branch.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "entrypoint": true
+    },
+    {
+      "id": "promote",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init.work_dir}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init.run_date}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift work_dir and run_date to top-level vars.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "resolve-inputs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-read.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--explicit",
+          "base_ref,baseline_path",
+          "--optional",
+          "base_ref=",
+          "--optional",
+          "baseline_path="
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Resolve inputs",
+      "description": "An explicit base_ref or baseline_path wins; otherwise baseline_path comes from implement's manifest entry. scope falls back to the manifest base_branch (resolve-inputs.outputs.base_branch) when base_ref is empty.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "scope",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/scope.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 600
+      },
+      "label": "Resolve diff scope",
+      "description": "Base is resolve-inputs.inputs.base_ref, else the manifest base_branch; neither, or no merge-base, fails the stage. Fetches at depth 200 (unshallowing if needed) and emits {base_ref, merge_base}. Halts: retrying cannot supply a missing base.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "classify",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-gate.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--classify",
+          "{{scope.merge_base}}",
+          "HEAD"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Classify changed files",
+      "description": "Roles (source, test, config, ci) and source files by language for merge-base..HEAD. detect mutates only changed source.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "detect",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/detect.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 300
+      },
+      "label": "Detect mutation tools",
+      "description": "Per language with changed source: no registered tool -> skipped; a probe failure -> exit 1 listing every install_hint (a missing tool fails the stage); else runnable. The test command comes from the baseline (R6), else the registry default. Halts: a missing tool will not appear on retry. Repository code (version probes, mutation tools, tests) runs only inside scripts/sandbox.sh: scrubbed environment, restricted filesystem, no network, and no unisolated fallback (exit 1 'no isolation available').",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "has-work?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "detect.runnable_count",
+            "operator": "eq",
+            "value": 0,
+            "output": "skip"
+          }
+        ],
+        "defaultOutput": "work"
+      },
+      "label": "Anything to mutate?",
+      "description": "No runnable language (no changed source, or no registered tool) skips to report, which records result skipped, score null and gate passed: the stage is done, not failed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "mutate",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/mutate.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 3900
+      },
+      "label": "Mutation run",
+      "description": "Dispatches scripts/mutate-<lang>.sh per runnable language, diff-scoped, and normalizes the results into {{workspace}}/harden/state.json. Leaves the worktree clean. Halts without retry: adapter failures (a missing tool, report drift) are deterministic, and a retry would rerun an hour-long run to the same failure. Repository code (version probes, mutation tools, tests) runs only inside scripts/sandbox.sh: scrubbed environment, restricted filesystem, no network, and no unisolated fallback (exit 1 'no isolation available').",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 980
+      }
+    },
+    {
+      "id": "score-0",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/score.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Score (initial)",
+      "description": "Scores state.json against gate_threshold and writes {{workspace}}/harden/survivors-round.json for strengthen.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1120
+      }
+    },
+    {
+      "id": "gate-0",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "score-0.gate_passed",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "score-0.denominator",
+            "operator": "eq",
+            "value": 0,
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "strengthen"
+      },
+      "label": "Gate passed?",
+      "description": "First-match. A passing score goes to report. So does an unscorable run: with the gate already failed, denominator 0 means every mutant was excluded (score null, reason \"all N mutants excluded ...\"), a broken mutation build that leaves strengthen no survivor to target; report records the gate failure. Otherwise the strengthen rounds.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1260
+      }
+    },
+    {
+      "id": "pass-mark",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/pass-mark.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 30
+      },
+      "label": "Mark round start",
+      "description": "Loop head. Records HEAD (the tamper gate's base) and a fresh pass_id for this round.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1400
+      }
+    },
+    {
+      "id": "state-snapshot",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/state-guard.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--snapshot"
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Snapshot score state",
+      "description": "Hashes harden/state.json and survivors-round.json (the hashes stay in this node's output, out of the agent's reach) and copies them aside before strengthen runs with Write access to the workspace.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1540
+      }
+    },
+    {
+      "id": "strengthen",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/strengthen.md",
+        "model_profile": "coder-sonnet5-high",
+        "timeoutSeconds": 5400
+      },
+      "label": "Strengthen tests",
+      "description": "Fixes any must-fix items from a voided round first, then writes tests (test files only) to kill the survivors in survivors-round.json. May claim equivalent mutants in {{workspace}}/harden/equivalence-claims.json. Commits only and leaves the tree clean. Claude doer, so both judges are GPT.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1680
+      }
+    },
+    {
+      "id": "clean-check",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/clean-check.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--discard"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Worktree clean?",
+      "description": "The mutation adapters refuse a dirty tree, so uncommitted changes left by strengthen would fail the stage at rescore. Reports them and, with --discard, restores the tree to HEAD (reset --hard, clean -fd, never -x); commits are untouched.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1820
+      }
+    },
+    {
+      "id": "state-check",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/state-guard.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--verify",
+          "state-snapshot"
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Score state untouched?",
+      "description": "Verifies the score state against state-snapshot's hashes. An edit by strengthen (a mutant set to killed, an extended approved_equivalents) is restored from the copy and the round is voided; a copy that was altered too exits 1.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1960
+      }
+    },
+    {
+      "id": "dirty?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "clean-check.dirty",
+            "operator": "eq",
+            "value": true,
+            "output": "dirty"
+          },
+          {
+            "field": "state-check.tampered",
+            "operator": "eq",
+            "value": true,
+            "output": "tampered"
+          }
+        ],
+        "defaultOutput": "clean"
+      },
+      "label": "Round left a dirty tree or edited state?",
+      "description": "First-match. A round that left uncommitted changes, or whose agent edited the score state, is voided as a whole (it still counts), so the stage still ends done. A clean round goes to the tamper gate.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2100
+      }
+    },
+    {
+      "id": "tamper-gate",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-gate.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "HEAD",
+          "--tests-only"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Tamper gate (tests only)",
+      "description": "Deterministic check of the round for weakened tests. --tests-only makes any source change a forced void (source_changed), as does a history rewrite.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2240
+      }
+    },
+    {
+      "id": "tamper-route",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "tamper-gate.force_void",
+            "operator": "eq",
+            "value": true,
+            "output": "void"
+          },
+          {
+            "field": "tamper-gate.needs_judge",
+            "operator": "eq",
+            "value": true,
+            "output": "judge"
+          }
+        ],
+        "defaultOutput": "clean"
+      },
+      "label": "Void, judge or pass?",
+      "description": "First-match, so the deterministic void comes first: a source edit or a history rewrite voids the round even when judgeable findings also exist. Judgeable findings go to the cross-family judge; a clean round is pushed, then goes to the claims.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2380
+      }
+    },
+    {
+      "id": "void-dirty",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--force-void",
+          "--reason",
+          "uncommitted_changes_discarded",
+          "--reset",
+          "--clear",
+          "harden/equivalence-claims.json",
+          "--clear",
+          "harden/equivalence-verdicts.json"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Void round (dirty tree)",
+      "description": "Forced void for a round that left uncommitted changes: resets to the round base, clears the equivalence scratch (R8) and writes must-fix.md naming the reason. --force-void is required: this runs before the tamper gate; clean-check has removed the previous round's findings.json, so must-fix.md carries no stale findings.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 2240
+      }
+    },
+    {
+      "id": "void-state",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--force-void",
+          "--reason",
+          "score_state_edited",
+          "--reset",
+          "--clear",
+          "harden/equivalence-claims.json",
+          "--clear",
+          "harden/equivalence-verdicts.json"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Void round (score state edited)",
+      "description": "Forced void for a round whose strengthen agent edited the score state (state-check has already restored it): resets to the round base, clears the equivalence scratch and writes must-fix.md naming the reason.",
+      "errorBehavior": {},
+      "position": {
+        "x": -840,
+        "y": 2240
+      }
+    },
+    {
+      "id": "void-round",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--reset",
+          "--clear",
+          "harden/equivalence-claims.json",
+          "--clear",
+          "harden/equivalence-verdicts.json"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Void round (forced)",
+      "description": "Void for a round the tests-only gate forced (a source change or a history rewrite): resets the worktree to the round base, clears the round's equivalence claims and verdicts (R8) and writes {{workspace}}/tamper/must-fix.md. No --force-void, so tamper-verdict reads this round's fresh findings.json and names the real reason (source_changed or history_rewritten). The round still counts.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 2520
+      }
+    },
+    {
+      "id": "tamper-context",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "tamper_context",
+            "operation": "set",
+            "value": "harden round {{harden_round}}: tests written to kill surviving mutants listed in {{workspace}}/harden/survivors-round.json; only test files may change"
+          }
+        ]
+      },
+      "label": "Judge context",
+      "description": "Tells the judge what the round was supposed to do.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2520
+      }
+    },
+    {
+      "id": "tamper-judge",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "@lib/tamper-judge.md",
+        "model_profile": "approver-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Tamper judge",
+      "description": "GPT-family judge for the Claude doer (strengthen on coder-sonnet5-high). Rules on every finding id and writes only {{workspace}}/tamper/verdict.json.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2660
+      }
+    },
+    {
+      "id": "tamper-verdict",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--reset",
+          "--clear",
+          "harden/equivalence-claims.json",
+          "--clear",
+          "harden/equivalence-verdicts.json"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Apply tamper verdict",
+      "description": "Fails closed: a missing or malformed verdict, an unruled finding or any legitimate:false voids the round, resets to the round base, clears the equivalence scratch (R8) and writes must-fix.md. A round that stands is left as is.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2800
+      }
+    },
+    {
+      "id": "voided?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "tamper-verdict.voided",
+            "operator": "eq",
+            "value": true,
+            "output": "voided"
+          }
+        ],
+        "defaultOutput": "stands"
+      },
+      "label": "Round voided?",
+      "description": "Entered only straight after tamper-verdict, so the verdict is this round's. A voided round skips the push, the claims and the rescore.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2940
+      }
+    },
+    {
+      "id": "checkpoint-push-round",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push round",
+      "description": "Pushes a round that stood, once the tamper gate has ruled, so a stopped run keeps the tests it added. Voids reset to the round base, which is already pushed, so they skip this.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3080
+      }
+    },
+    {
+      "id": "count-claims",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/equivalence.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--count"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Count equivalence claims",
+      "description": "Counts claims in {{workspace}}/harden/equivalence-claims.json; a missing or malformed file counts as 0.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3220
+      }
+    },
+    {
+      "id": "claims?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "count-claims.claim_count",
+            "operator": "gt",
+            "value": 0,
+            "output": "claims"
+          }
+        ],
+        "defaultOutput": "none"
+      },
+      "label": "Any claims?",
+      "description": "Claims go to the cross-family judge; otherwise straight to the rescore.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3360
+      }
+    },
+    {
+      "id": "judge-equivalent",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/judge-equivalent.md",
+        "model_profile": "approver-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Judge equivalence claims",
+      "description": "GPT-family judge for the Claude doer. Rules on each claim and writes {{workspace}}/harden/equivalence-verdicts.json; the file is what is read (agent_call does not enforce outputSchema).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3500
+      }
+    },
+    {
+      "id": "record-equivalence",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/equivalence.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--record"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Record equivalents",
+      "description": "Merges equivalent:true rulings into state.json; an unruled claim is rejected. Removes the claims and verdicts files.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3640
+      }
+    },
+    {
+      "id": "rescore",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/mutate.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--survivors-only"
+        ],
+        "timeoutSeconds": 3900
+      },
+      "label": "Rescore survivors",
+      "description": "Re-runs mutation only on files that still have survivors and REPLACES the whole earlier result set of every file it re-runs with the fresh one (fresh evidence is authoritative; nothing is inherited through a reused line key). Files not re-run keep their results; an equivalent-mutant approval in a re-run file survives only if its key is still reported and the file is unchanged. Records round harden_round + 1. Halts without retry: adapter failures (a missing tool, report drift) are deterministic, and a retry would rerun an hour-long run to the same failure. Repository code (version probes, mutation tools, tests) runs only inside scripts/sandbox.sh: scrubbed environment, restricted filesystem, no network, and no unisolated fallback (exit 1 'no isolation available').",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 3780
+      }
+    },
+    {
+      "id": "score-r",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/score.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Score (round)",
+      "description": "Rescores state.json and rewrites survivors-round.json for the next round.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3920
+      }
+    },
+    {
+      "id": "harden-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "harden_round",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "harden_round++",
+      "description": "Counts rounds, voided ones included, for the max_rounds cap.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 4060
+      }
+    },
+    {
+      "id": "harden-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "score-r.gate_passed",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "score-r.denominator",
+            "operator": "eq",
+            "value": 0,
+            "output": "exit"
+          },
+          {
+            "field": "harden_round",
+            "operator": "gte",
+            "value": "{{max_rounds}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Round loop or exit",
+      "description": "First-match. A passing score exits. An unscorable rescore (gate failed, every mutant excluded) exits too: there is nothing left to target. Then the round cap: a miss after max_rounds goes to report with gate_passed false, which is not a stage failure. A voided round leaves score-r absent or stale, never passed (the loop would already have exited). Otherwise the next round.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 4200
+      }
+    },
+    {
+      "id": "report",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/report.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Write harden report",
+      "description": "Writes and commits .arbitron/pipeline/<slug>.harden.json and <slug>.survivors.json together, and emits the stage outputs. focus_seed_path is the survivors file when the gate failed, else empty.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 4340
+      }
+    },
+    {
+      "id": "finish",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-append.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--workflow",
+          "harden",
+          "harden",
+          "done",
+          "{result: .report.result, skip_reason: .report.skip_reason, score: .report.score, gate_passed: .report.gate_passed, survivors_path: .report.survivors_path, focus_seed_path: .report.focus_seed_path, harden_report_path: .report.harden_report_path}"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Record stage",
+      "description": "Pushes the branch and records the harden entry in .arbitron/pipeline/<slug>.json. A miss or a skip is still done. Its outputs are the stage contract.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 4480
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init",
+      "target": "promote"
+    },
+    {
+      "source": "promote",
+      "target": "resolve-inputs"
+    },
+    {
+      "source": "resolve-inputs",
+      "target": "scope"
+    },
+    {
+      "source": "scope",
+      "target": "classify"
+    },
+    {
+      "source": "classify",
+      "target": "detect"
+    },
+    {
+      "source": "detect",
+      "target": "has-work?"
+    },
+    {
+      "source": "has-work?",
+      "target": "report",
+      "output": "skip",
+      "label": "nothing to mutate"
+    },
+    {
+      "source": "has-work?",
+      "target": "mutate",
+      "output": "work"
+    },
+    {
+      "source": "mutate",
+      "target": "score-0"
+    },
+    {
+      "source": "score-0",
+      "target": "gate-0"
+    },
+    {
+      "source": "gate-0",
+      "target": "report",
+      "output": "exit",
+      "label": "passed or unscorable"
+    },
+    {
+      "source": "gate-0",
+      "target": "pass-mark",
+      "output": "strengthen"
+    },
+    {
+      "source": "pass-mark",
+      "target": "state-snapshot"
+    },
+    {
+      "source": "state-snapshot",
+      "target": "strengthen"
+    },
+    {
+      "source": "strengthen",
+      "target": "clean-check"
+    },
+    {
+      "source": "clean-check",
+      "target": "state-check"
+    },
+    {
+      "source": "state-check",
+      "target": "dirty?"
+    },
+    {
+      "source": "dirty?",
+      "target": "void-dirty",
+      "output": "dirty",
+      "label": "uncommitted changes"
+    },
+    {
+      "source": "dirty?",
+      "target": "tamper-gate",
+      "output": "clean"
+    },
+    {
+      "source": "void-dirty",
+      "target": "harden-inc"
+    },
+    {
+      "source": "dirty?",
+      "target": "void-state",
+      "output": "tampered",
+      "label": "score state edited"
+    },
+    {
+      "source": "void-state",
+      "target": "harden-inc"
+    },
+    {
+      "source": "tamper-gate",
+      "target": "tamper-route"
+    },
+    {
+      "source": "tamper-route",
+      "target": "void-round",
+      "output": "void",
+      "label": "forced void"
+    },
+    {
+      "source": "tamper-route",
+      "target": "tamper-context",
+      "output": "judge"
+    },
+    {
+      "source": "tamper-route",
+      "target": "checkpoint-push-round",
+      "output": "clean"
+    },
+    {
+      "source": "void-round",
+      "target": "harden-inc"
+    },
+    {
+      "source": "tamper-context",
+      "target": "tamper-judge"
+    },
+    {
+      "source": "tamper-judge",
+      "target": "tamper-verdict"
+    },
+    {
+      "source": "tamper-verdict",
+      "target": "voided?"
+    },
+    {
+      "source": "voided?",
+      "target": "harden-inc",
+      "output": "voided"
+    },
+    {
+      "source": "voided?",
+      "target": "checkpoint-push-round",
+      "output": "stands"
+    },
+    {
+      "source": "checkpoint-push-round",
+      "target": "count-claims"
+    },
+    {
+      "source": "count-claims",
+      "target": "claims?"
+    },
+    {
+      "source": "claims?",
+      "target": "judge-equivalent",
+      "output": "claims"
+    },
+    {
+      "source": "claims?",
+      "target": "rescore",
+      "output": "none"
+    },
+    {
+      "source": "judge-equivalent",
+      "target": "record-equivalence"
+    },
+    {
+      "source": "record-equivalence",
+      "target": "rescore"
+    },
+    {
+      "source": "rescore",
+      "target": "score-r"
+    },
+    {
+      "source": "score-r",
+      "target": "harden-inc"
+    },
+    {
+      "source": "harden-inc",
+      "target": "harden-gate"
+    },
+    {
+      "source": "harden-gate",
+      "target": "report",
+      "output": "exit"
+    },
+    {
+      "source": "harden-gate",
+      "target": "pass-mark",
+      "output": "loop",
+      "label": "back-edge: next round"
+    },
+    {
+      "source": "report",
+      "target": "finish"
+    }
+  ],
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  }
+}

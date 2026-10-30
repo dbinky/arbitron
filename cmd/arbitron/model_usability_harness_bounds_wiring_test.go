@@ -195,7 +195,12 @@ if [ "$BOUNDS_NO_NEWLINE" = 1 ]; then printf '%%s' "$result"; else printf '%%s\n
 							before := calls.Load()
 							ev, err := ds.modelRefresh.probe.Check(ctx, path, e)
 							require.NoError(t, err)
-							assert.Equal(t, n <= probeOutputLimit, ev.Confirmed(), "%s size %d evidence %+v", output, n, ev)
+							// stdout stays capped at probeOutputLimit. The codex rollout is
+							// streamed record by record under a far larger whole-file cap
+							// (31a77e98), so one byte over the stdout limit is still valid
+							// rollout evidence.
+							wantConfirmed := n <= probeOutputLimit || output == "rollout"
+							assert.Equal(t, wantConfirmed, ev.Confirmed(), "%s size %d evidence %+v", output, n, ev)
 							assert.Greater(t, calls.Load(), before, "must reach the actual launcher and parser")
 							for len(workdirs) > 0 {
 								wd := <-workdirs

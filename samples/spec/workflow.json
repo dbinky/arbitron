@@ -1,0 +1,244 @@
+{
+  "id": "3f6d2a1e-5b7c-4e08-9a41-c2d8e7b0f1a3",
+  "name": "spec",
+  "description": "Standalone product-spec stage. Checks out an existing pipeline branch, runs an interactive product-only spec interview (optionally clarified by an idea doc), writes docs/specs/<date>-<slug>-spec.md at a computed path under the slug it was given, verifies it on disk, then pushes and records the spec entry in the pipeline manifest.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "Repo to clone.",
+      "required": true
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "Existing remote branch to check out and commit the spec on.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug. Kept as given; the spec stage never re-slugs.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Recorded as the manifest's top-level base_branch when this stage's finish creates the manifest. Empty leaves it unset.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Teams webhook URL, accepted for parity with the other stages. Leave empty in the committed sample.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "idea_path",
+      "type": "string",
+      "description": "Optional path of an idea doc on the branch, read as clarification material for a product-only spec.",
+      "default": "",
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--checkout"
+        ],
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url and add a worktree at ./work on the existing remote branch.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "entrypoint": true
+    },
+    {
+      "id": "promote",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init.work_dir}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init.run_date}}"
+          },
+          {
+            "variable": "spec_target",
+            "operation": "set",
+            "value": "docs/specs/{{init.run_date}}-{{slug}}-spec.md"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift work_dir and run_date to top-level vars and compute the spec target path from the given slug.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "resolve-inputs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-read.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--explicit",
+          "idea_path",
+          "--optional",
+          "idea_path="
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Resolve inputs",
+      "description": "An explicit idea_path wins; otherwise it defaults to empty (no idea doc).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "brainstorm-spec",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/brainstorm-spec.md",
+        "orchestrationFile": "orchestration/brainstorm-spec.orch.md",
+        "model_profile": "interviewer-codex",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "spec_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "spec_path"
+          ]
+        }
+      },
+      "label": "Brainstorm: spec",
+      "description": "Interactive product-spec interview. Reads the optional idea doc as clarification material, writes ./work/{{spec_target}} and commits locally. Not on a cycle; never pushes.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "checkpoint-push-spec",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push session",
+      "description": "Pushes the approved spec session before finalize-spec, so even a misnamed spec file survives a later failure: an unpushed spec lives only in a workspace that is deleted when the run ends.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "finalize-spec",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/finalize-docs.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--message",
+          "docs: add {{slug}} product spec",
+          "{{spec_target}}"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Finalize spec",
+      "description": "Verify the spec exists at the computed target path on disk and is non-empty; commit it if still uncommitted.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "finish",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-append.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--workflow",
+          "spec",
+          "spec",
+          "done",
+          "{spec_path: .[\"finalize-spec\"].paths[0]}"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Record stage",
+      "description": "Push the branch, then commit and push the spec entry to .arbitron/pipeline/<slug>.json. Its outputs are the stage contract.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init",
+      "target": "promote"
+    },
+    {
+      "source": "promote",
+      "target": "resolve-inputs"
+    },
+    {
+      "source": "resolve-inputs",
+      "target": "brainstorm-spec"
+    },
+    {
+      "source": "brainstorm-spec",
+      "target": "checkpoint-push-spec"
+    },
+    {
+      "source": "checkpoint-push-spec",
+      "target": "finalize-spec"
+    },
+    {
+      "source": "finalize-spec",
+      "target": "finish"
+    }
+  ],
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  }
+}

@@ -138,7 +138,7 @@ func TestOrderLayers_ZeroBudgetKeepsManifestOrder(t *testing.T) {
 }
 
 func TestOrderLayers_IsDeterministic(t *testing.T) {
-	g, err := BuildGraph(loadSample(t, "feature-pipeline"))
+	g, err := BuildGraph(loadSample(t, "legacy-feature-pipeline"))
 	require.NoError(t, err)
 	a, b := layeringFor(t, g), layeringFor(t, g)
 	orderLayers(context.Background(), a, 8)
@@ -147,7 +147,7 @@ func TestOrderLayers_IsDeterministic(t *testing.T) {
 }
 
 func TestOrderLayers_NeverWorseThanInitialOnSamples(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			g, err := BuildGraph(loadSample(t, name))
 			require.NoError(t, err)
@@ -174,7 +174,7 @@ func assertLayerRanks(t *testing.T, l *layering) {
 }
 
 func TestOrderLayers_LargerBudgetIsNeverWorse(t *testing.T) {
-	g, err := BuildGraph(loadSample(t, "feature-pipeline"))
+	g, err := BuildGraph(loadSample(t, "legacy-feature-pipeline"))
 	require.NoError(t, err)
 	small, large := layeringFor(t, g), layeringFor(t, g)
 	orderLayers(context.Background(), small, 2)

@@ -345,7 +345,10 @@ func TestValidateGroupChildren_CheckerAvailabilityUsesFirstGroupEvenWithInvalidI
 // ---------- legacy regression ----------
 
 // A workflow without groups produces byte-identical findings with or without
-// the new options, and the child reader is never consulted.
+// the new options, and the child reader is never consulted for group purposes.
+// A spawn_workflow node legitimately consults it (spawn input validation), once
+// per distinct child, and adds no finding when the name checker already
+// reports the unknown child.
 func TestValidateGroupChildren_LegacyWorkflowsIdenticalWithNewOptions(t *testing.T) {
 	legacy := []*workflow.Workflow{
 		{Name: "ok", Nodes: []workflow.Node{grpEntryT("s"), grpT("x")}, Edges: []workflow.Edge{grpE("s", "x")}},
@@ -362,6 +365,10 @@ func TestValidateGroupChildren_LegacyWorkflowsIdenticalWithNewOptions(t *testing
 		after := workflow.Validate(wf, nil, nil, nil, workflow.WithWorkflowChecker(names),
 			workflow.WithChildContractReader(r), workflow.WithGroupCheckersRequired())
 		assert.Equal(t, before, after, wf.Name)
-		assert.Empty(t, r.calls, wf.Name)
+		if wf.Name == "ok" {
+			assert.Empty(t, r.calls, wf.Name)
+		} else {
+			assert.Equal(t, map[string]int{"nope": 1}, r.calls, wf.Name)
+		}
 	}
 }

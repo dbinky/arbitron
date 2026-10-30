@@ -32,6 +32,7 @@ func recordingResolverScript(argvLog string) string {
 // "resolver", the autonomous turn used the live model, and the first human
 // message failed with ErrPinUnavailable.
 func TestGroupFilesE2E_ResolverTurnsRunTheTriggerTimeModel(t *testing.T) {
+	t.Parallel()
 	paths := writeFilesStack(t, nil)
 	argvLog := filepath.Join(paths.root, "resolver-argv.log")
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(recordingResolverScript(argvLog)), 0o700))

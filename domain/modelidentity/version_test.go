@@ -216,3 +216,73 @@ func TestVersionRefusalNamesAcceptedSpelling(t *testing.T) {
 		assert.Contains(t, err.Error(), c.want, name)
 	}
 }
+
+// A pi profile with no connection names its vendor in the model prefix
+// ("openai-codex/gpt-6.1-sol"). The resolver arrives either with the
+// no-connection stamp "claude-cli" (live route, path inventory) or with no route
+// provider at all (trigger-time request), and must apply the prefixed vendor's
+// grammar rather than the Claude subscription one.
+func TestVersionPiSubscriptionPrefixedModels(t *testing.T) {
+	r := modelidentity.NewVersionResolver()
+	ok := []string{
+		"openai-codex/gpt-6.1-sol",
+		"openai-codex/gpt-5-astra",
+		"openai-codex/gpt-4.1-2025-04-14",
+	}
+	for _, stamp := range []string{"claude-cli", ""} {
+		for _, model := range ok {
+			t.Run(stamp+"/"+model, func(t *testing.T) {
+				got, err := r.SpecificVersion(context.Background(), modelidentity.VersionRequest{Model: model, RouteProvider: stamp, Backend: "pi"})
+				require.NoError(t, err)
+				assert.Equal(t, model, got, "the spelling pi routes on is preserved")
+			})
+		}
+	}
+	got, err := r.SpecificVersion(context.Background(), modelidentity.VersionRequest{Model: "openai-codex/gpt-6.1-sol", RouteProvider: "claude-cli", Backend: "PI"})
+	require.NoError(t, err, "backend matching is case-insensitive like every other route")
+	assert.Equal(t, "openai-codex/gpt-6.1-sol", got)
+}
+
+func TestVersionPiSubscriptionFailsClosed(t *testing.T) {
+	r := modelidentity.NewVersionResolver()
+	for name, model := range map[string]string{
+		"codex mutable alias":         "openai-codex/gpt-6-latest",
+		"codex numeric alias":         "openai-codex/gpt-6.1",
+		"anthropic claude sonnet":     "anthropic/claude-sonnet-5-5",
+		"anthropic claude haiku":      "anthropic/claude-haiku-4-5-20251001",
+		"anthropic claude opus 1m":    "anthropic/claude-opus-4-6[1m]",
+		"claude tier alias":           "anthropic/sonnet",
+		"claude shorthand":            "anthropic/sonnet-4.5",
+		"claude on codex prefix":      "openai-codex/claude-opus-5-5",
+		"gpt on anthropic prefix":     "anthropic/gpt-6.1-sol",
+		"unknown vendor prefix":       "google/gemini-3-pro",
+		"key-based openai prefix":     "openai/gpt-6.1-sol",
+		"no prefix":                   "gpt-6.1-sol",
+		"bare claude id":              "claude-sonnet-5-5",
+		"repeated prefix":             "openai-codex/openai-codex/gpt-6.1-sol",
+		"empty prefix":                "/gpt-6.1-sol",
+		"empty model after prefix":    "openai-codex/",
+		"prefix case differs":         "OpenAI-Codex/gpt-6.1-sol",
+		"whitespace around separator": "openai-codex/ gpt-6.1-sol",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := r.SpecificVersion(context.Background(), modelidentity.VersionRequest{Model: model, RouteProvider: "claude-cli", Backend: "pi"})
+			require.ErrorIs(t, err, modelidentity.ErrSpecificVersionUnavailable)
+			assert.Contains(t, err.Error(), "backend pi", "the refusal names the pi route, not the Claude subscription")
+			assert.NotContains(t, err.Error(), "provider claude-cli")
+			assert.Contains(t, err.Error(), "openai-codex/gpt-N[.N]-{sol,astra,luna,terra}")
+			assert.NotContains(t, err.Error(), "anthropic/claude-{", "pi rejects the anthropic prefix at exec time, so it is not offered as an accepted spelling")
+		})
+	}
+}
+
+// A pi profile WITH a connection keeps the connection's grammar: the prefix
+// fallback is only for the no-connection path.
+func TestVersionPiConnectionRouteUnchanged(t *testing.T) {
+	r := modelidentity.NewVersionResolver()
+	_, err := r.SpecificVersion(context.Background(), modelidentity.VersionRequest{Model: "openai-codex/gpt-6.1-sol", RouteProvider: "openai", ConnectionRef: "o", Backend: "pi"})
+	require.ErrorIs(t, err, modelidentity.ErrSpecificVersionUnavailable, "an openai connection does not accept pi's openai-codex prefix")
+	got, err := r.SpecificVersion(context.Background(), modelidentity.VersionRequest{Model: "claude-sonnet-4-5", RouteProvider: "anthropic-api", ConnectionRef: "a", Backend: "pi"})
+	require.NoError(t, err)
+	assert.Equal(t, "claude-sonnet-4-5", got)
+}

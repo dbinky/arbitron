@@ -1,4 +1,4 @@
-.PHONY: ui check-ui-fresh build test test-go-fresh-ui test-ui test-all test-gate test-render test-dashboard-browser test-font-portability dist samples-tarball install-samples release clean-dist test-release test-install
+.PHONY: ui check-ui-fresh build test test-go-fresh-ui test-ui test-all test-gate test-render test-dashboard-browser test-font-portability test-scripts dist samples-tarball install-samples release clean-dist test-release test-install
 
 # Release version/build metadata. VERSION defaults to the current git tag with a
 # leading "v" stripped (tag v1.2.3 -> 1.2.3), falling back to the short SHA when
@@ -74,7 +74,15 @@ test-ui: $(DASHBOARD_DEPS)
 # job when its inputs change; together they are exactly test-all.
 test-all: test-gate test-font-portability
 
-test-gate: check-ui-fresh test-go-fresh-ui test-ui test-render test-dashboard-browser
+test-gate: check-ui-fresh test-go-fresh-ui test-ui test-scripts test-render test-dashboard-browser
+
+# Workflow script tests: shellcheck every listed script (SCRIPT_LINT; each task
+# appends its new or changed scripts), bats for *_test.bats, sh for *_test.sh.
+SCRIPT_LINT := $(addprefix samples/feature-pipeline/scripts/,intake.sh intake-check.sh adopt-ideate.sh halt.sh) samples/_lib/checkpoint-push.sh samples/_lib/notify-teams.sh samples/_lib/init-workspace.sh samples/_lib/pass-mark.sh samples/_lib/finalize-docs.sh samples/_lib/manifest-read.sh samples/_lib/manifest-append.sh samples/_lib/tamper-gate.sh samples/_lib/tamper-verdict.sh samples/_lib/commit-leftovers.sh samples/_lib/clear-owned-docs.sh samples/ideate/scripts/finalize-ideate.sh samples/plan/scripts/deps-count.sh samples/plan/scripts/list-plans.sh $(addprefix samples/implement/scripts/,count-plan-steps.sh baseline-check.sh persist-baseline.sh import-baseline.sh record-baseline.sh) $(addprefix samples/ralph-loop/scripts/,init-workspace.sh derive-scope.sh record-baseline.sh import-baseline.sh push-and-pr.sh record-pass-commit.sh verify-ralph-seed.sh) $(addprefix samples/harden/scripts/,scope.sh detect.sh mutate.sh mutate-go.sh mutate-csharp.sh sandbox.sh mutate-js.sh mutate-python.sh mutate-java.sh mutate-rust.sh score.sh equivalence.sh report.sh clean-check.sh state-guard.sh)
+test-scripts:
+	shellcheck $(SCRIPT_LINT)
+	bats $(shell find samples -name '*_test.bats')
+	@set -e; for t in $(wildcard samples/_lib/*_test.sh samples/*/scripts/*_test.sh); do echo "== $$t"; sh $$t; done
 
 # Browser-only dashboard scripts: shared font classes, wrap widths and per-graph
 # marker namespaces in real Chrome. A missing browser is a failure, not a skip.
@@ -117,7 +125,7 @@ samples-tarball:
 DEST ?= $(HOME)/.arbitron/samples
 install-samples:
 	@mkdir -p $(DEST)
-	cp -R samples/pr-review samples/feature-pipeline $(DEST)/
+	for d in samples/*/; do cp -R "$${d%/}" $(DEST)/; done
 	@echo "installed samples into $(DEST)"
 
 # Cross-compile the 4 release binaries named arbitron_<version>_<os>_<arch>

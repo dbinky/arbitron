@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
@@ -64,6 +65,25 @@ func TestWorkflowManifestHint_DocumentsParallelGroups(t *testing.T) {
 		assert.Contains(t, adaptmcp.WorkflowManifestHint, want)
 	}
 	assert.Contains(t, adaptmcp.WorkflowManifestHint, "gitVariable", "the original conventions hint is kept")
+}
+
+func TestWorkflowManifestHint_DocumentsLibrary(t *testing.T) {
+	for _, want := range []string{
+		"@lib/", `name "@lib"`, "scope", `"shared"`, "lib root", "private then shared", "scriptFile", "orchestrationFile",
+	} {
+		assert.Contains(t, adaptmcp.WorkflowManifestHint, want)
+	}
+}
+
+func TestWorkflowManifestHint_DocumentsSpawnInputs(t *testing.T) {
+	assert.Equal(t, 0, strings.Count(adaptmcp.ParallelGroupGuidance, "spawn_workflow"), "spawn guidance is its own const, not parallel-group prose")
+	for _, want := range []string{
+		"spawn_workflow", "config.inputs", "Mapped inputs win", "fails closed", "fully mapped",
+		"no model_profile", "never LLM-filled", "inputSources",
+	} {
+		assert.Contains(t, adaptmcp.SpawnInputsGuidance, want)
+		assert.Contains(t, adaptmcp.WorkflowManifestHint, want)
+	}
 }
 
 // guidanceChildren is the child contract the example's workflows group targets.

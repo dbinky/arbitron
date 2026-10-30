@@ -255,6 +255,37 @@ func TestModelSnapshotter_ActualRoutes(t *testing.T) {
 	}
 }
 
+// The live coder-pi-sol-high shape: backend pi, no connection, the vendor named
+// in pi's model prefix. Pinning must use the prefixed vendor's grammar.
+func TestModelSnapshotter_PiSubscriptionProfile(t *testing.T) {
+	for _, tc := range []struct {
+		model   string
+		wantErr bool
+	}{
+		{"openai-codex/gpt-6.1-sol", false},
+		{"anthropic/claude-sonnet-5-5", true},
+		{"openai-codex/gpt-6-latest", true},
+		{"google/gemini-3-pro", true},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			f := newInvFixture()
+			p := provider.Profile{Alias: "coder-pi-sol-high", Kind: provider.ProfileKindAgent, Backend: workflow.BackendPi, Model: tc.model}
+			cache := adapterprovider.NewProfileCacheFromProfiles(p)
+			snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t))
+			wf := &workflow.Workflow{Nodes: []workflow.Node{{ID: "implement", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{ModelProfile: p.Alias}}}}
+			got, err := snap.SnapshotModels(context.Background(), []string{p.Alias}, wf)
+			if tc.wantErr {
+				require.ErrorIs(t, err, provider.ErrSpecificVersionUnavailable)
+				assert.Contains(t, err.Error(), "backend pi")
+				assert.Empty(t, got.Models)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{p.Alias: tc.model}, got.Models)
+		})
+	}
+}
+
 func TestModelSnapshotter_UnrelatedReadFaultDoesNotStopSnapshot(t *testing.T) {
 	f := newInvFixture()
 	boom := errors.New("workflow read fault")

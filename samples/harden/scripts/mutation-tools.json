@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "language": "go",
+      "tool": "gremlins",
+      "tested_version": "0.6.0",
+      "probe": "gremlins --version",
+      "install_hint": "go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0",
+      "markers": ["go.mod"],
+      "source_ext": [".go"],
+      "diff_scoping": {
+        "mode": "native",
+        "how": "gremlins unleash --diff <branch-or-commit>; files outside the diff are reported SKIPPED (verified). Run from the module root."
+      },
+      "report": {
+        "format": "gremlins-json",
+        "path": "file given by -o <file>; files[].mutations[] = {type,status,line,column}; status is KILLED|LIVED|NOT COVERED|TIMED OUT|NOT VIABLE|SKIPPED; no replacement text"
+      },
+      "default_test_command": "go test ./...",
+      "test_command_injection": "none: gremlins always runs 'go test'; only --tags, --integration (full suite per mutant) and --coverpkg shape it"
+    },
+    {
+      "language": "csharp",
+      "tool": "Stryker.NET",
+      "tested_version": "5.0.0",
+      "probe": "{ dotnet-stryker --help >/dev/null || dotnet stryker --help >/dev/null; } && { dotnet tool list -g | grep -i dotnet-stryker || dotnet tool list | grep -i dotnet-stryker || true; }",
+      "install_hint": "dotnet tool install -g dotnet-stryker --version 5.0.0",
+      "markers": ["*.sln", "*.slnx", "*.csproj"],
+      "source_ext": [".cs"],
+      "diff_scoping": {
+        "mode": "native",
+        "how": "dotnet-stryker --since:<branch|tag|full-or-short-sha>; HEAD~N is rejected, so resolve it with git rev-parse first (verified). Run from the test project directory, or pass --test-project and --solution."
+      },
+      "report": {
+        "format": "mutation-testing-elements-json",
+        "path": "<output>/reports/mutation-report.json via --reporter json and --output <dir>; files{path}.mutants[] = {id,mutatorName,replacement,status,location}; status is Killed|Survived|NoCoverage|Timeout|Ignored|CompileError"
+      },
+      "default_test_command": "dotnet test",
+      "test_command_injection": "none: Stryker.NET drives 'dotnet test' itself; narrow with --test-case-filter"
+    },
+    {
+      "language": "js",
+      "tool": "StrykerJS",
+      "tested_version": "10.1.1",
+      "probe": "npx --no-install stryker --version || stryker --version",
+      "install_hint": "npm install --save-dev --save-exact @stryker-mutator/core@10.1.1 (or into a temp dir and run its node_modules/.bin/stryker); commit the lockfile so every checkout resolves the same version",
+      "markers": ["package.json"],
+      "source_ext": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"],
+      "diff_scoping": {
+        "mode": "target-list",
+        "how": "No native diff mode. Pass the changed files as mutate: [...] in a config file kept outside the worktree (stryker run <config>), or --mutate a.js,b.js; a file:START-END line range is accepted (verified with mutate)."
+      },
+      "report": {
+        "format": "mutation-testing-elements-json",
+        "path": "jsonReporter.fileName in the config (default reports/mutation/mutation.json); files{path}.mutants[] = {mutatorName,replacement,status,location}; status is Killed|Survived|NoCoverage|Timeout|CompileError|RuntimeError"
+      },
+      "default_test_command": "npm test",
+      "test_command_injection": "config: {\"testRunner\":\"command\",\"commandRunner\":{\"command\":\"<cmd>\"},\"coverageAnalysis\":\"off\"}, or --testRunner command --commandRunner.command \"<cmd>\" (verified); set tempDirName outside the worktree"
+    },
+    {
+      "language": "python",
+      "tool": "mutmut",
+      "tested_version": "3.8.0",
+      "probe": "mutmut --version || pipx list --short | grep '^mutmut' || python3 -m mutmut --version",
+      "install_hint": "pipx install mutmut==3.8.0",
+      "markers": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
+      "source_ext": [".py"],
+      "diff_scoping": {
+        "mode": "target-list",
+        "how": "No diff mode. mutmut reads only ./pyproject.toml [tool.mutmut] or ./setup.cfg [mutmut] from its cwd, so run it in a copy of the tree under the harden workspace with a generated setup.cfg: source_paths=<pkg dir>, only_mutate=<changed files> (verified). Source must import as a top-level package (a 'src.' module prefix asserts)."
+      },
+      "report": {
+        "format": "mutmut-meta-json",
+        "path": "<run dir>/mutants/<pkg>/<module>.py.meta: exit_code_by_key{<mutant key>: 0 survived | non-zero killed or timed out (0 and 1 verified)}; 'mutmut show <key>' prints the mutation diff; 'mutmut export-cicd-stats' writes only counts to mutants/mutmut-cicd-stats.json"
+      },
+      "default_test_command": "pytest",
+      "test_command_injection": "pytest only: extra pytest arguments via pytest_add_cli_args / pytest_add_cli_args_test_selection in the generated config; no arbitrary command"
+    },
+    {
+      "language": "java",
+      "tool": "PIT",
+      "tested_version": "1.30.1",
+      "version_source": "pinned",
+      "probe": "mvn -v",
+      "install_hint": "brew install maven (JDK required); mvn runs org.pitest:pitest-maven:1.30.1:mutationCoverage; JUnit 5 also needs pitest-junit5-plugin 1.2.2 declared in the pom",
+      "markers": ["pom.xml"],
+      "source_ext": [".java"],
+      "diff_scoping": {
+        "mode": "target-list",
+        "how": "No free diff mode (SCM scoping is the paid arcmutate extension). Map changed src/main/java files to fully qualified classes and pass -DtargetClasses=a.B,c.D (verified, Maven). Maven only: projects without a pom.xml are skipped."
+      },
+      "report": {
+        "format": "pit-xml",
+        "path": "-DoutputFormats=XML -DreportsDirectory=<dir> -DtimestampedReports=false gives <dir>/mutations.xml; <mutation status=KILLED|SURVIVED|NO_COVERAGE|TIMED_OUT> carries sourceFile, mutatedClass, mutatedMethod, lineNumber, mutator, description"
+      },
+      "default_test_command": {
+        "pom.xml": "mvn test"
+      },
+      "test_command_injection": "none: PIT runs Maven's configured test framework; narrow with -DtargetTests, -DexcludedClasses, -DexcludedGroups"
+    },
+    {
+      "language": "rust",
+      "tool": "cargo-mutants",
+      "tested_version": "26.0.0",
+      "probe": "cargo mutants --version",
+      "install_hint": "cargo install cargo-mutants --locked --version 26.0.0 (27.x needs rustc 1.88+; 26.0.0 builds on rustc 1.78+)",
+      "markers": ["Cargo.toml"],
+      "source_ext": [".rs"],
+      "diff_scoping": {
+        "mode": "native",
+        "how": "git diff <base> > <file>; cargo mutants --in-diff <file> (verified: 13 mutants reduced to 7). --file <path> is the target-list fallback."
+      },
+      "report": {
+        "format": "cargo-mutants-json",
+        "path": "<--output dir>/mutants.out/outcomes.json: outcomes[] = {scenario.Mutant{file,function,span,replacement,genre}, summary CaughtMutant|MissedMutant|Unviable|Timeout}; the baseline is a scenario 'Baseline' entry; missed.txt lists survivors"
+      },
+      "default_test_command": "cargo test",
+      "test_command_injection": "--cargo-test-arg <arg> (repeatable) and --test-tool cargo|nextest; extra args after -- go to the test binary"
+    }
+  ]
+}

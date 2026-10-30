@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -196,5 +197,36 @@ func TestMigrateFlatStore_NeverStampsOrJournals(t *testing.T) {
 	require.NotContains(t, string(after), "presentation")
 	for _, dir := range []string{".arbitron-layout-journal", ".arbitron-tree-commits"} {
 		require.NoDirExists(t, filepath.Join(base, dir), "migration must not create %s", dir)
+	}
+}
+
+func TestFlatStoreMigrate_LeavesLibFolder(t *testing.T) {
+	base := t.TempDir()
+	flatWorkflow(t, base, "_lib")
+	flatWorkflow(t, base, "alpha")
+
+	require.NoError(t, migrateFlatStore(base, fsDefaultUser))
+
+	_, err := os.Stat(filepath.Join(base, "_lib", "workflow.json"))
+	require.NoError(t, err, "_lib must stay at the workspace root")
+	_, err = os.Stat(filepath.Join(base, "users", fsDefaultUser.String(), "_lib"))
+	assert.True(t, os.IsNotExist(err), "_lib must not be moved into a user scope")
+	_, err = os.Stat(filepath.Join(base, "users", fsDefaultUser.String(), "alpha", "workflow.json"))
+	require.NoError(t, err, "ordinary workflows still migrate")
+}
+
+func TestFlatStoreMigrate_LeavesLibFolderCaseInsensitively(t *testing.T) {
+	base := t.TempDir()
+	flatWorkflow(t, base, "_Lib")
+	flatWorkflow(t, base, "alpha")
+
+	require.NoError(t, migrateFlatStore(base, fsDefaultUser))
+
+	_, err := os.Stat(filepath.Join(base, "_Lib", "workflow.json"))
+	require.NoError(t, err, "_Lib must stay at the workspace root")
+	entries, err := os.ReadDir(filepath.Join(base, "users", fsDefaultUser.String()))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotEqual(t, "_lib", strings.ToLower(e.Name()), "no _lib spelling may move into a user scope")
 	}
 }

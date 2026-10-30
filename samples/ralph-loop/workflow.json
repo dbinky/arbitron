@@ -1,7 +1,7 @@
 {
   "id": "71fce817-b51f-4c46-b77f-353d34295c7a",
   "name": "ralph-loop",
-  "description": "Ralph refinement loop with role-routed, cross-family model pairs. A seeder writes a behaviour-sliced review plan (an area is one promise traced from entry point to sink; a seam is one row reviewed in both directions) and a critic on another model family applies the merge test and the seam test before the loop starts. Phase 1 works single-system areas interleaved by risk: review 1 is the wiring lens (does the path exist and is it fed?), review 2 the failure lens (how does it fail?), each refined by one family and assessed by another. Phase 2 works the paired seam table. Seeded plans must fit their pass budget, test runs are scoped to the diff, every in-loop commit carries [skip ci] with exactly one CI run on the finished branch, and a run interrupted by a quota wall resumes on the same branch with every earned approval intact.",
+  "description": "Ralph refinement loop with role-routed, cross-family model pairs. A seeder writes a behaviour-sliced review plan (an area is one promise traced from entry point to sink; a seam is one row reviewed in both directions) and a critic on another model family applies the merge test and the seam test before the loop starts. Phase 1 works single-system areas interleaved by risk: review 1 is the wiring lens (does the path exist and is it fed?), review 2 the failure lens (how does it fail?), each refined by one family and assessed by another. Phase 2 works the paired seam table. Seeded plans must fit their pass budget, test runs are scoped to the diff, every in-loop commit carries [skip ci] with exactly one CI run on the finished branch, and a run interrupted by a quota wall resumes on the same branch with every earned approval intact. Every pass then crosses a deterministic tamper gate; judgeable findings go to a judge on the family opposite the pass's doer, and a voided pass is reverted and scored as no progress.",
   "author": "arbitron",
   "defaultErrorBehavior": {
     "type": "retry",
@@ -83,6 +83,27 @@
       "type": "number",
       "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged — a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
       "default": 12,
+      "required": false
+    },
+    {
+      "name": "in_place",
+      "type": "boolean",
+      "description": "Refine base_branch itself instead of cutting a dev-* work branch, and open the PR into pr_base. Requires a pr_base that differs from base_branch, or no PR could be opened.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "focus_seed",
+      "type": "string",
+      "description": "Worktree-relative path to a survivors file from a harden stage. When set, the seeder and the re-plan critic make every focus_items id a named area (the verifier fails the plan if one is missing) and the PR carries a harden-shortfall note. Empty means no seed.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "baseline_path",
+      "type": "string",
+      "description": "Worktree-relative path to a committed branch-point test baseline. When set (and present at the tip of base_branch), the run imports it instead of measuring one with baseline-tests. Empty measures as before.",
+      "default": "",
       "required": false
     },
     {
@@ -220,6 +241,45 @@
       }
     },
     {
+      "id": "baseline-source?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "init-workspace.baseline_present",
+            "operator": "eq",
+            "value": true,
+            "output": "import"
+          }
+        ],
+        "defaultOutput": "measure"
+      },
+      "label": "Import or measure baseline?",
+      "description": "A run given baseline_path (confirmed present at the tip by init-workspace) imports that committed baseline instead of spending an agent pass measuring one. Otherwise baseline-tests measures it as before.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 840
+      }
+    },
+    {
+      "id": "import-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/import-baseline.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 60
+      },
+      "label": "Import committed baseline",
+      "description": "Validates the record-baseline shape of ./work/\u003cbaseline_path\u003e and copies it to {{workspace}}/test-baseline.json, where record-baseline lifts it into variables exactly as it would a measured one. Fails the run on an unusable file: an explicitly named baseline that cannot be used is an input error.",
+      "errorBehavior": {},
+      "position": {
+        "x": -840,
+        "y": 980
+      }
+    },
+    {
       "id": "baseline-tests",
       "type": "agent_call",
       "config": {
@@ -232,7 +292,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 840
+        "y": 980
       }
     },
     {
@@ -248,7 +308,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 980
+        "y": 1120
       }
     },
     {
@@ -264,7 +324,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 1120
+        "y": 1260
       }
     },
     {
@@ -282,15 +342,16 @@
       },
       "position": {
         "x": -420,
-        "y": 1260
+        "y": 1400
       }
     },
     {
       "id": "checkpoint-push-seed",
       "type": "script",
       "config": {
-        "scriptFile": "scripts/checkpoint-push.sh",
+        "scriptFile": "@lib/checkpoint-push.sh",
         "interpreter": "/bin/sh",
+        "args": [],
         "timeoutSeconds": 120
       },
       "label": "Checkpoint: push seed",
@@ -298,7 +359,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 1400
+        "y": 1540
       }
     },
     {
@@ -361,8 +422,9 @@
       "id": "checkpoint-push-replan",
       "type": "script",
       "config": {
-        "scriptFile": "scripts/checkpoint-push.sh",
+        "scriptFile": "@lib/checkpoint-push.sh",
         "interpreter": "/bin/sh",
+        "args": [],
         "timeoutSeconds": 120
       },
       "label": "Checkpoint: push re-plan",
@@ -398,11 +460,28 @@
         "timeoutSeconds": 60
       },
       "label": "Record baseline vars",
-      "description": "Lift the baseline into test_baseline / test_commands / baseline_summary vars.",
+      "description": "Lift the baseline into test_baseline / test_commands / baseline_summary vars, and commit it as docs/reference/test-baseline.json (only when it changed) so checkpoint-push-baseline publishes it before the first pass-mark (R3).",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1540
+        "y": 1680
+      }
+    },
+    {
+      "id": "checkpoint-push-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push baseline",
+      "description": "Pushes the committed branch-point baseline before the first pass-mark (R3). Every tamper-gated range starts after this commit, so the baseline file can never read as baseline_edited, and a pass that does edit it is caught.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1820
       }
     },
     {
@@ -418,7 +497,24 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1680
+        "y": 1960
+      }
+    },
+    {
+      "id": "pass-mark",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/pass-mark.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 30
+      },
+      "label": "Mark pass start",
+      "description": "Records HEAD at the start of this pass (the tamper gate's base) and a fresh pass_id nonce. pass_id, never the sha, is what ties a void to this pass: a reset-void returns HEAD to the same sha, so a sha cannot tell this pass's void from the last one's (P8).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2100
       }
     },
     {
@@ -452,7 +548,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1820
+        "y": 2240
       }
     },
     {
@@ -471,8 +567,8 @@
         "retryDelaySeconds": 600
       },
       "position": {
-        "x": -700,
-        "y": 1960
+        "x": -420,
+        "y": 2380
       }
     },
     {
@@ -487,8 +583,8 @@
       "description": "Runs only the suites the pass's diff touched; skips entirely on an inspection-only pass; full sweep every 10th pass or on an unmapped path.",
       "errorBehavior": {},
       "position": {
-        "x": -700,
-        "y": 2100
+        "x": -420,
+        "y": 2520
       }
     },
     {
@@ -507,8 +603,8 @@
         "retryDelaySeconds": 600
       },
       "position": {
-        "x": -700,
-        "y": 2240
+        "x": -420,
+        "y": 2660
       }
     },
     {
@@ -528,7 +624,7 @@
       },
       "position": {
         "x": 0,
-        "y": 1960
+        "y": 2380
       }
     },
     {
@@ -544,7 +640,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2100
+        "y": 2520
       }
     },
     {
@@ -564,7 +660,7 @@
       },
       "position": {
         "x": 0,
-        "y": 2240
+        "y": 2660
       }
     },
     {
@@ -583,8 +679,8 @@
         "retryDelaySeconds": 600
       },
       "position": {
-        "x": 700,
-        "y": 1960
+        "x": 420,
+        "y": 2380
       }
     },
     {
@@ -599,8 +695,8 @@
       "description": "Runs only the suites the pass's diff touched; skips entirely on an inspection-only pass; full sweep every 10th pass or on an unmapped path.",
       "errorBehavior": {},
       "position": {
-        "x": 700,
-        "y": 2100
+        "x": 420,
+        "y": 2520
       }
     },
     {
@@ -619,8 +715,181 @@
         "retryDelaySeconds": 600
       },
       "position": {
-        "x": 700,
-        "y": 2240
+        "x": 420,
+        "y": 2660
+      }
+    },
+    {
+      "id": "tamper-gate",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-gate.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "HEAD"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Tamper gate",
+      "description": "Deterministic check of the whole pass (refine plus assess commits) for weakened tests: deleted or renamed tests, dropped assertions, added skip/focus markers, test/mutation/CI config edits, baseline edits, and history rewritten inside the pass. Writes {{workspace}}/tamper/findings.json. Exit 2 means bad inputs only.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2800
+      }
+    },
+    {
+      "id": "tamper-route",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "tamper-gate.force_void",
+            "operator": "eq",
+            "value": true,
+            "output": "void"
+          },
+          {
+            "field": "tamper-gate.needs_judge",
+            "operator": "eq",
+            "value": true,
+            "output": "judge"
+          }
+        ],
+        "defaultOutput": "clean"
+      },
+      "label": "Void, judge or pass?",
+      "description": "First-match, so the deterministic void comes first (R4): force_void (history rewritten inside the pass; ralph does not pass --tests-only, so source_changed never fires) cannot be judged because the diff is meaningless, and must win even when judgeable findings also exist. Judgeable findings go to a cross-family judge. A clean pass goes straight to record-pass-commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2940
+      }
+    },
+    {
+      "id": "tamper-void",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--force-void",
+          "--restore",
+          "docs/reference/focus-areas.md",
+          "--restore",
+          "docs/reference/paired-reviews.md",
+          "--gaps-file",
+          "docs/reference/gaps-identified.md"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Void pass (forced)",
+      "description": "Forced void without a judge: resets the worktree to the pass base, restores the tracking tables so no box ticked this pass survives, and records the must-fix items in gaps-identified.md. record-pass-commit then scores the pass as no progress.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 3080
+      }
+    },
+    {
+      "id": "tamper-context",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "tamper_context",
+            "operation": "set",
+            "value": "ralph pass {{ralph_iteration}}: {{select-work.next_kind}} on {{select-work.target_id}} ({{select-work.target_label}}); tracking in ./work/RALPH.md and ./work/docs/reference/"
+          }
+        ]
+      },
+      "label": "Judge context",
+      "description": "Tells the judge what this pass was supposed to do, so it can rule each finding against the plan rather than against the diff alone.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3080
+      }
+    },
+    {
+      "id": "judge-pick",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "single_2",
+            "output": "opus"
+          }
+        ],
+        "defaultOutput": "codex"
+      },
+      "label": "Pick cross-family judge",
+      "description": "The judge is the opposite family to the pass's doer (Q7). Doers: refine-single-1 is Sonnet (Claude), refine-single-2 is coder-codex-high (GPT), refine-paired is Opus (Claude). So only single_2 gets the Opus judge; everything else gets codex.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3220
+      }
+    },
+    {
+      "id": "tamper-judge-codex",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "@lib/tamper-judge.md",
+        "model_profile": "approver-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Tamper judge (codex)",
+      "description": "GPT-family judge for passes done by a Claude doer (single_1, paired). Rules on every finding id and writes only {{workspace}}/tamper/verdict.json.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 3360
+      }
+    },
+    {
+      "id": "tamper-judge-opus",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "@lib/tamper-judge.md",
+        "model_profile": "approver-opus-medium",
+        "timeoutSeconds": 1800
+      },
+      "label": "Tamper judge (opus)",
+      "description": "Claude-family judge for passes done by the GPT doer (single_2). Rules on every finding id and writes only {{workspace}}/tamper/verdict.json.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 3360
+      }
+    },
+    {
+      "id": "tamper-verdict",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--restore",
+          "docs/reference/focus-areas.md",
+          "--restore",
+          "docs/reference/paired-reviews.md",
+          "--gaps-file",
+          "docs/reference/gaps-identified.md"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Apply tamper verdict",
+      "description": "Applies the judge's verdict, failing closed: a missing or malformed verdict, an unruled finding, or any legitimate:false voids the pass by restoring the weakened test/config/CI/baseline files and the tracking tables, appending must-fix items to gaps-identified.md and writing {{workspace}}/tamper/must-fix.md for the next pass. A pass that stands is left as is.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3500
       }
     },
     {
@@ -636,7 +905,24 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2380
+        "y": 3640
+      }
+    },
+    {
+      "id": "checkpoint-push-pass",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push pass",
+      "description": "Pushes the pass once the tamper gate has ruled, including tamper-verdict's revert commit. The doers and approvers commit only, so a run that dies mid-pass never leaves an ungated pass on the branch. Agent commits carry [skip ci]; push-and-pr makes the one CI commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3780
       }
     },
     {
@@ -652,7 +938,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2520
+        "y": 3920
       }
     },
     {
@@ -690,7 +976,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2660
+        "y": 4060
       }
     },
     {
@@ -715,7 +1001,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2800
+        "y": 4200
       }
     },
     {
@@ -749,7 +1035,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2940
+        "y": 4340
       }
     },
     {
@@ -765,7 +1051,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3080
+        "y": 4480
       }
     },
     {
@@ -784,14 +1070,14 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3220
+        "y": 4620
       }
     },
     {
       "id": "notify-teams",
       "type": "script",
       "config": {
-        "scriptFile": "scripts/notify-teams.sh",
+        "scriptFile": "@lib/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
           "ralph-loop complete — {{slug}}",
@@ -812,7 +1098,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3360
+        "y": 4760
       }
     },
     {
@@ -832,7 +1118,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3500
+        "y": 4900
       }
     }
   ],
@@ -888,7 +1174,22 @@
     },
     {
       "source": "archive-ralph",
-      "target": "baseline-tests"
+      "target": "baseline-source?"
+    },
+    {
+      "source": "baseline-source?",
+      "target": "import-baseline",
+      "output": "import",
+      "label": "committed baseline"
+    },
+    {
+      "source": "baseline-source?",
+      "target": "baseline-tests",
+      "output": "measure"
+    },
+    {
+      "source": "import-baseline",
+      "target": "seed-ralph"
     },
     {
       "source": "baseline-tests",
@@ -916,10 +1217,18 @@
     },
     {
       "source": "record-baseline",
+      "target": "checkpoint-push-baseline"
+    },
+    {
+      "source": "checkpoint-push-baseline",
       "target": "select-work"
     },
     {
       "source": "select-work",
+      "target": "pass-mark"
+    },
+    {
+      "source": "pass-mark",
       "target": "work-router"
     },
     {
@@ -943,7 +1252,7 @@
     },
     {
       "source": "assess-single-1",
-      "target": "record-pass-commit"
+      "target": "tamper-gate"
     },
     {
       "source": "work-router",
@@ -960,7 +1269,7 @@
     },
     {
       "source": "assess-single-2",
-      "target": "record-pass-commit"
+      "target": "tamper-gate"
     },
     {
       "source": "work-router",
@@ -977,10 +1286,66 @@
     },
     {
       "source": "assess-paired",
+      "target": "tamper-gate"
+    },
+    {
+      "source": "tamper-gate",
+      "target": "tamper-route"
+    },
+    {
+      "source": "tamper-route",
+      "target": "tamper-void",
+      "output": "void",
+      "label": "forced void"
+    },
+    {
+      "source": "tamper-route",
+      "target": "tamper-context",
+      "output": "judge"
+    },
+    {
+      "source": "tamper-route",
+      "target": "record-pass-commit",
+      "output": "clean"
+    },
+    {
+      "source": "tamper-void",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "tamper-context",
+      "target": "judge-pick"
+    },
+    {
+      "source": "judge-pick",
+      "target": "tamper-judge-opus",
+      "output": "opus",
+      "label": "GPT doer"
+    },
+    {
+      "source": "judge-pick",
+      "target": "tamper-judge-codex",
+      "output": "codex",
+      "label": "Claude doer"
+    },
+    {
+      "source": "tamper-judge-codex",
+      "target": "tamper-verdict"
+    },
+    {
+      "source": "tamper-judge-opus",
+      "target": "tamper-verdict"
+    },
+    {
+      "source": "tamper-verdict",
       "target": "record-pass-commit"
     },
     {
       "source": "record-pass-commit",
+      "target": "checkpoint-push-pass"
+    },
+    {
+      "source": "checkpoint-push-pass",
       "target": "count-review-plan"
     },
     {

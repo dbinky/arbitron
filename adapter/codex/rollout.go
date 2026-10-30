@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -12,9 +13,16 @@ import (
 	"strings"
 )
 
-// maxRolloutBytes bounds the whole evidence file, including tool output and
-// line delimiters. Oversized rollouts are refused, never partially trusted.
-const maxRolloutBytes = 1 << 20
+const (
+	// maxRolloutBytes bounds the whole evidence file, including tool output and
+	// line delimiters. Long agent runs write rollouts of several MB, so the cap
+	// only guards against a runaway or growing file. Oversized rollouts are
+	// refused, never partially trusted.
+	maxRolloutBytes = 256 << 20
+	// maxRolloutRecordBytes bounds one JSONL record, excluding its newline, so
+	// a single giant tool output cannot exhaust memory.
+	maxRolloutRecordBytes = 16 << 20
+)
 
 // ErrModelEvidence marks a pinned Codex turn whose rollout evidence is missing,
 // from another session, from an earlier turn, or names another model. The turn
@@ -77,56 +85,95 @@ func findRollout(home, threadID string) (string, error) {
 }
 
 // readRollout collects the session_meta id and the model of each turn_context.
-// Read at most the limit plus one byte before decoding anything, so a growing
-// file cannot bypass the cap and a refused file never supplies partial evidence.
 func readRollout(path string) (rolloutEvidence, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return rolloutEvidence{}, fmt.Errorf("%w: cannot open rollout", ErrModelEvidence)
 	}
 	defer f.Close()
+	return readRolloutFrom(f, maxRolloutBytes, maxRolloutRecordBytes)
+}
 
-	data, err := io.ReadAll(io.LimitReader(f, maxRolloutBytes+1))
-	if err != nil {
-		return rolloutEvidence{}, fmt.Errorf("%w: cannot read rollout", ErrModelEvidence)
-	}
-	if len(data) > maxRolloutBytes {
-		return rolloutEvidence{}, fmt.Errorf("%w: rollout exceeds %d bytes", ErrModelEvidence, maxRolloutBytes)
-	}
-
+// readRolloutFrom streams r one record at a time. It reads at most maxTotal
+// plus one byte, so a growing file cannot bypass the cap, and holds at most one
+// record of maxRecord bytes. Any refusal returns zero evidence, never partial.
+func readRolloutFrom(r io.Reader, maxTotal, maxRecord int) (rolloutEvidence, error) {
+	lr := &io.LimitedReader{R: r, N: int64(maxTotal) + 1}
+	br := bufio.NewReader(lr)
 	var ev rolloutEvidence
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+	for {
+		line, err := readRolloutRecord(br, maxRecord)
+		if consumed := int64(maxTotal) + 1 - lr.N - int64(br.Buffered()); consumed > int64(maxTotal) {
+			return rolloutEvidence{}, fmt.Errorf("%w: rollout exceeds %d bytes", ErrModelEvidence, maxTotal)
 		}
-		var rec struct {
-			Type    string          `json:"type"`
-			Payload json.RawMessage `json:"payload"`
+		if err == errRolloutRecordTooLarge {
+			return rolloutEvidence{}, fmt.Errorf("%w: rollout record exceeds %d bytes", ErrModelEvidence, maxRecord)
 		}
-		if err := json.Unmarshal(line, &rec); err != nil || rec.Type == "" {
-			return rolloutEvidence{}, fmt.Errorf("%w: malformed rollout record", ErrModelEvidence)
+		if err != nil && err != io.EOF {
+			return rolloutEvidence{}, fmt.Errorf("%w: cannot read rollout", ErrModelEvidence)
 		}
-		if rec.Type != "session_meta" && rec.Type != "turn_context" {
-			continue
-		}
-		var payload struct {
-			ID    string `json:"id"`
-			Model string `json:"model"`
-		}
-		if err := json.Unmarshal(rec.Payload, &payload); err != nil {
-			return rolloutEvidence{}, fmt.Errorf("%w: malformed rollout identity", ErrModelEvidence)
-		}
-		switch rec.Type {
-		case "session_meta":
-			if payload.ID == "" || (ev.ThreadID != "" && ev.ThreadID != payload.ID) {
-				return rolloutEvidence{}, fmt.Errorf("%w: missing or contradictory rollout session", ErrModelEvidence)
+		if len(bytes.TrimSpace(line)) > 0 {
+			if perr := ev.add(line); perr != nil {
+				return rolloutEvidence{}, perr
 			}
-			ev.ThreadID = payload.ID
-		case "turn_context":
-			ev.TurnModels = append(ev.TurnModels, payload.Model)
+		}
+		if err == io.EOF {
+			return ev, nil
 		}
 	}
-	return ev, nil
+}
+
+var errRolloutRecordTooLarge = errors.New("rollout record too large")
+
+// readRolloutRecord returns the next line without its newline. It refuses a
+// line longer than max before buffering more than max bytes of it.
+func readRolloutRecord(br *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := br.ReadSlice('\n')
+		body := bytes.TrimSuffix(chunk, []byte("\n"))
+		if len(line)+len(body) > max {
+			return nil, errRolloutRecordTooLarge
+		}
+		line = append(line, body...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
+
+// add folds one record into ev. Every record must be JSON with a type; only
+// session_meta and turn_context records supply identity.
+func (ev *rolloutEvidence) add(line []byte) error {
+	var rec struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(line, &rec); err != nil || rec.Type == "" {
+		return fmt.Errorf("%w: malformed rollout record", ErrModelEvidence)
+	}
+	if rec.Type != "session_meta" && rec.Type != "turn_context" {
+		return nil
+	}
+	var ident struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	var payload struct {
+		ID    string `json:"id"`
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(line, &ident); err != nil || json.Unmarshal(ident.Payload, &payload) != nil {
+		return fmt.Errorf("%w: malformed rollout identity", ErrModelEvidence)
+	}
+	switch rec.Type {
+	case "session_meta":
+		if payload.ID == "" || (ev.ThreadID != "" && ev.ThreadID != payload.ID) {
+			return fmt.Errorf("%w: missing or contradictory rollout session", ErrModelEvidence)
+		}
+		ev.ThreadID = payload.ID
+	case "turn_context":
+		ev.TurnModels = append(ev.TurnModels, payload.Model)
+	}
+	return nil
 }
 
 // rolloutVerifier proves a pinned Codex turn ran on the pinned model from the

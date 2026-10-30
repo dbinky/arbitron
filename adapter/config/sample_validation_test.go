@@ -137,8 +137,10 @@ func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 var documentedProfileRow = regexp.MustCompile(`^\|\s*([a-z0-9][a-z0-9-]*)\s*\|\s*(agent|chat)\s*\|`)
 
 // documentedProfiles returns the alias→kind rows from a sample's PROFILES.md.
-// A sample without PROFILES.md documents nothing (it must run on the defaults);
-// any other read error fails the test rather than masquerading as absence.
+// A sample without PROFILES.md, or whose PROFILES.md has no `| alias |` table
+// (a parent with no model nodes that points at its children's files), documents
+// nothing (it must run on the defaults); any other read error fails the test
+// rather than masquerading as absence.
 func documentedProfiles(t *testing.T, sample string) profileKindChecker {
 	t.Helper()
 	kinds := profileKindChecker{}
@@ -147,12 +149,18 @@ func documentedProfiles(t *testing.T, sample string) profileKindChecker {
 		return kinds
 	}
 	require.NoError(t, err, "%s PROFILES.md must be readable", sample)
+	hasTable := false
 	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| alias |") {
+			hasTable = true
+		}
 		if m := documentedProfileRow.FindStringSubmatch(line); m != nil {
 			kinds[m[1]] = m[2]
 		}
 	}
-	require.NotEmpty(t, kinds, "%s PROFILES.md has no alias|kind table rows", sample)
+	if hasTable {
+		require.NotEmpty(t, kinds, "%s PROFILES.md has no alias|kind table rows", sample)
+	}
 	return kinds
 }
 
@@ -211,10 +219,10 @@ func TestSampleWorkflows_ValidateWithTheirDocumentedProfiles(t *testing.T) {
 // caught, so the recovery doc cannot silently fall behind the manifest.
 func TestSampleWorkflows_UndocumentedProfileFails(t *testing.T) {
 	kinds := defaultProfileKinds(t)
-	for alias, kind := range documentedProfiles(t, "feature-pipeline") {
+	for alias, kind := range documentedProfiles(t, "legacy-feature-pipeline") {
 		kinds[alias] = kind
 	}
-	wf := loadSampleWorkflow(t, "feature-pipeline")
+	wf := loadSampleWorkflow(t, "legacy-feature-pipeline")
 	var used string
 	for _, n := range wf.Nodes {
 		if n.Config.ModelProfile != "" {
@@ -222,7 +230,7 @@ func TestSampleWorkflows_UndocumentedProfileFails(t *testing.T) {
 			break
 		}
 	}
-	require.NotEmpty(t, used, "feature-pipeline must use at least one model_profile")
+	require.NotEmpty(t, used, "legacy-feature-pipeline must use at least one model_profile")
 	delete(kinds, used)
 	errs := workflow.Validate(&wf, allFilesExist{}, kinds, nil)
 	require.NotEmpty(t, errs, "dropping %s from the documented profiles must fail validation", used)

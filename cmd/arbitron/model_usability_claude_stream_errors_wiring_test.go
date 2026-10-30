@@ -16,6 +16,7 @@ import (
 // The process emits the actual injected credential in a rejected evidence field.
 // It must not escape through the durable initial error or a continuation error.
 func TestUsabilityClaudeStreamingSecretFreeErrorsRoot(t *testing.T) {
+	pinSinkRootEnv(t)
 	const model = "claude-sonnet-4-6"
 	const secret = "claude-stream-root-secret"
 	for _, failure := range []string{"wrong-model", "failed-result", "unsupported-suffix", "unterminated-suffix", "suffix-trailing-data", "repeated-suffix"} {
@@ -25,6 +26,7 @@ func TestUsabilityClaudeStreamingSecretFreeErrorsRoot(t *testing.T) {
 		}
 		for _, continuation := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/continuation=%v", failure, continuation), func(t *testing.T) {
+				t.Parallel()
 				dir := t.TempDir()
 				mode, argvLog := filepath.Join(dir, "mode"), filepath.Join(dir, "argv")
 				bin := filepath.Join(dir, "claude")

@@ -19,6 +19,7 @@ import (
 // ExecutionPathInventory, the gate's production revision source; the store
 // re-validates that token's persisted revisions inside the commit transaction.
 func TestAdvanceWiringPublishesNewRun(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, "config.yaml")
 	workspace := filepath.Join(root, "workspace")

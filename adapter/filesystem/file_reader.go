@@ -91,6 +91,10 @@ func (r *FileReaderAdapter) safeJoin(scopeRoot, workflowName, relativePath strin
 	if workflowName == "" || workflowName == "." || workflowName == ".." || strings.ContainsAny(workflowName, "/\\\x00") || internalArtifact(workflowName) {
 		return "", fmt.Errorf("%w: %s", workflow.ErrInvalidName, workflowName)
 	}
+	// Non-lib paths never reach the library folder through a workflow name.
+	if workflow.IsReservedWorkflowName(workflowName) {
+		return "", fmt.Errorf("%w: %q is reserved for the shared library (use @lib)", workflow.ErrInvalidName, workflowName)
+	}
 	wfDir := filepath.Join(scopeRoot, workflowName)
 	full := filepath.Join(wfDir, relativePath)
 	// Must stay inside the workspace root (catches bad workflowName).
@@ -109,6 +113,12 @@ func (r *FileReaderAdapter) safeJoin(scopeRoot, workflowName, relativePath strin
 // scope. The probe and optional read share the settlement lock, including when
 // a crash left the destination absent between swap renames.
 func (r *FileReaderAdapter) withExisting(owner uuid.UUID, workflowName, relativePath string, read func(string) error) (string, error) {
+	if rel, isLib, err := workflow.ParseLibPath(relativePath); isLib {
+		if err != nil {
+			return "", err
+		}
+		return r.withExistingLib(owner, rel, read)
+	}
 	var lastErr error
 	for _, root := range r.candidateRoots(owner) {
 		full, err := r.safeJoin(root.dir, workflowName, relativePath)
@@ -173,4 +183,125 @@ func (r *FileReaderAdapter) ResolvePath(owner uuid.UUID, workflowName, relativeP
 func (r *FileReaderAdapter) FileExists(owner uuid.UUID, workflowName, relativePath string) bool {
 	_, err := r.withExisting(owner, workflowName, relativePath, nil)
 	return err == nil
+}
+
+// withExistingLib resolves a validated library-relative path against the
+// owner's private library then the shared library, ignoring the workflow. The
+// first root holding the file wins; a containment failure in any root is an
+// error rather than a reason to try the next one. Library reads take no
+// settlement lock because _lib holds no manifest.
+func (r *FileReaderAdapter) withExistingLib(owner uuid.UUID, rel string, read func(string) error) (string, error) {
+	for _, root := range r.candidateRoots(owner) {
+		real, found, err := resolveLibCandidate(root.dir, rel)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			continue
+		}
+		if read != nil {
+			if err := read(real); err != nil {
+				return "", err
+			}
+		}
+		return real, nil
+	}
+	return "", os.ErrNotExist
+}
+
+// validAdapterLibRel applies the domain library-path rules plus the adapter's
+// own internal-artifact names, which are never library content.
+func validAdapterLibRel(rel string) error {
+	if err := workflow.ValidLibRel(rel); err != nil {
+		return err
+	}
+	if reservedWorkflowFile(rel) {
+		return fmt.Errorf("%w: reserved file name", workflow.ErrInvalidLibPath)
+	}
+	return nil
+}
+
+// resolveLibCandidate resolves rel inside scopeRoot's library folder and
+// returns the file's real path. found is false, with a nil error, only when
+// the library folder or the file is absent, so the caller may try the next
+// scope. A library folder that is a symlink or not a directory, a link that
+// resolves outside the library's real path, and a dangling link all fail
+// closed with ErrInvalidLibPath.
+func resolveLibCandidate(scopeRoot, rel string) (real string, found bool, err error) {
+	if err := validAdapterLibRel(rel); err != nil {
+		return "", false, err
+	}
+	libDir := filepath.Join(scopeRoot, workflow.LibraryFolder)
+	info, err := os.Lstat(libDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("%w: library folder %q: %v", workflow.ErrInvalidLibPath, libDir, err)
+	}
+	// Lstat reports a symlinked folder as a link, never as a directory.
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("%w: library folder %q is not a plain directory", workflow.ErrInvalidLibPath, libDir)
+	}
+	libRoot := filepath.Clean(libDir) + string(os.PathSeparator)
+	full := filepath.Join(libDir, filepath.FromSlash(rel))
+	if !strings.HasPrefix(full, libRoot) {
+		return "", false, fmt.Errorf("%w: %q escapes the library", workflow.ErrInvalidLibPath, rel)
+	}
+	realLib, err := filepath.EvalSymlinks(libDir)
+	if err != nil {
+		return "", false, err
+	}
+	if _, err := os.Lstat(full); err != nil {
+		if os.IsNotExist(err) {
+			// Lstat follows intermediate components, so a missing leaf may
+			// sit behind a dangling or escaping directory link.
+			if err := checkLibAncestors(libDir, realLib, rel); err != nil {
+				return "", false, err
+			}
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("%w: %q: %v", workflow.ErrInvalidLibPath, rel, err)
+	}
+	real, err = filepath.EvalSymlinks(full)
+	if err != nil {
+		// The entry exists but does not resolve: a dangling link. Formatted
+		// with %v so it never reads as os.ErrNotExist and falls through.
+		return "", false, fmt.Errorf("%w: %q does not resolve: %v", workflow.ErrInvalidLibPath, rel, err)
+	}
+	if !insideLib(real, realLib) {
+		return "", false, fmt.Errorf("%w: %q escapes the library", workflow.ErrInvalidLibPath, rel)
+	}
+	return real, true, nil
+}
+
+// insideLib reports whether real is realLib or sits beneath it.
+func insideLib(real, realLib string) bool {
+	return real == realLib || strings.HasPrefix(real, realLib+string(os.PathSeparator))
+}
+
+// checkLibAncestors walks rel's existing ancestors under libDir for a path
+// whose leaf is missing. Each existing ancestor must resolve inside realLib;
+// a dangling or escaping link fails closed so the miss never falls through to
+// the next scope or reveals what exists outside the library.
+func checkLibAncestors(libDir, realLib, rel string) error {
+	cur := libDir
+	parts := strings.Split(rel, "/")
+	for _, part := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, part)
+		if _, err := os.Lstat(cur); err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("%w: %q: %v", workflow.ErrInvalidLibPath, rel, err)
+		}
+		real, err := filepath.EvalSymlinks(cur)
+		if err != nil {
+			return fmt.Errorf("%w: %q does not resolve: %v", workflow.ErrInvalidLibPath, rel, err)
+		}
+		if !insideLib(real, realLib) {
+			return fmt.Errorf("%w: %q escapes the library", workflow.ErrInvalidLibPath, rel)
+		}
+	}
+	return nil
 }

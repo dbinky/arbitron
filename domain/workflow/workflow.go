@@ -4,6 +4,7 @@ package workflow
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -104,6 +105,9 @@ const (
 type SpawnConfig struct {
 	ChildWorkflow string
 	Mode          string
+	// Inputs is a deep copy of the node's inputs map (nil when none), so a
+	// consumer can mutate it without touching the workflow definition.
+	Inputs map[string]any
 }
 
 // Errors ParseSpawnConfig reports. They are sentinels so the validator can map
@@ -114,6 +118,8 @@ var (
 	ErrSpawnChildWorkflowMissing = errors.New("childWorkflow is not configured")
 	// ErrSpawnModeInvalid: the spawnMode is empty or unrecognized.
 	ErrSpawnModeInvalid = errors.New("unrecognized spawnMode")
+	// ErrSpawnReservedInput: inputs names a variable the engine seeds itself.
+	ErrSpawnReservedInput = errors.New("spawn input name is reserved")
 )
 
 // ParseSpawnConfig extracts and checks a spawn node's contract.
@@ -138,10 +144,25 @@ func ParseSpawnConfig(cfg NodeConfig) (SpawnConfig, error) {
 			ErrSpawnModeInvalid, strconv.Quote(cfg.SpawnMode),
 			strconv.Quote(SpawnModeFireAndForget), strconv.Quote(SpawnModeWaitForChild)))
 	}
+	reserved := make([]string, 0, len(cfg.Inputs))
+	for k := range cfg.Inputs {
+		if reservedInputNames[k] {
+			reserved = append(reserved, k)
+		}
+	}
+	sort.Strings(reserved)
+	for _, k := range reserved {
+		problems = append(problems, fmt.Errorf("%w: %q is seeded by the engine for every run; remove it from inputs",
+			ErrSpawnReservedInput, k))
+	}
 	if len(problems) > 0 {
 		return SpawnConfig{}, errors.Join(problems...)
 	}
-	return SpawnConfig{ChildWorkflow: cfg.ChildWorkflow, Mode: cfg.SpawnMode}, nil
+	out := SpawnConfig{ChildWorkflow: cfg.ChildWorkflow, Mode: cfg.SpawnMode}
+	if cfg.Inputs != nil {
+		out.Inputs = cloneGroupValue(cfg.Inputs).(map[string]any)
+	}
+	return out, nil
 }
 
 // IsValidSpawnMode reports whether m is a recognized spawn mode.
@@ -217,6 +238,7 @@ type NodeConfig struct {
 	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" | "codex" (agent_call/interactive_agent only)
 	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
 	ChildWorkflow      string            `json:"childWorkflow,omitempty"` // spawn_workflow: the child workflow's name
+	Inputs             map[string]any    `json:"inputs,omitempty"`        // spawn_workflow: child input name -> literal or template
 	SpawnMode          string            `json:"spawnMode,omitempty"`     // spawn_workflow: "fire_and_forget" | "wait_for_child"
 	OutputSchema       any               `json:"outputSchema,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`

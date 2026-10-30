@@ -114,3 +114,16 @@ func TestListScopes_UnreadableOwnerDirIsIncompleteInventory(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, scopes)
 }
+
+// Regression pin: green on arrival. ListScopes enumerates users/<uuid>, not
+// workflow folders, so a shared/_lib must not be mistaken for a scope.
+func TestListScopes_SharedLibAddsNoScope(t *testing.T) {
+	base := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "shared", workflow.LibraryFolder), 0o700))
+	repo := filesystem.NewWorkflowRepo(base)
+
+	scopes, err := repo.ListScopes(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, []workflow.Scope{workflow.Shared()}, scopes)
+}

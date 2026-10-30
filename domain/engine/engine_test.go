@@ -1386,6 +1386,18 @@ func TestEngine_TriggerWorkflowNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+// Regression pin: green on arrival. The reserved library name is not a
+// workflow, so triggering it through the engine fails as not found. The real
+// repository's refusal is covered in adapter/filesystem.
+func TestEngineTrigger_ReservedNameNotFound(t *testing.T) {
+	for _, name := range []string{"_lib", "_LIB", "@lib"} {
+		f := newTestFixtures()
+		_, _, err := f.engine.Trigger(context.Background(), name, nil, "normal")
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "not found", name)
+	}
+}
+
 // Origin stamping: the engine reads instance.OriginFromContext and stamps
 // TriggerSource + ScheduleID on every created instance. Manual triggers default
 // to OriginManual; schedule/run-now triggers carry the injected origin.

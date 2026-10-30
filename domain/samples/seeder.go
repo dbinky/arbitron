@@ -26,6 +26,8 @@ type Seeder struct {
 	mutations workflow.MutationCoordinator
 	registry  workflow.Registry
 	validator *workflow.Service
+	libFiles  workflow.OwnerFileChecker
+	library   workflow.LibraryStore
 }
 
 // NewSeeder constructs a Seeder. owner owns the seeded publications. Group
@@ -45,6 +47,11 @@ func NewSeeder(source SampleSource, repo workflow.Repository, published workflow
 // and NOT recorded (so a fixed source retries later); it does not abort the
 // rest. The first infrastructure error aborts and is returned.
 func (s *Seeder) Seed(ctx context.Context) error {
+	if s.library != nil {
+		if err := s.seedLibrary(ctx); err != nil {
+			return err
+		}
+	}
 	names, err := s.source.List(ctx)
 	if err != nil {
 		return fmt.Errorf("listing samples: %w", err)
@@ -92,7 +99,7 @@ func (s *Seeder) seedOne(ctx context.Context, name string) (bool, error) {
 		return false, nil
 	}
 	validationCtx := identity.WithIdentity(ctx, identity.Identity{UserID: s.owner, Role: identity.RoleAdmin})
-	if err := s.validator.ValidateGroupImport(validationCtx, wf, seedFiles(files)); err != nil {
+	if err := s.validator.ValidateGroupImport(validationCtx, wf, newSeedFiles(files, s.libFiles, s.owner)); err != nil {
 		if errors.Is(err, workflow.ErrGroupInvalid) {
 			s.logger.Warn("skipping invalid group sample", "name", name, "err", err)
 			return false, nil
@@ -136,6 +143,27 @@ func (s *Seeder) writeTree(ctx context.Context, shared workflow.Scope, name stri
 }
 
 // seedFiles describes only files in the incoming sample, never a stale shared copy.
-type seedFiles map[string][]byte
+type seedFiles struct {
+	files map[string][]byte
+	lib   workflow.OwnerFileChecker
+	owner uuid.UUID
+}
 
-func (f seedFiles) FileExists(_ string, path string) bool { _, ok := f[path]; return ok }
+func newSeedFiles(files map[string][]byte, lib workflow.OwnerFileChecker, owner uuid.UUID) seedFiles {
+	return seedFiles{files: files, lib: lib, owner: owner}
+}
+
+func (f seedFiles) FileExists(workflowName, path string) bool {
+	if _, isLib, err := workflow.ParseLibPath(path); isLib {
+		if err != nil {
+			return false
+		}
+		return f.lib == nil || f.lib.FileExists(f.owner, workflowName, path)
+	}
+	_, ok := f.files[path]
+	return ok
+}
+
+// SetLibFiles wires the checker that answers @lib paths during sample
+// validation. Without it a valid lib path is treated as present.
+func (s *Seeder) SetLibFiles(lib workflow.OwnerFileChecker) { s.libFiles = lib }

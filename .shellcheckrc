@@ -1,0 +1,5 @@
+# SC2015 flags the `[ a ] && [ b ] || die "..."` guard idiom the workflow
+# scripts use throughout, where C running after a true A is intended. Local
+# ShellCheck 0.11 does not report it there; Ubuntu 24.04's apt ShellCheck 0.9.0,
+# which the CI runner installs, does and fails the lint.
+disable=SC2015

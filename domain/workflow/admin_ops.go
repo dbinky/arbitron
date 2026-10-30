@@ -32,6 +32,9 @@ func (s *Service) Duplicate(ctx context.Context, name, newName string) error {
 
 // duplicate is the ungated body of Duplicate; callers go through Duplicate.
 func (s *Service) duplicate(ctx context.Context, name, newName string) error {
+	if err := rejectReservedName(newName); err != nil {
+		return err
+	}
 	if s.stamper != nil {
 		return s.duplicateRevision(ctx, name, newName)
 	}

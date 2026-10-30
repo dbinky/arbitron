@@ -182,6 +182,18 @@ missing `render.html` instead fails startup; rebuild embedded assets with `make 
 For development, `make test-render` requires a real browser and fails rather than
 skips when none is available; `make test-all` includes that gate.
 
+## Mutation hardening (the `harden` sample): sandbox prerequisite
+
+The `harden` stage runs repository-controlled code (a project-local mutation tool
+and the repository's own tests), so it runs it only inside a per-run sandbox with
+a credential-free environment, a restricted filesystem and no route off the host.
+The sandbox is **bubblewrap on Linux** and **`sandbox-exec` on macOS** (built in).
+On Linux install `bubblewrap` (`apt install bubblewrap`, `apk add bubblewrap`; the
+container image already includes it) and leave unprivileged user namespaces
+enabled. Without a usable sandbox `harden` **refuses to run** (`no isolation
+available`) rather than falling back to an unisolated run. Details and the
+operator settings are in [samples/harden/README.md](../../samples/harden/README.md).
+
 ## Codex backend (optional, user-provided)
 
 The **codex** agent backend lets agent nodes (`agent_call`, `interactive_agent`)

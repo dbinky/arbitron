@@ -1,6 +1,7 @@
 #!/bin/sh
 # Pushes the feature branch and opens a PR. Reads vars from stdin JSON; emits
-# {pr_url, pr_number, branch} as JSON. Fails loudly if gh is unauthenticated.
+# {pr_url, pr_number (a JSON number, null when no PR), pr_created, branch} as
+# JSON. An already-open PR from head to base is reused, never duplicated. Fails loudly if gh is unauthenticated.
 # Auth (HOME/PATH/GH_TOKEN) is provided via the engine's script.envpassthrough.
 set -eu
 IN="$(cat)"
@@ -52,6 +53,18 @@ elif [ -n "$PLAN_SUMMARY" ]; then
 Review plan: $PLAN_SUMMARY"
 fi
 
+# Harden shortfall: when focus_seed (a worktree-relative survivors file) is
+# readable and carries a summary, the PR states it. Absent/unreadable -> omitted.
+SEED="$(printf '%s' "$IN" | jq -r '.focus_seed // ""')"
+SHORTFALL=""
+if [ -n "$SEED" ] && [ -r "$WORK/$SEED" ]; then
+  SHORTFALL="$(jq -r '.summary // empty' "$WORK/$SEED" 2>/dev/null || true)"
+fi
+SHORTFALL_NOTE=""
+[ -n "$SHORTFALL" ] && SHORTFALL_NOTE="
+
+> **Harden shortfall:** $SHORTFALL"
+
 gh auth status 1>&2 || { echo "gh not authenticated" >&2; exit 1; }
 
 # CI runs once, on the finished branch. Every in-loop commit carried [skip ci]
@@ -84,9 +97,27 @@ fi
 # --base targets the feature's actual base branch when known; omitted (gh uses the
 # repo default) only if neither base_branch nor base_ref was provided. No --fill:
 # title/body are explicit, and --fill would fail on the shallow clone (see above).
-BASE_ARG=""
-[ -n "$BASE" ] && BASE_ARG="--base $BASE"
-PR_URL="$(cd "$WORK" && gh pr create $BASE_ARG --head "$BRANCH" --title "feat: $SLUG" \
-  --body "Automated feature pipeline for $SLUG. Spec/designs/plans under docs/. Ready for multi-persona PR review.$PLAN_NOTE$BASELINE_NOTE")"
+
+# REUSE: if a PR from this head to this base is already open (a re-run on the
+# same branch), it already carries the pushed refinements. Opening another would
+# fail; report the existing one instead.
+EXISTING="$(cd "$WORK" && gh pr list --head "$BRANCH" ${BASE:+--base "$BASE"} --state open --json number,url 2>/dev/null || echo '[]')"
+EX_NUMBER="$(printf '%s' "$EXISTING" | jq -r 'if type == "array" and length > 0 then .[0].number else empty end' 2>/dev/null || true)"
+if [ -n "$EX_NUMBER" ]; then
+  EX_URL="$(printf '%s' "$EXISTING" | jq -r '.[0].url')"
+  echo "push-and-pr: reusing open PR #$EX_NUMBER ($EX_URL)" >&2
+  if [ -n "$SHORTFALL" ]; then
+    (cd "$WORK" && gh pr comment "$EX_NUMBER" --body "> **Harden shortfall:** $SHORTFALL") 1>&2 \
+      || echo "push-and-pr: could not comment the harden shortfall on PR #$EX_NUMBER" >&2
+  fi
+  jq -n --arg u "$EX_URL" --argjson n "$EX_NUMBER" --arg b "$BRANCH" \
+    '{pr_url:$u, pr_number:$n, pr_created:false, branch:$b}'
+  exit 0
+fi
+
+PR_URL="$(cd "$WORK" && gh pr create ${BASE:+--base "$BASE"} --head "$BRANCH" --title "feat: $SLUG" \
+  --body "Automated feature pipeline for $SLUG. Spec/designs/plans under docs/. Ready for multi-persona PR review.$PLAN_NOTE$BASELINE_NOTE$SHORTFALL_NOTE")"
 PR_NUMBER="$(printf '%s' "$PR_URL" | sed 's:.*/::')"
-jq -n --arg u "$PR_URL" --arg n "$PR_NUMBER" --arg b "$BRANCH" '{pr_url:$u, pr_number:$n, branch:$b}'
+case "$PR_NUMBER" in ''|*[!0-9]*) PR_NUMBER=null ;; esac
+jq -n --arg u "$PR_URL" --argjson n "$PR_NUMBER" --arg b "$BRANCH" \
+  '{pr_url:$u, pr_number:$n, pr_created:true, branch:$b}'

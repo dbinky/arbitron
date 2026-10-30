@@ -17,9 +17,11 @@ import (
 )
 
 func TestLayoutHTTPE2E_ImmediatePeerCrashRead(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, boundary := range []string{"before-proof", "after-proof"} {
 		for _, first := range []string{"manifest", "layout", "raw"} {
 			t.Run(boundary+"/"+first, func(t *testing.T) {
+				t.Parallel()
 				e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 				ds, _ := e.boot(t)
 				ctx := adminCtxForLocalUser(t, ds)

@@ -119,6 +119,42 @@ o3="$(printf '{"work_dir":"%s","base_branch":"feat2"}' "$WORK3" | sh "$SCRIPT" 2
 check "edge: non-main default branch resolves" "$(printf '%s' "$o3" | jq -r .default_branch)" "trunk"
 check "edge: non-main scope is correct"        "$(printf '%s' "$o3" | jq -r .file_count)"     "1"
 
+# ------------------------------------------------------------------ pr_base
+# `mid` stacks one commit on feature/work; `top` stacks another on mid. Against
+# main the scope is four files; against pr_base=mid it is only top's own file.
+cd "$SEED"
+git_q checkout -b mid feature/work
+echo m > mid.txt; git_q add .; git_q commit -m "mid"; git_q push -u origin mid
+git_q checkout -b top
+echo t > top.txt; git_q add .; git_q commit -m "top"; git_q push -u origin top
+cd - >/dev/null
+SRC4="$TMP/src4"; WORK4="$TMP/work4"
+git_q clone --depth 1 --branch=top "file://$ORIGIN" "$SRC4"
+git_q -C "$SRC4" worktree add -b ralph-top "$WORK4" top
+run4() { printf '{"work_dir":"%s","base_branch":"top","pr_base":"%s"}' "$WORK4" "$1" | sh "$SCRIPT" 2>/dev/null; }
+
+o4="$(run4 mid)"
+check "pr_base: used for the merge-base (scope is only the top commit)" \
+  "$(printf '%s' "$o4" | jq -c '.changed_files')" '["top.txt"]'
+check "pr_base: method is merge-base" "$(printf '%s' "$o4" | jq -r .scope_method)" "merge-base"
+check "pr_base: reported as the base used" "$(printf '%s' "$o4" | jq -r .default_branch)" "mid"
+
+o5="$(run4 '')"
+check "pr_base: empty is unchanged (diffs against main)" "$(printf '%s' "$o5" | jq -r .default_branch)" "main"
+check "pr_base: empty sees the full stack" "$(printf '%s' "$o5" | jq -r .file_count)" "4"
+
+o6="$(run4 no-such-branch)"
+check "pr_base: unreachable falls back to the default branch" "$(printf '%s' "$o6" | jq -r .default_branch)" "main"
+check "pr_base: unreachable reports the real method" "$(printf '%s' "$o6" | jq -r .scope_method)" "merge-base"
+err6="$(printf '{"work_dir":"%s","base_branch":"top","pr_base":"no-such-branch"}' "$WORK4" | sh "$SCRIPT" 2>&1 >/dev/null || true)"
+check "pr_base: unreachable note says it is ignored" \
+  "$(printf '%s' "$err6" | grep -c 'pr_base .no-such-branch. was unreachable and is being IGNORED')" "1"
+if printf '{"work_dir":"%s","pr_base":"--upload-pack=x"}' "$WORK4" | sh "$SCRIPT" >/dev/null 2>&1; then
+  check "pr_base: leading dash is rejected" "exited 0" "non-zero"
+else
+  check "pr_base: leading dash is rejected" "non-zero" "non-zero"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "all derive-scope tests passed"; else
   echo "$fails derive-scope test(s) FAILED"; exit 1; fi

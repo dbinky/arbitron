@@ -22,7 +22,7 @@ func arrangeSample(t *testing.T, name string) (Graph, Geometry, Measurements) {
 }
 
 func TestSamples_PassGeometricPreflight(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			g, geo, m := arrangeSample(t, name)
 			fs := Preflight(g, geo, m)
@@ -38,7 +38,7 @@ func TestSamples_PassGeometricPreflight(t *testing.T) {
 }
 
 func TestSamples_SavedGeometryDefectsBlock(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			g, geo, m := arrangeSample(t, name)
 			assert.Zero(t, BlockingCount(Preflight(g, geo, m)))
@@ -86,7 +86,7 @@ func TestSamples_RouteSearchRemovesCrossingsBeforePreflight(t *testing.T) {
 }
 
 func TestSamples_FeaturePipelineShape(t *testing.T) {
-	_, geo, _ := arrangeSample(t, "feature-pipeline")
+	_, geo, _ := arrangeSample(t, "legacy-feature-pipeline")
 	assert.Len(t, geo.Nodes, 66)
 	assert.Len(t, geo.Edges, 79)
 	assert.Greater(t, geo.Canvas.H, geo.Canvas.W, "continuous downward progression: long workflows scroll vertically")
@@ -143,7 +143,7 @@ func TestSamples_BranchLabelsStayNearestTheirOwnRoute(t *testing.T) {
 		}
 		return d
 	}
-	for _, name := range []string{"feature-pipeline", "ralph-loop", "pr-review"} {
+	for _, name := range []string{"legacy-feature-pipeline", "ralph-loop", "pr-review"} {
 		_, geo, _ := arrangeSample(t, name)
 		for _, e := range geo.Edges {
 			if e.Text == nil {

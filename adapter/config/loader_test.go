@@ -614,7 +614,7 @@ func TestLoad_Teams_DefaultsDisabledEmpty(t *testing.T) {
 // in-repo default profile registry satisfies the contracts of the workflows
 // shipped in this repo (PR #18 Must Fix item 4, comment 4614860006). A fresh
 // install with no deployment config.yaml must validate samples/pr-review and
-// samples/feature-pipeline honestly — those reference reviewer/coder/planner
+// samples/legacy-feature-pipeline honestly — those reference reviewer/coder/planner
 // (agent), interviewer (agent), and assessor (chat). Without these defaults a
 // clean clone passes workflow_validate and then dies mid-run with "unknown
 // profile alias".

@@ -920,7 +920,7 @@ import (
 func check(err error) { if err != nil { panic(err) } }
 func main() {
   out := map[string]map[string]any{}
-  for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+  for _, name := range []string{"pr-review", "legacy-feature-pipeline", "ralph-loop"} {
     raw, err := os.ReadFile(filepath.Join("samples", name, "workflow.json")); check(err)
     var wf workflow.Workflow; check(json.Unmarshal(raw, &wf))
     graph, err := layout.BuildGraph(&wf); check(err)
@@ -944,7 +944,7 @@ func main() {
           string,
           { workflow: WorkflowDefinition; geometry: Geometry }
         >
-        expect(Object.keys(samples).sort()).toEqual(['feature-pipeline', 'pr-review', 'ralph-loop'])
+        expect(Object.keys(samples).sort()).toEqual(['legacy-feature-pipeline', 'pr-review', 'ralph-loop'])
         for (const [name, sample] of Object.entries(samples)) {
           const manifest = JSON.parse(
             readFileSync(resolve('..', 'samples', name, 'workflow.json'), 'utf8'),

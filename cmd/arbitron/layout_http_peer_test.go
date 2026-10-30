@@ -20,10 +20,12 @@ import (
 // Each case boots the reader before the writer and stops recovery polling. The
 // first surviving-peer read must itself fail closed, not benefit from a sweep.
 func TestLayoutHTTPE2E_RenamePeerCrash(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, kind := range []string{"private", "shared"} {
 		for _, boundary := range []string{"before-identity", "after-identity"} {
 			for _, first := range []string{"raw", "manifest", "layout"} {
 				t.Run(kind+"/"+boundary+"/"+first, func(t *testing.T) {
+					t.Parallel()
 					e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 					ds, _ := e.boot(t)
 					ds.layout.worker.Stop()

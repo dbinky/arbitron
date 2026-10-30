@@ -43,6 +43,11 @@
 # measured. Without that, pass 1 always ran every suite, minutes after the
 # baseline had just measured them all.
 #
+# An IMPORTED baseline (baseline-imported, written by import-baseline.sh) has no
+# usable measured commit, so the first verification of the run ignores both
+# last-pass-head and baseline-head and runs every suite; import-verified is
+# written once that sweep has run, after which diffing resumes as above.
+#
 # Reads {workspace, work_dir} from stdin JSON. Emits:
 #   tests_ran / scope / suites_run / suites_skipped
 #   new_failures        number — BLOCKING: green-at-baseline suites now failing
@@ -81,11 +86,15 @@ fi
 # record-pass-commit runs AFTER this node, so last-pass-head still points at the
 # previous pass's HEAD — exactly the diff base we want.
 PREV=""
-[ -f "$WS/last-pass-head" ] && PREV="$(cat "$WS/last-pass-head" 2>/dev/null || true)"
-if [ -z "$PREV" ] || ! git -C "$WORK" cat-file -e "${PREV}^{commit}" 2>/dev/null; then
-  # Pass 1: no previous pass, so diff against the commit the baseline measured.
-  PREV=""
-  [ -f "$WS/baseline-head" ] && PREV="$(cat "$WS/baseline-head" 2>/dev/null || true)"
+IMPORT_PENDING=false
+if [ -f "$WS/baseline-imported" ] && [ ! -f "$WS/import-verified" ]; then IMPORT_PENDING=true; fi
+if [ "$IMPORT_PENDING" = false ]; then
+  [ -f "$WS/last-pass-head" ] && PREV="$(cat "$WS/last-pass-head" 2>/dev/null || true)"
+  if [ -z "$PREV" ] || ! git -C "$WORK" cat-file -e "${PREV}^{commit}" 2>/dev/null; then
+    # Pass 1: no previous pass, so diff against the commit the baseline measured.
+    PREV=""
+    [ -f "$WS/baseline-head" ] && PREV="$(cat "$WS/baseline-head" 2>/dev/null || true)"
+  fi
 fi
 CHANGED="$TMP/changed"; : > "$CHANGED"
 DIFF_OK=false
@@ -262,5 +271,8 @@ else
   [ "$BUILD_BROKEN" = true ] && SUM="$SUM A target that COMPILED at baseline no longer compiles."
   SUM="$SUM Approvals are blocked until this is fixed or explicitly reverted. $SCOPEMSG"
 fi
+
+# The imported baseline's first full sweep has now run.
+if [ "$IMPORT_PENDING" = true ] && [ "$RAN" = true ]; then printf '%s\n' "$SCOPE" > "$WS/import-verified"; fi
 
 emit "$RAN" "$NF" "$REG_JSON" "$BUILD_BROKEN" "$SUS_JSON" "$AN" "$CONF" "$SCOPE" "$RAN_JSON" "$SKIP_JSON" "$SUM"

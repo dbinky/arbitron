@@ -164,6 +164,7 @@ func gsListIDs(srv *httptest.Server, query string) (map[uuid.UUID]bool, error) {
 // reader, routerDeps does not pass it, or the route is not registered, this GET
 // is a 404 and the test fails. The sink is the HTTP JSON body.
 func TestGraphStateE2E_RunningGroupShowsBothBranchesThroughCompositionRoot(t *testing.T) {
+	t.Parallel()
 	gates := newGroupProcessGates(t)
 	var wf workflow.Workflow
 	require.NoError(t, json.Unmarshal([]byte(gsFanoutManifest), &wf))
@@ -309,6 +310,7 @@ func TestGroupLayoutE2E_ServesPhaseOneOwnershipThroughCompositionRoot(t *testing
 // The queue's ancestor discovery through the REAL list pipeline: HTTP param ->
 // Engine.ListEnriched (service-set scope) -> sqlite recursive CTE.
 func TestQueueAncestorsE2E_CompletedParentWithActiveChildIsDiscoverable(t *testing.T) {
+	t.Parallel()
 	ds := bootGraphStateStack(t)
 	srv := gsServeAPI(t, ds)
 

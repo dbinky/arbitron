@@ -31,6 +31,7 @@ func (j authoringReceiptObstruction) MarkCommitted(ctx context.Context, revision
 // Losing the prepared input, allowing an overwrite before settlement, or
 // replaying the current manifest instead of the captured one breaks this test.
 func TestLayoutSaveReceiptFailureSurvivesOverwriteAndDelete(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"create", "private-update", "shared-update"} {
 		t.Run(operation, func(t *testing.T) {
 			db := layoutE2EOpenDB(t)

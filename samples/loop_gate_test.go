@@ -2,6 +2,7 @@ package samples_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -74,7 +75,7 @@ func countsReviewPlan(wf *workflow.Workflow) bool {
 }
 
 func TestLoopGateCannotExitOnStagnationAloneWhileWorkRemains(t *testing.T) {
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+	for _, name := range []string{"pr-review", "legacy-feature-pipeline", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 			if !countsReviewPlan(wf) {
@@ -123,7 +124,7 @@ func TestLoopGateCannotExitOnStagnationAloneWhileWorkRemains(t *testing.T) {
 }
 
 func TestWedgeThresholdIsDeclaredAndNotTighterThanTheStallSignal(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "ralph-loop"} {
+	for _, name := range []string{"legacy-feature-pipeline", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 
@@ -186,4 +187,39 @@ func TestRalphGateExitsOnACompletedPlan(t *testing.T) {
 			"arithmetic completion signal cannot end the loop", planCompleteField)
 	}
 	t.Fatal("ralph-loop: no refine-gate node")
+}
+
+// An in_place run on a branch that merely INHERITED a review plan from pr_base
+// is fresh (init-workspace reports resumed:false). The fresh route must reach
+// the seeder that consumes this run's focus_seed, and the resume route must
+// bypass it: that is what makes the inherited-plan fix change the outcome.
+func TestRalphFreshRouteConsumesFocusSeed(t *testing.T) {
+	wf := loadSample(t, "ralph-loop")
+	fresh := edgeTarget(wf, "resumed?", "fresh")
+	resume := edgeTarget(wf, "resumed?", "resume")
+	if fresh == "" || resume == "" {
+		t.Fatalf("resumed? must have fresh and resume ports, got fresh=%q resume=%q", fresh, resume)
+	}
+	if !reachableAvoiding(wf, fresh, "seed-ralph", "") {
+		t.Error("the fresh route never reaches seed-ralph")
+	}
+	if !reachableAvoiding(wf, fresh, "verify-ralph-seed", "") {
+		t.Error("the fresh route never reaches verify-ralph-seed")
+	}
+	if reachableAvoiding(wf, resume, "seed-ralph", "") {
+		t.Error("the resume route must not re-seed: it would discard earned approvals")
+	}
+	for _, id := range []string{"seed-ralph", "verify-ralph-seed"} {
+		n := nodeByID(wf, id)
+		raw, err := os.ReadFile("ralph-loop/" + n.Config.TemplateFile)
+		if n.Config.TemplateFile == "" {
+			raw, err = os.ReadFile("ralph-loop/" + n.Config.ScriptFile)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw)+strings.Join(n.Config.Args, " "), "focus_seed") {
+			t.Errorf("%s does not consume focus_seed", id)
+		}
+	}
 }

@@ -196,9 +196,11 @@ func TestCommitProtocol_RenameProcess(t *testing.T) {
 }
 
 func TestCommitProtocol_RenamePeerCrash(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, kind := range []string{"private", "shared"} {
 		for _, boundary := range []string{"prepare", "before-identity", "after-identity", "receipt", "enqueue", "journal-relocated", "store-relocated", "cleanup-error", "source-cleaned", "rollback-restored"} {
 			t.Run(kind+"/"+boundary, func(t *testing.T) {
+				t.Parallel()
 				e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 				ds, _ := e.boot(t)
 				ds.layout.worker.Stop()

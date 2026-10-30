@@ -1,0 +1,194 @@
+{
+  "id": "908838bb-a32a-4943-8849-15154181656d",
+  "name": "ideate",
+  "description": "Standalone ideation stage. A free-form jam with an Opus thinking partner, grounded read-only in the repo: no skills, no structured questioning, no steering towards a plan. Only if the human asks, the jam writes the idea up as docs/ideas/<slug>.md from the shared idea-doc skeleton. A script then names the branch, commits the doc, and the finish step pushes the branch and records the ideate entry in the pipeline manifest. A jam that ends without a doc fails the stage with \"no idea doc written\".",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "Repo to clone and talk about. The jam reads it; only the idea doc is ever written.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Branch the worktree is cut from (detached). The new dev-<slug>-<date>-<short> branch starts here, and it is recorded as the manifest's base_branch.",
+      "default": "main",
+      "required": false
+    },
+    {
+      "name": "topic",
+      "type": "string",
+      "description": "What to talk about. Empty opens the jam with \"Okay, what are we talking about?\".",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Teams webhook URL, accepted for parity with the other stages. Leave empty in the committed sample.",
+      "default": "",
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--detached-base"
+        ],
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone base_branch and add a detached worktree at ./work. No branch exists until the jam produces a slug.",
+      "errorBehavior": {},
+      "entrypoint": true,
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "promote",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init.work_dir}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init.run_date}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift work_dir and run_date to top-level vars for the jam and finalize.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "jam",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/jam.md",
+        "orchestrationFile": "orchestration/jam.orch.md",
+        "model_profile": "interviewer-opus-high"
+      },
+      "label": "Jam",
+      "description": "Open-ended ideation with the human. On request only, writes docs/ideas/<slug>.md and <workspace>/.arbitron/ideate-result.json, then commits locally. No outputSchema: the human ends the session and the slug travels through the result file.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "finalize",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/finalize-ideate.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Finalize idea",
+      "description": "Check the result file, the kebab-case slug and the doc; fail with \"no idea doc written\" when the jam produced none. Move the worktree onto dev-<slug>-<run_date>-<short_id> and commit the doc if needed. Deterministic, so it halts instead of retrying.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "promote-result",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{finalize.slug}}"
+          },
+          {
+            "variable": "branch",
+            "operation": "set",
+            "value": "{{finalize.branch}}"
+          }
+        ]
+      },
+      "label": "Promote result",
+      "description": "Lift slug and branch to top-level vars, where manifest-append reads them.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "finish",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-append.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--workflow",
+          "ideate",
+          "ideate",
+          "done",
+          "{slug: .slug, branch: .branch, idea_path: .finalize.idea_path}"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Record stage",
+      "description": "Push the new branch, then commit and push the ideate entry to .arbitron/pipeline/<slug>.json. Its outputs are the stage contract.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init",
+      "target": "promote"
+    },
+    {
+      "source": "promote",
+      "target": "jam"
+    },
+    {
+      "source": "jam",
+      "target": "finalize"
+    },
+    {
+      "source": "finalize",
+      "target": "promote-result"
+    },
+    {
+      "source": "promote-result",
+      "target": "finish"
+    }
+  ],
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  }
+}

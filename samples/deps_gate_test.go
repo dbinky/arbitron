@@ -2,6 +2,9 @@ package samples_test
 
 import (
 	"context"
+	"encoding/json"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -32,7 +35,7 @@ func depsGateRoute(t *testing.T, wf *workflow.Workflow, needs, iteration float64
 		}
 	}
 	if gate.ID == "" {
-		t.Fatal("feature-pipeline has no deps-gate node")
+		t.Fatal("legacy-feature-pipeline has no deps-gate node")
 	}
 	vars := variable.NewStore()
 	vars.SetNodeOutput("deps-assess", assess)
@@ -48,7 +51,7 @@ func depsGateRoute(t *testing.T, wf *workflow.Workflow, needs, iteration float64
 }
 
 func TestDepsGateSendsHumanDecisionsToResolve(t *testing.T) {
-	wf := loadSample(t, "feature-pipeline")
+	wf := loadSample(t, "legacy-feature-pipeline")
 	// What run 5e86d796's deps-assess actually reported.
 	llmSaidNothingBlocks := map[string]any{
 		"blocking_count": float64(0), "has_blocking": false,
@@ -73,7 +76,7 @@ func TestDepsGateSendsHumanDecisionsToResolve(t *testing.T) {
 
 // The counter must actually sit between the assessor and the gate.
 func TestDepsCountRunsBetweenAssessAndGate(t *testing.T) {
-	wf := loadSample(t, "feature-pipeline")
+	wf := loadSample(t, "legacy-feature-pipeline")
 	next := map[string]string{}
 	for _, e := range wf.Edges {
 		next[e.Source] = e.Target
@@ -81,5 +84,68 @@ func TestDepsCountRunsBetweenAssessAndGate(t *testing.T) {
 	if next["deps-assess"] != "deps-count" || next["deps-count"] != "deps-gate" {
 		t.Errorf("want deps-assess -> deps-count -> deps-gate, got deps-assess -> %q, deps-count -> %q",
 			next["deps-assess"], next["deps-count"])
+	}
+}
+
+// The plan stage's gates must read the count the real reducer produces for a
+// schema-valid assessment whose gap lines the model formatted badly. Each case
+// runs plan/scripts/deps-count.sh and feeds its output to the actual gate node.
+func TestPlanDepsGateSeesBadlyFormattedGaps(t *testing.T) {
+	wf := loadSample(t, "plan")
+	cases := []struct {
+		name   string
+		assess string
+		want   string
+	}{
+		{"unprefixed", `{"gaps":["A human must choose the storage backend"],"has_unresolved":true,"unresolved_count":1}`, "resolve"},
+		{"bold prefix", `{"gaps":["**BLOCKING:** plan 2 needs Foo.Bar"],"has_unresolved":true,"unresolved_count":1}`, "resolve"},
+		{"bulleted prefix", `{"gaps":["- DECISION: pick storage backend"],"has_unresolved":true,"unresolved_count":1}`, "resolve"},
+		{"malformed entry", `{"gaps":[{"gap":"not a string"}],"has_unresolved":true,"unresolved_count":1}`, "resolve"},
+		{"flags only", `{"gaps":[],"has_unresolved":true,"unresolved_count":2}`, "resolve"},
+		{"clean", `{"gaps":["NON-BLOCKING: provisioned outside the repo"],"has_unresolved":false,"unresolved_count":0}`, "proceed"},
+		{"empty", `{"gaps":[],"has_unresolved":false,"unresolved_count":0}`, "proceed"},
+	}
+	// Gate 1 asks the person; gate 2 (after the one resolve pass) blocks instead.
+	for _, pair := range []struct{ assess, count, gate, open string }{
+		{"deps-assess", "deps-count", "deps-gate", "resolve"},
+		{"deps-assess-2", "deps-count-2", "deps-gate-2", "blocked"},
+	} {
+		var gate workflow.Node
+		for _, n := range wf.Nodes {
+			if n.ID == pair.gate {
+				gate = n
+			}
+		}
+		if gate.ID == "" {
+			t.Fatalf("plan has no %s node", pair.gate)
+		}
+		for _, c := range cases {
+			t.Run(pair.gate+"/"+c.name, func(t *testing.T) {
+				in := `{"` + pair.assess + `":` + c.assess + `}`
+				cmd := exec.Command("sh", "plan/scripts/deps-count.sh", pair.assess)
+				cmd.Stdin = strings.NewReader(in)
+				out, err := cmd.Output()
+				if err != nil {
+					t.Fatalf("deps-count.sh: %v", err)
+				}
+				var counted map[string]any
+				if err := json.Unmarshal(out, &counted); err != nil {
+					t.Fatalf("deps-count output %q: %v", out, err)
+				}
+				vars := variable.NewStore()
+				vars.SetNodeOutput(pair.count, counted)
+				res, err := engine.NewConditionalExecutor().Execute(context.Background(), gate, vars, wf.Name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := c.want
+				if want == "resolve" {
+					want = pair.open
+				}
+				if res.OutputPort != want {
+					t.Errorf("deps-count %v routed %q, want %q", counted, res.OutputPort, want)
+				}
+			})
+		}
 	}
 }

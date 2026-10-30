@@ -138,6 +138,27 @@ at the top of `gaps-identified.md`, `Plan consolidated <date>: old area N → ne
 area M, …`, covering every old row, and put the same map in the record below.
 Leave every gap item's state exactly as it is.
 
+## Seeded focus items
+
+**Seed file:** `{{focus_seed}}`. If that value is empty, skip this section: the run
+has no seed. If it names a file, this section is mandatory.
+
+A seed is a survivors file from an earlier hardening stage: test gaps a mutation
+run proved real. Its items must not be lost in the re-plan. If an id is already
+named in the plan, keep it; if not, add it under the rules below. Earned
+approvals are unaffected.
+
+1. Read `./work/{{focus_seed}}`. Each entry under `focus_items` has an `id`.
+2. Make every id a named area, or name it inside an existing area. Either way,
+   write its **exact id string** in `./work/docs/reference/focus-areas.md`. The
+   verifier greps for each id verbatim and fails the plan if one is missing.
+3. Use each item's `mutants` (its surviving mutants) as **Review-1 evidence** for
+   the area that holds it, so the wiring review starts from a proven gap rather
+   than rediscovering it.
+4. Seeded areas count against the pass budget (the verifier's CHECK 2) like any
+   other area. Merge seeded items into existing behaviours where the merge test
+   allows it, rather than giving each its own area.
+
 ## What you must NOT do
 
 - Never touch production code or tests. This pass edits the four tracking files only.

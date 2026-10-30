@@ -215,7 +215,7 @@ func TestSeedSampleWorkflows_CoveringPeerRelocationRejectsClaim(t *testing.T) {
 	var rows int
 	require.NoError(t, ds.db.QueryRow("SELECT count(*) FROM layout_revisions").Scan(&rows))
 	seed := func(ctx context.Context) error {
-		return seedSampleWorkflows(ctx, e.samplesDir, e.workspaceDir, ds.workflowRepo, ds.publishedRepo, ds.layout.stamper, ds.layout.mutations, registry, localDefaultUser, layoutE2EDiscardLogger())
+		return seedSampleWorkflows(ctx, e.samplesDir, e.workspaceDir, ds.workflowRepo, ds.publishedRepo, ds.layout.stamper, ds.layout.mutations, registry, nil, nil, localDefaultUser, layoutE2EDiscardLogger())
 	}
 	assertUnchanged := func() {
 		t.Helper()

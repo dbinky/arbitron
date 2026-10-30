@@ -22,8 +22,10 @@ import (
 // Once it dies the blocked raw read settles that entry itself: an unproven seed
 // releases exactly its own claim and serves nothing; a proven one rolls forward.
 func TestSeedSampleWorkflows_PeerSettlingReadWaitsForLiveSeedClaim(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, stage := range []string{"identity", "partial-tree", "before-proof", "after-proof"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			e := durableSeedEnv(t)
 			ds, _ := e.boot(t)
 			ds.layout.worker.Stop()

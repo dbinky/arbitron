@@ -1,0 +1,661 @@
+{
+  "id": "4c8e1f3a-6b2d-4e97-a05c-d3f7b9e21c58",
+  "name": "plan",
+  "description": "Standalone planning stage. Checks out an existing pipeline branch, writes run-dated TDD task plans under docs/plans/<slug>/ from the spec and aligned designs, aligns them, and gates on deterministic dependency counts. Open BLOCKING/DECISION gaps get ONE interactive resolve pass and a re-check; anything still open records the stage as blocked. Then pushes and records plan_paths[], deps_resolved and deps_gaps in the pipeline manifest.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "Repo to clone.",
+      "required": true
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "Existing remote branch to check out and commit the plans on.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug. Kept as given; plans live under docs/plans/<slug>/.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Recorded as the manifest's top-level base_branch when this stage's finish creates the manifest. Empty leaves it unset.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Teams webhook URL, accepted for parity with the other stages. Leave empty in the committed sample.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_path",
+      "type": "string",
+      "description": "Path of the approved spec on the branch. Falls back to the pipeline manifest's spec entry when empty.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "design_paths",
+      "type": "array",
+      "description": "Paths of the aligned phase designs on the branch. Falls back to the pipeline manifest's design entry when empty.",
+      "default": [],
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--checkout"
+        ],
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url and add a worktree at ./work on the existing remote branch.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "entrypoint": true
+    },
+    {
+      "id": "promote",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init.work_dir}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init.run_date}}"
+          },
+          {
+            "variable": "plan_dir",
+            "operation": "set",
+            "value": "docs/plans/{{slug}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift work_dir and run_date to top-level vars and compute the per-slug plan directory.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "resolve-inputs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-read.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--explicit",
+          "spec_path,design_paths",
+          "--require",
+          "spec_path,design_paths"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Resolve inputs",
+      "description": "Explicit spec_path/design_paths win; otherwise both come from the manifest's spec and design entries. Both are required. design_paths stays a typed array.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "clear-plans",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/clear-owned-docs.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--message",
+          "docs: clear {{slug}} plans for regeneration",
+          "{{plan_dir}}/{{run_date}}-phase-*-task-*.md"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Clear this run's earlier plans",
+      "description": "Reconciles this stage's owned file set before generating: removes today's <run_date>-phase-N-task-M.md plans under plan_dir (git rm + commit; history keeps them) so a same-day rerun with fewer phases cannot leave the first run's extra files for list-plans to publish. Refuses any pattern that is not a plan output.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 350
+      }
+    },
+    {
+      "id": "produce-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/produce-plans.md",
+        "model_profile": "coder-opus-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Produce plans",
+      "description": "Write detailed TDD task plans for each design phase to ./work/docs/plans/<slug>/<run_date>-phase-N-task-M.md; commit locally.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "checkpoint-push-plans",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push new plans",
+      "description": "Pushes as soon as plans exist, before the dependency gate can route anywhere, so a blocked exit never loses the plan package.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "align-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-plans.md",
+        "model_profile": "reviewer-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align plans",
+      "description": "Align spec + designs + plans; fix in place; commit locally. Ends with the UNRESOLVED-DEPENDENCIES block deps-assess reads.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "deps-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/deps-assess.md",
+        "model_profile": "assessor-opus-high",
+        "outputSchema": {
+          "properties": {
+            "blocking_count": {
+              "type": "number"
+            },
+            "gaps": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "has_blocking": {
+              "type": "boolean"
+            },
+            "has_unresolved": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "unresolved_count": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "has_unresolved",
+            "unresolved_count",
+            "gaps",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess plan dependencies",
+      "description": "Read the align-plans report and list every open item as a BLOCKING:/DECISION:/NON-BLOCKING: gap line. Advisory only: the schema is not enforced, so the gate routes on deps-count.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "deps-count",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/deps-count.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "deps-assess"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Count gaps needing a person",
+      "description": "Counts deps-assess's BLOCKING: and DECISION: gap lines (needs_resolution) after stripping bullets, numbering and markdown emphasis. Fails closed: a non-empty gap with no recognised prefix counts as blocking, a non-string gap sets parse_ok false, and has_unresolved / unresolved_count raise a zero count to 1; unreadable gaps report needs_resolution=1.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 980
+      }
+    },
+    {
+      "id": "deps-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "deps-count.needs_resolution",
+            "operator": "eq",
+            "value": 0,
+            "output": "proceed"
+          }
+        ],
+        "defaultOutput": "resolve"
+      },
+      "label": "Deps need a person?",
+      "description": "Proceed only when deps-count.needs_resolution is 0. Otherwise take the ONE interactive resolve pass. Routes on deps-count (a script), never on deps-assess fields: llm_call outputSchema is not enforced, and run 5e86d796 sailed past 7 decisions on a first-match blocking_count == 0.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1120
+      }
+    },
+    {
+      "id": "resolve-deps",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/resolve-deps.md",
+        "orchestrationFile": "orchestration/resolve-deps.orch.md",
+        "model_profile": "interviewer-opus-high",
+        "outputSchema": {
+          "properties": {
+            "notes": {
+              "type": "string"
+            },
+            "updated_docs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "updated_docs",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Resolve dependencies (interactive)",
+      "description": "Walk the human through each BLOCKING/DECISION gap, patch the design/plan docs, commit locally. Runs at most once: not on a cycle; never pushes.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 420,
+        "y": 1260
+      }
+    },
+    {
+      "id": "push-resolution",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push resolution",
+      "description": "Push the human's resolution before re-checking, so a blocked exit keeps it.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1400
+      }
+    },
+    {
+      "id": "align-plans-2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-plans.md",
+        "model_profile": "reviewer-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Re-align plans",
+      "description": "Same as align-plans, over the docs resolve-deps patched.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1540
+      }
+    },
+    {
+      "id": "deps-assess-2",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/deps-assess-2.md",
+        "model_profile": "assessor-opus-high",
+        "outputSchema": {
+          "properties": {
+            "blocking_count": {
+              "type": "number"
+            },
+            "gaps": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "has_blocking": {
+              "type": "boolean"
+            },
+            "has_unresolved": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "unresolved_count": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "has_unresolved",
+            "unresolved_count",
+            "gaps",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Re-assess plan dependencies",
+      "description": "Same as deps-assess, reading the align-plans-2 report.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1680
+      }
+    },
+    {
+      "id": "deps-count-2",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/deps-count.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "deps-assess-2"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Re-count gaps needing a person",
+      "description": "Counts deps-assess-2's gap lines, never the stale first pass. Fails closed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1820
+      }
+    },
+    {
+      "id": "deps-gate-2",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "deps-count-2.needs_resolution",
+            "operator": "eq",
+            "value": 0,
+            "output": "proceed"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Still need a person?",
+      "description": "Proceed only when deps-count-2.needs_resolution is 0. Anything still open blocks the stage instead of asking the human again, so resolve-deps never sits on a cycle.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1960
+      }
+    },
+    {
+      "id": "mark-resolved",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "plan_status",
+            "operation": "set",
+            "value": "done"
+          },
+          {
+            "variable": "deps_resolved",
+            "operation": "set",
+            "value": true
+          },
+          {
+            "variable": "deps_gaps",
+            "operation": "set",
+            "value": ""
+          }
+        ]
+      },
+      "label": "Mark resolved",
+      "description": "Every dependency is closed: the stage is done.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2100
+      }
+    },
+    {
+      "id": "mark-unresolved",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "plan_status",
+            "operation": "set",
+            "value": "blocked"
+          },
+          {
+            "variable": "deps_resolved",
+            "operation": "set",
+            "value": false
+          },
+          {
+            "variable": "deps_gaps",
+            "operation": "set",
+            "value": "{{deps-assess-2.gaps}}"
+          }
+        ]
+      },
+      "label": "Mark unresolved",
+      "description": "Gaps remain after the one resolve pass: the stage is blocked, and deps_gaps carries the JSON text of deps-assess-2.gaps.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2100
+      }
+    },
+    {
+      "id": "list-plans",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/list-plans.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 60
+      },
+      "label": "List plans",
+      "description": "List this run's <run_date>-phase-N-task-M.md plans under plan_dir, sorted by phase then task. Other dates' files are ignored; none exits 1.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 2240
+      }
+    },
+    {
+      "id": "checkpoint-push",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push",
+      "description": "Push the branch with the final aligned plans.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2380
+      }
+    },
+    {
+      "id": "finish",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-append.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--workflow",
+          "plan",
+          "plan",
+          "{{plan_status}}",
+          "{plan_paths: .[\"list-plans\"].plan_paths, deps_resolved: .deps_resolved, deps_gaps: .deps_gaps}"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Record stage",
+      "description": "Commit and push the plan entry (status done or blocked) to .arbitron/pipeline/<slug>.json. plan_paths stays a typed array. Its outputs are the stage contract.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2520
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init",
+      "target": "promote"
+    },
+    {
+      "source": "promote",
+      "target": "resolve-inputs"
+    },
+    {
+      "source": "resolve-inputs",
+      "target": "clear-plans"
+    },
+    {
+      "source": "clear-plans",
+      "target": "produce-plans"
+    },
+    {
+      "source": "produce-plans",
+      "target": "checkpoint-push-plans"
+    },
+    {
+      "source": "checkpoint-push-plans",
+      "target": "align-plans"
+    },
+    {
+      "source": "align-plans",
+      "target": "deps-assess"
+    },
+    {
+      "source": "deps-assess",
+      "target": "deps-count"
+    },
+    {
+      "source": "deps-count",
+      "target": "deps-gate"
+    },
+    {
+      "source": "deps-gate",
+      "target": "mark-resolved",
+      "output": "proceed"
+    },
+    {
+      "source": "deps-gate",
+      "target": "resolve-deps",
+      "output": "resolve"
+    },
+    {
+      "source": "resolve-deps",
+      "target": "push-resolution"
+    },
+    {
+      "source": "push-resolution",
+      "target": "align-plans-2"
+    },
+    {
+      "source": "align-plans-2",
+      "target": "deps-assess-2"
+    },
+    {
+      "source": "deps-assess-2",
+      "target": "deps-count-2"
+    },
+    {
+      "source": "deps-count-2",
+      "target": "deps-gate-2"
+    },
+    {
+      "source": "deps-gate-2",
+      "target": "mark-resolved",
+      "output": "proceed"
+    },
+    {
+      "source": "deps-gate-2",
+      "target": "mark-unresolved",
+      "output": "blocked"
+    },
+    {
+      "source": "mark-resolved",
+      "target": "list-plans"
+    },
+    {
+      "source": "mark-unresolved",
+      "target": "list-plans"
+    },
+    {
+      "source": "list-plans",
+      "target": "checkpoint-push"
+    },
+    {
+      "source": "checkpoint-push",
+      "target": "finish"
+    }
+  ],
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  }
+}

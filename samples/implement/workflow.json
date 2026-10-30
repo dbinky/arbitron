@@ -1,0 +1,1026 @@
+{
+  "id": "1a460201-d8b7-49ba-9666-a8b26a8b63b1",
+  "name": "implement",
+  "description": "Standalone implementation stage. Checks out an existing pipeline branch, reuses or measures and commits the branch-point test baseline, then implements the plan one task per pass with strict TDD. Every pass crosses a deterministic tamper gate with a cross-family judge before it is pushed. Completion is decided by counting plan checkboxes; a blocked plan or the iteration cap records the stage as blocked. Records status, blocked_reason and baseline_path in the pipeline manifest.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "Repo to clone.",
+      "required": true
+    },
+    {
+      "name": "branch",
+      "type": "string",
+      "description": "Existing remote branch to check out and implement on.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug. Names the committed baseline .arbitron/pipeline/<slug>.baseline.json.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Recorded as the manifest's top-level base_branch when this stage's finish creates the manifest. Empty leaves it unset.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Teams webhook URL, accepted for parity with the other stages. Leave empty in the committed sample.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "plan_paths",
+      "type": "array",
+      "description": "Plan files on the branch, in task order. Falls back to the pipeline manifest's plan entry when empty.",
+      "default": [],
+      "required": false
+    },
+    {
+      "name": "max_impl_iterations",
+      "type": "number",
+      "description": "Iteration cap. Reaching it with plan steps unticked records the stage as blocked.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "impl_iteration",
+      "type": "number",
+      "description": "Pass counter; leave at 0.",
+      "default": 0,
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--checkout"
+        ],
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url and add a worktree at ./work on the existing remote branch.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "entrypoint": true
+    },
+    {
+      "id": "promote",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init.work_dir}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init.run_date}}"
+          },
+          {
+            "variable": "baseline_rel",
+            "operation": "set",
+            "value": ".arbitron/pipeline/{{slug}}.baseline.json"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift work_dir and run_date to top-level vars and name the committed branch-point baseline, a sibling of the pipeline manifest.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "resolve-inputs",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-read.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--explicit",
+          "plan_paths",
+          "--require",
+          "plan_paths"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Resolve inputs",
+      "description": "An explicit plan_paths wins; otherwise it comes from the manifest's plan entry. Required. It stays a typed array, which count-plan-steps, tamper-verdict and both loop prompts read by key.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "baseline-check",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/baseline-check.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 30
+      },
+      "label": "Baseline committed?",
+      "description": "Reports whether ./work/<baseline_rel> already exists on the branch, so a rerun reuses the committed baseline instead of re-measuring a partly implemented tree.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "baseline-source?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "baseline-check.present",
+            "operator": "eq",
+            "value": true,
+            "output": "import"
+          }
+        ],
+        "defaultOutput": "measure"
+      },
+      "label": "Import or measure baseline?",
+      "description": "A baseline already committed by an earlier run is imported and never re-measured: a re-measure on a partly implemented branch would record that run's own failures as pre-existing. Otherwise baseline-tests measures it.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "baseline-tests",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/baseline-tests.md",
+        "model_profile": "coder-sonnet5-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Capture test baseline",
+      "description": "Before any implementation, detect and run the project's test suite(s) (mixed languages -> possibly several) and write {{workspace}}/test-baseline.json recording which tests already fail at the branch point.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "persist-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/persist-baseline.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 60
+      },
+      "label": "Commit baseline",
+      "description": "Validates the measured baseline, copies it to ./work/<baseline_rel> and commits it, so it is in history before the first pass-mark (R3) and a later run imports it. No empty fallback: an empty baseline is never committed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "checkpoint-push-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push baseline",
+      "description": "Pushes the committed baseline before the first pass-mark (R3). Every tamper-gated range starts after this commit, so the baseline can never read as baseline_edited, and a pass that does edit it is caught.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 980
+      }
+    },
+    {
+      "id": "import-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/import-baseline.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 60
+      },
+      "label": "Import committed baseline",
+      "description": "Validates the record-baseline shape of ./work/<baseline_rel> and copies it to {{workspace}}/test-baseline.json for record-baseline. It is already committed and pushed. Fails the run on an unusable file.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 700
+      }
+    },
+    {
+      "id": "record-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-baseline.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 60
+      },
+      "label": "Record baseline vars",
+      "description": "Lift {{workspace}}/test-baseline.json into structured vars (test_baseline, test_commands, baseline_summary) for later stages. Both baseline paths reach it with the baseline already committed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1120
+      }
+    },
+    {
+      "id": "pass-mark",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/pass-mark.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 30
+      },
+      "label": "Mark pass start",
+      "description": "Loop head. Records HEAD at the start of this pass (the tamper gate's base) and a fresh pass_id. pass_id, never the sha, ties a verdict to this pass: a reset-void returns HEAD to the same sha (P8).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1260
+      }
+    },
+    {
+      "id": "impl-task",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/impl-task.md",
+        "model_profile": "coder-pi-sol-high",
+        "timeoutSeconds": 5400
+      },
+      "label": "Implement next task",
+      "description": "Fix any must-fix items from a voided pass, then implement the next incomplete plan task with strict TDD and commit (commit-leftovers commits anything it forgets). Commits only; checkpoint-push-impl pushes after the tamper gate. GPT doer, so the tamper judge is Claude.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1400
+      }
+    },
+    {
+      "id": "commit-leftovers",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/commit-leftovers.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Commit leftovers",
+      "description": "Commits any edits the agent left uncommitted (source, plan boxes, new files) on top of the pass, so the tamper gate, count-plan-steps, the checkpoint push and the manifest all describe one committed HEAD. Fails the pass if the commit or the cleanliness check fails.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1470
+      }
+    },
+    {
+      "id": "tamper-gate",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-gate.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "HEAD"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Tamper gate",
+      "description": "Deterministic check of the whole pass for weakened tests: deleted or renamed tests, dropped assertions, added skip/focus markers, test/mutation/CI config edits, baseline edits, and history rewritten inside the pass. Writes {{workspace}}/tamper/findings.json. Exit 2 means bad inputs only.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1540
+      }
+    },
+    {
+      "id": "tamper-route",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "tamper-gate.force_void",
+            "operator": "eq",
+            "value": true,
+            "output": "void"
+          },
+          {
+            "field": "tamper-gate.needs_judge",
+            "operator": "eq",
+            "value": true,
+            "output": "judge"
+          }
+        ],
+        "defaultOutput": "clean"
+      },
+      "label": "Void, judge or pass?",
+      "description": "First-match, so the deterministic void comes first (R4): a history rewrite inside the pass cannot be judged because the diff is meaningless, and must win even when judgeable findings also exist. Judgeable findings go to the cross-family judge. A clean pass goes straight to checkpoint-push-impl.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1680
+      }
+    },
+    {
+      "id": "tamper-void",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--force-void",
+          "--restore-json",
+          "resolve-inputs.inputs.plan_paths"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Void pass (forced)",
+      "description": "Forced void without a judge: resets the worktree to the pass base and restores the plan files, so no box ticked this pass survives, and writes {{workspace}}/tamper/must-fix.md for the next pass.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 1820
+      }
+    },
+    {
+      "id": "tamper-context",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "tamper_context",
+            "operation": "set",
+            "value": "implement pass {{impl_iteration}}: one task from the plans listed in resolve-inputs.inputs.plan_paths; a task that removes a feature may legitimately remove its tests"
+          }
+        ]
+      },
+      "label": "Judge context",
+      "description": "Tells the judge what this pass was supposed to do, so it can rule each finding against the plan rather than against the diff alone.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1820
+      }
+    },
+    {
+      "id": "tamper-judge",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "@lib/tamper-judge.md",
+        "model_profile": "approver-opus-medium",
+        "timeoutSeconds": 1800
+      },
+      "label": "Tamper judge",
+      "description": "Claude-family judge for the GPT doer (impl-task on coder-pi-sol-high). Rules on every finding id and writes only {{workspace}}/tamper/verdict.json.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1960
+      }
+    },
+    {
+      "id": "tamper-verdict",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/tamper-verdict.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "{{pass-mark.sha}}",
+          "--restore-json",
+          "resolve-inputs.inputs.plan_paths"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Apply tamper verdict",
+      "description": "Applies the judge's verdict, failing closed: a missing or malformed verdict, an unruled finding, or any legitimate:false voids the pass by restoring the weakened test/config/CI/baseline files and the plan files, and writes {{workspace}}/tamper/must-fix.md for the next pass. A pass that stands is left as is.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2100
+      }
+    },
+    {
+      "id": "voided?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "tamper-verdict.voided",
+            "operator": "eq",
+            "value": true,
+            "output": "voided"
+          }
+        ],
+        "defaultOutput": "stands"
+      },
+      "label": "Pass voided?",
+      "description": "Read only on the edge that just ran tamper-verdict, so the verdict is this pass's. A voided pass skips impl-assess: its report describes work that was just undone.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2240
+      }
+    },
+    {
+      "id": "checkpoint-push-void",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push void",
+      "description": "Pushes the void's restore commit, if any, so a stopped run never publishes the voided work as the branch tip.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 2380
+      }
+    },
+    {
+      "id": "skip-assess",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "assess_blocked",
+            "operation": "set",
+            "value": false
+          }
+        ]
+      },
+      "label": "No assessment (voided)",
+      "description": "A voided pass is not assessed. Sets assess_blocked=false so a previous pass's all_remaining_blocked, still in the store, cannot block the stage.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 2520
+      }
+    },
+    {
+      "id": "checkpoint-push-impl",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push pass",
+      "description": "Pushes a pass that stood, once the tamper gate has ruled, so a stopped run keeps every task that stood.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2380
+      }
+    },
+    {
+      "id": "impl-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/impl-assess.md",
+        "model_profile": "assessor-opus-high",
+        "outputSchema": {
+          "properties": {
+            "all_remaining_blocked": {
+              "type": "boolean"
+            },
+            "all_tasks_complete": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "tasks_remaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "all_tasks_complete",
+            "tasks_remaining",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess impl progress",
+      "description": "Advisory read of the pass report, only for passes that stood. Only all_remaining_blocked routes (through lift-assess), and only when present and true: the claude-cli chat path does not enforce outputSchema, so the key is deliberately not required. Completion is decided by count-plan-steps.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2520
+      }
+    },
+    {
+      "id": "lift-assess",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "assess_blocked",
+            "operation": "set",
+            "value": "{{impl-assess.all_remaining_blocked}}"
+          }
+        ]
+      },
+      "label": "Lift assessor verdict",
+      "description": "Copies this pass's all_remaining_blocked into assess_blocked, which impl-gate reads. An absent key stays an unresolved marker, which is not true. Every pass sets assess_blocked exactly once, here or in skip-assess.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2660
+      }
+    },
+    {
+      "id": "count-plan-steps",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/count-plan-steps.sh",
+        "interpreter": "/bin/sh",
+        "args": [],
+        "timeoutSeconds": 60
+      },
+      "label": "Count plan steps",
+      "description": "Counts - [ ] and - [x] across resolve-inputs.inputs.plan_paths as committed at HEAD (git show), so impl-gate decides completion by arithmetic over the same commit the gate judged and the manifest records. Fails closed: an unreadable or uncommitted plan, or plans with no boxes, are never complete.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2800
+      }
+    },
+    {
+      "id": "impl-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "impl_iteration++",
+      "description": "Counts passes for the iteration cap.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2940
+      }
+    },
+    {
+      "id": "impl-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "count-plan-steps.all_tasks_complete",
+            "operator": "eq",
+            "value": true,
+            "output": "done"
+          },
+          {
+            "field": "count-plan-steps.unreadable.0",
+            "operator": "exists",
+            "value": null,
+            "output": "unusable"
+          },
+          {
+            "field": "count-plan-steps.no_checkboxes",
+            "operator": "eq",
+            "value": true,
+            "output": "unusable"
+          },
+          {
+            "field": "assess_blocked",
+            "operator": "eq",
+            "value": true,
+            "output": "blocked"
+          },
+          {
+            "field": "impl_iteration",
+            "operator": "gte",
+            "value": "{{max_impl_iterations}}",
+            "output": "cap"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Impl loop or exit",
+      "description": "First-match, deterministic evidence first: count-plan-steps.all_tasks_complete ends the stage done, even if the assessor also says blocked, and an assessor claiming completion over unticked boxes cannot end it. An unreadable plan or plans with no checkboxes can never complete, so they stop the stage on the first count instead of spinning to the cap. Then the advisory assess_blocked (absent or voided reads as false) stops a loop stuck on a missing producer. Then the cap, which with work left is blocked. Otherwise the next pass.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3080
+      }
+    },
+    {
+      "id": "mark-done",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_status",
+            "operation": "set",
+            "value": "done"
+          },
+          {
+            "variable": "blocked_reason",
+            "operation": "set",
+            "value": ""
+          }
+        ]
+      },
+      "label": "Mark done",
+      "description": "Every plan step is ticked.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3220
+      }
+    },
+    {
+      "id": "mark-unusable",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_status",
+            "operation": "set",
+            "value": "blocked"
+          },
+          {
+            "variable": "blocked_reason",
+            "operation": "set",
+            "value": "plan_paths unreadable or contain no checkboxes: unreadable={{count-plan-steps.unreadable}} no_checkboxes={{count-plan-steps.no_checkboxes}}"
+          }
+        ]
+      },
+      "label": "Mark plans unusable",
+      "description": "The plans cannot prove completion (a file is unreadable, or none holds a checkbox), so more passes cannot help: the stage is blocked.",
+      "errorBehavior": {},
+      "position": {
+        "x": -840,
+        "y": 3220
+      }
+    },
+    {
+      "id": "mark-blocked?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl-assess.notes",
+            "operator": "eq",
+            "value": "",
+            "output": "unexplained"
+          },
+          {
+            "field": "impl-assess.notes",
+            "operator": "exists",
+            "value": null,
+            "output": "explained"
+          }
+        ],
+        "defaultOutput": "unexplained"
+      },
+      "label": "Blocker named?",
+      "description": "Uses the assessor's notes as the blocked reason when it gave any. Missing or empty notes get a fixed reason, since a transform would leave an unresolved marker in the manifest.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 3220
+      }
+    },
+    {
+      "id": "mark-blocked",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_status",
+            "operation": "set",
+            "value": "blocked"
+          },
+          {
+            "variable": "blocked_reason",
+            "operation": "set",
+            "value": "{{impl-assess.notes}}"
+          }
+        ]
+      },
+      "label": "Mark blocked",
+      "description": "Every remaining task is blocked on a producer outside its scope; the assessor's notes name the blocker for the parent's alert.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 3360
+      }
+    },
+    {
+      "id": "mark-blocked-unexplained",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_status",
+            "operation": "set",
+            "value": "blocked"
+          },
+          {
+            "variable": "blocked_reason",
+            "operation": "set",
+            "value": "all remaining tasks blocked (see impl-assess)"
+          }
+        ]
+      },
+      "label": "Mark blocked (no notes)",
+      "description": "The assessor said every remaining task is blocked but named no blocker.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 3360
+      }
+    },
+    {
+      "id": "mark-cap",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_status",
+            "operation": "set",
+            "value": "blocked"
+          },
+          {
+            "variable": "blocked_reason",
+            "operation": "set",
+            "value": "iteration cap {{max_impl_iterations}} reached; {{count-plan-steps.unchecked_steps}} unchecked plan steps remain"
+          }
+        ]
+      },
+      "label": "Mark cap reached",
+      "description": "The iteration cap ran out with plan steps still unticked: the stage is blocked, not done.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 3220
+      }
+    },
+    {
+      "id": "finish",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/manifest-append.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "--workflow",
+          "implement",
+          "implement",
+          "{{impl_status}}",
+          "{status: .impl_status, blocked_reason: .blocked_reason, baseline_path: .baseline_rel}"
+        ],
+        "timeoutSeconds": 300
+      },
+      "label": "Record stage",
+      "description": "Commit and push the implement entry (status done or blocked) to .arbitron/pipeline/<slug>.json. Its outputs are the stage contract.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3500
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init",
+      "target": "promote"
+    },
+    {
+      "source": "promote",
+      "target": "resolve-inputs"
+    },
+    {
+      "source": "resolve-inputs",
+      "target": "baseline-check"
+    },
+    {
+      "source": "baseline-check",
+      "target": "baseline-source?"
+    },
+    {
+      "source": "baseline-source?",
+      "target": "import-baseline",
+      "output": "import",
+      "label": "committed baseline"
+    },
+    {
+      "source": "baseline-source?",
+      "target": "baseline-tests",
+      "output": "measure"
+    },
+    {
+      "source": "baseline-tests",
+      "target": "persist-baseline"
+    },
+    {
+      "source": "persist-baseline",
+      "target": "checkpoint-push-baseline"
+    },
+    {
+      "source": "checkpoint-push-baseline",
+      "target": "record-baseline"
+    },
+    {
+      "source": "import-baseline",
+      "target": "record-baseline"
+    },
+    {
+      "source": "record-baseline",
+      "target": "pass-mark"
+    },
+    {
+      "source": "pass-mark",
+      "target": "impl-task"
+    },
+    {
+      "source": "impl-task",
+      "target": "commit-leftovers"
+    },
+    {
+      "source": "commit-leftovers",
+      "target": "tamper-gate"
+    },
+    {
+      "source": "tamper-gate",
+      "target": "tamper-route"
+    },
+    {
+      "source": "tamper-route",
+      "target": "tamper-void",
+      "output": "void",
+      "label": "forced void"
+    },
+    {
+      "source": "tamper-route",
+      "target": "tamper-context",
+      "output": "judge"
+    },
+    {
+      "source": "tamper-route",
+      "target": "checkpoint-push-impl",
+      "output": "clean"
+    },
+    {
+      "source": "tamper-void",
+      "target": "checkpoint-push-void"
+    },
+    {
+      "source": "tamper-context",
+      "target": "tamper-judge"
+    },
+    {
+      "source": "tamper-judge",
+      "target": "tamper-verdict"
+    },
+    {
+      "source": "tamper-verdict",
+      "target": "voided?"
+    },
+    {
+      "source": "voided?",
+      "target": "checkpoint-push-void",
+      "output": "voided"
+    },
+    {
+      "source": "voided?",
+      "target": "checkpoint-push-impl",
+      "output": "stands"
+    },
+    {
+      "source": "checkpoint-push-void",
+      "target": "skip-assess"
+    },
+    {
+      "source": "skip-assess",
+      "target": "count-plan-steps"
+    },
+    {
+      "source": "checkpoint-push-impl",
+      "target": "impl-assess"
+    },
+    {
+      "source": "impl-assess",
+      "target": "lift-assess"
+    },
+    {
+      "source": "lift-assess",
+      "target": "count-plan-steps"
+    },
+    {
+      "source": "count-plan-steps",
+      "target": "impl-inc"
+    },
+    {
+      "source": "impl-inc",
+      "target": "impl-gate"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-done",
+      "output": "done"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-unusable",
+      "output": "unusable",
+      "label": "plans unusable"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-blocked?",
+      "output": "blocked",
+      "label": "all remaining blocked"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-cap",
+      "output": "cap",
+      "label": "iteration cap"
+    },
+    {
+      "source": "impl-gate",
+      "target": "pass-mark",
+      "output": "loop",
+      "label": "back-edge: next task"
+    },
+    {
+      "source": "mark-blocked?",
+      "target": "mark-blocked",
+      "output": "explained"
+    },
+    {
+      "source": "mark-blocked?",
+      "target": "mark-blocked-unexplained",
+      "output": "unexplained"
+    },
+    {
+      "source": "mark-unusable",
+      "target": "finish"
+    },
+    {
+      "source": "mark-blocked-unexplained",
+      "target": "finish"
+    },
+    {
+      "source": "mark-done",
+      "target": "finish"
+    },
+    {
+      "source": "mark-blocked",
+      "target": "finish"
+    },
+    {
+      "source": "mark-cap",
+      "target": "finish"
+    }
+  ],
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  }
+}

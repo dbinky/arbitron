@@ -23,6 +23,7 @@ import (
 // The real composition root consumes persisted connections/profiles/pins. Only
 // the upstream HTTP service is substituted; it refuses missing request inputs.
 func TestUsabilityHTTPExactModelRoot(t *testing.T) {
+	pinSinkRootEnv(t)
 	for _, protocol := range []struct {
 		provider, model, nextModel string
 	}{
@@ -35,6 +36,7 @@ func TestUsabilityHTTPExactModelRoot(t *testing.T) {
 		for _, interactive := range []bool{false, true} {
 			for _, actual := range []string{model, "fallback", ""} {
 				t.Run(fmt.Sprintf("provider=%s/interactive=%v/actual=%s", protocol.provider, interactive, actual), func(t *testing.T) {
+					t.Parallel()
 					var mu sync.Mutex
 					var models []string
 					actualModel := actual

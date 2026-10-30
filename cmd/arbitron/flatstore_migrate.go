@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 // flatStoreMarker is the sentinel file recording that the one-time flat→user
@@ -25,7 +27,7 @@ var reservedRoots = map[string]bool{
 }
 
 func flatStoreArtifact(name string) bool {
-	if reservedRoots[name] {
+	if reservedRoots[name] || workflow.IsReservedWorkflowName(name) {
 		return true
 	}
 	if !strings.HasPrefix(name, ".") {

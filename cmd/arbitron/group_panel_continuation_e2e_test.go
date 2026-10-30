@@ -22,6 +22,7 @@ import (
 // continuation with the loser still running, and after the loser's late
 // completion. The late completion moves live status only.
 func TestGroupPanelE2E_FinishIndependentlyPanelTracksDecisionContinuationAndLateLoser(t *testing.T) {
+	t.Parallel()
 	ds, gates := bootGatedBehaviorStack(t, 5, map[string]string{"grp-fs-indep": fsIndependentManifest},
 		map[string][]string{"grp-fs-indep": {"slow-hold", "fast-set"}})
 	srv := gsServeAPI(t, ds)

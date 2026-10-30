@@ -16,10 +16,12 @@ import (
 // initDomain supplies the real factory, binding, run pins and parser. Only the
 // process leaf is replaced; it refuses missing model, prompt, cwd or agent key.
 func TestUsabilityClaudeNonStreamingExactModelRoot(t *testing.T) {
+	pinSinkRootEnv(t)
 	const model = "claude-sonnet-4-6"
 	for _, agent := range []bool{false, true} {
 		for _, actual := range []string{"exact", "helper", "context-window", "unsupported-suffix", "unterminated-suffix", "suffix-trailing-data", "repeated-suffix", "fallback", "missing"} {
 			t.Run(fmt.Sprintf("agent=%v/actual=%s", agent, actual), func(t *testing.T) {
+				t.Parallel()
 				usage := map[string]any{}
 				switch actual {
 				case "exact", "helper":

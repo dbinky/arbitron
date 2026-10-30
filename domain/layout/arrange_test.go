@@ -272,7 +272,7 @@ func TestArrange_LongUnicodeLabelsGrowBoxes(t *testing.T) {
 }
 
 func TestArrange_IsDeterministic(t *testing.T) {
-	g, err := BuildGraph(loadSample(t, "feature-pipeline"))
+	g, err := BuildGraph(loadSample(t, "legacy-feature-pipeline"))
 	require.NoError(t, err)
 	a := arrangeFor(t, g, DefaultOptions())
 	b := arrangeFor(t, g, DefaultOptions())
@@ -302,7 +302,7 @@ func TestArrange_DoesNotMutateTheGraph(t *testing.T) {
 }
 
 func TestArrange_SamplesAreValidDownwardAndOverlapFree(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			g, err := BuildGraph(loadSample(t, name))
 			require.NoError(t, err)
@@ -614,7 +614,7 @@ func TestArrange_LayerInversionsMustNotDiscardBetterOrthogonalRoutes(t *testing.
 }
 
 func TestArrange_SearchPrefixesCompareCompleteRoutes(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			g, err := BuildGraph(loadSample(t, name))
 			require.NoError(t, err)

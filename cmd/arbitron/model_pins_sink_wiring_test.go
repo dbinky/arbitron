@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -149,7 +148,7 @@ func serveRootCatalog(t *testing.T, ds *domainStack, f *fixtureFetcher) {
 // through initDomain, while cleanup still closes every stack on a failed test.
 func bootSinkRootWithClose(t *testing.T, llmCfg string, setup func(workspaceDir string)) (*domainStack, func()) {
 	t.Helper()
-	t.Setenv("ARBITRON_MASTER_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x5d}, 32)))
+	pinSinkRootEnv(t)
 	root := t.TempDir()
 	workspaceDir := filepath.Join(root, "workspaces")
 	require.NoError(t, os.MkdirAll(workspaceDir, 0o700))

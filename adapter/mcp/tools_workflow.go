@@ -95,36 +95,40 @@ func RegisterWorkflowTools(srv *Server) {
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_list_files",
-			gomcp.WithDescription("List files associated with a workflow"),
+			gomcp.WithDescription("List files associated with a workflow. Name \"@lib\" lists the shared prompt library: {\"private\":[...],\"shared\":[...]}"),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
+			gomcp.WithString("scope", gomcp.Description("Only with name \"@lib\": ignored for list, which always returns both private and shared")),
 		),
 		workflowListFilesHandler(srv),
 	)
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_read_file",
-			gomcp.WithDescription("Read a file associated with a workflow"),
+			gomcp.WithDescription("Read a file associated with a workflow. Name \"@lib\" reads a library file (private copy first, then shared)"),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
 			gomcp.WithString("path", gomcp.Required(), gomcp.Description("Relative file path")),
+			gomcp.WithString("scope", gomcp.Description("Only with name \"@lib\": omit to read private then shared; \"private\" or \"shared\" (admin) reads exactly that scope")),
 		),
 		workflowReadFileHandler(srv),
 	)
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_write_file",
-			gomcp.WithDescription("Write a file to a workflow directory"),
+			gomcp.WithDescription("Write a file to a workflow directory. Name \"@lib\" writes a library file (private by default; shared needs admin)"),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
 			gomcp.WithString("path", gomcp.Required(), gomcp.Description("Relative file path")),
 			gomcp.WithString("content", gomcp.Required(), gomcp.Description("File content")),
+			gomcp.WithString("scope", gomcp.Description("Only with name \"@lib\": omit to write private; \"shared\" needs admin")),
 		),
 		workflowWriteFileHandler(srv),
 	)
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_delete_file",
-			gomcp.WithDescription("Delete a file from a workflow directory"),
+			gomcp.WithDescription("Delete a file from a workflow directory. Name \"@lib\" deletes a library file (private by default; shared needs admin)"),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
 			gomcp.WithString("path", gomcp.Required(), gomcp.Description("Relative file path")),
+			gomcp.WithString("scope", gomcp.Description("Only with name \"@lib\": omit to delete from private; \"shared\" needs admin")),
 		),
 		workflowDeleteFileHandler(srv),
 	)
@@ -446,6 +450,13 @@ func workflowListFilesHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
 
+		scope, _ := args["scope"].(string)
+		if isLib, refused := routeLibrary(name, scope); refused != nil {
+			return refused, nil
+		} else if isLib {
+			return libraryListHandler(ctx, srv, scope)
+		}
+
 		if !safeWorkflowName(name) {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
@@ -475,6 +486,14 @@ func workflowReadFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
 
+		scope, _ := args["scope"].(string)
+		if isLib, refused := routeLibrary(name, scope); refused != nil {
+			return refused, nil
+		} else if isLib {
+			p, _ := args["path"].(string)
+			return libraryReadHandler(ctx, srv, scope, p)
+		}
+
 		if !safeWorkflowName(name) {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
@@ -488,6 +507,11 @@ func workflowReadFileHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			if result := mutationPendingToolError(err); result != nil {
 				return result, nil
+			}
+			if _, isLib, _ := workflow.ParseLibPath(path); isLib {
+				// Lib errors can embed absolute server paths; use the
+				// sanitized messages the @lib route uses.
+				return libToolError("read", path, err), nil
 			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to read file: %s", err)), nil
 		}
@@ -505,6 +529,14 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 		name, _ := args["name"].(string)
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
+		}
+
+		scope, _ := args["scope"].(string)
+		if isLib, refused := routeLibrary(name, scope); refused != nil {
+			return refused, nil
+		} else if isLib {
+			p, _ := args["path"].(string)
+			return libraryWriteHandler(ctx, srv, args, scope, p)
 		}
 
 		if !safeWorkflowName(name) {
@@ -550,6 +582,14 @@ func workflowDeleteFileHandler(srv *Server) server.ToolHandlerFunc {
 		name, _ := args["name"].(string)
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
+		}
+
+		scope, _ := args["scope"].(string)
+		if isLib, refused := routeLibrary(name, scope); refused != nil {
+			return refused, nil
+		} else if isLib {
+			p, _ := args["path"].(string)
+			return libraryDeleteHandler(ctx, srv, scope, p)
 		}
 
 		if !safeWorkflowName(name) {

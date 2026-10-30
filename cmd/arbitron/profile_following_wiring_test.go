@@ -64,6 +64,7 @@ profiles:
 // strand the later entry behind the nonempty-table seed gate on restart. (The
 // later entry is pinned: a first boot has no catalog to prove a following start.)
 func TestFollowingProfileRootSkipsInvalidSelection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		selection string

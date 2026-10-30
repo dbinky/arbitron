@@ -53,6 +53,21 @@ minus the reserved `workspace`) come back as the spawn node's `childOutput` on
 BOTH ports, e.g. `{{spawn-1.childOutput.review.verdict}}`. The node output also
 carries `childInstanceId`, `childWorkflow`, `spawnMode`, and `childState`.
 
+A spawn node may set an explicit `inputs` map (child input name to a literal or
+`{{template}}` against the parent's variables). Mapped values are passed as
+given and always win. The startup-value LLM runs only for required child inputs
+that are unmapped and have no default; child defaults are passed explicitly, and
+optional inputs are never LLM-filled. A mapped reference that cannot be resolved
+fails closed (the spawn fails rather than passing an empty value). A fully mapped
+spawn makes zero LLM calls and needs no `model_profile`. The node output carries
+`inputSources` (input name to `mapped`, `default`, or `prepared`; names only,
+never values); it is readable downstream (`{{spawn-1.inputSources.topic}}`) for
+`fire_and_forget` spawns, and trace-only (first execution record) for awaited
+spawns. A string in `inputs` that is exactly one `{{path}}` keeps the
+referenced value's type; any other templated string is interpolated to a
+string. Mapping parent `{{workspace}}` paths into a child is discouraged:
+the child has its own workspace.
+
 Use the code vocabulary above when editing manifests, validation, dashboard behavior, or tests. Older docs may refer generically to `interactive`.
 
 Provider abstraction is centered on:
@@ -66,8 +81,18 @@ Agent backend vocabulary is defined in `domain/workflow/workflow.go`:
 
 - `claude-code`
 - `opencode`
+- `codex`
+- `pi`
 
-The backend axis is separate from provider/connection. Do not add vendor-specific node kinds.
+The backend axis is separate from provider/connection. Do not add vendor-specific node kinds. For cross-family rules, family is the model vendor (after stripping provider prefixes), not the backend.
+
+## Pipeline stage workflows
+
+The feature pipeline is split into stage workflows under `samples/`: `ideate`, `spec`, `design`, `plan`, `implement` and `harden`, plus `ralph-loop` and `pr-review`, which are the parent's refine and review stages. The parent `feature-pipeline` composes them with `spawn_workflow`. The older monolithic pipeline still ships, unchanged, as `legacy-feature-pipeline`; pre-release builds called the parent `feature-pipeline-next`, and pipeline manifests stamped with that name still resume.
+
+- **Manifests.** Stage progress and outputs are recorded in `.arbitron/pipeline/<slug>.json` in the work repo; resume reads them to decide which stages to skip or adopt.
+- **Tamper gate.** Stages that must not edit their own tests or contracts use the shared `@lib` tamper gate: the `tamper-gate` script, the `tamper-judge` prompt, and the `tamper-verdict` script. `harden`, `implement` and `ralph-loop` wire it. Reference the files as `@lib/...`. `_lib` files are seeded into the shared library at boot (once; admin edits are never overwritten) and live-read at run time.
+- **Spawns.** Every `spawn_workflow` in the parent is fully mapped: each child input is passed explicitly through `inputs`, and each needed result is read from `childOutput`. Nothing is inherited implicitly.
 
 ## Authorization, Visibility, and Multi-User State
 
@@ -95,6 +120,20 @@ Do not put an **awaited** `spawn_workflow` node (`spawnMode: wait_for_child`) in
 A **fire-and-forget** `spawn_workflow` node is loop-safe and carries no such restriction: it has no short-circuit, so each revisit spawns a new child, consistent with the documented re-execution semantics of loop revisits.
 
 Instance workspaces are managed through the `WorkspaceManager` port. Agent nodes should mutate only the instance workspace, exposed to templates as `{{workspace}}`.
+
+## Shared library (@lib)
+
+`@lib` is a reusable file library (prompts, templates, scripts) that any workflow can reference. Source lives in `samples/_lib/` and is seeded into the shared library at boot, per file and create-if-absent (see `samples/_lib/README.md`).
+
+- **Roots and precedence.** Two roots: the run owner's private `_lib` and the shared `_lib`. A reference resolves private first, then shared, keyed by the run OWNER (not the viewer or editor). A private file therefore shadows the shared file of the same path for your own runs only.
+- **Where it works.** Use `@lib/<path>` in `templateFile`, `scriptFile`, `orchestrationFile`, `resolverPromptFile`, and in includes.
+- **Include rule.** A relative include inside a lib file resolves against the lib root, not the including workflow. `./x` and `../` are rejected inside the lib; write `prompts/x.md`, not `./x.md`.
+- **Naming.** The `@lib/` prefix is case-sensitive. `_lib` and `@lib` are reserved (case-insensitively) and can never be a workflow name. Paths are validated strictly: no traversal, absolute paths, backslashes or empty components, and no top-level `workflow.json`/`layout.json`. Containment and symlinks fail closed.
+- **Live reads.** Lib files are read at run time, not snapshotted into an instance. A broken lib edit breaks every workflow that references it, including running instances. Lib scripts need tests and should change via PRs, not by hand on a live server.
+- **MCP.** Use `workflow_list_files`, `workflow_read_file`, `workflow_write_file` and `workflow_delete_file` with `name: "@lib"` and an optional `scope` (`private` or `shared`). Without `scope`, write and delete act on the private library, a read is an effective read (private then shared), and a list ignores `scope` and returns both. Writing or deleting in `shared` requires admin and is audited (`lib.edit_shared`). The MCP write size limit also applies to lib files. `scope` is only valid with `name: "@lib"`.
+- **Publish gotcha.** A published (shared) workflow resolves `@lib/...` for each run owner, so put the lib files in `shared` BEFORE publishing a workflow that uses them; files only in your private lib will not be found by other users.
+- **Script gotcha: cwd.** A lib script runs with its cwd inside `_lib`, possibly the SHARED one. Scripts must write via absolute paths taken from stdin (e.g. `work_dir`), never relative paths.
+- **Script gotcha: siblings.** `$(dirname "$0")` finds sibling files only in the same scope as the script; there is no fallback to the shared library.
 
 ## Provider and Credential Safety
 

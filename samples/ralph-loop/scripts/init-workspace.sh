@@ -2,8 +2,13 @@
 # Reads the variable snapshot as JSON on stdin; clones repo_url into
 # {{workspace}}/src (optionally checking out base_branch), derives slug +
 # run_date, creates the dev-<slug>-<run_date>-<instance-short-id> worktree at
-# {{workspace}}/work, and emits {slug, run_date, work_dir, src_dir, branch,
-# base_ref} as JSON.
+# {{workspace}}/work, and emits {slug, run_date, resumed, work_dir, src_dir,
+# branch, base_ref, in_place, baseline_present} as JSON.
+#
+# in_place=true works directly ON base_branch (no dev-* branch is cut); the PR is
+# then opened against pr_base, so pr_base must differ from base_branch.
+# baseline_path (optional) names a committed test-baseline file at the tip of
+# base_branch; baseline_present tells the graph to import it instead of measuring.
 set -eu
 IN="$(cat)"
 WS="$(printf '%s' "$IN" | jq -r '.workspace')"
@@ -12,6 +17,9 @@ SLUG_IN="$(printf '%s' "$IN" | jq -r '.slug // ""')"
 BASE_BRANCH_IN="$(printf '%s' "$IN" | jq -r '.base_branch // ""')"
 # Explicit opt-in only: reject malformed flags before any filesystem/git work.
 FORCE_FRESH="$(printf '%s' "$IN" | jq -r 'if has("force_fresh") then if (.force_fresh | type) == "boolean" then .force_fresh else error("force_fresh must be a boolean") end else false end')"
+IN_PLACE="$(printf '%s' "$IN" | jq -r 'if has("in_place") and .in_place != null then if (.in_place | type) == "boolean" then .in_place else error("in_place must be a boolean") end else false end')"
+PR_BASE_IN="$(printf '%s' "$IN" | jq -r '.pr_base // ""')"
+BASELINE_PATH="$(printf '%s' "$IN" | jq -r '.baseline_path // ""')"
 
 [ -n "$WS" ] && [ "$WS" != "null" ] || { echo "workspace not set" >&2; exit 1; }
 [ -n "$REPO_URL" ] && [ "$REPO_URL" != "null" ] || { echo "repo_url not set" >&2; exit 1; }
@@ -104,6 +112,32 @@ else
   BASE_BRANCH="$BASE_BRANCH_IN"
 fi
 
+# in_place needs a PR target distinct from the branch being worked on, or no PR
+# can be opened. Checked before any git work.
+if [ "$IN_PLACE" = true ]; then
+  if [ -z "$BASE_BRANCH" ]; then
+    echo "in_place requires an explicit base_branch (the branch to work on)" >&2
+    exit 1
+  fi
+  case "$PR_BASE_IN" in
+    -*) echo "pr_base must not begin with '-': $PR_BASE_IN" >&2; exit 1 ;;
+  esac
+  if [ -z "$PR_BASE_IN" ] || [ "$PR_BASE_IN" = "$BASE_BRANCH" ]; then
+    echo "in_place requires a pr_base different from base_branch, or no PR can be opened" >&2
+    exit 1
+  fi
+fi
+
+# baseline_path is a repo-relative path read from the clone: reject absolute
+# paths, traversal and option-looking values before it reaches git.
+if [ -n "$BASELINE_PATH" ]; then
+  case "$BASELINE_PATH" in
+    /*|-*|..|../*|*/..|*/../*)
+      echo "baseline_path must be a repo-relative path without '..': $BASELINE_PATH" >&2
+      exit 1 ;;
+  esac
+fi
+
 # Shallow clone: the pipeline only needs the tip of the base branch to create
 # the feature worktree, commit, push, and open a PR — it never walks deep
 # history. --depth 1 keeps each per-instance clone code-sized instead of hauling
@@ -134,9 +168,54 @@ fi
 # branch would strand them behind a second PR. Detected rather than declared, so
 # a normal run needs no new input. force_fresh=true instead takes the fresh
 # branch through the existing archive/baseline/seed path, preserving old docs.
+# in_place: pr_base must be a real remote branch (fail fast on a typo) and,
+# now that BASE_REF is resolved, still differ from it.
+if [ "$IN_PLACE" = true ]; then
+  if [ "$PR_BASE_IN" = "$BASE_REF" ]; then
+    echo "in_place requires a pr_base different from base_branch, or no PR can be opened" >&2
+    exit 1
+  fi
+  if ! git check-ref-format "refs/heads/$PR_BASE_IN" >/dev/null 2>&1 || \
+     ! git -C "$SRC" ls-remote --exit-code --heads origin "$PR_BASE_IN" >/dev/null 2>&1; then
+    echo "pr_base does not exist on the remote: $PR_BASE_IN" >&2
+    exit 1
+  fi
+fi
+
+# A baseline named by baseline_path must exist at the tip of the cloned ref.
+BASELINE_PRESENT=false
+if [ -n "$BASELINE_PATH" ]; then
+  if git -C "$SRC" cat-file -e "HEAD:$BASELINE_PATH" 2>/dev/null; then
+    BASELINE_PRESENT=true
+  else
+    echo "baseline_path not found at the tip of $BASE_REF: $BASELINE_PATH" >&2
+    exit 1
+  fi
+fi
+
 RESUMED=false
 if [ "$FORCE_FRESH" = false ] && [ -n "$BASE_BRANCH" ] && git -C "$SRC" cat-file -e "origin/$BASE_BRANCH:docs/reference/focus-areas.md" 2>/dev/null; then
   RESUMED=true
+  # in_place works on a feature branch cut from the target repo's pr_base, so a
+  # review plan merged to pr_base earlier is INHERITED by every new feature
+  # branch. File existence does not show that this branch earned its approvals:
+  # resuming an inherited plan would skip the seed, ignore this run's focus_seed
+  # and restore someone else's approvals. Resume only when the plan on
+  # base_branch differs from pr_base's. The depth-1 clone holds just the feature
+  # ref, so pr_base is fetched explicitly; diff exit 0 = identical (inherited,
+  # fresh), 1 = changed on this branch (resume), anything else is an error.
+  if [ "$IN_PLACE" = true ]; then
+    git -C "$SRC" fetch --depth=1 --quiet origin "+refs/heads/$PR_BASE_IN:refs/remotes/origin/$PR_BASE_IN" 1>&2 \
+      || { echo "init-workspace: could not fetch pr_base $PR_BASE_IN to compare the review plan" >&2; exit 1; }
+    rc=0
+    git -C "$SRC" diff --quiet "origin/$PR_BASE_IN" "origin/$BASE_BRANCH" -- docs/reference/focus-areas.md 1>&2 || rc=$?
+    case "$rc" in
+      0) RESUMED=false
+         echo "init-workspace: $BASE_BRANCH's review plan is identical to $PR_BASE_IN's (inherited), treating as a fresh run" >&2 ;;
+      1) ;;
+      *) echo "init-workspace: comparing the review plan with $PR_BASE_IN failed (exit $rc)" >&2; exit 1 ;;
+    esac
+  fi
 fi
 
 if [ "$RESUMED" = true ]; then
@@ -147,8 +226,15 @@ if [ "$RESUMED" = true ]; then
   git -C "$SRC" worktree add --quiet "$WORK" "$BRANCH" 1>&2
   echo "init-workspace: RESUMING on $BRANCH (it already carries a review plan)" >&2
 else
-  BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
-  git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
+  if [ "$IN_PLACE" = true ]; then
+    # Work on base_branch itself; free the ref from the clone first.
+    BRANCH="$BASE_REF"
+    git -C "$SRC" checkout --detach --quiet 1>&2
+    git -C "$SRC" worktree add --quiet "$WORK" "$BRANCH" 1>&2
+  else
+    BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
+    git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
+  fi
 fi
 
 # CI COST: every commit the loop makes carries "[skip ci]", so pushing after
@@ -177,5 +263,5 @@ printf '\n[skip ci]\n' >> "$MSG"
 HOOK
 chmod +x "$HOOK_DIR/commit-msg"
 
-jq -n --argjson resumed "$RESUMED" --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
-  '{slug:$slug, run_date:$rd, resumed:$resumed, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base}'
+jq -n --argjson resumed "$RESUMED" --argjson inp "$IN_PLACE" --argjson bp "$BASELINE_PRESENT" --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
+  '{slug:$slug, run_date:$rd, resumed:$resumed, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base, in_place:$inp, baseline_present:$bp}'

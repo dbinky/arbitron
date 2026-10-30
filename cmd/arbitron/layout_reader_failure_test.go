@@ -15,6 +15,7 @@ import (
 // A real status-store deadline must not turn a stamped save into a legacy or
 // successful layout, discard its captured positions, or repair it during a read.
 func TestLayoutQueryE2E_StatusDeadlinePreservesFallback(t *testing.T) {
+	t.Parallel()
 	ds := bootQueryStack(t)
 	ds.layout.stop()
 	ctx := adminCtxForLocalUser(t, ds)

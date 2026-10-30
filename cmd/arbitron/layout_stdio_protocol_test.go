@@ -293,6 +293,7 @@ func TestLayoutStdioProtocol_LocalAuthoringAndRetry(t *testing.T) {
 }
 
 func TestLayoutStdioProtocol_NonLocalDeniesAuthoring(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	binary := buildLayoutStdioBinary(t)
 	// Only supply discovery metadata so the real auth adapters can boot. No
 	// credential, verified identity or authenticated context is manufactured.
@@ -309,6 +310,7 @@ func TestLayoutStdioProtocol_NonLocalDeniesAuthoring(t *testing.T) {
 	t.Cleanup(issuer.Close)
 	for _, mode := range []string{"org", "edge"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			e := newLayoutE2EEnv(t, layoutE2EOptions{})
 			// Save real input in local mode first. Missing names or revisions could
 			// mask an accidental default-user fallback with unrelated tool errors.

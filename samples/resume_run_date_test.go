@@ -28,7 +28,7 @@ func promoteDocs(t *testing.T, wf *workflow.Workflow, nodeID, detectID string, d
 		}
 	}
 	if node.ID == "" {
-		t.Fatalf("feature-pipeline has no %s node", nodeID)
+		t.Fatalf("legacy-feature-pipeline has no %s node", nodeID)
 	}
 	vars := variable.NewStore()
 	if err := vars.SetInput("run_date", "2026-10-01"); err != nil {
@@ -42,7 +42,7 @@ func promoteDocs(t *testing.T, wf *workflow.Workflow, nodeID, detectID string, d
 }
 
 func TestResumePromotesTheDocsRunDate(t *testing.T) {
-	wf := loadSample(t, "feature-pipeline")
+	wf := loadSample(t, "legacy-feature-pipeline")
 	for _, tc := range []struct{ node, detect string }{
 		{"promote-docs", "detect-docs"},
 		{"promote-docs-final", "detect-docs-final"},

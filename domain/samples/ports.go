@@ -22,6 +22,10 @@ type SampleSource interface {
 	// -> content) for the named sample. Invalid content wraps ErrMalformedSample;
 	// infrastructure errors are returned without that marker and abort seeding.
 	Read(ctx context.Context, name string) (*workflow.Workflow, map[string][]byte, error)
+	// ReadLibrary returns the shipped shared-library files (library-relative
+	// path -> content). An absent library folder yields an empty map. Test
+	// files are excluded; names are NOT validated here (the seeder does that).
+	ReadLibrary(ctx context.Context) (map[string][]byte, error)
 }
 
 // Ledger records which sample names have already been seeded, so each sample is

@@ -42,6 +42,8 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'STUB'
 #!/bin/sh
 [ "$1" = "auth" ] && exit 0
+if [ "$1 $2" = "pr list" ]; then echo "${GH_PR_LIST:-[]}"; exit 0; fi
+if [ "$1 $2" = "pr comment" ]; then printf '%s\n' "$@" > "$GH_COMMENT_FILE"; exit 0; fi
 printf '%s\n' "$@" > "$GH_ARGV_FILE"
 echo "https://github.com/o/r/pull/999"
 STUB
@@ -67,8 +69,8 @@ echo loop > "$WORK/g"; git -C "$WORK" add g; git -C "$WORK" commit --quiet -m "r
 contains "fixture: a loop commit carries the CI marker" "$(git -C "$WORK" log -1 --format=%B)" "skip ci"
 
 run() { # stdin-json -> stdout
-  GH_ARGV_FILE="$TMP/argv"; export GH_ARGV_FILE
-  : > "$TMP/argv"
+  GH_ARGV_FILE="$TMP/argv"; GH_COMMENT_FILE="$TMP/comment"; export GH_ARGV_FILE GH_COMMENT_FILE
+  : > "$TMP/argv"; rm -f "$TMP/comment"
   printf '%s' "$1" | sh "$SUT" 2>/dev/null
 }
 body() { tr '\n' '\v' < "$TMP/argv" | sed 's/.*--body\v//' | tr '\v' '\n'; }
@@ -138,6 +140,37 @@ check    "pr_base on a fresh run: targets pr_base" "$(tr '\n' ' ' < "$TMP/argv" 
 # --- 8. empty pr_base keeps the old behaviour --------------------------------
 OUT="$(run "$(vars 0 'Review plan COMPLETE on the boxes.' feature | jq '. + {pr_base:""}')")"
 check    "empty pr_base: resumed run still opens no PR" "$(printf '%s' "$OUT" | jq -r .pr_created)" "false"
+
+# --- 9. pr_number is a JSON number -------------------------------------------
+OUT="$(run "$(vars 0 'Review plan COMPLETE on the boxes.' main)")"
+check    "pr_number is a number" "$(printf '%s' "$OUT" | jq -r '.pr_number|type')" "number"
+check    "pr_number value" "$(printf '%s' "$OUT" | jq -r '.pr_number')" "999"
+check    "a new PR reports pr_created:true" "$(printf '%s' "$OUT" | jq -r '.pr_created')" "true"
+
+# --- 10. an open PR from head to base is reused ------------------------------
+GH_PR_LIST='[{"number":42,"url":"https://github.com/o/r/pull/42"}]'; export GH_PR_LIST
+OUT="$(run "$(vars 0 'Review plan COMPLETE on the boxes.' main)")"
+check    "reuses an open PR: url" "$(printf '%s' "$OUT" | jq -r '.pr_url')" "https://github.com/o/r/pull/42"
+check    "reuses an open PR: number is a number" "$(printf '%s' "$OUT" | jq -r '.pr_number|type')" "number"
+check    "reuses an open PR: number" "$(printf '%s' "$OUT" | jq -r '.pr_number')" "42"
+check    "reuses an open PR: pr_created false" "$(printf '%s' "$OUT" | jq -r '.pr_created')" "false"
+check    "reuses an open PR: no pr create was issued" "$(wc -c < "$TMP/argv" | tr -d ' ')" "0"
+
+# --- 11. harden shortfall ----------------------------------------------------
+mkdir -p "$WORK/.arbitron/pipeline"
+printf '{"summary":"mutation score 72.41%% (gate 80%%); 23 survivors in 6 files","focus_items":[]}' > "$WORK/.arbitron/pipeline/s.survivors.json"
+SEEDVARS() { vars 0 'Review plan COMPLETE on the boxes.' main | jq '. + {focus_seed:".arbitron/pipeline/s.survivors.json"}'; }
+unset GH_PR_LIST
+OUT="$(run "$(SEEDVARS)")"
+B="$(body)"
+contains "shortfall block in a new PR body" "$B" "> \*\*Harden shortfall:\*\* mutation score 72.41%"
+GH_PR_LIST='[{"number":42,"url":"https://github.com/o/r/pull/42"}]'; export GH_PR_LIST
+OUT="$(run "$(SEEDVARS)")"
+contains "shortfall comment on a reused PR" "$(cat "$TMP/comment")" "Harden shortfall:\*\* mutation score 72.41%"
+contains "shortfall comment targets the reused PR" "$(cat "$TMP/comment")" "^42$"
+unset GH_PR_LIST
+OUT="$(run "$(vars 0 'Review plan COMPLETE on the boxes.' main | jq '. + {focus_seed:"nope.json"}')")"
+lacks    "unreadable focus_seed: no shortfall block" "$(body)" "Harden shortfall"
 
 if [ "$fails" -eq 0 ]; then echo "all push-and-pr tests passed"; else
   echo "$fails push-and-pr test(s) FAILED"; exit 1; fi

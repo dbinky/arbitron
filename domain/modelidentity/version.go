@@ -54,6 +54,15 @@ var openrouterVendors = map[string]*regexp.Regexp{
 	"moonshotai": kimiFixedRE,
 }
 
+// piSubscriptionVendors maps each pi provider prefix a no-connection pi profile
+// may name onto that vendor's fixed-version grammar. pi routes on the prefix
+// ("openai-codex/gpt-6.1-sol"), so exactly one recognized prefix is removed; an
+// unknown, repeated or empty prefix matches nothing. anthropic/ is
+// deliberately absent: the pi runtime rejects it at exec time.
+var piSubscriptionVendors = map[string]*regexp.Regexp{
+	"openai-codex": openaiFixedRE,
+}
+
 // Accepted spellings per route, named in refusals so an operator can see what
 // to set the profile to.
 const (
@@ -67,6 +76,7 @@ const (
 	acceptKimi               = "[moonshotai/]kimi-kN[.N][-code]"
 	acceptOllamaCloud        = "[ollama-cloud/]deepseek-vN[.N]-{flash,pro}, glm-N[.N][-flash] or kimi-kN[.N][-code]"
 	acceptBedrock            = "[us.|eu.|apac.|global.]anthropic.claude-{opus,sonnet,haiku}-N[-N][-YYYYMMDD]-vN:M"
+	acceptPiSubscription     = "openai-codex/gpt-N[.N]-{sol,astra,luna,terra} (or openai-codex/gpt-4.1-2025-04-14), e.g. openai-codex/gpt-6.1-sol"
 	acceptNone               = "none: this route cannot run pinned workflows in this release (LiteLLM, local Ollama and unrecognized providers have no fixed-version identity)"
 )
 
@@ -76,12 +86,33 @@ func unavailable(req VersionRequest, why string) error {
 
 func routeLabel(req VersionRequest) string {
 	switch {
+	case isPiSubscription(req):
+		return "backend pi"
 	case req.RouteProvider != "":
 		return "provider " + req.RouteProvider
 	case req.Backend != "":
 		return "backend " + req.Backend
 	}
 	return "claude subscription"
+}
+
+// isPiSubscription reports a pi profile that names no connection. The resolver
+// stamps the Claude subscription id ("claude-cli") on every no-connection
+// binding regardless of backend, and a trigger-time request carries no route
+// provider at all; for pi both mean only "the vendor is in the model prefix".
+func isPiSubscription(req VersionRequest) bool {
+	provider := strings.ToLower(strings.TrimSpace(req.RouteProvider))
+	return strings.EqualFold(strings.TrimSpace(req.Backend), "pi") && req.ConnectionRef == "" &&
+		(provider == "" || provider == "claude-cli")
+}
+
+func piSubscriptionFixed(model string) bool {
+	vendor, native, ok := strings.Cut(model, "/")
+	if !ok {
+		return false
+	}
+	re := piSubscriptionVendors[vendor]
+	return re != nil && re.MatchString(native)
 }
 
 func openrouterFixed(model string) bool {
@@ -114,6 +145,8 @@ func explicitVersion(req VersionRequest) (string, error) {
 		return "", unavailable(req, "is a deployment or proxy alias with no known fixed version; accepted spellings: "+acceptNone)
 	case provider == "bedrock" || provider == "amazon-bedrock":
 		fixed, accepted = bedrockFixedRE.MatchString(model), acceptBedrock
+	case isPiSubscription(req):
+		fixed, accepted = piSubscriptionFixed(model), acceptPiSubscription
 	case provider == "claude-cli" || provider == "" && req.ConnectionRef == "" && (backend == "" || backend == "claude-cli" || backend == "claude-code"):
 		fixed, accepted = claudeSubscriptionRE.MatchString(model), acceptClaudeSubscription
 	case provider == "" && req.ConnectionRef == "" && backend == "codex":

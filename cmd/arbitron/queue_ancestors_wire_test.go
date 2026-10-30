@@ -17,6 +17,7 @@ import (
 // This real-store response is also consumed at the rendered queue sink in
 // QueueView.ancestors.test.tsx. Regenerate with UPDATE_QUEUE_ANCESTORS_WIRE=1.
 func TestQueueAncestorsE2E_WirePagesPast500WithTimestampTies(t *testing.T) {
+	t.Parallel()
 	ds := bootGraphStateStack(t)
 	srv := gsServeAPI(t, ds)
 	ctx := context.Background()

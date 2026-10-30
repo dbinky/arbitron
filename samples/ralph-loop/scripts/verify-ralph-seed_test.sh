@@ -90,5 +90,61 @@ OUT="$(printf '{"work_dir":"%s","max_ralph_iterations":500,"critique-replan":{"r
 check "a re-planned run with the record passes" "$rc" "0"
 check "and reports critiqued:true for the replan critic" "$(printf '%s' "$OUT" | jq -r '.critiqued')" "true"
 
+# --- 7. CHECK 5: seeded focus items must be named in the plan -------------------
+plan 15 12; cp "$TMP/PROTO" "$TMP/RALPH.md"
+mkdir -p "$TMP/.arbitron/pipeline"
+SEED="$TMP/.arbitron/pipeline/s.survivors.json"
+seed() { jq -n --args '{summary:"s", focus_items: ($ARGS.positional | map({id: .}))}' "$@" > "$SEED"; }
+seeded() { printf '{"work_dir":"%s","max_ralph_iterations":500,"focus_seed":"%s"}' "$TMP" "$1"; }
+printf '\n### Area 2 — limits (harden:pkg/a.go, harden:pkg/b.go)\n' >> "$TMP/docs/reference/focus-areas.md"
+
+seed harden:pkg/a.go harden:pkg/b.go
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: all ids present ok" "$rc" "0"
+
+seed harden:pkg/a.go harden:pkg/missing.go
+ERR="$(seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" 2>&1 >/dev/null)" && rc=0 || rc=1
+check "focus_seed: one missing exits 1" "$rc" "1"
+case "$ERR" in *harden:pkg/missing.go*) echo "ok   - focus_seed: the missing id is named";; *) echo "FAIL - missing id not named: $ERR"; fails=$((fails+1));; esac
+case "$ERR" in *harden:pkg/a.go*) echo "FAIL - a present id was reported missing"; fails=$((fails+1));; *) echo "ok   - focus_seed: present ids are not listed";; esac
+
+seed harden:other
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: harden:other absent from the plan exits 1" "$rc" "1"
+printf '\n### Area 3 — everything else (harden:other)\n' >> "$TMP/docs/reference/focus-areas.md"
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: harden:other handled once named" "$rc" "0"
+
+seeded .arbitron/pipeline/nope.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: unreadable seed exits 1" "$rc" "1"
+printf 'not json' > "$SEED"
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: malformed seed exits 1" "$rc" "1"
+
+# an id is a whole token: a longer path sharing the prefix does not satisfy it
+printf '\n### Area 4 — backups (harden:pkg/c.go.bak, x/harden:pkg/d.go)\n' >> "$TMP/docs/reference/focus-areas.md"
+seed harden:pkg/c.go
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: harden:pkg/c.go is not satisfied by harden:pkg/c.go.bak" "$rc" "1"
+seed harden:pkg/d.go
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: a longer prefix path does not satisfy the id" "$rc" "1"
+printf '\n### Area 5 — end (harden:pkg/e.go).\n- harden:pkg/f.go' >> "$TMP/docs/reference/focus-areas.md"
+seed harden:pkg/e.go harden:pkg/f.go
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: id before punctuation and at end-of-line matches" "$rc" "0"
+
+# a shortfall with zero items is valid
+printf '{"summary":"s","focus_items":[]}' > "$SEED"
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: empty focus_items passes" "$rc" "0"
+printf '{"summary":"s"}' > "$SEED"
+seeded .arbitron/pipeline/s.survivors.json | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: missing focus_items array exits 1" "$rc" "1"
+
+seed harden:never/named.go
+printf '{"work_dir":"%s","max_ralph_iterations":500,"focus_seed":""}' "$TMP" | sh "$SCRIPT" >/dev/null 2>&1 && rc=0 || rc=1
+check "focus_seed: empty focus_seed skipped" "$rc" "0"
+
 [ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
 echo "all checks passed"

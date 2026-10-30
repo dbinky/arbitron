@@ -182,7 +182,8 @@ _make_samples_fixture() {
   local tarball="arbitron_samples_${version}.tar.gz"
   # Build a tiny tar with a workflow dir.
   local srcdir="$dir/src"
-  mkdir -p "$srcdir/pr-review" "$srcdir/feature-pipeline"
+  mkdir -p "$srcdir/pr-review" "$srcdir/feature-pipeline" "$srcdir/_lib"
+  printf 'shared library\n' >"$srcdir/_lib/README.md"
   printf 'pr-review workflow\n' >"$srcdir/pr-review/workflow.yaml"
   printf 'feature-pipeline workflow\n' >"$srcdir/feature-pipeline/workflow.yaml"
   tar -czf "$dir/$tarball" -C "$srcdir" .
@@ -219,6 +220,25 @@ _make_samples_fixture() {
   [ "$status" -eq 0 ]
   [ -d "$destdir/pr-review" ]
   [ -d "$destdir/feature-pipeline" ]
+}
+
+@test "fetch_samples_to extracts the _lib library folder" {
+  export ARBITRON_VERSION="1.2.3"
+  local fixture_dir="$TEST_SANDBOX/fixture-lib"
+  mkdir -p "$fixture_dir"
+  local tarball
+  tarball="$(_make_samples_fixture "$fixture_dir")"
+  install_fake curl "
+    for a in \"\$@\"; do prev=\"\$last\"; last=\"\$a\"; if [ \"\$prev\" = \"-o\" ]; then dest=\"\$a\"; fi; done
+    case \"\$*\" in
+      *SHA256SUMS*) cp '$fixture_dir/SHA256SUMS' \"\$dest\" ;;
+      *)            cp '$fixture_dir/$tarball'   \"\$dest\" ;;
+    esac
+  "
+  local destdir="$TEST_SANDBOX/samples-lib-out"
+  run fetch_samples_to "$destdir"
+  [ "$status" -eq 0 ]
+  [ -f "$destdir/_lib/README.md" ]
 }
 
 @test "fetch_samples_to fails closed on checksum mismatch and returns non-zero" {

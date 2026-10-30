@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -97,4 +98,58 @@ func (e *Engine) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
 		return uuid.Nil, fmt.Errorf("spawn child workflow %q: %w", req.ChildWorkflow, err)
 	}
 	return childID, nil
+}
+
+// preflightSpawnChildren refuses to start a workflow whose spawn_workflow nodes
+// map inputs the PUBLISHED child no longer (or does not yet) declare.
+//
+// Why at trigger time: the sample seeder never overwrites a workflow already in
+// its ledger, so an upgraded install can hold a new parent beside an old child.
+// The spawn-time guard (ErrSpawnUnknownChildInput) still catches that, but only
+// when the spawn node runs, which for a late-stage child is after hours of
+// completed upstream work. This runs the same unknown-key check against the
+// child contract as the RUN OWNER sees it (private scope first, then the
+// shared/published one, through the same visibility filter the trigger and the
+// spawn use) before anything is created or enqueued, so zero parent nodes
+// execute.
+//
+// Only an unambiguous contract violation is refused: a child that cannot be
+// resolved (not found, hidden, a lookup error) is left to the spawn-time guard,
+// because children can change or appear later and a transient lookup failure
+// must not block an otherwise valid run. Spawn nodes without a literal child
+// name are skipped.
+func (e *Engine) preflightSpawnChildren(ctx context.Context, owner uuid.UUID, wf *workflow.Workflow, filter workflow.SharedVisibilityFilter) error {
+	type contract struct {
+		fields   []workflow.InputField
+		resolved bool
+	}
+	contracts := map[string]contract{}
+	for _, n := range wf.Nodes {
+		if n.Type != workflow.NodeTypeSpawnWorkflow || n.Config.ChildWorkflow == "" || len(n.Config.Inputs) == 0 {
+			continue
+		}
+		child := n.Config.ChildWorkflow
+		c, seen := contracts[child]
+		if !seen {
+			if cw, _, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, child, filter); err == nil {
+				c = contract{fields: cw.Inputs, resolved: true}
+			}
+			contracts[child] = c
+		}
+		if !c.resolved {
+			continue
+		}
+		fields := c.fields
+		plan := workflow.PlanChildInputs(fields, n.Config.Inputs)
+		if len(plan.Unknown) == 0 {
+			continue
+		}
+		declared := make([]string, 0, len(fields))
+		for _, f := range fields {
+			declared = append(declared, f.Name)
+		}
+		return fmt.Errorf("workflow %q cannot start: %w: spawn_workflow node %q maps input(s) %s that the published child workflow %q does not declare (declared: %s); update and publish the installed %q workflow, then trigger again",
+			wf.Name, ErrSpawnUnknownChildInput, n.ID, strings.Join(plan.Unknown, ", "), child, strings.Join(declared, ", "), child)
+	}
+	return nil
 }

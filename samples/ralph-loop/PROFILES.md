@@ -23,17 +23,44 @@ blind spots, which is the same opinion twice rather than redundancy.
 Routing by which box is outstanding also means a withheld approval naturally
 sends the same row back to the same refiner next pass, with no extra bookkeeping.
 
-| alias | kind | backend | model | effort | tools | used by |
-|-------|------|---------|-------|--------|-------|---------|
-| approver-codex-high | agent | codex | gpt-6.1-sol | high | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired |
-| approver-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | assess-single-2 |
-| assessor-sonnet5-high | chat | (inherit) | claude-sonnet-5-5 | high | (chat: tool-suppressed) | refine-assess |
-| coder-codex-high | agent | codex | gpt-6.1-sol | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
-| coder-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | refine-paired |
-| coder-sonnet5-high | agent | claude-code | claude-sonnet-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-1 |
-| coder-sonnet5-medium | agent | claude-code | claude-sonnet-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | baseline-tests |
-| critic-codex-high | agent | codex | gpt-6-astra | high | Read,Write,Edit,Grep,Glob,Bash | critique-seed, critique-replan |
-| planner-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | seed-ralph |
+| alias | kind | backend | model | effort | context | tools | used by |
+|-------|------|---------|-------|--------|---------|-------|---------|
+| approver-codex-high | agent | codex | gpt-6.1-sol | high | default | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired, tamper-judge-codex |
+| approver-opus-medium | agent | claude-code | claude-opus-5-5 | medium | default | Read,Write,Edit,Grep,Glob,Bash | assess-single-2, tamper-judge-opus |
+| assessor-sonnet5-high | chat | (inherit) | claude-sonnet-5-5 | high | 1m | (chat: tool-suppressed) | refine-assess |
+| coder-codex-high | agent | codex | gpt-6.1-sol | high | default | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
+| coder-opus-medium | agent | claude-code | claude-opus-5-5 | medium | default | Read,Write,Edit,Grep,Glob,Bash | refine-paired |
+| coder-sonnet5-high | agent | claude-code | claude-sonnet-5-5 | high | 1m | Read,Write,Edit,Grep,Glob,Bash | refine-single-1 |
+| coder-sonnet5-medium | agent | claude-code | claude-sonnet-5-5 | medium | 1m | Read,Write,Edit,Grep,Glob,Bash | baseline-tests |
+| critic-codex-high | agent | codex | gpt-6-astra | high | default | Read,Write,Edit,Grep,Glob,Bash | critique-seed, critique-replan |
+| planner-opus-high | agent | claude-code | claude-opus-5-5 | high | default | Read,Write,Edit,Grep,Glob,Bash | seed-ralph |
+
+The family of each profile is the vendor of its `model`, not its backend (spec
+§3.4): `claude-*` is Claude, `gpt-*` is GPT. The family test reads it from the
+`model` column above, so there is no family column to drift.
+
+- **Following vs pinned** is an admin profile property. A following profile
+  tracks its model family's newest release; a pinned one stays on its model id.
+- **Each child run pins its models when it is spawned.** A run started by a
+  parent pipeline keeps the models it resolved at spawn time, even if a profile
+  is edited while it runs.
+
+## Tamper judges
+
+Every pass crosses a deterministic tamper gate before its progress is scored.
+When the gate finds judgeable changes (a deleted test, a skip marker, a loosened
+config), a judge rules on each finding. **The judge is the opposite family to the
+pass's doer**, for the same reason the approver is:
+
+| pass (`select-work.next_kind`) | doer | judge |
+|---|---|---|
+| `single_1` | `coder-sonnet5-high` — Claude | `tamper-judge-codex` (`approver-codex-high`) — GPT |
+| `single_2` | `coder-codex-high` — GPT | `tamper-judge-opus` (`approver-opus-medium`) — Claude |
+| `paired` | `coder-opus-medium` — Claude | `tamper-judge-codex` (`approver-codex-high`) — GPT |
+
+`judge-pick` routes `single_2` to the Opus judge and everything else to codex.
+A new lane or a doer swapped across families must update `judge-pick` and the
+`judgePairings` table in `samples/family_test.go` together.
 
 ## Tracking-file contract
 

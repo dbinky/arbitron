@@ -118,7 +118,14 @@ func validateGroupNode(wf *Workflow, n Node, files FileChecker, profiles Profile
 	}
 
 	if raw.ResolverPromptFile != "" {
-		if problem := groupRelativePathProblem(raw.ResolverPromptFile, false); problem != "" {
+		if _, isLib, err := ParseLibPath(raw.ResolverPromptFile); isLib && err != nil {
+			// Not a GROUP_ code: a malformed lib path is reported but does not gate writes.
+			errs = append(errs, ValidationError{
+				Code:    "INVALID_LIB_PATH",
+				Message: "node " + n.ID + " references invalid library path resolverPromptFile: " + raw.ResolverPromptFile + " (" + libPathReason(err) + ")",
+				NodeID:  n.ID,
+			})
+		} else if problem := groupRelativePathProblem(raw.ResolverPromptFile, false); problem != "" {
 			errs = append(errs, ValidationError{
 				Code:    "GROUP_MISSING_PROMPT_FILE",
 				Message: "parallel_group " + n.ID + " resolverPromptFile " + strconv.Quote(raw.ResolverPromptFile) + " " + problem + "; use a path relative to the workflow folder",

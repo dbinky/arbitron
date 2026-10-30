@@ -56,7 +56,7 @@ func TestAssignRanks_MultipleEntrypointsAndDisconnectedComponents(t *testing.T) 
 }
 
 func TestAssignRanks_LoopReturnTargetsAreAboveTheirSources(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			g, err := BuildGraph(loadSample(t, name))
 			require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestAssignRanks_IsolatedNode(t *testing.T) {
 }
 
 func TestClassifyEdges_SamplesForwardSubgraphIsADAG(t *testing.T) {
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			g, err := BuildGraph(loadSample(t, name))
 			require.NoError(t, err)

@@ -17,7 +17,7 @@ import (
 // all-samples-passed rendered acceptance gate remains owned by P3T7.
 func TestLayoutPreflight_RealBrowserSavedFindingsAndScoreReachView(t *testing.T) {
 	browser := requireBrowserE2E(t)
-	for _, name := range []string{"feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
+	for _, name := range []string{"legacy-feature-pipeline", "pr-review", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			env := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "5", realSample: name})
 			useLayoutE2EBrowser(t, browser)

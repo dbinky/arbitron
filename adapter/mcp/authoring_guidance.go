@@ -31,7 +31,23 @@ There is no convention for passing a profile as a workflow input.`
 // WorkflowManifestHint is appended to the workflow_create and workflow_update
 // tool descriptions: the variable conventions plus the parallel_group guide.
 const WorkflowManifestHint = " Use the standard variable conventions from the server instructions (repo/repo_url, base_branch, pr_number, slug, branch, work_dir); set the optional top-level gitVariable when the run's branch lives under a non-standard variable." +
-	ParallelGroupGuidance
+	ParallelGroupGuidance + SpawnInputsGuidance + LibraryGuidance
+
+// LibraryGuidance documents the shared @lib library for workflow authors.
+const LibraryGuidance = ` Shared library: reference reusable files as "@lib/<path>" (case-sensitive prefix) in templateFile, scriptFile, orchestrationFile, resolverPromptFile and includes; the run owner's private library is checked first, then the shared one. ` +
+	`Relative includes inside a lib file resolve against the lib root; "./x" and "../" are rejected there. "_lib" and "@lib" are reserved workflow names. ` +
+	`Manage lib files with workflow_list_files, workflow_read_file, workflow_write_file and workflow_delete_file using name "@lib" and an optional scope ("private" or "shared"; shared writes need admin). Without scope, write and delete act on private, a read is private then shared, and a list returns both. ` +
+	`Lib files are read live, so a broken edit breaks running instances; put lib files in scope "shared" before publishing a workflow that uses them.`
+
+// SpawnInputsGuidance documents the explicit config.inputs map on
+// spawn_workflow nodes.
+const SpawnInputsGuidance = ` Spawn inputs: a "spawn_workflow" node may set config.inputs, a map of child input name to a literal or {{template}} resolved against the parent's variables ("workspace" is reserved). ` +
+	`Mapped inputs win: a mapped value is passed as given and is never replaced by the LLM preparer, and a child default is passed explicitly when nothing is mapped. ` +
+	`Only required child inputs that are unmapped and have no default are prepared by the LLM; optional inputs are never LLM-filled. ` +
+	`A mapped reference that cannot be resolved fails closed: the spawn fails instead of passing an empty value. ` +
+	`A fully mapped spawn makes zero LLM calls, so it needs no model_profile; set model_profile only when some required input is left to the preparer. ` +
+	`The node output's inputSources records how each input was obtained ("mapped", "default" or "prepared"), names only, never values. It is readable downstream (e.g. {{spawn-1.inputSources.topic}}) for fire_and_forget spawns; for wait_for_child spawns it is trace-only, recorded on the first execution record and absent from the resumed node output. ` +
+	`Avoid mapping paths inside the parent's {{workspace}}; the child has its own workspace.`
 
 // ParallelGroupGuidance documents parallel_group authoring for every tool
 // that writes workflow definitions (workflow_create, workflow_update,

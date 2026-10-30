@@ -43,27 +43,38 @@ func NewWorkflowRepo(basePath string) *WorkflowRepo {
 }
 
 // scopeRoot returns the directory that contains workflow folders for the
-// given scope: basePath/users/<ownerID> for Private, basePath/shared for
-// Shared. It does not create the directory.
+// given scope. It does not create the directory.
 func (r *WorkflowRepo) scopeRoot(scope workflow.Scope) (string, error) {
+	return scopeRootDir(r.basePath, scope)
+}
+
+// ensureScopeRoot creates the scope root dir with partition permissions.
+func (r *WorkflowRepo) ensureScopeRoot(scope workflow.Scope) (string, error) {
+	return ensureScopeRootDir(r.basePath, scope)
+}
+
+// scopeRootDir returns the scope root under basePath:
+// basePath/users/<ownerID> for Private, basePath/shared for Shared. It does
+// not create the directory.
+func scopeRootDir(basePath string, scope workflow.Scope) (string, error) {
 	switch scope.Kind {
 	case workflow.ScopePrivate:
 		if scope.OwnerID == uuid.Nil {
 			return "", fmt.Errorf("%w: private scope requires owner", workflow.ErrInvalidName)
 		}
-		return filepath.Join(r.basePath, "users", scope.OwnerID.String()), nil
+		return filepath.Join(basePath, "users", scope.OwnerID.String()), nil
 	case workflow.ScopeShared:
-		return filepath.Join(r.basePath, "shared"), nil
+		return filepath.Join(basePath, "shared"), nil
 	default:
 		return "", fmt.Errorf("%w: unknown scope kind", workflow.ErrInvalidName)
 	}
 }
 
-// ensureScopeRoot creates the scope root dir (and, for private scopes, the
+// ensureScopeRootDir creates the scope root dir (and, for private scopes, the
 // parent users/ dir) with 0o700 perms, chmodding to defeat umask relaxation,
 // matching adapter/filesystem/workspace.go's security precedent.
-func (r *WorkflowRepo) ensureScopeRoot(scope workflow.Scope) (string, error) {
-	scopeRoot, err := r.scopeRoot(scope)
+func ensureScopeRootDir(basePath string, scope workflow.Scope) (string, error) {
+	scopeRoot, err := scopeRootDir(basePath, scope)
 	if err != nil {
 		return "", err
 	}
@@ -87,6 +98,11 @@ func (r *WorkflowRepo) ensureScopeRoot(scope workflow.Scope) (string, error) {
 // the scope root itself or escape it via path traversal (e.g., "../sibling",
 // ".", "") including cross-scope escapes.
 func (r *WorkflowRepo) resolveWorkflowDir(scope workflow.Scope, name string) (string, error) {
+	// _lib and @lib are the shared library, never a workflow. This is the single
+	// choke point for every per-workflow repository method.
+	if workflow.IsReservedWorkflowName(name) {
+		return "", fmt.Errorf("%w: %q is reserved for the shared library (use @lib)", workflow.ErrInvalidName, name)
+	}
 	scopeRoot, err := r.scopeRoot(scope)
 	if err != nil {
 		return "", err
@@ -148,7 +164,7 @@ func (r *WorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workfl
 
 	var summaries []workflow.WorkflowSummary
 	for _, entry := range entries {
-		if !entry.IsDir() || internalArtifact(entry.Name()) {
+		if !entry.IsDir() || internalArtifact(entry.Name()) || workflow.IsReservedWorkflowName(entry.Name()) {
 			continue
 		}
 
@@ -253,7 +269,7 @@ func (r *WorkflowRepo) LoadManifests(ctx context.Context, scope workflow.Scope) 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !entry.IsDir() || isCopyTreeArtifact(entry.Name()) {
+		if !entry.IsDir() || isCopyTreeArtifact(entry.Name()) || workflow.IsReservedWorkflowName(entry.Name()) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(scopeRoot, entry.Name(), "workflow.json"))
@@ -421,6 +437,15 @@ func (r *WorkflowRepo) writeFile(ctx context.Context, scope workflow.Scope, name
 	targetPath := filepath.Join(wfDir, relativePath)
 	if !strings.HasPrefix(targetPath, wfRoot) {
 		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
+	}
+
+	// A path that is, raw or cleaned, an @lib path is always routed to the
+	// shared library on read, so a workflow-scoped file there would be
+	// unreachable.
+	for _, p := range []string{relativePath, filepath.ToSlash(filepath.Clean(relativePath))} {
+		if _, isLib, _ := workflow.ParseLibPath(p); isLib {
+			return fmt.Errorf("%w: %s is reserved for the shared library", workflow.ErrInvalidFilePath, relativePath)
+		}
 	}
 
 	// Protect the manifest: workflow.json is only ever written through Create

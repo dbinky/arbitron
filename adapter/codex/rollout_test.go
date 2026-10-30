@@ -83,9 +83,145 @@ func TestRolloutVerifier_AfterTurnRequiresNewTurnOnPin(t *testing.T) {
 	require.ErrorIs(t, v.afterTurn(rolloutThread, "gpt-5", 1), ErrModelEvidence, "new turn ran another model")
 }
 
-func TestReadRollout_SizeLimit(t *testing.T) {
-	const limit = 1 << 20
+// padLine is a non-identity record of exactly n bytes (excluding the newline),
+// standing in for the large tool output and event records of a long run.
+func padLine(kind string, n int) string {
+	head := `{"type":"` + kind + `","payload":{"text":"`
+	tail := `"}}`
+	return head + strings.Repeat("x", n-len(head)-len(tail)) + tail
+}
+
+// padding returns non-identity records totalling at least n bytes.
+func padding(n int) []string {
+	var lines []string
+	for size := 0; size < n; {
+		kind := "response_item"
+		if len(lines)%2 == 1 {
+			kind = "event_msg"
+		}
+		lines = append(lines, padLine(kind, 64<<10))
+		size += 64<<10 + 1
+	}
+	return lines
+}
+
+func concat(parts ...[]string) []string {
+	var out []string
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out
+}
+
+func requireRefused(t *testing.T, ev rolloutEvidence, err error) {
+	t.Helper()
+	require.ErrorIs(t, err, ErrModelEvidence)
+	assert.Empty(t, ev.ThreadID, "a refused rollout must supply no partial evidence")
+	assert.Empty(t, ev.TurnModels)
+}
+
+func TestReadRollout_LargeRolloutVerifies(t *testing.T) {
+	home := t.TempDir()
+	v := &rolloutVerifier{home: home}
+	lines := concat([]string{metaLine(rolloutThread), ctxLine("gpt-5")}, padding(3<<20))
+	p := writeRollout(t, home, rolloutThread, lines...)
+	fi, err := os.Stat(p)
+	require.NoError(t, err)
+	require.Greater(t, fi.Size(), int64(1<<20), "fixture must exceed the old 1 MiB cap")
+
+	n, err := v.beforeResume(rolloutThread, "gpt-5")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	require.NoError(t, v.afterTurn(rolloutThread, "gpt-5", 0))
+}
+
+func TestReadRollout_Edges(t *testing.T) {
+	t.Run("identity records after large padding are found", func(t *testing.T) {
+		lines := concat(padding(2<<20), []string{metaLine(rolloutThread)}, padding(1<<20), []string{ctxLine("gpt-5")})
+		ev, err := readRollout(writeRollout(t, t.TempDir(), rolloutThread, lines...))
+		require.NoError(t, err)
+		assert.Equal(t, rolloutThread, ev.ThreadID)
+		assert.Equal(t, []string{"gpt-5"}, ev.TurnModels)
+	})
+	t.Run("blank lines and no trailing newline", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "rollout.jsonl")
+		body := "\n\n" + metaLine(rolloutThread) + "\n  \n\r\n" + ctxLine("a") + "\n\n" + ctxLine("b")
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		ev, err := readRollout(p)
+		require.NoError(t, err)
+		assert.Equal(t, rolloutThread, ev.ThreadID)
+		assert.Equal(t, []string{"a", "b"}, ev.TurnModels)
+	})
+	t.Run("empty file proves nothing", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "rollout.jsonl")
+		require.NoError(t, os.WriteFile(p, nil, 0o600))
+		ev, err := readRollout(p)
+		require.NoError(t, err)
+		assert.Empty(t, ev.ThreadID)
+		assert.Empty(t, ev.TurnModels)
+	})
+	t.Run("identity is taken only from session_meta and turn_context", func(t *testing.T) {
+		decoy := `{"type":"response_item","payload":{"id":"` + rolloutThread2 + `","model":"gpt-evil"}}`
+		ev, err := readRollout(writeRollout(t, t.TempDir(), rolloutThread, metaLine(rolloutThread), decoy, ctxLine("gpt-5")))
+		require.NoError(t, err)
+		assert.Equal(t, rolloutThread, ev.ThreadID)
+		assert.Equal(t, []string{"gpt-5"}, ev.TurnModels)
+	})
+}
+
+func TestReadRollout_Errors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bad  string
+	}{
+		{"malformed JSON past 1 MiB", `{"type":"response_item","payload":`},
+		{"record without a type past 1 MiB", `{"payload":{"text":"x"}}`},
+		{"contradictory session id past 1 MiB", metaLine(rolloutThread2)},
+		{"turn_context without a payload past 1 MiB", `{"type":"turn_context"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := concat([]string{metaLine(rolloutThread), ctxLine("gpt-5")}, padding(2<<20), []string{tc.bad, ctxLine("gpt-5")})
+			ev, err := readRollout(writeRollout(t, t.TempDir(), rolloutThread, lines...))
+			requireRefused(t, ev, err)
+		})
+	}
+}
+
+func TestReadRollout_RecordCap(t *testing.T) {
+	assert.Equal(t, 16<<20, maxRolloutRecordBytes)
+	for _, tc := range []struct {
+		name string
+		size int
+		ok   bool
+	}{
+		{"record exactly at the cap", maxRolloutRecordBytes, true},
+		{"record one byte over the cap", maxRolloutRecordBytes + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeRollout(t, t.TempDir(), rolloutThread, metaLine(rolloutThread), padLine("response_item", tc.size), ctxLine("a"))
+			ev, err := readRollout(p)
+			if !tc.ok {
+				requireRefused(t, ev, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, rolloutThread, ev.ThreadID)
+			assert.Equal(t, []string{"a"}, ev.TurnModels)
+		})
+	}
+	t.Run("final record over the cap without a newline", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "rollout.jsonl")
+		body := metaLine(rolloutThread) + "\n" + ctxLine("a") + "\n" + padLine("response_item", maxRolloutRecordBytes+1)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		ev, err := readRollout(p)
+		requireRefused(t, ev, err)
+	})
+}
+
+func TestReadRollout_TotalCap(t *testing.T) {
+	assert.Equal(t, 256<<20, maxRolloutBytes)
 	prefix := metaLine(rolloutThread) + "\n" + ctxLine("a") + "\n" + ctxLine("b") + "\n"
+	const limit = 4 << 10
 	for _, tc := range []struct {
 		name string
 		size int
@@ -95,15 +231,12 @@ func TestReadRollout_SizeLimit(t *testing.T) {
 		{"one byte over limit", limit + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := filepath.Join(t.TempDir(), "rollout.jsonl")
-			// Short blank lines ensure the cap covers the whole file, including
-			// delimiters, rather than just individually buffered JSON lines.
-			require.NoError(t, os.WriteFile(p, []byte(prefix+strings.Repeat("\n", tc.size-len(prefix))), 0o600))
-			ev, err := readRollout(p)
+			// Blank lines ensure the cap covers the whole stream, including
+			// delimiters, rather than just the JSON records.
+			body := prefix + strings.Repeat("\n", tc.size-len(prefix))
+			ev, err := readRolloutFrom(strings.NewReader(body), limit, 1<<10)
 			if tc.size > limit {
-				require.ErrorIs(t, err, ErrModelEvidence)
-				assert.Empty(t, ev.ThreadID, "oversized input must return no partial evidence")
-				assert.Empty(t, ev.TurnModels)
+				requireRefused(t, ev, err)
 				return
 			}
 			require.NoError(t, err)
@@ -111,14 +244,41 @@ func TestReadRollout_SizeLimit(t *testing.T) {
 			assert.Equal(t, []string{"a", "b"}, ev.TurnModels)
 		})
 	}
-	t.Run("oversized tool line is refused", func(t *testing.T) {
-		huge := `{"type":"response_item","payload":{"text":"` + strings.Repeat("x", limit+10) + `"}}`
-		p := writeRollout(t, t.TempDir(), rolloutThread, metaLine(rolloutThread), huge, ctxLine("a"))
-		ev, err := readRollout(p)
-		require.ErrorIs(t, err, ErrModelEvidence)
-		assert.Empty(t, ev.ThreadID)
-		assert.Empty(t, ev.TurnModels)
+	t.Run("identity past the cap is never trusted", func(t *testing.T) {
+		body := strings.Repeat("\n", limit) + metaLine(rolloutThread) + "\n" + ctxLine("a") + "\n"
+		ev, err := readRolloutFrom(strings.NewReader(body), limit, 1<<10)
+		requireRefused(t, ev, err)
 	})
+	t.Run("a record straddling the cap reports the cap", func(t *testing.T) {
+		body := prefix + strings.Repeat("\n", limit-len(prefix)-10) + ctxLine("c") + "\n"
+		ev, err := readRolloutFrom(strings.NewReader(body), limit, 1<<10)
+		requireRefused(t, ev, err)
+		assert.Contains(t, err.Error(), "exceeds")
+	})
+}
+
+// TestReadRollout_B9f9b29aRegression replays the shape that failed pr-review
+// instance b9f9b29a at architect-r1: a ~2 MB rollout from a long agent run with
+// one turn_context near the start and another after the bulk of tool output.
+func TestReadRollout_B9f9b29aRegression(t *testing.T) {
+	home := t.TempDir()
+	v := &rolloutVerifier{home: home}
+	const pin = "gpt-5.5"
+	lines := concat(
+		[]string{metaLine(rolloutThread), ctxLine(pin)},
+		padding(1<<20),
+		[]string{ctxLine(pin)},
+		padding(900<<10),
+	)
+	p := writeRollout(t, home, rolloutThread, lines...)
+	fi, err := os.Stat(p)
+	require.NoError(t, err)
+	require.Greater(t, fi.Size(), int64(1900<<10))
+
+	require.NoError(t, v.afterTurn(rolloutThread, pin, 1))
+	n, err := v.beforeResume(rolloutThread, pin)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
 }
 
 func TestResolveCodexHome(t *testing.T) {
@@ -192,7 +352,7 @@ func TestExecSession_PinnedModelEvidence(t *testing.T) {
 	})
 	t.Run("oversized stored rollout refuses resume before spawn", func(t *testing.T) {
 		_, err, mr := run(t, turnConfig{Model: "gpt-5", ResumeID: rolloutThread}, func(h string) {
-			writeRollout(t, h, rolloutThread, metaLine(rolloutThread), ctxLine("gpt-5"), strings.Repeat("\n", 1<<20))
+			writeRollout(t, h, rolloutThread, metaLine(rolloutThread), ctxLine("gpt-5"), padLine("response_item", maxRolloutRecordBytes+1))
 		}, nil)
 		require.ErrorIs(t, err, ErrModelEvidence)
 		assert.Len(t, mr.calls, 1, "only the version probe ran; the resume was never launched")
@@ -201,7 +361,7 @@ func TestExecSession_PinnedModelEvidence(t *testing.T) {
 		ev, err, mr := run(t, turnConfig{Model: "gpt-5", ResumeID: rolloutThread}, func(h string) {
 			writeRollout(t, h, rolloutThread, metaLine(rolloutThread), ctxLine("gpt-5"))
 		}, func(h string) {
-			writeRollout(t, h, rolloutThread, metaLine(rolloutThread), ctxLine("gpt-5"), ctxLine("gpt-5"), strings.Repeat("\n", 1<<20))
+			writeRollout(t, h, rolloutThread, metaLine(rolloutThread), ctxLine("gpt-5"), ctxLine("gpt-5"), padLine("response_item", maxRolloutRecordBytes+1))
 		})
 		require.NoError(t, err)
 		require.Len(t, mr.calls, 2)

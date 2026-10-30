@@ -622,3 +622,23 @@ func TestWorkflowValidate_Groups_ValidAndAdvisoryOnly(t *testing.T) {
 	assert.True(t, v.Valid, "an advisory alone never makes a workflow invalid: %v", v.Errors)
 	assert.Contains(t, gtCodes(v.Errors), "GROUP_REQUIRED_INPUT_RUNTIME")
 }
+
+func TestWorkflowValidateTool_ReportsSpawnInputFindings(t *testing.T) {
+	f := newGroupToolServer(t, true)
+	f.create(t, gtChildManifest("reviewer"))
+	var wf workflow.Workflow
+	require.NoError(t, json.Unmarshal([]byte(gtBaseManifest("spawner")), &wf))
+	wf.Nodes = append([]workflow.Node{{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true,
+		Config: workflow.NodeConfig{Operations: []workflow.Operation{{Variable: "x", Operation: "set", Value: 1}}}},
+		{ID: "sp", Type: workflow.NodeTypeSpawnWorkflow, Config: workflow.NodeConfig{
+			ChildWorkflow: "reviewer", SpawnMode: workflow.SpawnModeFireAndForget,
+			Inputs: map[string]any{"topic": "x", "tpoic": "typo"},
+		}}}, wf.Nodes...)
+	wf.Edges = []workflow.Edge{{Source: "entry", Target: "sp"}, {Source: "sp", Target: "done"},
+		{Source: "entry", Target: "a1"}, {Source: "entry", Target: "b1"}, {Source: "entry", Target: "failed"}}
+	require.NoError(t, f.repo.Create(context.Background(), workflow.Private(mcpTestUserID), "spawner", &wf))
+
+	res := callTool(t, f.srv, "workflow_validate", map[string]any{"name": "spawner"})
+	require.False(t, res.IsError)
+	assert.Contains(t, extractText(t, res), "SPAWN_UNKNOWN_CHILD_INPUT")
+}

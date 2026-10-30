@@ -19,6 +19,7 @@ import (
 // An invalid legacy group must stay untouched without blocking its valid
 // neighbors or the next scope. Child contracts must not depend on backfill order.
 func TestGroupAuthoringE2E_BackfillSkipsInvalidGroupsAndContinuesScopes(t *testing.T) {
+	t.Parallel()
 	paths := writeGroupStack(t, 5, nil)
 	repo := filesystem.NewWorkflowRepo(paths.workspaceDir)
 	ctx := context.Background()
@@ -138,6 +139,7 @@ func TestGroupAuthoringE2E_StartupImportsValidateBeforePersistence(t *testing.T)
 // MCP import tools must expose structured refusal from the production service,
 // leaving both real SQLite metadata and the destination folder untouched.
 func TestGroupAuthoringE2E_ImportToolsRefuseInvalidDefinitions(t *testing.T) {
+	t.Parallel()
 	ds, ws := bootGroupAuthoringStack(t)
 	ctx := adminCtxForLocalUser(t, ds)
 	srv := newGroupMCPServer(ds)

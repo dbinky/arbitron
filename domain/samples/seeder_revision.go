@@ -41,7 +41,7 @@ func (s *Seeder) seedRevision(ctx context.Context, name string) error {
 	wf, files, readErr := s.source.Read(ctx, name)
 	if readErr == nil && wf != nil {
 		validationCtx := identity.WithIdentity(ctx, identity.Identity{UserID: s.owner, Role: identity.RoleAdmin})
-		if err := s.validator.ValidateGroupImport(validationCtx, wf, seedFiles(files)); err != nil {
+		if err := s.validator.ValidateGroupImport(validationCtx, wf, newSeedFiles(files, s.libFiles, s.owner)); err != nil {
 			if errors.Is(err, workflow.ErrGroupInvalid) {
 				s.logger.Warn("skipping invalid group sample", "name", name, "err", err)
 				return nil

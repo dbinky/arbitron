@@ -74,7 +74,7 @@ func TestReadabilityReviewer_RealBrowser_FeaturePipelinePassesThroughTheCoordina
 	coord, err := layout.NewCoordinator(b, NewReadabilityReviewer(nil))
 	require.NoError(t, err)
 
-	res := coord.Run(context.Background(), layout.Job{Revision: "rev-feature-pipeline", Manifest: loadSampleWorkflow(t, "feature-pipeline"), MaxAttempts: 5}, nil)
+	res := coord.Run(context.Background(), layout.Job{Revision: "rev-feature-pipeline", Manifest: loadSampleWorkflow(t, "legacy-feature-pipeline"), MaxAttempts: 5}, nil)
 	require.Nil(t, res.Failure, "failure: %+v", res.Failure)
 	require.Equal(t, layout.VerdictPassed, res.Verdict, "unresolved findings: %+v", res.Findings)
 	require.NotNil(t, res.Best)

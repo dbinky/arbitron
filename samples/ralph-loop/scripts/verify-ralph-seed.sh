@@ -38,8 +38,14 @@
 # did not do the job, and the plan it waved through is the seeder's own slicing.
 # Older snapshots that have no critic node are not held to this.
 #
+# CHECK 5 — seeded focus items.
+# When focus_seed (a worktree-relative survivors file from harden) is non-empty,
+# every focus_items[].id in it must appear verbatim in focus-areas.md, so a
+# survivor cluster the seeder dropped cannot slip into the loop unreviewed. An
+# unreadable or malformed seed fails closed too.
+#
 # Reads the variable snapshot on stdin; uses {work_dir, max_ralph_iterations,
-# critique-seed}. Emits {ok, roles, singles, paired, implied_passes, budget,
+# focus_seed, critique-seed}. Emits {ok, roles, singles, paired, implied_passes, budget,
 # critiqued}.
 set -eu
 IN="$(cat)"
@@ -82,7 +88,7 @@ for role in $ROLES; do
              'wrapup:Wrap Up:-i' 'stoptag:Stop after the tag:-i' \
              'thenstop:then stop:-i' 'towrapup:proceed to Wrap Up:-i'; do
     lbl="${chk%%:*}"; rest="${chk#*:}"; pat="${rest%:*}"; flg="${rest##*:}"
-    if grep $flg -q -- "$pat" "$TMP/$role"; then
+    if grep "$flg" -q -- "$pat" "$TMP/$role"; then
       present="$present $role/$lbl"
     else
       missing="$missing $role/$lbl"
@@ -167,6 +173,49 @@ if [ "$CRITIC_RAN" = yes ]; then
     exit 1
   fi
   CRITIQUED=true
+fi
+
+# has_token ID FILE: ID appears verbatim as a whole token. The char before must not
+# be a path char; the char after must not be one either (a '.' counts as
+# punctuation only when what follows it is not a path char, so "a.go." matches
+# but "a.go.bak" does not).
+has_token() {
+  [ -r "$2" ] || return 1
+  awk -v id="$1" '
+    function pc(c) { return c ~ /[A-Za-z0-9_\/.-]/ }
+    { line = $0; off = 0
+      while ((i = index(line, id)) > 0) {
+        pre = (off + i > 1) ? substr($0, off + i - 1, 1) : ""
+        nxt = substr(line, i + length(id), 1)
+        aft = substr(line, i + length(id) + 1, 1)
+        ok = (pre == "" || !pc(pre)) && (nxt == "" || !pc(nxt) || (nxt == "." && (aft == "" || !pc(aft))))
+        if (ok) { found = 1; exit }
+        off += i; line = substr(line, i + 1)
+      } }
+    END { exit !found }' "$2"
+}
+
+# --- CHECK 5: seeded focus items -------------------------------------------------
+FOCUS_SEED="$(printf '%s' "$IN" | jq -r '.focus_seed // ""')"
+if [ -n "$FOCUS_SEED" ]; then
+  SEEDFILE="$WORK/$FOCUS_SEED"
+  if [ ! -r "$SEEDFILE" ] || ! jq -e '.focus_items | type == "array"' "$SEEDFILE" >/dev/null 2>&1; then
+    echo "verify-ralph-seed: focus_seed '$FOCUS_SEED' is unreadable or has no focus_items[].id list." >&2
+    exit 1
+  fi
+  IDS="$(jq -r '.focus_items[] | .id // empty' "$SEEDFILE")"
+  MISSING_IDS=""
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    has_token "$id" "$PLAN" || MISSING_IDS="$MISSING_IDS $id"
+  done <<IDS_EOF
+$IDS
+IDS_EOF
+  if [ -n "$MISSING_IDS" ]; then
+    echo "verify-ralph-seed: seeded focus item(s) missing from focus-areas.md:$MISSING_IDS" >&2
+    echo "  Every id in $FOCUS_SEED must be a named area, or be named verbatim inside one." >&2
+    exit 1
+  fi
 fi
 
 jq -n --arg p "${present# }" --argjson s "$SINGLES" --argjson pr "$PAIRED" \

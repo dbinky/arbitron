@@ -39,10 +39,7 @@ var layoutE2EPositions = map[string]workflow.NodePosition{"t1": {X: 20, Y: 30}, 
 
 func newLayoutE2EEnv(t *testing.T, opts layoutE2EOptions) *layoutE2EEnv {
 	t.Helper()
-	for _, key := range []string{"ARBITRON_LAYOUT_MAXATTEMPTS", "ARBITRON_LAYOUT_BROWSERPATH", "ARBITRON_LAYOUT_ARTIFACTDIR", "ARBITRON_LAYOUT_BROWSERNOSANDBOX", "ARBITRON_SAMPLES_SEED", "ARBITRON_SAMPLES_SOURCEDIR"} {
-		t.Setenv(key, "")
-		require.NoError(t, os.Unsetenv(key))
-	}
+	pinLayoutE2EEnv(t)
 	e := &layoutE2EEnv{root: t.TempDir()}
 	e.workspaceDir = filepath.Join(e.root, "workspace")
 	e.dbPath = filepath.Join(e.root, "arbitron.db")

@@ -35,6 +35,7 @@ printf '%s\n' '{"type":"result","is_error":false,"result":"Resolved","session_id
 `
 
 func TestGroupFilesE2E_AutomaticRepairContinuesWithoutOperator(t *testing.T) {
+	t.Parallel()
 	paths := writeFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(repairingResolverScript), 0o700))
 	ds, err := initStartedDomain(context.Background(), paths.configPath)
@@ -60,6 +61,7 @@ func TestGroupFilesE2E_AutomaticRepairContinuesWithoutOperator(t *testing.T) {
 // A resolver's success response cannot turn an aborted merge into success.
 // Both automatic verification and operator end must reach rollback/failure.
 func TestGroupFilesE2E_AbortedResolutionRollsBackInsteadOfDroppingTaskChanges(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"autonomous", "operator_end"} {
 		t.Run(phase, func(t *testing.T) {
 			paths := writeFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
@@ -164,6 +166,7 @@ func assertInheritedFileModes(t *testing.T, ds *domainStack, id uuid.UUID) {
 }
 
 func TestGroupFilesE2E_StartingCopyAndGatherPreservePermissions(t *testing.T) {
+	t.Parallel()
 	ds, paths := bootFilesStack(t, map[string]string{"grp-files-all": filesPermissionManifest(t, filesAllManifest)})
 	id := triggerGroupWorkflow(t, ds, "grp-files-all")
 	require.Equal(t, instance.StateCompleted, waitForTerminalState(t, ds, id))
@@ -222,6 +225,7 @@ func TestGroupFilesE2E_FailedApplyRoutesFailureAndRestoresBytesAndModes(t *testi
 // Node ErrorBehavior must not expose that area to a downstream node until the
 // frozen output exists. Removing the gather-error barrier makes each case fail.
 func TestGroupFilesE2E_OutputStorageFailureBlocksErrorBehaviorUntilRecovered(t *testing.T) {
+	t.Parallel()
 	for _, behavior := range []string{"skip", "route", "retry"} {
 		t.Run(behavior, func(t *testing.T) {
 			var manifest map[string]any

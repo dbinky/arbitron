@@ -3,6 +3,8 @@
 Working **unattended** in the worktree at `./work`. The user is unavailable —
 make the calls yourself.
 
+If `{{workspace}}/tamper/must-fix.md` exists, address it before anything else this pass.
+
 ## Your assignment this pass
 
 - **Work item:** `{{select-work.target_id}}` — {{select-work.target_label}}
@@ -98,8 +100,10 @@ evidence is what would have justified approval, recommend no approval.
 
 `./work/RALPH.md` carries the loop protocol for all three roles. **Read the
 section for your role first and follow it.** If this summary and RALPH.md ever
-disagree, RALPH.md wins, with one exception: **test scope**. Where RALPH.md
+disagree, RALPH.md wins, with two exceptions. **Test scope:** where RALPH.md
 says to run the test commands, run targeted tests as described above.
+**Pushing:** never push, even where RALPH.md says to; the workflow pushes the
+pass once the tamper gate has ruled on it.
 
 ## Each pass
 
@@ -149,8 +153,10 @@ Cite what you verified (`file:symbol`, the grep you ran, the test that fails
 when the seam is broken). Record anything newly discovered in
 `gaps-identified.md`.
 
-**Step C** — Commit and push. Your work is valuable regardless of review status:
-`git -C ./work add -A && git -C ./work commit -m "refine({{slug}}): {{select-work.target_id}} — <what you changed>" && git -C ./work push --quiet -u origin HEAD`
+**Step C** — Commit. Your work is valuable regardless of review status:
+`git -C ./work add -A && git -C ./work commit -m "refine({{slug}}): {{select-work.target_id}} — <what you changed>"`
+Commit only — never push. The workflow pushes the pass once the tamper gate has
+ruled on it.
 
 **Step D** — State what this pass advanced, as a single line:
 

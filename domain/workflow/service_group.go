@@ -332,10 +332,11 @@ func (s *Service) rejectStoredGroupImport(ctx context.Context, wf *Workflow, sco
 	if err != nil {
 		return fmt.Errorf("listing group import files for %q: %w", name, err)
 	}
-	files := importFileSet{}
-	for _, path := range paths {
-		files[path] = true
+	owner := uuid.Nil
+	if id, err := caller(ctx); err == nil {
+		owner = id.UserID
 	}
+	files := newImportFileSet(paths, s.groupFiles, owner)
 	if err := s.ValidateGroupImport(ctx, wf, files); err != nil {
 		return err
 	}
@@ -347,6 +348,29 @@ func (s *Service) rejectStoredGroupImport(ctx context.Context, wf *Workflow, sco
 	return nil
 }
 
-type importFileSet map[string]bool
+// importFileSet answers existence for the files of an incoming tree. Lib paths
+// are not part of the tree: they go to the optional lib fallback, and are
+// treated as present when none is wired.
+type importFileSet struct {
+	paths map[string]bool
+	lib   OwnerFileChecker
+	owner uuid.UUID
+}
 
-func (f importFileSet) FileExists(_ string, path string) bool { return f[path] }
+func newImportFileSet(paths []string, lib OwnerFileChecker, owner uuid.UUID) importFileSet {
+	set := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		set[p] = true
+	}
+	return importFileSet{paths: set, lib: lib, owner: owner}
+}
+
+func (f importFileSet) FileExists(workflowName, path string) bool {
+	if _, isLib, err := ParseLibPath(path); isLib {
+		if err != nil {
+			return false
+		}
+		return f.lib == nil || f.lib.FileExists(f.owner, workflowName, path)
+	}
+	return f.paths[path]
+}

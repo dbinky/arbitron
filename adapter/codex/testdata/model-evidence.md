@@ -49,7 +49,7 @@ pub struct TurnContextItem {
 filename contains the thread ID. Reverted/forked rollout formats are not guessed
 by this reader; missing or ambiguous matches remain errors. The existing
 interactive verifier supplies the same account-home resolution and bounded
-1 MiB reader used by the batch path.
+streaming reader used by the batch path (256 MiB per file, 16 MiB per record).
 
 `exec_events.rs` names `thread.started` with `thread_id`, `turn.completed` and
 `turn.failed`. `event_processor_with_jsonl_output.rs` emits `turn.completed`

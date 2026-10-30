@@ -17,14 +17,28 @@
 #   branch-only  — no default branch reachable at all; falls back to the tip
 #                  commit's own diff
 #
-# Reads {work_dir, base_branch, scope_note} from stdin JSON. Emits
+# When pr_base is set (a stacked PR targets it rather than the default branch) it
+# is fetched and used in place of the default branch in all three strategies. An
+# unreachable pr_base falls back to the default branch, reported via the method.
+#
+# Reads {work_dir, base_branch, pr_base, scope_note} from stdin JSON. Emits
 # {default_branch, scope_method, merge_base, file_count, changed_files,
 #  files_truncated, commit_log, scope_note}.
 set -eu
 IN="$(cat)"
 WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
 NOTE="$(printf '%s' "$IN" | jq -r '.scope_note // ""')"
+PR_BASE="$(printf '%s' "$IN" | jq -r '.pr_base // ""')"
 [ -n "$WORK" ] || { echo "derive-scope: work_dir not set" >&2; exit 1; }
+# pr_base is a workflow input that reaches git argv: reject option injection and
+# malformed refs before any git call.
+if [ -n "$PR_BASE" ]; then
+  case "$PR_BASE" in
+    -*) echo "derive-scope: pr_base must not begin with '-': $PR_BASE" >&2; exit 1 ;;
+  esac
+  git check-ref-format "refs/heads/$PR_BASE" >/dev/null 2>&1 || \
+    { echo "derive-scope: pr_base is not a valid branch name: $PR_BASE" >&2; exit 1; }
+fi
 
 MAX_FILES=300
 
@@ -38,6 +52,15 @@ if [ -z "$DEF" ]; then
   done
 fi
 [ -n "$DEF" ] || DEF="main"
+
+# pr_base replaces the default branch when it is actually fetchable.
+if [ -n "$PR_BASE" ]; then
+  if git -C "$WORK" fetch --quiet --depth=200 origin "+refs/heads/$PR_BASE:refs/remotes/origin/$PR_BASE" 2>/dev/null; then
+    DEF="$PR_BASE"
+  else
+    echo "derive-scope: pr_base '$PR_BASE' was unreachable and is being IGNORED; scope is derived against $DEF" >&2
+  fi
+fi
 
 # Fetch the default branch. Bounded depth first — cheap and enough for almost any
 # real feature branch — then unshallow only if the fork point is still missing.

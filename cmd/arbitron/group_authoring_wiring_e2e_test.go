@@ -96,6 +96,7 @@ func TestGroupAuthoringE2E_ValidateAndWriteGatesAgreeOnCheckers(t *testing.T) {
 // sink. Authoring walk: create -> upsert with a missing prompt file (refused,
 // definition untouched) -> write the file -> upsert accepted -> get -> delete.
 func TestGroupAuthoringE2E_PromptFileAndDeleteThroughCompositionRoot(t *testing.T) {
+	t.Parallel()
 	ds, workspaceDir := bootGroupAuthoringStack(t)
 	ctx := adminCtxForLocalUser(t, ds)
 	srv := newGroupMCPServer(ds)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,7 +26,13 @@ const durableSeedName = "durable-seed"
 func durableSeedEnv(t *testing.T) *layoutE2EEnv {
 	t.Helper()
 	e := newLayoutE2EEnv(t, layoutE2EOptions{seedSample: durableSeedName})
-	t.Setenv("ARBITRON_SAMPLES_SEED", "false")
+	// Disable boot-time seeding in the config file rather than the environment
+	// so parallel subtests can share this fixture; ARBITRON_SAMPLES_SEED still
+	// outranks it where a test re-enables seeding.
+	raw, err := os.ReadFile(e.configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "  seed: true\n")
+	require.NoError(t, os.WriteFile(e.configPath, bytes.Replace(raw, []byte("  seed: true\n"), []byte("  seed: false\n"), 1), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(e.samplesDir, durableSeedName, "z-last.txt"), []byte("last supporting file"), 0600))
 	return e
 }
@@ -34,7 +41,7 @@ func seedWithRoot(t *testing.T, e *layoutE2EEnv, ds *domainStack, repo workflow.
 	t.Helper()
 	stamper, err := workflow.NewRevisionStamper(repo, workflow.StamperDeps{Journal: journal, Requester: ds.layout.requester, Displayed: ds.layout.store, Settler: ds.layout.commits, Logger: layoutE2EDiscardLogger()})
 	require.NoError(t, err)
-	return seedSampleWorkflows(context.Background(), e.samplesDir, e.workspaceDir, repo, publications, stamper, ds.layout.mutations, adaptsqlite.NewWorkflowIdentityRepo(ds.db), localDefaultUser, layoutE2EDiscardLogger())
+	return seedSampleWorkflows(context.Background(), e.samplesDir, e.workspaceDir, repo, publications, stamper, ds.layout.mutations, adaptsqlite.NewWorkflowIdentityRepo(ds.db), nil, nil, localDefaultUser, layoutE2EDiscardLogger())
 }
 
 func assertDurableSeed(t *testing.T, e *layoutE2EEnv, ds *domainStack, req workflow.ArrangementRequest) {
@@ -123,8 +130,10 @@ func (j seedReceiptObstruction) MarkCommitted(ctx context.Context, revision stri
 }
 
 func TestSeedSampleWorkflows_LiveDurableRecovery(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, boundary := range []string{"receipt", "enqueue"} {
 		t.Run(boundary, func(t *testing.T) {
+			t.Parallel()
 			e := durableSeedEnv(t)
 			bad := filepath.Join(e.samplesDir, "a-malformed")
 			require.NoError(t, os.MkdirAll(bad, 0700))
@@ -244,7 +253,7 @@ func TestSeedSampleWorkflows_CrashProcess(t *testing.T) {
 	require.NoError(t, err)
 	source := filepath.Join(barrier.root, "samples")
 	registry := seedCrashRegistry{adaptsqlite.NewWorkflowIdentityRepo(ds.db), barrier}
-	err = seedSampleWorkflows(context.Background(), source, ds.cfg.Workspace.Path, repo, layoutCrashPublications{ds.publishedRepo, barrier}, stamper, ds.layout.mutations, registry, localDefaultUser, layoutE2EDiscardLogger())
+	err = seedSampleWorkflows(context.Background(), source, ds.cfg.Workspace.Path, repo, layoutCrashPublications{ds.publishedRepo, barrier}, stamper, ds.layout.mutations, registry, nil, nil, localDefaultUser, layoutE2EDiscardLogger())
 	require.NoError(t, err)
 	t.Fatal("seed never reached kill barrier")
 }

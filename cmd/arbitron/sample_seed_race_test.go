@@ -61,7 +61,7 @@ func TestSeedSampleWorkflows_RaceProcess(t *testing.T) {
 	stamper, err := workflow.NewRevisionStamper(ds.workflowRepo, workflow.StamperDeps{Journal: seedPrepareProbe{ds.layout.journal, root}, Requester: ds.layout.requester, Displayed: ds.layout.store, Settler: ds.layout.commits})
 	require.NoError(t, err)
 	mutations := seedRaceMutations{ds.layout.mutations, t, root, os.Getenv("ARBITRON_SEED_RACE_PEER")}
-	require.NoError(t, seedSampleWorkflows(context.Background(), filepath.Join(root, "samples"), ds.cfg.Workspace.Path, ds.workflowRepo, ds.publishedRepo, stamper, mutations, adaptsqlite.NewWorkflowIdentityRepo(ds.db), localDefaultUser, layoutE2EDiscardLogger()))
+	require.NoError(t, seedSampleWorkflows(context.Background(), filepath.Join(root, "samples"), ds.cfg.Workspace.Path, ds.workflowRepo, ds.publishedRepo, stamper, mutations, adaptsqlite.NewWorkflowIdentityRepo(ds.db), nil, nil, localDefaultUser, layoutE2EDiscardLogger()))
 }
 
 func TestSeedSampleWorkflows_TwoProcessesCommitOnce(t *testing.T) {

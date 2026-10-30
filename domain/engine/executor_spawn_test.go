@@ -303,7 +303,8 @@ func TestSpawnExecutor_PassesChildContractAndParentContextToPreparer(t *testing.
 	assert.Equal(t, "spawn-1", got.NodeID)
 	assert.Equal(t, "child", got.ChildWorkflow)
 	assert.Equal(t, "chat-default", got.ProfileAlias)
-	require.Len(t, got.Inputs, 2, "the CHILD's declared inputs are the contract")
+	require.Len(t, got.Inputs, 1, "only unmapped required inputs without a default are prepared")
+	assert.Equal(t, "repo", got.Inputs[0].Name)
 	assert.Equal(t, "quantum", got.ParentContext["topic"])
 	assert.NotNil(t, got.ParentContext["analyzer"],
 		"the parent's prior NODE OUTPUTS must reach the preparer, not just its inputs")

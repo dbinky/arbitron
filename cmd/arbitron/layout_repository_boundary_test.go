@@ -58,9 +58,11 @@ func layoutRepositoryInstanceCount(t *testing.T, ds *domainStack) int {
 }
 
 func TestLayoutRepository_StagedPublicationReadBoundaries(t *testing.T) {
+	pinLayoutE2EEnv(t)
 	for _, consumer := range []string{"load", "trigger", "catalog"} {
 		for _, boundary := range []string{"before-proof", "after-proof"} {
 			t.Run(consumer+"/"+boundary, func(t *testing.T) {
+				t.Parallel()
 				e := newLayoutE2EEnv(t, layoutE2EOptions{maxAttempts: "1"})
 				ds, _ := e.boot(t)
 				ctx := adminCtxForLocalUser(t, ds)

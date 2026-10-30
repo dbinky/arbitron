@@ -1,0 +1,1958 @@
+{
+  "id": "553a035c-143e-427c-912d-fe101ed3a9ed",
+  "name": "legacy-feature-pipeline",
+  "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, checkpoint-push the plans, record a branch-point test baseline, implement task-by-task (TDD), refine via the native ralph loop (gating on no NEW failures vs the baseline, with a stagnation backstop), and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
+  "author": "arbitron",
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  },
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "GitHub repo URL to clone and work in.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug used for the branch name and docs. If empty, the branch uses a neutral 'feature' placeholder (never the repo name) and the real slug is resolved from the spec brainstorm for docs/templates.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_only",
+      "type": "boolean",
+      "description": "Stop after the planning package (spec + designs + plans) is produced, committed, and pushed — before implementation begins. The plans are checkpoint-pushed on both paths.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "max_impl_iterations",
+      "type": "number",
+      "description": "Backstop cap on the draft-impl loop.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "max_ralph_iterations",
+      "type": "number",
+      "description": "Backstop cap on the ralph refinement loop. A seam-based plan of N single-system areas and P paired reviews needs 2N+P passes MINIMUM with zero rework (one observed plan: 26 areas + 112 pairs = 164), and most areas need several passes, so 200 left almost no headroom.",
+      "default": 500,
+      "required": false
+    },
+    {
+      "name": "impl_iteration",
+      "type": "number",
+      "description": "Draft-impl loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "ralph_iteration",
+      "type": "number",
+      "description": "Ralph loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "no_progress_streak",
+      "type": "number",
+      "description": "Consecutive ralph passes that made no forward progress; the refine loop exits when this reaches 2 (stagnation backstop).",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "max_no_progress_streak",
+      "type": "number",
+      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged — a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
+      "default": 12,
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Power Automate / Teams webhook URL for completion alerts. Leave empty in the committed sample (the notify-teams steps are no-ops when unset, or read ARBITRON_TEAMS_WEBHOOK_URL from the server env). The runtime workflow stores the real URL as this default.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "deps_resolution_iteration",
+      "type": "number",
+      "description": "Plan-time dependency-resolution loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "resume",
+      "type": "boolean",
+      "description": "Resume an interrupted feature: detect which docs already exist for `slug` and skip forward to the first stage that still has work. Requires `slug`.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Ref to base the feature worktree on (empty = the repo's default branch). init-workspace.sh already validates and shallow-clones this ref.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_path",
+      "type": "string",
+      "description": "Repo-relative path to the spec. Populated by the spec brainstorm on a fresh run, or by doc detection on a resume. Templates read {{spec_path}}.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "resume_stage",
+      "type": "string",
+      "description": "Stage a resumed run enters at: spec | design | plans | implementation. Computed by detect-docs, never set by hand.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "impl_blocked",
+      "type": "boolean",
+      "description": "Set by the impl loop when every remaining task is blocked. Routes the final terminal to done-blocked while still allowing the ralph loop and PR to run. Never set by hand.",
+      "default": false,
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init-workspace",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-\u003cslug\u003e-\u003crun_date\u003e-\u003cinstance-short-id\u003e worktree at {{workspace}}/work. The instance-id suffix keeps branches unique across concurrent runs of the same repo/feature.",
+      "errorBehavior": {},
+      "entrypoint": true,
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "promote-vars",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{init-workspace.slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init-workspace.run_date}}"
+          },
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init-workspace.work_dir}}"
+          },
+          {
+            "variable": "branch",
+            "operation": "set",
+            "value": "{{init-workspace.branch}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift init-workspace outputs to top-level vars for clean downstream references.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "notify-start",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Feature pipeline started for {{slug}} on branch {{branch}} (repo {{repo_url}})."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: started",
+      "description": "In-app notification that the pipeline has started.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 280
+      }
+    },
+    {
+      "id": "resume?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "resume",
+            "operator": "eq",
+            "value": true,
+            "output": "detect"
+          }
+        ],
+        "defaultOutput": "fresh"
+      },
+      "label": "Resume?",
+      "description": "resume=true routes to doc detection; otherwise the full pipeline runs from the spec brainstorm exactly as before.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
+      "id": "detect-docs",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/detect-docs.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Detect existing docs",
+      "description": "Deterministic: globs docs/{specs,designs,plans}, normalizes filenames (strips ISO date + role suffix), token-scores against slug in both directions, and emits resume_stage + matched_slug + spec_path. A script, not an LLM: llm_call has no tools and its schema is not enforced.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 560
+      }
+    },
+    {
+      "id": "docs-ambiguous?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "detect-docs.ambiguous",
+            "operator": "eq",
+            "value": true,
+            "output": "disambiguate"
+          }
+        ],
+        "defaultOutput": "clear"
+      },
+      "label": "Docs ambiguous?",
+      "description": "True only when two different features score within 0.2 of each other, i.e. picking wrongly is plausible. The LLM tiebreaker runs ONLY in that case.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "disambiguate-docs",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/disambiguate-docs.md",
+        "model_profile": "assessor-sonnet5-high",
+        "outputSchema": {
+          "properties": {
+            "chosen_slug": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chosen_slug"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Disambiguate docs (tiebreak)",
+      "description": "Picks which candidate feature the caller meant. It chooses ONLY the slug; stage and spec_path are recomputed deterministically afterwards by detect-docs-final, so a degenerate answer still yields correct routing.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "promote-chosen-slug",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{disambiguate-docs.chosen_slug}}"
+          }
+        ]
+      },
+      "label": "Promote chosen slug",
+      "description": "Lifts the tiebreaker's slug into the variable the detector reads.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 980
+      }
+    },
+    {
+      "id": "detect-docs-final",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/detect-docs.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Re-detect docs (chosen slug)",
+      "description": "Second deterministic pass against the disambiguated slug. This is what makes the LLM advisory: the routing facts always come from the script.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1120
+      }
+    },
+    {
+      "id": "promote-docs",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{detect-docs.safe_slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{detect-docs.safe_run_date}}"
+          },
+          {
+            "variable": "spec_path",
+            "operation": "set",
+            "value": "{{detect-docs.spec_path}}"
+          },
+          {
+            "variable": "resume_stage",
+            "operation": "set",
+            "value": "{{detect-docs.resume_stage}}"
+          }
+        ]
+      },
+      "label": "Promote detected docs",
+      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug — matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1260
+      }
+    },
+    {
+      "id": "promote-docs-final",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{detect-docs-final.safe_slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{detect-docs-final.safe_run_date}}"
+          },
+          {
+            "variable": "spec_path",
+            "operation": "set",
+            "value": "{{detect-docs-final.spec_path}}"
+          },
+          {
+            "variable": "resume_stage",
+            "operation": "set",
+            "value": "{{detect-docs-final.resume_stage}}"
+          }
+        ]
+      },
+      "label": "Promote detected docs (tiebroken)",
+      "description": "Disambiguated path: adopt the re-detection results.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1400
+      }
+    },
+    {
+      "id": "resume-stage?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "resume_stage",
+            "operator": "eq",
+            "value": "implementation",
+            "output": "impl"
+          },
+          {
+            "field": "resume_stage",
+            "operator": "eq",
+            "value": "plans",
+            "output": "plans"
+          },
+          {
+            "field": "resume_stage",
+            "operator": "eq",
+            "value": "design",
+            "output": "design"
+          }
+        ],
+        "defaultOutput": "spec"
+      },
+      "label": "Resume at which stage?",
+      "description": "The ladder: plans present -\u003e re-align and re-validate them, then implement; spec+designs -\u003e write plans; spec only -\u003e design brainstorm; nothing found -\u003e full pipeline. The implementation rung deliberately enters at align-plans rather than baseline-tests so a resumed run still passes the dependency gate (plans written by an earlier run were validated against an earlier repo state) and so spec_only remains meaningful on every resume path. Default is the full pipeline, so an unrecognised value costs time rather than skipping work.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1540
+      }
+    },
+    {
+      "id": "brainstorm-spec",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/brainstorm-spec.md",
+        "model_profile": "interviewer-codex",
+        "outputSchema": {
+          "properties": {
+            "slug": {
+              "type": "string"
+            },
+            "spec_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "spec_path"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/brainstorm-spec.orch.md"
+      },
+      "label": "Brainstorm: spec",
+      "description": "Interactive agent spec brainstorm; writes spec to disk and emits {slug, spec_path}.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 0
+      }
+    },
+    {
+      "id": "repromote-slug",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{brainstorm-spec.slug}}"
+          },
+          {
+            "variable": "spec_path",
+            "operation": "set",
+            "value": "{{brainstorm-spec.spec_path}}"
+          }
+        ]
+      },
+      "label": "Re-promote slug",
+      "description": "After the spec brainstorm, promote the resolved slug AND spec_path to top-level vars so designs/plans/templates all use one consistent slug and one spec pointer.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 140
+      }
+    },
+    {
+      "id": "checkpoint-push-spec",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push spec",
+      "description": "Pushes the approved product spec commit. The spec brainstorm runs on a codex interactive_agent, whose sandbox pins sandbox_workspace_write.network_access=false — with codex's approval subsystem deleted that sandbox is the sole containment against a prompt-injected turn exfiltrating the worktree, so it must stay off. A git push from inside that turn therefore cannot work by design. The turn commits locally and this node, which runs outside the sandbox with the engine's auth env passthrough, does the push — also making the expensive interview survive a later crash instead of living only in the instance worktree. Note the codex agent_call path uses --dangerously-bypass-approvals-and-sandbox and is NOT affected; this is specific to codex interactive_agent nodes.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 280
+      }
+    },
+    {
+      "id": "brainstorm-design",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/brainstorm-design.md",
+        "model_profile": "interviewer-opus-high",
+        "outputSchema": {
+          "properties": {
+            "design_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "slug": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "design_paths"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/brainstorm-design.orch.md"
+      },
+      "label": "Brainstorm: design",
+      "description": "Interactive agent design brainstorm; writes design docs to disk and emits {slug, design_paths}.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 420
+      }
+    },
+    {
+      "id": "align-designs",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-designs.md",
+        "model_profile": "reviewer-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align designs",
+      "description": "Read spec + designs; fix alignment in place; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 560
+      }
+    },
+    {
+      "id": "produce-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/produce-plans.md",
+        "model_profile": "coder-opus-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Produce plans",
+      "description": "Write detailed TDD task plans for each design phase; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 700
+      }
+    },
+    {
+      "id": "checkpoint-push-plans",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push new plans",
+      "description": "Pushes as soon as plans exist, BEFORE the dependency gate can route anywhere. Previously the only checkpoint sat on the gate's proceed edge, so a blocked exit discarded the entire spec+design+plan package when the workspace was garbage-collected.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 840
+      }
+    },
+    {
+      "id": "align-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-plans.md",
+        "model_profile": "reviewer-codex-high",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align plans",
+      "description": "Align spec+designs+plans; fix in place; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 980
+      }
+    },
+    {
+      "id": "deps-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/deps-assess.md",
+        "model_profile": "assessor-opus-high",
+        "outputSchema": {
+          "properties": {
+            "blocking_count": {
+              "type": "number"
+            },
+            "gaps": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "has_blocking": {
+              "type": "boolean"
+            },
+            "has_unresolved": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "unresolved_count": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "has_unresolved",
+            "unresolved_count",
+            "gaps",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess plan dependencies",
+      "description": "Gate: read the align-plans report and emit {has_unresolved, unresolved_count, gaps, notes} so unresolved producers are caught before implementation.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1120
+      }
+    },
+    {
+      "id": "deps-count",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/deps-count.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Count gaps needing a person",
+      "description": "Counts deps-assess's BLOCKING: and DECISION: gap lines (needs_resolution) so deps-gate routes on arithmetic, not on LLM-emitted fields. Fails closed: unreadable gaps report needs_resolution=1. Added after run 5e86d796 proceeded past 7 human decisions because the gate was first-match on blocking_count == 0.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1260
+      }
+    },
+    {
+      "id": "deps-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "deps-count.needs_resolution",
+            "operator": "eq",
+            "value": 0,
+            "output": "proceed"
+          },
+          {
+            "field": "deps_resolution_iteration",
+            "operator": "gte",
+            "value": 1,
+            "output": "blocked"
+          }
+        ],
+        "defaultOutput": "resolve"
+      },
+      "label": "Deps blocking?",
+      "description": "Proceed only when deps-count.needs_resolution is 0, i.e. no BLOCKING: and no DECISION: gaps. Otherwise take exactly ONE interactive resolve pass with the human; if anything still needs resolution after it, stop. Routes on deps-count (a script) rather than on deps-assess fields, because llm_call outputSchema is not enforced and because conditions are first-match: the old first condition `blocking_count == 0 -\u003e proceed` sent run 5e86d796 past 7 unresolved decisions.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1400
+      }
+    },
+    {
+      "id": "checkpoint-push",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push plans",
+      "description": "Push the feature branch after the spec/design/plan phase so that expensive interactive+planning work survives a later crash/cancel/logout instead of living only in the instance worktree.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1540
+      }
+    },
+    {
+      "id": "spec-only?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "spec_only",
+            "operator": "eq",
+            "value": true,
+            "output": "stop"
+          }
+        ],
+        "defaultOutput": "continue"
+      },
+      "label": "Spec only?",
+      "description": "Gate AFTER planning + checkpoint push: if spec_only, stop with the spec/designs/plans pushed; else continue to baseline capture and the implementation loop.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1680
+      }
+    },
+    {
+      "id": "baseline-tests",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/baseline-tests.md",
+        "model_profile": "coder-sonnet5-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Capture test baseline",
+      "description": "Before any implementation, detect and run the project's test suite(s) (mixed languages -\u003e possibly several) and write {{workspace}}/test-baseline.json recording which tests already fail at the branch point.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 0
+      }
+    },
+    {
+      "id": "record-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-baseline.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Record baseline vars",
+      "description": "Lift {{workspace}}/test-baseline.json into structured vars (test_baseline, test_commands, baseline_summary) so the ralph loop gates on NEW failures vs this baseline rather than a fully green suite.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 140
+      }
+    },
+    {
+      "id": "impl-task",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/impl-task.md",
+        "model_profile": "coder-pi-sol-high",
+        "timeoutSeconds": 5400
+      },
+      "label": "Implement next task",
+      "description": "Implement the next incomplete plan task, strict TDD, commit. Runs on a different model family than the planner that produced the plans and the approver that reviews the result, so no single family both writes and certifies the implementation.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 280
+      }
+    },
+    {
+      "id": "impl-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/impl-assess.md",
+        "model_profile": "assessor-opus-high",
+        "outputSchema": {
+          "properties": {
+            "all_remaining_blocked": {
+              "type": "boolean"
+            },
+            "all_tasks_complete": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "tasks_remaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "all_tasks_complete",
+            "tasks_remaining",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess impl progress",
+      "description": "Emit {all_tasks_complete, tasks_remaining, notes, all_remaining_blocked}. all_remaining_blocked is intentionally NOT in `required`: the claude-cli chat path has no native structured-output enforcement (schema is prompt prose only), so the model intermittently omits the key and a hard requirement kills the run. impl-gate only branches when it is true, so an absent value is correctly read as false.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 420
+      }
+    },
+    {
+      "id": "impl-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "impl_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 560
+      }
+    },
+    {
+      "id": "impl-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl-assess.all_tasks_complete",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "impl-assess.all_remaining_blocked",
+            "operator": "eq",
+            "value": true,
+            "output": "blocked"
+          },
+          {
+            "field": "impl_iteration",
+            "operator": "gte",
+            "value": "{{max_impl_iterations}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Impl loop or exit",
+      "description": "Exit when all tasks complete OR iteration cap reached; else loop.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 700
+      }
+    },
+    {
+      "id": "notify-teams-spec",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "feature-pipeline (spec-only) complete — {{slug}}",
+          "Spec, phased designs and TDD task plans were produced, aligned and checkpoint-pushed. Stopped before implementation (spec_only).",
+          "info",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "Status=spec-only-complete"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams (spec-only)",
+      "description": "Rich alert to the Teams webhook on the spec-only stop (no-op if teams_webhook_url unset).",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 840
+      }
+    },
+    {
+      "id": "done-spec",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "spec-only-complete"
+          }
+        ]
+      },
+      "label": "Done (spec-only, terminal)",
+      "description": "Terminal node for the --spec-only path.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 980
+      }
+    },
+    {
+      "id": "resolve-deps",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/resolve-deps.md",
+        "model_profile": "interviewer-opus-high",
+        "outputSchema": {
+          "properties": {
+            "notes": {
+              "type": "string"
+            },
+            "updated_docs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "updated_docs",
+            "notes"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/resolve-deps.orch.md"
+      },
+      "label": "Resolve dependency (interactive)",
+      "description": "Interactive opus-planner: point the human at each unresolved dependency, brainstorm the missing contract at implementation-design altitude, patch the blocked design/plan doc, commit; then loop back to re-align and re-check.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 1120
+      }
+    },
+    {
+      "id": "deps-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "deps_resolution_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "deps_resolution_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 1260
+      }
+    },
+    {
+      "id": "deps-blocked-notify",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "feature-pipeline BLOCKED (planning) — {{slug}}",
+          "The planning phase could not close the dependency graph after {{max_deps_iterations}} interactive resolution passes. Implementation was NOT started, to avoid a livelock. Unresolved: {{deps-assess.notes}}",
+          "warning",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "Status=planning-blocked"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams (planning blocked)",
+      "description": "Escalation alert when unresolved plan dependencies remain after the resolution cap; the pipeline stops rather than shipping a plan the impl loop would livelock on.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 1400
+      }
+    },
+    {
+      "id": "push-blocked",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Push before blocked exit",
+      "description": "Terminal-path work preservation: both blocked escalations push the branch before ending, so a stopped run leaves its work on the remote instead of only in a workspace that is deleted on completion.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 1540
+      }
+    },
+    {
+      "id": "mark-impl-blocked",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_blocked",
+            "operation": "set",
+            "value": true
+          }
+        ]
+      },
+      "label": "Mark implementation blocked",
+      "description": "Records that the impl loop exited blocked, so the run still refines and opens a PR but is reported as blocked rather than complete.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 0
+      }
+    },
+    {
+      "id": "impl-blocked-notify",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "feature-pipeline BLOCKED (implementation) — {{slug}}",
+          "The implementation loop stopped because every remaining task is blocked on a producer that does not exist and is outside its scope — a plan gap that slipped past the planning gate. Stopped rather than spinning to the iteration cap. Blocker: {{impl-assess.notes}}",
+          "warning",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "Status=impl-blocked"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams (impl blocked)",
+      "description": "Escalation alert when the impl loop detects all remaining tasks are blocked on non-existent producers; stop-and-escalate instead of spinning to the cap.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 140
+      }
+    },
+    {
+      "id": "seed-ralph",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/seed-ralph.md",
+        "model_profile": "planner-opus-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Seed ralph files",
+      "description": "Writes RALPH.md (the loop protocol with both lenses), focus-areas.md (behaviour areas with entry, sink, files and a checklist per lens; one paired row per seam with SHARED/TRACE/BREAK; No seam; area detail blocks) and gaps-identified.md, sized to fit the pass budget. Runs at high effort with the full context window: it runs once and its output sets the cost of every pass after it.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 280
+      }
+    },
+    {
+      "id": "critique-seed",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/critique-seed.md",
+        "model_profile": "critic-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Critique review plan",
+      "description": "Cross-family plan critic. Applies the merge test (areas are behaviours, not layers or files), the block test (entry, sink, files, a checklist per lens), the seam test (shared state, contract, flag or ordering; different authors; silent failure) and the budget to the seeded plan, merging and striking in place and recording every decision under '## Plan critique' in RALPH.md. The seeder's own slicing is the thing under review, so this runs on a different model family from the seeder. Runs after seed-ralph on every path that seeds a plan.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 420
+      }
+    },
+    {
+      "id": "verify-ralph-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-ralph-seed.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify ralph seed",
+      "description": "Fails the run unless RALPH.md carries the loop protocol markers; unless 2*singles + paired fits the pass budget (a paired row costs a whole pass); unless every paired row is one seam (no directional mirror rows) and checkbox syntax lives only in the two tables; and, when the critic ran, unless RALPH.md carries its '## Plan critique' record.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 1260,
+        "y": 560
+      }
+    },
+    {
+      "id": "select-work",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/select-work.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Select next work",
+      "description": "The router. Picks the highest-risk outstanding item and emits next_kind, which decides BOTH what gets reviewed and which model pair handles it. Phase 1 works single-system areas (review 1 = the wiring lens, review 2 = the failure lens); phase 2 begins only when every single box is ticked. Models are named only in the node profiles.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 700
+      }
+    },
+    {
+      "id": "work-router",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "single_1",
+            "output": "single1"
+          },
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "single_2",
+            "output": "single2"
+          },
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "paired",
+            "output": "paired"
+          }
+        ],
+        "defaultOutput": "done"
+      },
+      "label": "Route by work kind",
+      "description": "Sends the pass down the lane select-work chose. Conditions are FIRST-MATCH, so the three kinds are listed before the default exit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 840
+      }
+    },
+    {
+      "id": "refine-single-1",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-single.md",
+        "model_profile": "coder-sonnet5-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine single (review 1)",
+      "description": "Review 1 of a single-system area: the WIRING lens. Refined by one model family and assessed by another, so an area never gets two opinions from the same blind spot.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 980
+      }
+    },
+    {
+      "id": "verify-tests-single1",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests (single 1)",
+      "description": "Baseline-relative test gate for review 1. Blocks approval on NEW failures only.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 1120
+      }
+    },
+    {
+      "id": "assess-single-1",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/assess-single.md",
+        "model_profile": "approver-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Assess single (review 1)",
+      "description": "Independent approver for review 1, on a different model family from its refiner. The only agent permitted to tick this box.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 1260
+      }
+    },
+    {
+      "id": "refine-single-2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-single.md",
+        "model_profile": "coder-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine single (review 2)",
+      "description": "Review 2 of a single-system area: the FAILURE lens. Uses the opposite model pair from review 1.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 1400
+      }
+    },
+    {
+      "id": "verify-tests-single2",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests (single 2)",
+      "description": "Baseline-relative test gate for review 2.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1260,
+        "y": 1540
+      }
+    },
+    {
+      "id": "assess-single-2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/assess-single.md",
+        "model_profile": "approver-opus-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Assess single (review 2)",
+      "description": "Independent approver for review 2, cross-family against its refiner.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 0
+      }
+    },
+    {
+      "id": "refine-paired",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-paired.md",
+        "model_profile": "coder-opus-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine paired seam",
+      "description": "Phase 2: one paired integration seam, both directions in a single pass. Begins only once every single-system box is ticked.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 140
+      }
+    },
+    {
+      "id": "verify-tests-paired",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests (paired)",
+      "description": "Baseline-relative test gate for the paired seam pass.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 280
+      }
+    },
+    {
+      "id": "assess-paired",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/assess-paired.md",
+        "model_profile": "approver-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Assess paired seam",
+      "description": "Independent approver for the paired seam, cross-family against its refiner.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 420
+      }
+    },
+    {
+      "id": "record-pass-commit",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-pass-commit.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Record pass commit",
+      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone — but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 560
+      }
+    },
+    {
+      "id": "count-review-plan",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/count-review-plan.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Count review plan",
+      "description": "Counts outstanding approval boxes in focus-areas.md and emits plan_complete, so loop termination is arithmetic rather than narrative. refine-assess is toolless: it could only read the pass's own \u003cpromise\u003eFINIT\u003c/promise\u003e claim and had no way to contradict it. Run ae3ec85f exited that way at pass 56 of a 200 cap with all 112 paired integration reviews untouched — 114 of 164 approvals outstanding — and shipped a PR whose review plan was 70% unexecuted. Fails closed: an unreadable plan emits plan_complete=false, and the stagnation backstop plus the cap still bound the run.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 700
+      }
+    },
+    {
+      "id": "refine-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/refine-assess.md",
+        "model_profile": "assessor-sonnet5-high",
+        "outputSchema": {
+          "properties": {
+            "consecutive_no_progress": {
+              "type": "number"
+            },
+            "done": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "progressed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "done",
+            "notes",
+            "progressed",
+            "consecutive_no_progress"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess refinement",
+      "description": "Emit {done, notes, progressed, consecutive_no_progress}; done gates on no NEW failures vs the baseline (not a green suite), and consecutive_no_progress drives the stagnation exit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 840
+      }
+    },
+    {
+      "id": "refine-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "ralph_iteration",
+            "operation": "increment",
+            "value": 1
+          },
+          {
+            "variable": "no_progress_streak",
+            "operation": "set",
+            "value": "{{refine-assess.consecutive_no_progress}}"
+          }
+        ]
+      },
+      "label": "ralph_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 980
+      }
+    },
+    {
+      "id": "refine-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "ralph_iteration",
+            "operator": "gte",
+            "value": "{{max_ralph_iterations}}",
+            "output": "exit"
+          },
+          {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": "{{max_no_progress_streak}}",
+            "output": "exit"
+          },
+          {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 5,
+            "output": "loop"
+          },
+          {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 2,
+            "output": "rescue"
+          },
+          {
+            "field": "count-review-plan.plan_complete",
+            "operator": "eq",
+            "value": false,
+            "output": "loop"
+          },
+          {
+            "field": "verify-tests.new_failures",
+            "operator": "gte",
+            "value": 1,
+            "output": "loop"
+          },
+          {
+            "field": "refine-assess.done",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Refine loop or exit",
+      "description": "Conditions are first-match, so a listed-but-later condition is not a guard. This gate DID read count-review-plan.plan_complete, but at index 4, behind an unconditional `consecutive_no_progress \u003e= 3 -\u003e exit` at index 2 — the counter was shadowed and could never veto a stagnation exit. That is the same defect that ended ralph-loop run a1aab074 with 98 approval boxes outstanding, and the reason count-review-plan was written in the first place. The stagnation exit is now the declared hard-wedge threshold (max_no_progress_streak, 12) rather than a bare 3. Widening the runway that far would have fired the Opus rescue on every pass from 2 to 11, so the rescue band is bounded to streaks 2-4 (three attempts, was one) and 5-11 loop normally until the wedge threshold. Below that, an incomplete plan or a new-vs-baseline failure keeps the loop running, and only then may the assessor's `done` end it.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 1120
+      }
+    },
+    {
+      "id": "push-and-pr",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/push-and-pr.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Push \u0026 open PR",
+      "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open). When impl_blocked is set the PR is a DRAFT titled [BLOCKED] whose body names the remaining tasks and the assessor's account of what blocks them.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 1260
+      }
+    },
+    {
+      "id": "notify-done",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Feature pipeline complete for {{slug}}: PR {{push-and-pr.pr_url}} opened. PR review will run on open."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: PR opened",
+      "description": "In-app notification that the PR is open.",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 1400
+      }
+    },
+    {
+      "id": "notify-teams",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "feature-pipeline complete — {{slug}}",
+          "Spec, phased designs, plans, implementation and the ralph refinement loop are done; a PR has been opened ({{push-and-pr.pr_url}}). PR review runs automatically on open.",
+          "good",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "PR={{push-and-pr.pr_url}}",
+          "Status={{pipeline_status}}"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams (PR opened)",
+      "description": "Rich completion alert to the Teams webhook after the PR is opened (no-op if teams_webhook_url unset).",
+      "errorBehavior": {},
+      "position": {
+        "x": 1680,
+        "y": 1540
+      }
+    },
+    {
+      "id": "final-status?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl_blocked",
+            "operator": "eq",
+            "value": true,
+            "output": "blocked"
+          }
+        ],
+        "defaultOutput": "complete"
+      },
+      "label": "Blocked or complete?",
+      "description": "Chooses the terminal AFTER the PR is opened. A run whose implementation was blocked still refines and ships a PR, but must not report 'complete' -- that would assert verification it never performed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 2100,
+        "y": 0
+      }
+    },
+    {
+      "id": "done",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "complete"
+          }
+        ]
+      },
+      "label": "Done (terminal)",
+      "description": "Terminal node. Records final status so the walk ends cleanly.",
+      "errorBehavior": {},
+      "position": {
+        "x": 2100,
+        "y": 140
+      }
+    },
+    {
+      "id": "done-blocked",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Done (blocked, terminal)",
+      "description": "Terminal node for the escalation paths: planning or implementation stopped on an unresolvable dependency; a human must resolve the plan gap.",
+      "errorBehavior": {},
+      "position": {
+        "x": 2100,
+        "y": 280
+      }
+    },
+    {
+      "id": "refine-rescue",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-rescue.md",
+        "model_profile": "refine-deep",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine (Opus rescue pass)",
+      "description": "One stronger pass per stagnation event. Stagnation used to exit the loop and ship the PR with the review plan unfinished; with a cheaper worker that triggers more often. If the rescue also makes no progress the streak reaches 3 and the loop exits for real, so this cannot spin.",
+      "errorBehavior": {},
+      "position": {
+        "x": 2100,
+        "y": 420
+      }
+    },
+    {
+      "id": "verify-tests-rescue",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests (rescue pass)",
+      "description": "Baseline-relative test gate for the Opus rescue pass. The rescue pass breaks a stagnation rather than working a numbered review row, so it records its commit directly instead of routing through a lane approver — the next iteration re-routes through select-work and is assessed normally.",
+      "errorBehavior": {},
+      "position": {
+        "x": 2100,
+        "y": 560
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init-workspace",
+      "target": "promote-vars"
+    },
+    {
+      "source": "promote-vars",
+      "target": "notify-start"
+    },
+    {
+      "source": "brainstorm-spec",
+      "target": "repromote-slug"
+    },
+    {
+      "source": "repromote-slug",
+      "target": "checkpoint-push-spec"
+    },
+    {
+      "source": "checkpoint-push-spec",
+      "target": "brainstorm-design"
+    },
+    {
+      "source": "brainstorm-design",
+      "target": "align-designs"
+    },
+    {
+      "source": "spec-only?",
+      "target": "baseline-tests",
+      "output": "continue"
+    },
+    {
+      "source": "align-designs",
+      "target": "produce-plans"
+    },
+    {
+      "source": "checkpoint-push",
+      "target": "spec-only?"
+    },
+    {
+      "source": "baseline-tests",
+      "target": "record-baseline"
+    },
+    {
+      "source": "record-baseline",
+      "target": "impl-task"
+    },
+    {
+      "source": "impl-task",
+      "target": "impl-assess"
+    },
+    {
+      "source": "impl-assess",
+      "target": "impl-inc"
+    },
+    {
+      "source": "impl-inc",
+      "target": "impl-gate"
+    },
+    {
+      "source": "impl-gate",
+      "target": "impl-task",
+      "output": "loop",
+      "label": "back-edge: next task"
+    },
+    {
+      "source": "impl-gate",
+      "target": "seed-ralph",
+      "output": "exit"
+    },
+    {
+      "source": "seed-ralph",
+      "target": "critique-seed"
+    },
+    {
+      "source": "critique-seed",
+      "target": "verify-ralph-seed"
+    },
+    {
+      "source": "record-pass-commit",
+      "target": "count-review-plan"
+    },
+    {
+      "source": "count-review-plan",
+      "target": "refine-assess"
+    },
+    {
+      "source": "refine-assess",
+      "target": "refine-inc"
+    },
+    {
+      "source": "refine-inc",
+      "target": "refine-gate"
+    },
+    {
+      "source": "refine-gate",
+      "target": "push-and-pr",
+      "output": "exit"
+    },
+    {
+      "source": "push-and-pr",
+      "target": "notify-done"
+    },
+    {
+      "source": "notify-done",
+      "target": "notify-teams"
+    },
+    {
+      "source": "spec-only?",
+      "target": "notify-teams-spec",
+      "output": "stop"
+    },
+    {
+      "source": "notify-teams-spec",
+      "target": "done-spec"
+    },
+    {
+      "source": "align-plans",
+      "target": "deps-assess"
+    },
+    {
+      "source": "deps-assess",
+      "target": "deps-count"
+    },
+    {
+      "source": "deps-count",
+      "target": "deps-gate"
+    },
+    {
+      "source": "deps-gate",
+      "target": "checkpoint-push",
+      "output": "proceed"
+    },
+    {
+      "source": "deps-gate",
+      "target": "resolve-deps",
+      "output": "resolve",
+      "label": "back-edge: resolve then re-align"
+    },
+    {
+      "source": "deps-gate",
+      "target": "deps-blocked-notify",
+      "output": "blocked"
+    },
+    {
+      "source": "resolve-deps",
+      "target": "deps-inc"
+    },
+    {
+      "source": "deps-inc",
+      "target": "align-plans",
+      "label": "loop: re-align + re-check deps"
+    },
+    {
+      "source": "notify-start",
+      "target": "resume?"
+    },
+    {
+      "source": "resume?",
+      "target": "brainstorm-spec",
+      "output": "fresh",
+      "label": "fresh run"
+    },
+    {
+      "source": "resume?",
+      "target": "detect-docs",
+      "output": "detect",
+      "label": "resume"
+    },
+    {
+      "source": "detect-docs",
+      "target": "docs-ambiguous?"
+    },
+    {
+      "source": "docs-ambiguous?",
+      "target": "promote-docs",
+      "output": "clear"
+    },
+    {
+      "source": "docs-ambiguous?",
+      "target": "disambiguate-docs",
+      "output": "disambiguate"
+    },
+    {
+      "source": "disambiguate-docs",
+      "target": "promote-chosen-slug"
+    },
+    {
+      "source": "promote-chosen-slug",
+      "target": "detect-docs-final"
+    },
+    {
+      "source": "detect-docs-final",
+      "target": "promote-docs-final"
+    },
+    {
+      "source": "promote-docs",
+      "target": "resume-stage?"
+    },
+    {
+      "source": "promote-docs-final",
+      "target": "resume-stage?"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "brainstorm-spec",
+      "output": "spec",
+      "label": "nothing found"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "brainstorm-design",
+      "output": "design",
+      "label": "spec exists"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "produce-plans",
+      "output": "plans",
+      "label": "spec+designs exist"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "align-plans",
+      "output": "impl",
+      "label": "plans exist — re-align + revalidate"
+    },
+    {
+      "source": "produce-plans",
+      "target": "checkpoint-push-plans"
+    },
+    {
+      "source": "checkpoint-push-plans",
+      "target": "align-plans"
+    },
+    {
+      "source": "deps-blocked-notify",
+      "target": "push-blocked"
+    },
+    {
+      "source": "push-blocked",
+      "target": "done-blocked"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-impl-blocked",
+      "output": "blocked",
+      "label": "all remaining blocked"
+    },
+    {
+      "source": "mark-impl-blocked",
+      "target": "impl-blocked-notify"
+    },
+    {
+      "source": "impl-blocked-notify",
+      "target": "seed-ralph",
+      "label": "still refine + open a PR"
+    },
+    {
+      "source": "notify-teams",
+      "target": "final-status?"
+    },
+    {
+      "source": "final-status?",
+      "target": "done-blocked",
+      "output": "blocked"
+    },
+    {
+      "source": "final-status?",
+      "target": "done",
+      "output": "complete"
+    },
+    {
+      "source": "refine-gate",
+      "target": "refine-rescue",
+      "output": "rescue",
+      "label": "stagnation: one Opus rescue"
+    },
+    {
+      "source": "verify-ralph-seed",
+      "target": "select-work"
+    },
+    {
+      "source": "select-work",
+      "target": "work-router"
+    },
+    {
+      "source": "work-router",
+      "target": "refine-single-1",
+      "output": "single1"
+    },
+    {
+      "source": "work-router",
+      "target": "refine-single-2",
+      "output": "single2"
+    },
+    {
+      "source": "work-router",
+      "target": "refine-paired",
+      "output": "paired"
+    },
+    {
+      "source": "work-router",
+      "target": "push-and-pr",
+      "output": "done",
+      "label": "nothing outstanding"
+    },
+    {
+      "source": "refine-single-1",
+      "target": "verify-tests-single1"
+    },
+    {
+      "source": "verify-tests-single1",
+      "target": "assess-single-1"
+    },
+    {
+      "source": "assess-single-1",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "refine-single-2",
+      "target": "verify-tests-single2"
+    },
+    {
+      "source": "verify-tests-single2",
+      "target": "assess-single-2"
+    },
+    {
+      "source": "assess-single-2",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "refine-paired",
+      "target": "verify-tests-paired"
+    },
+    {
+      "source": "verify-tests-paired",
+      "target": "assess-paired"
+    },
+    {
+      "source": "assess-paired",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "refine-rescue",
+      "target": "verify-tests-rescue"
+    },
+    {
+      "source": "verify-tests-rescue",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "refine-gate",
+      "target": "select-work",
+      "output": "loop",
+      "label": "back-edge: re-route"
+    }
+  ]
+}

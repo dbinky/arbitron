@@ -2,6 +2,7 @@ package samples_test
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,7 @@ func loadSample(t *testing.T, name string) *workflow.Workflow {
 }
 
 func TestSamplesParse(t *testing.T) {
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop", "harness-update"} {
+	for _, name := range allSampleNames(t) {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 			if wf.Name != name {
@@ -56,7 +57,7 @@ func TestSamplesParse(t *testing.T) {
 // the runtime default is where the secret belongs, never the sample.
 func TestSampleInputsCarryNoSecrets(t *testing.T) {
 	sensitive := []string{"webhook", "token", "secret", "password", "api_key"}
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop", "harness-update"} {
+	for _, name := range allSampleNames(t) {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 			for _, in := range wf.Inputs {
@@ -74,5 +75,47 @@ func TestSampleInputsCarryNoSecrets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSamplesLibFolderInvariants(t *testing.T) {
+	root := "_lib"
+	info, err := os.Lstat(root)
+	if err != nil {
+		t.Fatalf("samples/_lib must exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("samples/_lib is not a directory")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "workflow.json")); err == nil {
+		t.Errorf("samples/_lib must not contain a workflow.json")
+	}
+	files := 0
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			t.Errorf("%s: symlinks are not allowed in the library", path)
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		files++
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if err := workflow.ValidLibRel(filepath.ToSlash(rel)); err != nil {
+			t.Errorf("%s: %v", rel, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files == 0 {
+		t.Errorf("samples/_lib has no files")
 	}
 }
