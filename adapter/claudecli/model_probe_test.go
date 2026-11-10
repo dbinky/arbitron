@@ -151,13 +151,43 @@ func TestModelProbeClaudeNonStreamingCannotReplaceFailedProof(t *testing.T) {
 	for _, first := range []string{
 		`{"type":"result","result":"fallback","modelUsage":{"fallback":{}}}`,
 		`{"type":"result","result":"failed","is_error":true}`,
-		`{"type":"result","result":"first","modelUsage":{"claude-sonnet-4-6":{}}}`,
+		`{"type":"result","result":"first"}`,
 	} {
 		t.Run(first, func(t *testing.T) {
 			r := &modelEvidenceRunner{t: t}
 			r.lines = []string{first, `{"type":"result","result":"later success","modelUsage":{"claude-sonnet-4-6":{}}}`}
 			out, err := NewChatAdapter(Config{BinaryPath: "claude", Runner: r}).Chat(context.Background(), engine.ChatRequest{Model: proofModel, Prompt: "prove this turn", WorkDir: "/tmp/proof-workspace", RequireExecutedModel: true})
 			require.Error(t, err)
+			assert.Nil(t, out)
+		})
+	}
+}
+
+// A batch call (agent_call) whose session re-woke for background subagents
+// returns the LAST proven result: that wake holds the final answer.
+func TestModelProbeClaudeNonStreamingAcceptsRepeatedProof(t *testing.T) {
+	r := &modelEvidenceRunner{t: t}
+	r.lines = []string{
+		`{"type":"result","result":"first","modelUsage":{"claude-sonnet-4-6":{}}}`,
+		`{"type":"result","result":"later success","modelUsage":{"claude-sonnet-4-6":{}}}`,
+	}
+	out, err := NewChatAdapter(Config{BinaryPath: "claude", Runner: r}).Chat(context.Background(), engine.ChatRequest{Model: proofModel, Prompt: "prove this turn", WorkDir: "/tmp/proof-workspace", RequireExecutedModel: true})
+	require.NoError(t, err)
+	assert.Contains(t, fmt.Sprint(out), "later success")
+}
+
+func TestModelProbeClaudeNonStreamingRejectsLaterUnprovenResult(t *testing.T) {
+	proven := `{"type":"result","result":"first","modelUsage":{"claude-sonnet-4-6":{}}}`
+	for _, later := range []string{
+		`{"type":"result","result":"fallback","modelUsage":{"fallback":{}}}`,
+		`{"type":"result","result":"failed","is_error":true,"modelUsage":{"claude-sonnet-4-6":{}}}`,
+		`{"type":"result","result":"missing"}`,
+	} {
+		t.Run(later, func(t *testing.T) {
+			r := &modelEvidenceRunner{t: t}
+			r.lines = []string{proven, later}
+			out, err := NewChatAdapter(Config{BinaryPath: "claude", Runner: r}).Chat(context.Background(), engine.ChatRequest{Model: proofModel, Prompt: "prove this turn", WorkDir: "/tmp/proof-workspace", RequireExecutedModel: true})
+			require.ErrorContains(t, err, "model execution evidence")
 			assert.Nil(t, out)
 		})
 	}

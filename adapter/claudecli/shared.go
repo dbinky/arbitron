@@ -126,8 +126,10 @@ func (c *adapterCore) chatEnvWithBinding(binding provider.ResolvedBinding) []str
 // shared by ChatAdapter.Chat (which discards the steps) and
 // AgentAdapter.RunAgent (which folds them into AgentResult.Steps): it surfaces
 // start errors, mid-stream parse errors, process exit errors, a missing result
-// event, and an is_error result. When wantModel is non-empty, exactly one
-// successful result must include it in modelUsage (D3); helper models are allowed.
+// event, and an is_error result. When wantModel is non-empty, every result must
+// be a success that includes it in modelUsage (D3); helper models are allowed.
+// Several results occur when background subagents re-wake the session; the
+// last one carries the final answer.
 func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, wantModel string) (streamEvent, []streamEvent, error) {
 	lines, wait, err := runner.Run(ctx, spec)
 	if err != nil {
@@ -154,7 +156,9 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, want
 			continue
 		}
 		if ev.Kind == eventResult {
-			if wantModel != "" && (haveResult || ev.IsError || !executedModelMatches(wantModel, ev.ModelUsage)) {
+			// Background-subagent wakes emit one result each; every one must
+			// prove the pinned model, and the last (the final answer) wins.
+			if wantModel != "" && (ev.IsError || !executedModelMatches(wantModel, ev.ModelUsage)) {
 				parseErr = errModelExecutionEvidence
 				continue
 			}

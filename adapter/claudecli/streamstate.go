@@ -20,7 +20,7 @@ type streamState struct {
 	tokensIn  int
 	tokensOut int
 	failed    bool
-	// wantModel, when set, is the pinned model the result's modelUsage must
+	// wantModel, when set, is the pinned model every result's modelUsage must
 	// contain; a result without it fails the stream instead of completing.
 	wantModel string
 	sawResult bool
@@ -59,16 +59,13 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 			}
 		}
 	case eventResult:
-		// A pinned invocation has exactly one terminal proof, as collectResult
-		// requires for batch calls. Latch failure before later events can replace
-		// the evidence or publish Done; the caller still drains and reaps.
-		if s.wantModel != "" && s.sawResult {
-			sendChunk(engine.ChatChunk{Error: errModelExecutionEvidence})
-			s.failed = true
-			return
-		}
+		// One turn can carry several results: Claude Code re-wakes a print
+		// session each time a background subagent finishes. A pinned turn needs
+		// EVERY result to prove the model, so one unproven or failed wake fails
+		// the whole turn (latched before Done; the caller still drains and reaps).
 		s.sawResult = true
-		s.tokensIn, s.tokensOut = ev.TokensIn, ev.TokensOut
+		s.tokensIn += ev.TokensIn
+		s.tokensOut += ev.TokensOut
 		if !ev.IsError && s.wantModel != "" && !executedModelMatches(s.wantModel, ev.ModelUsage) {
 			sendChunk(engine.ChatChunk{
 				Error: fmt.Errorf("claudecli: pinned model %q absent from result modelUsage", s.wantModel),
