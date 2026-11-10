@@ -16,6 +16,17 @@
       "finished_at": "2026-11-10T18:04:19Z",
       "instance_id": "35f3bb3e-8ff9-432f-a956-e7928bffe3dd",
       "workflow": "feature-pipeline"
+    },
+    {
+      "stage": "spec",
+      "status": "done",
+      "outputs": {
+        "spec_path": "docs/specs/2026-11-10-lunaroute-provider-spec.md"
+      },
+      "commit": "5ac3db376a392d60d40731d5111775f56794af62",
+      "finished_at": "2026-11-10T20:36:24Z",
+      "instance_id": "58421d1b-d77b-4e4d-828c-e463a9da4897",
+      "workflow": "spec"
     }
   ]
 }
