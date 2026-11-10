@@ -1,0 +1,21 @@
+{
+  "slug": "lunaroute-provider",
+  "base_branch": "main",
+  "branch": "dev-lunaroute-provider-2026-11-10-35f3bb3e",
+  "stages": [
+    {
+      "stage": "ideate",
+      "status": "done",
+      "outputs": {
+        "slug": "lunaroute-provider",
+        "branch": "dev-lunaroute-provider-2026-11-10-35f3bb3e",
+        "idea_path": "docs/ideas/lunaroute-provider.md",
+        "provided": true
+      },
+      "commit": "a39fad8a2efca3949c1aec5e12ccc28dbc4f4564",
+      "finished_at": "2026-11-10T18:04:19Z",
+      "instance_id": "35f3bb3e-8ff9-432f-a956-e7928bffe3dd",
+      "workflow": "feature-pipeline"
+    }
+  ]
+}
