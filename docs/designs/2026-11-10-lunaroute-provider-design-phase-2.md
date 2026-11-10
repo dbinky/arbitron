@@ -35,8 +35,14 @@ classifier, capability table, error classifier).
 - **Contract:** implements `ConnectionProbe`. Calls `GET <root>/v1/models` (URL
   from the phase-1 endpoint helper) using the guarded reveal; returns
   `ProbeResult{Reachable, Models}`. Non-2xx and transport errors are mapped by the
-  **phase-1 LunaRoute classifier** (not the generic `classifyStatus`), so callers
-  can tell credentials / unavailable / busy / service failure / unknown apart.
+  **phase-1 LunaRoute classifier** with operation context (not the generic
+  `classifyStatus`), so callers can tell credentials / unavailable / busy / service failure
+  / unknown apart.
+- Enforce the phase-1 hosted endpoint and key rules within the probe, including
+  CLI-created bindings (which bypass the profile resolver). Disable redirects
+  for LunaRoute credential-bearing HTTP calls; the existing shared client has
+  no redirect policy. Test via an injected transport responding at the canonical
+  hosted URL, rather than weakening the production endpoint rule for localhost.
 - **Does not** parse limits or capabilities from the listing (phase-1 decision:
   availability only).
 - **Registered as:** the `lunaroute` arm of `ProbeFactory.ProbeFor`.
@@ -46,9 +52,12 @@ classifier, capability table, error classifier).
 - **Contract:** input = connection name (admin identity required, same rule as
   `ConnectionService`). Output = list of entries, each: model id, family (lab or
   `unresolved`), task kinds, compatible backends, context limit, output limit,
-  supported efforts — each capability field explicitly `known(value)` or
-  `unknown`; plus a top-level note that availability does not imply
-  compatibility. Errors are the phase-1 sentinels.
+  supported efforts per task/backend and known setting conflicts — each
+  capability field explicitly `known(value)` or `unknown`; plus a top-level note that
+  availability does not imply
+  compatibility. Return independent support/unsupported/unknown facts rather
+  than treating an observed supported backend as a complete allowlist. Include
+  evidence references for known facts. Errors are the phase-1 sentinels.
 - **Collaborators (ports only):** `ConnectionStore` (metadata Get + Reveal, via a
   binding built with the guarded reveal), `ProbeSelector`, family classifier,
   capability table read port.
@@ -63,7 +72,8 @@ classifier, capability table, error classifier).
 - **Contract:** one required argument (connection name); returns the discovery
   view as JSON; never returns key material. Description tells the LLM that
   `unknown` fields are not guarantees and that it must choose model and backend
-  explicitly.
+  explicitly; LunaRoute profiles name their agent backend and use pinned
+  selection. Do not recommend or automatically select a model.
 - Maps phase-1 sentinels to stable, actionable messages (credential rejected,
   service unavailable/busy, cause unknown, forbidden, not found).
 - Also: `connErrorResult` gains mappings for the phase-1 connection-write
@@ -79,18 +89,41 @@ classifier, capability table, error classifier).
   LunaRoute binding are classified with the phase-1 classifier (so chat errors
   say "credentials rejected" / "model unavailable" / … rather than a generic
   upstream status).
-- **No new chat adapter:** request/response contract is identical.
+- **Implementation seam:** extend `adapter/openrouter/provider.go:Config` with
+  an optional structured error-classification hook (status, bounded body,
+  transport error, operation); inject the LunaRoute classifier in its factory
+  arm. Apply it to `Chat` and `StreamChat`, including immediate and channel
+  errors. The existing `statusError` only returns `ErrUpstreamStatus`; parsing
+  its formatted error string is not an implementation. Redact echoed keys
+  before snippets/logging; avoid dumping arbitrary response bodies.
+- Wrap actual chat invocations with the phase-1 pure launch check and validate
+  request-level settings such as `MaxTokens` against known output limits.
+  `buildBody` currently maps/floors effort through `ChatReasoningEffort`; for
+  LunaRoute reject unsupported or lossy mappings and emit the validated setting
+  exactly. Never send a request that knowingly exceeds a limit.
+- **No new chat adapter:** reuse the existing request/response implementation.
+  Non-LunaRoute hooks/behaviour remain unchanged. A pinned response with a
+  different model remains an execution-evidence error; LR-03 must settle alias
+  response spellings before acceptance, never disable that check to make it pass.
 
 ### 3.5 Agent post-failure diagnosis wrapper (adapter/provider)
 - **Job:** turn opaque agent failures on LunaRoute into classified errors.
 - **Contract:** decorates the `engine.AgentProvider` returned by
   `AgentProviderFor` when the binding's canonical provider is `lunaroute`.
-  Success path is a pure pass-through (zero extra calls). On a failed run it
-  performs one LunaRoute probe with the same binding and wraps the original error
-  with exactly one of: credentials rejected · model `X` not in catalog · service
-  unavailable/busy · "agent failed; LunaRoute reachable and model listed — cause
-  unknown" — always preserving the original error and its stderr snippet. A
-  failing diagnosis never masks the original error.
+  Before dispatch, run the phase-1 launch compatibility check; a known conflict
+  returns directly without a probe or launch. Success is a pure pass-through
+  (zero extra calls). After an opaque run failure, perform at most one bounded
+  LunaRoute probe using the same binding. Report the probe's current observation
+  separately: credentials rejected now, model missing now, service unavailable
+  now, or reachable/model listed with cause unknown. A later probe is not proof
+  of the original inference failure's cause; retain that uncertainty. Prefer
+  verified structured inference errors when available and do not probe on local
+  validation/reveal/config failures or caller cancellation.
+- Preserve the original error identity (`errors.Is/As`) and only safe diagnostics;
+  never promise a raw stderr snippet. Current adapters may sanitize away stderr
+  on pinned runs, and `engine.AgentProvider` has no stderr result field. Adapters
+  must redact at their own log/error sinks before the wrapper sees the error.
+  A failing diagnosis never masks the original error; cancellation is preserved.
 - Applies to whichever backends phases 3–4 enable; in this phase it is unit-tested
   against fake agent providers.
 - **No substitution / no retry** on another model, backend or provider.
@@ -113,15 +146,19 @@ classified, wrapped error → engine node failure (no fallback).
 
 | Input | Consumer | Production producer |
 |---|---|---|
-| Connection name | discovery service | MCP `connection_models` argument (new tool, §3.3) |
-| Connection metadata (provider, base URL) | discovery service | `domain/provider.ConnectionStore.Get` — production instance `adapter/sqlite.ConnectionRepo`, already on MCP deps as `adapter/mcp/deps.go:Deps.Connections` |
-| Key for listing | LunaRoute probe | `ConnectionStore.Reveal` wrapped by the phase-1 guarded reveal |
+| Connection name | discovery service | Author-supplied tool argument. New `connection_models` handler must parse it using the same name-input pattern as `adapter/mcp/tools_connection.go:connectionGetHandler`; it is not a catalog-derived name. |
+| Connection metadata (provider, base URL) | discovery service | `domain/provider/connection.go:ConnectionStore.Get` — production instance `adapter/sqlite.ConnectionRepo`, already on MCP deps as `adapter/mcp/deps.go:Deps.Connections` |
+| Key for listing | LunaRoute probe | `domain/provider/connection.go:ConnectionStore.Reveal`, implemented by `adapter/sqlite/connection_repo.go:ConnectionRepo.Reveal`; phase-1 guard is applied inside the probe as well as by discovery binding construction. |
 | Probe selector | discovery service, agent wrapper | `adapter/probe/factory.go:NewProbeFactory` — **today constructed only in `cmd/arbitron/connection.go` (CLI)**; must be constructed in the serve composition root (deferred item) |
-| Available model ids | discovery service, agent wrapper | LunaRoute `GET /v1/models` via the new probe arm. **UNRESOLVED DEPENDENCY: the exact response envelope (assumed OpenAI-style `data[].id`) and the gateway's error-code bodies (assumed `INVALID_API_KEY` / `SERVICE_UNAVAILABLE` / `*_busy`, per the idea doc) are unverified offline; confirm in the Tier-2 live run before relying on code-level mapping beyond HTTP status.** |
-| Family per model | discovery service | phase-1 family classifier over `domain/modelidentity/identity.go:families` |
-| Task kinds / backends / limits / efforts | discovery service | phase-1 capability table (`capabilities.default.yaml` → `LoadCapabilityRules`). **UNRESOLVED DEPENDENCY (inherited from phase 1): values not yet populated; all read `unknown` until the live run fills them.** |
-| HTTP client, timeout, response cap | probe, chat route | `cmd/arbitron/main.go:newOutboundHTTPClient` → `httpClient`, already in the factory deps; probe `Deps.HTTPClient/Timeout/MaxResponseBytes` |
-| Chat binding (model, base URL, reveal) | chat route | `adapter/provider/dynamic.go:DynamicProfileResolver.Resolve` |
+| Available model ids | discovery service, agent wrapper | LunaRoute `GET /v1/models` via the new probe arm. **UNRESOLVED DEPENDENCY LR-04: the exact response envelope (assumed OpenAI-style `data[].id`) and the gateway's error-code bodies (assumed `INVALID_API_KEY` / `SERVICE_UNAVAILABLE` / `*_busy`, per the idea doc) are unverified offline; confirm in the Tier-2 live run before relying on code-level mapping beyond HTTP status.** |
+| Family per model | discovery service | Existing prefix table `domain/modelidentity/identity.go:families`, extended by phase 1. **UNRESOLVED DEPENDENCY LR-03: verified LunaRoute vendors/aliases, never inferred from listing membership.** |
+| Task kinds / backends / limits / efforts | discovery service | phase-1 capability table (`capabilities.default.yaml` → `LoadCapabilityRules`). **UNRESOLVED DEPENDENCY LR-02 (phase 1): authoritative facts and scoped completion observations are absent; unknowns remain explicit until evidence is checked in.** |
+| HTTP client, timeout, response cap | probe, chat route | `cmd/arbitron/main.go:newOutboundHTTPClient` → factory `Deps.HTTPClient`; limits from `domain/config/config.go:LLMConfig` through serve wiring and `adapter/probe/factory.go:Deps`. New LunaRoute client clone disables redirects; the existing client does not. |
+| Chat binding (model, base URL, reveal) | chat route | `adapter/provider/dynamic.go:DynamicProfileResolver.Resolve`, with run model applied by `domain/provider/pinning.go:PinningResolver.Resolve`; fields defined in `domain/provider/provider.go:ResolvedBinding`. |
+| Chat request settings / prompts | chat preflight and body | `domain/engine/ports.go:ChatRequest`, constructed by `domain/engine/executor_llm.go:LLMCallExecutor.Execute`; node settings originate in `domain/workflow/workflow.go:NodeConfig`. |
+| Original agent failure | diagnosis wrapper | `domain/engine/ports.go:AgentProvider.RunAgent` error; concrete producers are each backend's `provider.go:Provider.RunAgent` (Claude: `agent_adapter.go:AgentAdapter.RunAgent`). There is no separate stderr port. |
+| Caller identity / cancellation | admin gate, bounded diagnosis | Authenticated context from `adapter/http/auth_middleware.go:AuthMiddleware.Handler`, using `domain/identity/identity.go:WithIdentity/FromContext`; service gate is `domain/provider/authz.go:requireAdmin`. Context also flows through `AgentProvider.RunAgent`. |
+| Hosted endpoint / auth contract | probe, chat | **UNRESOLVED DEPENDENCY LR-01 (phase 1)**; phase-1 helper is proposed work over stored `Connection.BaseURL`, not existing endpoint evidence. |
 
 ### Deferred to plans
 - **Composition-root wiring (serve path):** construct one `ProbeFactory` with the
@@ -132,14 +169,24 @@ classified, wrapped error → engine node failure (no fallback).
   and non-nil-backed in the production server (not only in tests).
 - **Factory deps:** add the probe selector to `adapter/provider` `Deps`; the
   agent wrapper is applied inside `AgentProviderFor` only for `lunaroute`.
+- **Runtime policy:** wrap real chat/agent calls with the phase-1 compatibility
+  rule; leave model-empty inventory construction lazy. Reject unsupported
+  LunaRoute interactive agent routes in `InteractiveStreamSelector` before a
+  subscription adapter is selected.
+- **Chat error seam:** add the optional classification hook and LunaRoute
+  redirect policy; defaults preserve other providers.
+- **Discovery evidence:** complete LR-01/LR-04 verification before writing parser
+  fixtures; collect LR-02/LR-03 evidence before acceptance profile creation.
 - **Error mapping tables:** MCP connection/profile error results for every
   phase-1 sentinel.
 - **Docs:** MCP authoring guidance (`adapter/mcp/authoring_guidance.go`) mentions
-  `connection_models` and that LunaRoute model choice is explicit.
+  `connection_models`, explicit model/backend choice, unknown capability
+  semantics, and actual-vendor family checks for doer/judge pairings.
 
 ## 6. Integration seams
 
-- `ProbeSelector` — new arm only; CLI `connection validate` benefits unchanged.
+- `ProbeSelector` — new arm plus hosted/key guards in the probe; CLI
+  `connection validate` gains support without assuming its binding is guarded.
 - `ChatProviderFor` — new arm; openrouter adapter reused.
 - `AgentProviderFor` — return value decorated for LunaRoute only; other backends'
   behaviour byte-identical.
@@ -159,28 +206,38 @@ classified, wrapped error → engine node failure (no fallback).
 
 ## 8. Testing — STRICT TDD (all five categories required)
 
-- **Happy-path:** `connection_models` against an `httptest` fake gateway returns
+For every change, write a failing test first, implement the minimum to pass,
+then refactor while green. Use recorded protocol fixtures only after verification;
+fixture success does not close an unresolved external dependency.
+
+- **Happy-path:** `connection_models` against a transport-injected fake gateway returns
   every listed id with family and table-backed fields; a LunaRoute chat call
   against a fake `/v1/chat/completions` returns content.
 - **Success:** probe sends Bearer `lr_…` to `<root>/v1/models` (exact path, no
   doubled `/v1`); chat posts to `<root>/v1/chat/completions` with no OpenRouter
   headers; CLI `connection validate` lists LunaRoute models; agent wrapper is a
   pure pass-through on success (fake probe asserts zero calls).
-- **Failure:** 401 → credentials rejected; 404 / model absent → model unavailable;
+- **Failure:** 401 → credentials rejected; verified unknown-model code / missing
+  model in successful listing → model unavailable; bare listing 404 → cause unknown;
   429 → busy; 503 → service failure; teapot/unknown status → cause unknown;
   non-admin discovery → forbidden; unknown connection → not found.
 - **Error:** transport error / TLS failure → service failure; oversized body →
   bounded-read error; guarded reveal rejects non-`lr_` stored key before any
   request is sent (fake server asserts no request); agent wrapper with a failing
-  diagnosis returns the original error intact.
+  diagnosis preserves original error identity and marks its later observation
+  uncertain; cancellation makes no diagnosis call; malformed listing is a
+  protocol/service failure, never a successful empty catalog.
 - **Edge-case:** empty model list (reachable, zero models); model id present in
   listing but absent from table (all fields `unknown`); table entry for a model
   absent from listing (not shown — availability rules); unresolved-family model
-  shown as `unresolved`; provider with `ModelsUnsupported`; key never appears in
-  results/logs/errors (log-capture assertion).
+  shown as `unresolved`; provider with `ModelsUnsupported`; echoed key redacted
+  before truncation; redirect rejected; request MaxTokens above a known limit
+  rejected before I/O; key never appears in results/logs/errors (log-capture assertion).
 - **Tier 2 (live, gated by `ARBITRON_LUNAROUTE_E2E_KEY`, skipped otherwise):**
   through the real MCP tools — create connection, `connection_models`, create a
   chat profile, run a representative chat task to completion; invalid key and
   unknown model produce the distinct errors; confirms the `/v1/models` envelope
-  and error bodies (closing this phase's UNRESOLVED items) and records the
-  capability-table values for phase 1.
+  and error bodies (LR-04) and records observed chat support only. Obtain authoritative
+  LR-02 limits/efforts and
+  LR-03 vendor/alias evidence separately; discovery alone does not supply them.
+  Missing credentials skip the test, leaving release acceptance outstanding.
