@@ -90,7 +90,10 @@ every non-LunaRoute codex and pi path is byte-identical to today.
   form, key referenced by env var name, the binding's model) into a private
   temporary directory (owner-only permissions) and points pi at that directory for
   this run only; the directory is removed after the run on every exit path.
-  Any required model limits/tool/reasoning metadata must come from the phase-1
+  Reasoning is an independent supported/unsupported/unknown fact (supported → true, unsupported →
+  false); neither missing efforts nor a nonempty effort list supplies that boolean. Unknown
+  required reasoning blocks save and launch. Any required model limits/tool/reasoning metadata
+  must come from the phase-1
   evidence-backed table, not invented defaults. Unknown required fields block
   this route until LR-02/LR-08 are resolved.
 - **Env contract:** base env + the one credential var (guarded reveal) + the
@@ -238,3 +241,14 @@ model/backend/provider substitution. Observe supporting calls for every backend.
 No launch-only smoke test, skipped live suite or missing required backend meets
 readiness. All LR-01–LR-08 items must have recorded evidence or remain visible
 plan-stage tasks/escalations; do not remove an unresolved marker on a mock pass.
+
+## Alignment contracts for release evidence
+
+P4-T1 independently verifies codex/pi contracts before P4-T2/T4; P4-T3/T5 jointly enable and feed
+their adapters; P4-T7 owns final acceptance. Version probes on LunaRoute use private configuration
+with the credential removed, rather than inheriting subscription CODEX_HOME. Error/log safety and
+local-failure markers apply to legacy unpinned calls as well. The release matrix executes the
+proprietary/alias selection, validates actual output/tool traces and main/helper requests, and
+runs the existing same-vendor safeguard rejection; saved profiles, model pins, empty observation
+slices or skipped tests are insufficient. All eight LR leaves remain open until
+authoritative/runtime artifacts exist and the owning tasks populate runtime sources.

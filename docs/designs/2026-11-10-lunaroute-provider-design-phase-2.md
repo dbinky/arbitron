@@ -52,7 +52,7 @@ classifier, capability table, error classifier).
 - **Contract:** input = connection name (admin identity required, same rule as
   `ConnectionService`). Output = list of entries, each: model id, family (lab or
   `unresolved`), task kinds, compatible backends, context limit, output limit,
-  supported efforts per task/backend and known setting conflicts — each
+  supported efforts per task/backend, independent reasoning support and known setting conflicts — each
   capability field explicitly `known(value)` or `unknown`; plus a top-level note that
   availability does not imply
   compatibility. Return independent support/unsupported/unknown facts rather
@@ -93,9 +93,13 @@ classifier, capability table, error classifier).
   an optional structured error-classification hook (status, bounded body,
   transport error, operation); inject the LunaRoute classifier in its factory
   arm. Apply it to `Chat` and `StreamChat`, including immediate and channel
-  errors. The existing `statusError` only returns `ErrUpstreamStatus`; parsing
+  errors, body-read/decode failures and structured SSE error frames. Verified codes must be
+  decoded from recorded operation-specific schemas and supplied to the classifier; a permanently
+  empty Code input is inert wiring. The existing `statusError` only returns `ErrUpstreamStatus`;
+  parsing
   its formatted error string is not an implementation. Redact echoed keys
-  before snippets/logging; avoid dumping arbitrary response bodies.
+  before snippets/logging; discard incomplete capped diagnostic bodies so partial credentials
+  cannot survive an early truncation; avoid dumping arbitrary response bodies.
 - Wrap actual chat invocations with the phase-1 pure launch check and validate
   request-level settings such as `MaxTokens` against known output limits.
   `buildBody` currently maps/floors effort through `ChatReasoningEffort`; for

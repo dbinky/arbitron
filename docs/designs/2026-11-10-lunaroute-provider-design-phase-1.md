@@ -140,7 +140,8 @@ or the spec's excluded inference modalities and LunaRoute MCP service.
 - **Job:** the curated record of *known* per-model facts.
 - **Content (per LunaRoute model id):** supported task kinds (chat / agent),
   compatible agent backends, context limit, output limit, supported effort
-  levels per task/backend, and known request-setting conflicts (e.g. output
+  levels per task/backend, independent reasoning support required by custom backend metadata, and
+  known request-setting conflicts (e.g. output
   token bounds). Each known fact carries an evidence reference. Any absent
   model or field is `unknown`; one successful task proves only that tested
   combination, not all tasks/backends, all efforts, or maximum token limits.
@@ -148,7 +149,10 @@ or the spec's excluded inference modalities and LunaRoute MCP service.
   `adapter/config/capabilities.default.yaml`, parsed by `LoadCapabilityRules`
   (same embedded-default + operator-override mechanism as `model_overrides`).
 - **Domain read port:** lookup by model id → per-field known/unknown values.
-  Carried on the already-loaded and already-injected capability ruleset so no new
+  Request-setting facts use `temperature` / `output_schema` support facts; output bounds use the
+  existing limit fields. Reasoning is a separate supported/unsupported/unknown fact, never
+  inferred from effort levels. Carried on the already-loaded and already-injected capability
+  ruleset so no new
   root wiring path is invented.
 - **Semantics:** the table is the *only* source of capability knowledge in this
   release (live `/v1/models` decides availability only — phase 2). Enforcement
@@ -199,11 +203,17 @@ Rejects, each with its own typed, actionable error:
 
 Ordering: test temporary backend enablement on the original route first, then
 grammar, then model compatibility. Pass the same rules through
-`ProfileService.revalidatePrepared` as well as `ValidateSelection`.
+`ProfileService.revalidatePrepared` as well as `ValidateSelection`. Route-aware effective-axis
+reporting must preserve the validated requested LunaRoute setting; generic native-provider
+flooring must not alter it. Refuse following mode before catalog selection, including when Model
+is empty.
 
 **Launch validation:** phases 2–4 run this pure compatibility rule on the actual
 resolved model, effective backend (after any node override), context and effort
-before HTTP/subprocess I/O. This covers profile seeds, unchanged profile edits,
+before HTTP/subprocess I/O. Retain whether the backend was explicitly selected
+(`ResolvedBinding.BackendExplicit`, produced from Profile.Backend by both binding producers, ORed
+with a node override before deployment defaulting); an effective default cannot masquerade as
+author intent. This covers profile seeds, unchanged profile edits,
 connection changes, run pins and workflows added after profile save. No online
 probe is required before a working run. Factory inventory uses model-empty
 bindings in `pathBuilder.add`; construction must remain lazy and must not reveal

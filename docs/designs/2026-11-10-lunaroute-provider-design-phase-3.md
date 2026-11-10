@@ -77,7 +77,9 @@ selected, compatible model. No new node types; selection is by profile only.
   connection and the selected compatible model. Do not assume a row controls
   them. If no supported effort emission exists, reject non-default effort.
 - Preserve existing tool permission translation and fail-closed tool scope.
-  Sanitize backend errors/logs before wrapper diagnosis; raw stderr is not safe.
+  Sanitize backend errors/logs before wrapper diagnosis for pinned and legacy unpinned LunaRoute
+  calls; raw stderr is not safe. Local validation/reveal/config/version failures carry a local
+  marker so diagnosis does not probe them.
 
 ### 3.3 Diagnosis wrapper coverage
 - Both backends' providers are returned through the phase-2 wrapper for LunaRoute
@@ -182,3 +184,13 @@ LR-01–LR-03/LR-05/LR-06.
   alone does not close LR-05/LR-06. Include a proprietary/alias selection in the
   overall acceptance matrix and show same-vendor doer/judge rejection through
   the shared classifier. Missing credentials leave release acceptance pending.
+
+## Alignment contracts for plan execution
+
+P3-T5 has independent evidence preparation before the P3-T1/T2 emitters, then production
+verification after P3-T3; there is no evidence-through-unimplemented-adapter cycle. Missing
+LR-05/LR-06 controls block enablement. An ignored custom-model/helper key is not accepted as
+harmless. If OpenCode requires model metadata, its Config consumes the shared capability rules
+through Factory and its root test checks the emitted values. The Claude terminal modelUsage check
+must reject nonselected helper models on LunaRoute while preserving existing non-LunaRoute
+behavior. Sink tests cover both backends' failed-run diagnosis, not only successful env emission.
