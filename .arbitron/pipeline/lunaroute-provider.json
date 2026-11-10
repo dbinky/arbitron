@@ -27,6 +27,22 @@
       "finished_at": "2026-11-10T20:36:24Z",
       "instance_id": "58421d1b-d77b-4e4d-828c-e463a9da4897",
       "workflow": "spec"
+    },
+    {
+      "stage": "design",
+      "status": "done",
+      "outputs": {
+        "design_paths": [
+          "docs/designs/2026-11-10-lunaroute-provider-design-phase-1.md",
+          "docs/designs/2026-11-10-lunaroute-provider-design-phase-2.md",
+          "docs/designs/2026-11-10-lunaroute-provider-design-phase-3.md",
+          "docs/designs/2026-11-10-lunaroute-provider-design-phase-4.md"
+        ]
+      },
+      "commit": "ac9962837fbe78e24ea03720ee082ad1b9e12f10",
+      "finished_at": "2026-11-10T21:28:40Z",
+      "instance_id": "ad039e5e-0125-463c-9946-ec2a9951923d",
+      "workflow": "design"
     }
   ]
 }
