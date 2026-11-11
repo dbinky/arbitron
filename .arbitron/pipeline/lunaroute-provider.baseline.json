@@ -1,0 +1,6 @@
+{"suites":[
+{"name":"go","command":"go test -timeout 30m ./...","paths":["adapter","cmd","domain","plugin","test","examples","go.mod","go.sum","Makefile"],"build_ok":true,"failed_count":0,"passed_count":14041,"failing_tests":[]},
+{"name":"dashboard","command":"cd dashboard && npx tsc --noEmit && npx vitest run","paths":["dashboard"],"build_ok":true,"failed_count":0,"passed_count":1572,"failing_tests":[]},
+{"name":"script-bats","command":"bats $(find samples -name '*_test.bats')","paths":["samples","Makefile"],"build_ok":true,"failed_count":0,"passed_count":784,"failing_tests":[]},
+{"name":"script-sh","command":"for t in samples/_lib/*_test.sh samples/*/scripts/*_test.sh; do sh $t; done","paths":["samples"],"build_ok":true,"failed_count":0,"passed_count":23,"failing_tests":[]}
+]}
