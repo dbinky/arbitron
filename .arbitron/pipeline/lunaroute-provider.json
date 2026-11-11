@@ -43,6 +43,52 @@
       "finished_at": "2026-11-10T21:28:40Z",
       "instance_id": "ad039e5e-0125-463c-9946-ec2a9951923d",
       "workflow": "design"
+    },
+    {
+      "stage": "plan",
+      "status": "blocked",
+      "outputs": {
+        "plan_paths": [
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-1.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-2.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-3.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-4.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-5.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-6.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-7.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-8.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-9.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-10.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-1-task-11.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-1.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-2.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-3.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-4.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-5.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-6.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-7.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-8.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-2-task-9.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-3-task-1.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-3-task-2.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-3-task-3.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-3-task-4.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-3-task-5.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-1.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-2.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-3.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-4.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-5.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-6.md",
+          "docs/plans/lunaroute-provider/2026-11-10-phase-4-task-7.md"
+        ],
+        "deps_resolved": false,
+        "deps_gaps": "[\"NON-BLOCKING: alignment report (commit ed018c5) — live verification remains gated; why it cannot stop the work: it is a gated check that runs after implementation, outside the repo, and the report says no plan task consumes a missing producer (UNRESOLVED-DEPENDENCIES: 0, 32 plans and 69 Go snippets checked, with evidence producers and production data paths fixed); no plan text asks a person to make a choice\"]"
+      },
+      "commit": "ed018c51f9020cf26d8d61dffd0d19bbbe595bd2",
+      "finished_at": "2026-11-11T02:49:20Z",
+      "instance_id": "a349951a-556b-43eb-9213-54c4126f679f",
+      "workflow": "plan"
     }
   ]
 }
