@@ -121,10 +121,15 @@ func TestLunaRouteAgentProfileSaveWiring(t *testing.T) {
 // prompt, workspace, tool policy and route before returning a terminal answer.
 func fakeLunaRouteClaude(t *testing.T, dir string) (bin, argvLog, failFlag string) {
 	t.Helper()
+	return fakeLunaRouteClaudeModel(t, dir, "glm-5.3", "glm-5.3")
+}
+
+func fakeLunaRouteClaudeModel(t *testing.T, dir, selected, reported string) (bin, argvLog, failFlag string) {
+	t.Helper()
 	bin = filepath.Join(dir, "fake-claude.sh")
 	argvLog = filepath.Join(dir, "argv.log")
 	failFlag = filepath.Join(dir, "FAIL")
-	script := strings.NewReplacer("@ARGV@", argvLog, "@FAIL@", failFlag, "@KEY@", lrRootKey).Replace(`#!/bin/sh
+	script := strings.NewReplacer("@ARGV@", argvLog, "@FAIL@", failFlag, "@KEY@", lrRootKey, "@MODEL@", selected, "@REPORTED@", reported).Replace(`#!/bin/sh
 set -eu
 input=$(cat)
 [ "$input" = hello ] || exit 54
@@ -137,28 +142,33 @@ check ANTHROPIC_AUTH_TOKEN '@KEY@'
 check ANTHROPIC_API_KEY __unset__
 prev=; iso=0; for a in "$@"; do if [ "$prev" = --setting-sources ] && [ -z "$a" ]; then iso=1; fi; prev=$a; done
 [ "$iso" = 1 ] || exit 53
-for v in ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL CLAUDE_CODE_SUBAGENT_MODEL; do check "$v" glm-5.3; done
+for v in ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL CLAUDE_CODE_SUBAGENT_MODEL; do check "$v" '@MODEL@'; done
 check CLAUDE_CODE_GATEWAY_HINT_HEADERS 1
 check CLAUDE_CODE_MAX_CONTEXT_TOKENS 202752
 check CLAUDE_CODE_MAX_OUTPUT_TOKENS 32768
 check CLAUDE_CODE_AUTO_COMPACT_WINDOW __unset__
 check CLAUDE_CODE_DISABLE_1M_CONTEXT __unset__
-case " $* " in *' --model glm-5.3 '*) ;; *) exit 49 ;; esac
+case " $* " in *' --model @MODEL@ '*) ;; *) exit 49 ;; esac
 case " $* " in *' --dangerously-skip-permissions '*) ;; *) exit 56 ;; esac
 case " $* " in *' --allowedTools Read,Write,Bash '*) ;; *) exit 57 ;; esac
 case "$*" in *'@KEY@'*) exit 50 ;; esac
 if [ -f '@FAIL@' ]; then printf checked-route > failure-reached; echo 'upstream rejected key @KEY@' >&2; exit 1; fi
-echo '{"type":"result","is_error":false,"result":"lunaroute ok","session_id":"s","usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"glm-5.3":{}}}'
+echo '{"type":"result","is_error":false,"result":"lunaroute ok","session_id":"s","usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"@REPORTED@":{}}}'
 `)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o700))
 	return
 }
 func fakeLunaRouteOpencode(t *testing.T, dir string) (argvLog, cfgLog, failFlag string) {
 	t.Helper()
+	return fakeLunaRouteOpencodeModel(t, dir, "glm-5.3", "glm-5.3")
+}
+
+func fakeLunaRouteOpencodeModel(t *testing.T, dir, selected, reported string) (argvLog, cfgLog, failFlag string) {
+	t.Helper()
 	argvLog = filepath.Join(dir, "argv.log")
 	cfgLog = filepath.Join(dir, "config.json")
 	failFlag = filepath.Join(dir, "FAIL")
-	script := strings.NewReplacer("@ARGV@", argvLog, "@CFG@", cfgLog, "@FAIL@", failFlag, "@KEY@", lrRootKey).Replace(`#!/bin/sh
+	script := strings.NewReplacer("@ARGV@", argvLog, "@CFG@", cfgLog, "@FAIL@", failFlag, "@KEY@", lrRootKey, "@MODEL@", selected, "@REPORTED@", reported).Replace(`#!/bin/sh
 set -eu
 if [ "$1" = --version ]; then echo 'opencode 1.19.2'; exit 0; fi
 case "$PWD" in */instances/*) ;; *) exit 55 ;; esac
@@ -167,26 +177,36 @@ printf '%s\n' "$*" >> '@ARGV@'
 printf '%s' "$OPENCODE_CONFIG_CONTENT" > '@CFG@'
 [ "$LUNAROUTE_API_KEY" = '@KEY@' ] || exit 43
 case "$OPENCODE_CONFIG_CONTENT" in *'@KEY@'*) exit 44 ;; esac
-for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"npm":"@ai-sdk/openai-compatible"' '"small_model":"lunaroute/glm-5.3"' '"models":{"glm-5.3":{"limit":{"context":202752,"output":32768},"name":"glm-5.3","tool_call":true}}' '"model":"lunaroute/glm-5.3"' '"enabled_providers":["lunaroute"]' '"permission":{"*":"deny","bash":"allow","read":"allow","write":"allow"}'; do
+for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"npm":"@ai-sdk/openai-compatible"' '"small_model":"lunaroute/@MODEL@"' '"models":{"@MODEL@":{"limit":{"context":202752,"output":32768},"name":"@MODEL@","tool_call":true}}' '"model":"lunaroute/@MODEL@"' '"enabled_providers":["lunaroute"]' '"permission":{"*":"deny","bash":"allow","read":"allow","write":"allow"}'; do
  case "$OPENCODE_CONFIG_CONTENT" in *"$field"*) ;; *) echo 'config mismatch' >&2; exit 45 ;; esac
 done
 case "$*" in *'@KEY@'*) exit 49 ;; esac
 if [ "$1" = run ]; then
  [ "$2" = hello ] || exit 54
- case " $* " in *' -m lunaroute/glm-5.3 --dangerously-skip-permissions --format json --pure '*) ;; *) exit 50 ;; esac
+ case " $* " in *' -m lunaroute/@MODEL@ --dangerously-skip-permissions --format json --pure '*) ;; *) exit 50 ;; esac
  if [ -f '@FAIL@' ]; then printf checked-route > failure-reached; echo 'opaque failure @KEY@' >&2; exit 1; fi
  printf '%s\n' '{"type":"text","sessionID":"ses_run","part":{"id":"prt_text","messageID":"msg_answer","sessionID":"ses_run","type":"text","text":"verified output"}}'
  exit 0
 fi
 [ "$*" = 'export ses_run --pure' ] || exit 51
-printf '%s\n' '{"info":{"id":"ses_run"},"messages":[{"info":{"id":"msg_answer","sessionID":"ses_run","role":"assistant","providerID":"lunaroute","modelID":"glm-5.3","time":{"created":1,"completed":2}},"parts":[]}]}'
+printf '%s\n' '{"info":{"id":"ses_run"},"messages":[{"info":{"id":"msg_answer","sessionID":"ses_run","role":"assistant","providerID":"lunaroute","modelID":"@REPORTED@","time":{"created":1,"completed":2}},"parts":[]}]}'
 `)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0o700))
 	return
 }
 func bootLunaRouteAgent(t *testing.T, backend, bin string, gw *agentListingGateway) *domainStack {
 	t.Helper()
-	cfg := "capabilitiespath: " + writeLunaRouteCaps(t) + "\n"
+	return bootLunaRouteAgentModel(t, backend, bin, "glm-5.3", gw)
+}
+
+func bootLunaRouteAgentModel(t *testing.T, backend, bin, model string, gw *agentListingGateway) *domainStack {
+	t.Helper()
+	caps := lunaRouteCapsFile(t, fmt.Sprintf(`lunaroute_models:
+  %s:
+    context_tokens: {tokens: 202752, evidence: "test-fixture#context"}
+    output_tokens: {tokens: 32768, evidence: "test-fixture#output"}
+`, model))
+	cfg := "capabilitiespath: " + caps + "\n"
 	if bin != "" {
 		cfg += "llm:\n  binarypath: " + bin + "\n"
 	}
@@ -194,10 +214,11 @@ func bootLunaRouteAgent(t *testing.T, backend, bin string, gw *agentListingGatew
 		writeWorkflow(t, ws, "lr-agent", `{"name":"lr-agent","nodes":[{"id":"work","type":"agent_call","entrypoint":true,"config":{"model_profile":"lr-agent","templateFile":"templates/p.md"}}],"edges":[]}`)
 		writePinTemplate(t, ws, "lr-agent")
 	})
-	ctx := adminCtxForLocalUser(t, ds)
-	require.NoError(t, ds.connSvc.Create(ctx, provider.Connection{Name: "lr", Provider: "lunaroute"}, lrRootKey))
-	_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-agent", Kind: provider.ProfileKindAgent, Backend: backend, ConnectionRef: "lr", Model: "glm-5.3", AllowedTools: []string{"Read", "Write", "Bash"}})
-	require.NoError(t, err)
+	call := lunaRouteToolCaller(t, ds)
+	bad, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "api_key": lrRootKey})
+	require.False(t, bad, text)
+	bad, text = call("profile_create", map[string]any{"alias": "lr-agent", "kind": "agent", "backend": backend, "connection_ref": "lr", "model": model, "allowed_tools": []string{"Read", "Write", "Bash"}})
+	require.False(t, bad, text)
 	return ds
 }
 func triggerLunaRouteAgent(t *testing.T, ds *domainStack) (uuid.UUID, *instance.Instance) {

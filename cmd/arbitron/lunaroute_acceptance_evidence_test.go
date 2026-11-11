@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,10 +130,12 @@ func TestLunaRouteAcceptanceEvidence_NodeAndWorkspace(t *testing.T) {
 			assert.True(t, proof.FileOK && proof.CommandOK)
 		})
 	}
-	in := acceptanceNodeFixture(t, "pi", "claude-sonnet-5-lr1", "claude-sonnet-5-6")
-	proof, err := collectAcceptanceNode(in, acceptanceFixtureKey)
-	require.NoError(t, err)
-	assert.Equal(t, "claude-sonnet-5-6", proof.Models[0].Model, "alias drift must not be overwritten by the pin")
+	for _, selected := range []string{"claude-sonnet-5-lr1", "glm-999.9", "deepseek-4.1-flash-1017"} {
+		in := acceptanceNodeFixture(t, "pi", selected, selected)
+		proof, err := collectAcceptanceNode(in, acceptanceFixtureKey)
+		require.Error(t, err, "an exact echo cannot authorize an unreviewed or revoked selection")
+		assert.Empty(t, proof.Models)
+	}
 }
 
 func TestLunaRouteAcceptanceEvidence_SQLiteTimestampPrecision(t *testing.T) {
@@ -250,13 +253,18 @@ func TestLunaRouteAcceptanceEvidence_ChatUsesResponseModel(t *testing.T) {
 	assert.False(t, proof.FileOK || proof.CommandOK)
 	require.Len(t, proof.Models, 1)
 	assert.Equal(t, "chat_response", proof.Models[0].Source)
-	alias := "claude-sonnet-5-lr1"
-	in.Model = alias
-	reported := "claude-sonnet-5-6"
+	for _, reported := range []string{"glm-5.3-flash", "claude-sonnet-5-lr1", "claude-sonnet-5-6", ""} {
+		in.Node.LLMModel = &reported
+		proof, err = collectAcceptanceNode(in, acceptanceFixtureKey)
+		require.Error(t, err, "response evidence must equal the reviewed selection, not merely its family")
+		assert.Empty(t, proof.Models)
+	}
+	in.Model = "claude-sonnet-5-lr1"
+	reported := in.Model
 	in.Node.LLMModel = &reported
 	proof, err = collectAcceptanceNode(in, acceptanceFixtureKey)
-	require.NoError(t, err)
-	assert.Equal(t, reported, proof.Models[0].Model)
+	require.Error(t, err, "revoked selections cannot be authorized by a matching response")
+	assert.Empty(t, proof.Models)
 	in.Node.LLMModel = nil
 	_, err = collectAcceptanceNode(in, acceptanceFixtureKey)
 	require.Error(t, err)
@@ -266,10 +274,18 @@ func TestLunaRouteAcceptanceEvidence_ChatUsesResponseModel(t *testing.T) {
 // loader, engine and HTTP adapter feed a persisted node into the collector.
 // This test does not authorize live release acceptance or agent enablement.
 func TestLunaRouteAcceptanceEvidence_RealMCPChatSink(t *testing.T) {
-	gw := newFakeLunaRouteGateway(t, acceptanceFixtureKey, "glm-5.3")
-	gw.ExpectChat("glm-5.3", lrRootPrompt, 1234, "")
-	gw.Reply("POST /v1/chat/completions", lunaRouteGatewayReply{Status: 200, Body: `{"model":"glm-5.3","choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}`})
-	ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, lrChatCaps)+"\n", gw, func(ws string) {
+	for _, model := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
+		t.Run(model, func(t *testing.T) { testLunaRouteAcceptanceChatSink(t, model) })
+	}
+}
+
+func testLunaRouteAcceptanceChatSink(t *testing.T, model string) {
+	t.Helper()
+	gw := newFakeLunaRouteGateway(t, acceptanceFixtureKey, model)
+	gw.ExpectChat(model, lrRootPrompt, 1234, "")
+	gw.Reply("POST /v1/chat/completions", lunaRouteGatewayReply{Status: 200, Body: fmt.Sprintf(`{"model":%q,"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}`, model)})
+	caps := fmt.Sprintf("lunaroute_models:\n  %s:\n    tasks:\n      chat: {support: supported, evidence: 'ev#chat'}\n    output_tokens: {tokens: 32768, evidence: 'ev#out'}\n", model)
+	ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, caps)+"\n", gw, func(ws string) {
 		writeLunaRouteChatWorkflow(t, ws, "acceptance-chat", "acceptance-chat", 1234, false)
 	})
 	call := lunaRouteToolCaller(t, ds)
@@ -281,20 +297,21 @@ func TestLunaRouteAcceptanceEvidence_RealMCPChatSink(t *testing.T) {
 	var discovery provider.DiscoveryView
 	require.NoError(t, json.Unmarshal([]byte(text), &discovery))
 	require.Len(t, discovery.Models, 1)
-	assert.Equal(t, "glm-5.3", discovery.Models[0].ID)
+	assert.Equal(t, model, discovery.Models[0].ID)
 	assert.Equal(t, provider.FactView{Support: "supported", Evidence: "ev#chat"}, discovery.Models[0].Tasks["chat"])
-	isErr, text = call("profile_create", map[string]any{"alias": "acceptance-chat", "kind": "chat", "connection_ref": "lr", "model": "glm-5.3"})
+	isErr, text = call("profile_create", map[string]any{"alias": "acceptance-chat", "kind": "chat", "connection_ref": "lr", "model": model})
 	require.False(t, isErr, "profile_create failed")
 	id := triggerViaMCP(t, call, "acceptance-chat")
 	inst := waitLunaRouteTerminal(t, ds, id)
-	assert.Equal(t, map[string]string{"acceptance-chat": "glm-5.3"}, inst.ModelPins)
+	assert.Equal(t, map[string]string{"acceptance-chat": model}, inst.ModelPins)
+	assert.Equal(t, instance.ModelPinsVersionSnapshot, inst.ModelPinsVersion)
 	node, err := ds.nodeExecRepo.GetByInstanceAndNode(adminCtxForLocalUser(t, ds), id, "ask")
 	require.NoError(t, err)
 	require.NotNil(t, node)
-	proof, err := collectAcceptanceNode(acceptanceNodeInput{RunID: id, Model: "glm-5.3", ExpectedOutput: "PONG", Node: *node}, acceptanceFixtureKey)
+	proof, err := collectAcceptanceNode(acceptanceNodeInput{RunID: id, Model: model, ExpectedOutput: "PONG", Node: *node}, acceptanceFixtureKey)
 	require.NoError(t, err)
 	require.Len(t, proof.Models, 1)
-	assert.Equal(t, "glm-5.3", proof.Models[0].Model)
+	assert.Equal(t, model, proof.Models[0].Model)
 	require.NoError(t, checkAcceptanceLog(ds.cfg.Logging.File, acceptanceFixtureKey), "actual server log must be readable and safe")
 	reqs := gw.Requests()
 	require.Len(t, reqs, 2)
@@ -306,7 +323,7 @@ func TestLunaRouteAcceptanceEvidence_RealMCPChatSink(t *testing.T) {
 	// Removing the response-model producer must invalidate the final proof,
 	// even though output, profile and pins still look correct.
 	node.LLMModel = nil
-	_, err = collectAcceptanceNode(acceptanceNodeInput{RunID: id, Model: "glm-5.3", ExpectedOutput: "PONG", Node: *node}, acceptanceFixtureKey)
+	_, err = collectAcceptanceNode(acceptanceNodeInput{RunID: id, Model: model, ExpectedOutput: "PONG", Node: *node}, acceptanceFixtureKey)
 	require.Error(t, err)
 }
 
