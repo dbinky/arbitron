@@ -76,6 +76,8 @@ func (f *ProbeFactory) ProbeFor(b domprovider.ResolvedBinding) (domprovider.Conn
 		return newAnthropicProbe(f.deps), nil
 	case domprovider.CanonicalBedrock:
 		return newBedrockProbe(f.deps), nil
+	case domprovider.CanonicalLunaRoute:
+		return newLunaRouteProbe(f.deps), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", domprovider.ErrNoProbeForProvider, b.Provider)
 	}
