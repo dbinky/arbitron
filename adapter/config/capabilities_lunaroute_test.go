@@ -65,7 +65,7 @@ func TestLoadCapabilityRules_LunaRouteSection(t *testing.T) {
 func TestLoadCapabilityRules_EmbeddedLunaRouteReleaseSet(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "docs/evidence/lunaroute-provider/model-capabilities.md"))
 	require.NoError(t, err, "production facts require the P1-T11 source note")
-	for _, id := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash-1017", "claude-sonnet-5-lr1"} {
+	for _, id := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
 		assert.Contains(t, string(source), "\n## "+id+"\n", "even unknown facts need a reviewed per-model source anchor")
 	}
 	r, err := adapterconfig.LoadCapabilityRules("")
@@ -97,7 +97,7 @@ func TestLoadCapabilityRules_EmbeddedLunaRouteReleaseSet(t *testing.T) {
 			}
 		}
 	}
-	assert.ElementsMatch(t, []string{"claude-sonnet-5-lr1", "deepseek-4.1-flash-1017", "glm-5.3", "glm-5.3-flash"}, ids)
+	assert.ElementsMatch(t, []string{"deepseek-4.1-flash", "glm-5.3", "glm-5.3-flash"}, ids)
 }
 
 func TestLoadCapabilityRules_LunaRouteRejectsBadFacts(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	configadapter "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
@@ -125,15 +124,9 @@ func TestLunaRouteDiscoveryWiring(t *testing.T) {
 }
 
 func TestLunaRouteDiscoveryWiringEmbeddedDefaults(t *testing.T) {
-	// Source-reviewed defaults currently mark all static facts unknown. They
-	// must stay unknown in discovery, not acquire invented limits or support.
-	rules, err := configadapter.LoadCapabilityRules("")
-	require.NoError(t, err)
-	fact, ok := rules.LunaRouteModel("glm-5.3")
-	require.True(t, ok)
-	assert.False(t, fact.ContextTokens.Known())
-	assert.False(t, fact.OutputTokens.Known())
-	gw := newFakeLunaRouteGateway(t, "lr_default_disc", "glm-5.3")
+	// R2's recorded metadata must reach the actual MCP JSON sink through the
+	// default loader and root feed, without authorizing unobserved backends.
+	gw := newFakeLunaRouteGateway(t, "lr_default_disc", "glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash")
 	ds := bootLunaRouteRoot(t, "", gw, func(string) {})
 	call := mcpCallAs(t, ds, identity.Identity{UserID: localDefaultUser, Role: identity.RoleAdmin})
 	isErr, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "base_url": "", "api_key": "lr_default_disc"})
@@ -143,21 +136,35 @@ func TestLunaRouteDiscoveryWiringEmbeddedDefaults(t *testing.T) {
 	assert.NotContains(t, text, "lr_default_disc")
 	var view provider.DiscoveryView
 	require.NoError(t, json.Unmarshal([]byte(text), &view))
-	require.Len(t, view.Models, 1)
-	m := view.Models[0]
-	assert.Equal(t, "glm-5.3", m.ID)
-	assert.Equal(t, "zhipuai", m.Family)
-	assert.Equal(t, provider.LimitView{}, m.ContextTokens)
-	assert.Equal(t, provider.LimitView{}, m.OutputTokens)
-	assert.Equal(t, provider.FactView{Support: "unknown"}, m.Reasoning)
-	for _, kind := range []string{"chat", "agent"} {
-		assert.Equal(t, provider.FactView{Support: "unknown"}, m.Tasks[kind])
-	}
-	for _, backend := range provider.LunaRouteBackends {
-		assert.Equal(t, provider.FactView{Support: "unknown"}, m.Backends[backend])
-	}
-	for _, setting := range []string{"temperature", "output_schema"} {
-		assert.Equal(t, provider.FactView{Support: "unknown"}, m.RequestSettings[setting])
+	require.Len(t, view.Models, 3)
+	for _, m := range view.Models {
+		want := map[string]struct {
+			family          string
+			context, output int
+			pi              []string
+		}{
+			"glm-5.3":            {"zhipuai", 524288, 131072, []string{"none", "low", "high", "max"}},
+			"glm-5.3-flash":      {"zhipuai", 524288, 163840, []string{"low", "high", "max"}},
+			"deepseek-4.1-flash": {"deepseek", 1048576, 262144, []string{"low", "medium", "high", "xhigh", "max"}},
+		}[m.ID]
+		require.NotEmpty(t, want.family, "only canonical release models")
+		ev := "docs/evidence/lunaroute-provider/model-capabilities.md#" + m.ID
+		assert.Equal(t, want.family, m.Family)
+		assert.Equal(t, provider.LimitView{Known: true, Tokens: want.context, Evidence: ev}, m.ContextTokens)
+		assert.Equal(t, provider.LimitView{Known: true, Tokens: want.output, Evidence: ev}, m.OutputTokens)
+		assert.Equal(t, provider.FactView{Support: "supported", Evidence: ev}, m.Reasoning)
+		assert.Equal(t, provider.FactView{Support: "supported", Evidence: ev}, m.RequestSettings["output_schema"])
+		assert.Equal(t, provider.FactView{Support: "unknown"}, m.RequestSettings["temperature"])
+		assert.Equal(t, provider.EffortView{Known: true, Levels: want.pi, Evidence: ev}, m.Efforts["pi"])
+		for _, axis := range []string{"chat", "claude-code", "opencode", "codex"} {
+			assert.Equal(t, provider.EffortView{Levels: []string{}}, m.Efforts[axis])
+		}
+		for _, kind := range []string{"chat", "agent"} {
+			assert.Equal(t, provider.FactView{Support: "unknown"}, m.Tasks[kind])
+		}
+		for _, backend := range provider.LunaRouteBackends {
+			assert.Equal(t, provider.FactView{Support: "unknown"}, m.Backends[backend])
+		}
 	}
 	require.Len(t, gw.Requests(), 1)
 	assert.Equal(t, "Bearer lr_default_disc", gw.Requests()[0].Authorization)

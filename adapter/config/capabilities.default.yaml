@@ -30,15 +30,35 @@ backends:
     context_tiers: [default]
     effort_levels: [default, low, medium, high, xhigh, max]
 
-# Source review: docs/evidence/lunaroute-provider/model-capabilities.md.
-# Every static fact is explicitly unpublished for these candidates. Empty
-# records mean UNKNOWN, never unsupported or a default token/reasoning value.
-# Identity authorization is separate: model-identities.md excludes two
-# unconfirmed ids. A capability record does not authorize an executable id.
-# Limits-required backends remain refused; LR-02 is escalated in register.yaml.
-# Operator overrides replace whole model records; known facts require evidence.
+# R2 source: recorded authenticated metadata, reviewed in model-capabilities.md.
+# Only exact pi effort mappings are authorized; other axes remain unknown.
+# Task/backend completion support is populated by its owning live experiments,
+# independently of static metadata. Overrides replace whole model records.
 lunaroute_models:
-  glm-5.3: {}                  # model-capabilities.md#glm-5.3
-  glm-5.3-flash: {}            # model-capabilities.md#glm-5.3-flash
-  deepseek-4.1-flash-1017: {}  # model-capabilities.md#deepseek-4.1-flash-1017
-  claude-sonnet-5-lr1: {}      # model-capabilities.md#claude-sonnet-5-lr1
+  glm-5.3:
+    context_tokens: {tokens: 524288, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
+    output_tokens: {tokens: 131072, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
+    reasoning: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
+    efforts:
+      pi: {levels: [none, low, high, max], evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
+    request_settings:
+      temperature: {support: unknown}
+      output_schema: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
+  glm-5.3-flash:
+    context_tokens: {tokens: 524288, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3-flash"}
+    output_tokens: {tokens: 163840, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3-flash"}
+    reasoning: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3-flash"}
+    efforts:
+      pi: {levels: [low, high, max], evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3-flash"}
+    request_settings:
+      temperature: {support: unknown}
+      output_schema: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3-flash"}
+  deepseek-4.1-flash:
+    context_tokens: {tokens: 1048576, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#deepseek-4.1-flash"}
+    output_tokens: {tokens: 262144, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#deepseek-4.1-flash"}
+    reasoning: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#deepseek-4.1-flash"}
+    efforts:
+      pi: {levels: [low, medium, high, xhigh, max], evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#deepseek-4.1-flash"}
+    request_settings:
+      temperature: {support: unknown}
+      output_schema: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#deepseek-4.1-flash"}

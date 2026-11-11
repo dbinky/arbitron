@@ -2,6 +2,8 @@ package lunaroute_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,10 +17,76 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var releaseCandidates = []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash-1017", "claude-sonnet-5-lr1"}
+var releaseCandidates = []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"}
 
-// Inspect the deployed source, not an injected nonempty unit fixture. Unknown
-// entries are justified by an explicit per-model source review, never a default.
+// R2 authorizes the recorded metadata, not runtime catalog inference. Check the
+// loaded production values against that independent producer, including omissions.
+func TestProductionCapabilitySnapshot(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(evidenceDir(t), "sources/lr02-live-models-2026-11-11.json"))
+	require.NoError(t, err)
+	var snapshot struct {
+		Source string `json:"source"`
+		Models []struct {
+			ID           string          `json:"id"`
+			Context      int             `json:"context_window"`
+			Output       int             `json:"max_output_tokens"`
+			Capabilities map[string]bool `json:"capabilities"`
+			ClientCompat struct {
+				Pi struct {
+					SupportsReasoningEffort bool               `json:"supportsReasoningEffort"`
+					ThinkingLevelMap        map[string]*string `json:"thinkingLevelMap"`
+				} `json:"pi"`
+			} `json:"client_compat"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &snapshot))
+	require.Contains(t, snapshot.Source, provider.LunaRouteHostedRoot+"/v1/models")
+	rules, err := adapterconfig.LoadCapabilityRules("")
+	require.NoError(t, err)
+	var ids []string
+	for _, source := range snapshot.Models {
+		ids = append(ids, source.ID)
+		m, ok := rules.LunaRouteModel(source.ID)
+		require.True(t, ok, source.ID)
+		ev := evidencePath + "/model-capabilities.md#" + source.ID
+		require.Positive(t, source.Context)
+		require.Positive(t, source.Output)
+		assert.Equal(t, provider.LimitFact{Tokens: source.Context, Evidence: ev}, m.ContextTokens)
+		assert.Equal(t, provider.LimitFact{Tokens: source.Output, Evidence: ev}, m.OutputTokens)
+		require.True(t, source.Capabilities["reasoning"])
+		require.True(t, source.Capabilities["json_schema"])
+		assert.Equal(t, provider.SupportFact{Support: provider.SupportSupported, Evidence: ev}, m.Reasoning)
+		assert.Equal(t, provider.SupportFact{Support: provider.SupportSupported, Evidence: ev}, m.RequestSettings["output_schema"])
+		assert.Equal(t, provider.SupportUnknown, m.RequestSettings["temperature"].Support)
+		require.True(t, source.ClientCompat.Pi.SupportsReasoningEffort)
+		var exact []provider.Effort
+		for level, wire := range source.ClientCompat.Pi.ThinkingLevelMap {
+			if wire != nil && *wire == level {
+				exact = append(exact, provider.Effort(level))
+			} else if level == "off" && wire != nil && *wire == "none" {
+				// Arbitron's none is pi's off, not a graded-effort remap.
+				exact = append(exact, provider.EffortNone)
+			}
+		}
+		require.NotEmpty(t, exact)
+		assert.True(t, m.Effort("pi").Known)
+		assert.ElementsMatch(t, exact, m.Effort("pi").Levels, "do not authorize remapped or null effort levels")
+		assert.Equal(t, ev, m.Effort("pi").Evidence)
+		for _, axis := range []string{"chat", "claude-code", "opencode", "codex"} {
+			assert.False(t, m.Effort(axis).Known, "pi compatibility does not establish %s effort support", axis)
+		}
+		for _, kind := range []provider.ProfileKind{provider.ProfileKindChat, provider.ProfileKindAgent} {
+			assert.Equal(t, provider.SupportUnknown, m.Task(kind).Support, "metadata alone is not a completed task")
+		}
+		for _, backend := range provider.LunaRouteBackends {
+			assert.Equal(t, provider.SupportUnknown, m.Backend(backend).Support)
+		}
+	}
+	assert.ElementsMatch(t, releaseCandidates, ids)
+	assert.Len(t, rules.LunaRouteModels(), len(ids), "no revoked alias or upstream weights id")
+}
+
+// Inspect the deployed source, not an injected nonempty unit fixture.
 func TestProductionCapabilityEvidence(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join(evidenceDir(t), "model-capabilities.md"))
 	require.NoError(t, err)
@@ -72,11 +140,65 @@ func TestProductionCapabilityEvidence(t *testing.T) {
 					}
 					fact("efforts."+axis, "["+strings.Join(levels, ", ")+"]", f.Evidence)
 				} else {
-					assert.Contains(t, section, "| efforts (chat, claude-code, opencode, codex, pi) | unknown |")
+					assert.Contains(t, section, "| efforts."+axis+" | unknown |")
 				}
 			}
 		})
 	}
+}
+
+func TestProductionSnapshotRegisterApplication(t *testing.T) {
+	r := loadRegister(t)
+	require.Empty(t, validateRegister(r))
+	it := r.Items["LR-02"]
+	assert.Equal(t, "decided", it.Status, "static application must not claim completed backend verification")
+	assert.Empty(t, it.Escalation, "R2 lifts the missing-metadata escalation")
+	assert.Contains(t, it.Evidence, evidencePath+"/sources/lr02-live-models-2026-11-11.json")
+	for _, ref := range []string{
+		"adapter/config/capabilities.default.yaml:lunaroute_models",
+		"adapter/config/capabilities.go:LoadCapabilityRules",
+		"domain/provider/model_discovery.go:Discover",
+	} {
+		assert.Contains(t, it.AppliedTo, ref)
+	}
+	assert.NotEmpty(t, releaseProblems(repoRoot(t), r), "unfinished backend/matrix evidence still closes the release gate")
+}
+
+func TestProductionGatewayObservation(t *testing.T) {
+	const name = "lr01-gateway-20261111T155705.865199000Z.json"
+	raw, err := readRepoFile(repoRoot(t), evidencePath+"/observations/"+name)
+	require.NoError(t, err)
+	require.NoError(t, validateObservationJSON(raw, ""), "operator evidence must satisfy the same private observation schema")
+	var observed []gatewayObservation
+	require.NoError(t, json.Unmarshal(raw, &observed))
+	require.Len(t, observed, 5)
+	for i, dialect := range []string{"models", "chat", "messages", "responses", "invalid-key"} {
+		o := observed[i]
+		assert.Equal(t, dialect, o.Dialect)
+		assert.Equal(t, "Authorization", o.AuthHeader)
+		switch dialect {
+		case "models":
+			assert.Equal(t, "/v1/models", o.Path)
+			assert.Equal(t, http.StatusOK, o.Status)
+			assert.Positive(t, o.ModelCount)
+			assert.Equal(t, "array", o.Schema["data"])
+		case "invalid-key":
+			assert.Equal(t, "/v1/models", o.Path)
+			assert.Equal(t, http.StatusUnauthorized, o.Status)
+			assert.Equal(t, "INVALID_API_KEY", o.ErrorCode)
+			assert.ErrorIs(t, provider.ClassifyLunaRoute(provider.LunaRouteOutcome{Operation: provider.LunaRouteListModels, Status: o.Status, Code: o.ErrorCode}), provider.ErrLunaRouteCredentialsRejected)
+		default:
+			path := map[string]string{"chat": "/v1/chat/completions", "messages": "/v1/messages", "responses": "/v1/responses"}[dialect]
+			assert.Equal(t, path, o.Path)
+			assert.Equal(t, http.StatusOK, o.Status)
+			assert.Equal(t, "glm-5.3", o.Model)
+			assert.True(t, modelidentity.LunaRouteExecutedModelAccepted(o.Model, o.ReportedModel))
+			assert.True(t, o.Terminal)
+			assert.True(t, o.HasContent)
+			assert.NotEmpty(t, o.Schema)
+		}
+	}
+	assert.Contains(t, loadRegister(t).Items["LR-01"].Evidence, evidencePath+"/observations/"+name)
 }
 
 func modelSourceSection(t *testing.T, source, id string) string {
@@ -99,7 +221,7 @@ func TestProductionIdentityAndGatewayEvidence(t *testing.T) {
 		}
 		require.NoError(t, err)
 		assert.Equal(t, id, selected)
-		vendor := map[string]modelidentity.Family{"glm-5.3": "zhipuai", "claude-sonnet-5-lr1": "anthropic"}[id]
+		vendor := map[string]modelidentity.Family{"glm-5.3": "zhipuai", "glm-5.3-flash": "zhipuai", "deepseek-4.1-flash": "deepseek"}[id]
 		require.NotEmpty(t, vendor, "confirmed identities require an explicit source-reviewed vendor")
 		assert.Contains(t, section, string(vendor))
 		assert.Equal(t, vendor, modelidentity.ClassifyFamily("lunaroute", id))

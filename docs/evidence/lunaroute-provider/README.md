@@ -1,25 +1,32 @@
 # LunaRoute evidence and readiness
 
 These are reviewed source notes and test-produced observations, **not a release
-approval**. `register.yaml` contains exactly LR-01 through LR-08. Source review
-on 2026-11-11 found unpublished model metadata and two unconfirmed identities.
-LR-02 is escalated; other items remain decided. No live credential was available.
-
-> **Superseded in part, 2026-11-11.** The LR-02 and LR-03 paragraphs below predate the operator's live session. See the decisions doc § Operator rulings: R2 makes the `/v1/models` snapshot the per-model source, and R3 sets the release ids and revokes the Claude-alias mapping.
+approval**. `register.yaml` contains exactly LR-01 through LR-08. The operator's
+2026-11-11 gateway pass verifies the service paths and Bearer contract (R1).
+R2's recorded metadata now populates the embedded static capability table; the
+missing-metadata escalation is cleared. R3 authorizes exactly `glm-5.3`,
+`glm-5.3-flash` and `deepseek-4.1-flash`, never Claude-shaped aliases. Register
+verification additionally requires the owning runtime/completion evidence;
+release readiness remains pending.
 
 ## Collection and population
 
 1. Review the LunaRoute documentation, record source title, URL, access date and
    exact supporting passages. `sources/lr01-gateway-docs.md` covers paths/auth;
    `gateway-contract.md` covers listing/error contracts. Model notes have one
-   anchor per release candidate, with omitted facts explicitly unknown. Do not
-   use `/v1/models` membership as identity or static capability evidence.
+   anchor per release model, with omitted facts explicitly unknown. R2 authorizes
+   the recorded authenticated `/v1/models` metadata fields in
+   `sources/lr02-live-models-2026-11-11.json`; membership alone is not a static
+   fact or vendor-identity proof.
 2. Apply reviewed facts to their **production** sources: P1-T6/T7 identity maps,
    P1-T8 `capabilities.default.yaml:lunaroute_models`, P1-T2 error-code table.
-   The embedded capability records currently carry only reviewed unknowns.
-   They authorize no identity, limits, reasoning, effort or backend support.
-   The fixed-id table authorizes only the two source-confirmed ids. Do not
-   substitute another id or expand the production map to satisfy a test.
+   The embedded capability records carry reviewed limits, independent reasoning,
+   output-schema support and exact pi effort mappings. Temperature and other
+   effort axes remain unknown. The production loader feeds these facts into
+   MCP discovery and request preflight; root tests assert the resulting JSON
+   and persisted over-limit failure, including zero inference requests.
+   Static facts authorize no completed task/backend claim. The fixed-id table
+   separately authorizes R3's three canonical ids.
 3. Run live experiments with explicitly selected, reviewed models. Capture
    successful terminal content for all inference dialects, and actual
    main/helper traffic for each binary. Later P2-T8/P3-T5/P4-T1 completion
@@ -39,13 +46,15 @@ LR-02 is escalated; other items remain decided. No live credential was available
 - `escalated`: contradiction/failed requirement, with actionable explanation
   and the decision's on-failure rule applied. Only `verified` passes release.
 
-LR-02: no published per-model context/output/reasoning facts exist in the
-required model-doc source. Claude Code/OpenCode/Pi must refuse unknown required
-metadata. No reasoning default or placeholder limit is permitted. Obtain model
-documentation or an explicit source-contract decision before enabling readiness.
-LR-03: `glm-5.3-flash` and `deepseek-4.1-flash-1017` remain excluded from the
-executable subset. Coordinated release-set/fixture revision needs authoritative
-spellings or a release-set decision; no alternatives were invented.
+LR-02: R2 clears the source blocker; `model-capabilities.md` records the exact
+snapshot-to-runtime mapping and nonempty source anchors. Task/backend completion
+population remains with P2-T8/P3-T5/P4-T1. Required facts that a future override
+omits must still fail closed, without a reasoning default or placeholder limit.
+LR-03: R3's three canonical ids are executable; `deepseek-4.1-flash-1017` is a
+weights name, not a served id, and `claude-*-lr*` aliases are revoked.
+P1-T11's final runtime consistency gate still awaits the later backend/helper
+consumers and P4-T7's completed correlated MCP matrix. Offline GREEN and a
+locally skipped live rerun cannot mark those contracts ready.
 
 ## Framework and direct gateway regression
 

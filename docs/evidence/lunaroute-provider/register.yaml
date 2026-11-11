@@ -12,7 +12,11 @@ items:
     decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-02
     evidence: [docs/evidence/lunaroute-provider/model-capabilities.md, docs/evidence/lunaroute-provider/sources/lr02-live-models-2026-11-11.json]
     escalation: ""
-    applied_to: []
+    applied_to:
+      - adapter/config/capabilities.default.yaml:lunaroute_models
+      - adapter/config/capabilities.go:LoadCapabilityRules
+      - domain/provider/model_discovery.go:Discover
+      - domain/provider/lunaroute_validate.go:CheckLunaRouteRequest
   LR-03:
     title: Reviewed executable identities and alias vendor evidence
     status: decided
