@@ -30,9 +30,9 @@ const lrChatCaps = `lunaroute_models:
     request_settings:
       output_schema: {support: unsupported, evidence: "ev#schema"}
       temperature: {support: unsupported, evidence: "ev#temp"}
-  claude-sonnet-5-lr1:
+  glm-5.3-flash:
     tasks:
-      chat: {support: unsupported, evidence: "ev#alias-chat"}
+      chat: {support: unsupported, evidence: "ev#flash-chat"}
 `
 const lrRootPrompt = "nonce-root-8401: answer ping"
 
@@ -65,7 +65,7 @@ func triggerLunaRouteChat(t *testing.T, ds *domainStack, name string) (uuid.UUID
 // Real root -> save -> pin capture -> resolver -> factory -> HTTP -> persisted
 // output. No test-only source/selector replaces the composition root's ports.
 func TestLunaRouteChatWiring(t *testing.T) {
-	gw := newFakeLunaRouteGateway(t, "lr_live_chat", "glm-5.3", "claude-sonnet-5-lr1")
+	gw := newFakeLunaRouteGateway(t, "lr_live_chat", "glm-5.3", "glm-5.3-flash")
 	gw.ExpectChat("glm-5.3", lrRootPrompt, 1234, "low")
 	ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, lrChatCaps)+"\n", gw, func(ws string) {
 		writeLunaRouteChatWorkflow(t, ws, "lr-chat", "lr-chat", 1234, false)
@@ -80,9 +80,9 @@ func TestLunaRouteChatWiring(t *testing.T) {
 	_, eff, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-chat", Kind: provider.ProfileKindChat, ConnectionRef: "lr", Model: "glm-5.3", Effort: provider.EffortLow})
 	require.NoError(t, err)
 	assert.Equal(t, provider.EffortLow, eff.Effort)
-	_, _, err = ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-conflict", Kind: provider.ProfileKindChat, ConnectionRef: "lr", Model: "claude-sonnet-5-lr1"})
+	_, _, err = ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-conflict", Kind: provider.ProfileKindChat, ConnectionRef: "lr", Model: "glm-5.3-flash"})
 	require.ErrorIs(t, err, provider.ErrLunaRouteIncompatible)
-	assert.Contains(t, err.Error(), "ev#alias-chat")
+	assert.Contains(t, err.Error(), "ev#flash-chat")
 	_, _, err = ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-med", Kind: provider.ProfileKindChat, ConnectionRef: "lr", Model: "glm-5.3", Effort: provider.EffortMedium})
 	require.ErrorIs(t, err, provider.ErrLunaRouteAxisUnsupported)
 	var refused int
@@ -139,34 +139,38 @@ func TestLunaRouteChatWiring(t *testing.T) {
 	}
 }
 
-func TestLunaRouteChatWiringAliasEvidence(t *testing.T) {
-	caps := strings.Replace(lrChatCaps, `chat: {support: unsupported, evidence: "ev#alias-chat"}`, `chat: {support: supported, evidence: "ev#alias-chat"}`, 1)
-	gw := newFakeLunaRouteGateway(t, "lr_alias_chat", "claude-sonnet-5-lr1")
-	gw.ExpectChat("claude-sonnet-5-lr1", lrRootPrompt, 1234, "")
-	ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, caps)+"\n", gw, func(ws string) { writeLunaRouteChatWorkflow(t, ws, "lr-alias", "lr-alias", 1234, false) })
-	ctx := adminCtxForLocalUser(t, ds)
-	require.NoError(t, ds.connSvc.Create(ctx, provider.Connection{Name: "lr", Provider: "lunaroute"}, "lr_alias_chat"))
-	_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-alias", Kind: provider.ProfileKindChat, ConnectionRef: "lr", Model: "claude-sonnet-5-lr1"})
-	require.NoError(t, err)
-	for _, reported := range []string{"claude-sonnet-5-5", "glm-5.3"} {
-		gw.Reply("POST /v1/chat/completions", lunaRouteGatewayReply{Status: 200, Body: fmt.Sprintf(`{"model":%q,"choices":[{"message":{"content":"pong"},"finish_reason":"stop"}]}`, reported)})
-		id, inst := triggerLunaRouteChat(t, ds, "lr-alias")
-		if reported == "claude-sonnet-5-5" {
-			require.Equal(t, instance.StateCompleted, inst.State)
-			assert.Equal(t, map[string]any{"response": "pong"}, successfulNodeOutput(t, ds, id, "ask"))
-			var model string
-			require.NoError(t, ds.db.QueryRow(`SELECT llm_model FROM node_executions WHERE instance_id=? AND node_id='ask'`, id.String()).Scan(&model))
-			assert.Equal(t, reported, model, "record actual execution, not the configured alias")
-			pinned, err := ds.instanceRepo.Get(context.Background(), id)
+func TestLunaRouteChatWiringFixedEvidence(t *testing.T) {
+	for _, selected := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
+		t.Run(selected, func(t *testing.T) {
+			caps := fmt.Sprintf("lunaroute_models:\n  %s:\n    output_tokens: {tokens: 4096, evidence: 'ev#out'}\n    efforts:\n      chat: {levels: [high], evidence: 'ev#eff'}\n", selected)
+			gw := newFakeLunaRouteGateway(t, "lr_fixed_chat", selected)
+			gw.ExpectChat(selected, lrRootPrompt, 1234, "high")
+			ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, caps)+"\n", gw, func(ws string) { writeLunaRouteChatWorkflow(t, ws, "lr-fixed", "lr-fixed", 1234, false) })
+			ctx := adminCtxForLocalUser(t, ds)
+			require.NoError(t, ds.connSvc.Create(ctx, provider.Connection{Name: "lr", Provider: "lunaroute"}, "lr_fixed_chat"))
+			_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-fixed", Kind: provider.ProfileKindChat, ConnectionRef: "lr", Model: selected, Effort: provider.EffortHigh})
 			require.NoError(t, err)
-			assert.Equal(t, instance.ModelPinsVersionSnapshot, pinned.ModelPinsVersion)
-			assert.Equal(t, map[string]string{"lr-alias": "claude-sonnet-5-lr1"}, pinned.ModelPins, "pin retains selected executable")
-		} else {
-			assert.Equal(t, instance.StateFailed, inst.State)
-			assert.Contains(t, nodeError(t, ds, id), "execution evidence")
-		}
+			for _, reported := range []string{selected, selected + "-changed", "claude-sonnet-5-5"} {
+				gw.Reply("POST /v1/chat/completions", lunaRouteGatewayReply{Status: 200, Body: fmt.Sprintf(`{"model":%q,"choices":[{"message":{"content":"pong"},"finish_reason":"stop"}]}`, reported)})
+				id, inst := triggerLunaRouteChat(t, ds, "lr-fixed")
+				if reported == selected {
+					require.Equal(t, instance.StateCompleted, inst.State)
+					assert.Equal(t, map[string]any{"response": "pong"}, successfulNodeOutput(t, ds, id, "ask"))
+					var model string
+					require.NoError(t, ds.db.QueryRow(`SELECT llm_model FROM node_executions WHERE instance_id=? AND node_id='ask'`, id.String()).Scan(&model))
+					assert.Equal(t, reported, model, "record actual execution evidence")
+					pinned, err := ds.instanceRepo.Get(context.Background(), id)
+					require.NoError(t, err)
+					assert.Equal(t, instance.ModelPinsVersionSnapshot, pinned.ModelPinsVersion)
+					assert.Equal(t, map[string]string{"lr-fixed": selected}, pinned.ModelPins)
+				} else {
+					assert.Equal(t, instance.StateFailed, inst.State)
+					assert.Contains(t, nodeError(t, ds, id), "execution evidence")
+				}
+			}
+			assert.Len(t, gw.Requests(), 3, "exact selection, never a fallback or retry")
+		})
 	}
-	assert.Len(t, gw.Requests(), 2)
 }
 
 func TestLunaRouteChatWiringEffectiveAxesNeverFloor(t *testing.T) {

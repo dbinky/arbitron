@@ -110,7 +110,7 @@ func lrChatRequest() engine.ChatRequest {
 }
 func lrChatCaps() domprovider.CapabilityRules {
 	models := map[string]domprovider.LunaRouteModel{}
-	for _, id := range []string{"glm-5.3", "claude-sonnet-5-lr1"} {
+	for _, id := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
 		models[id] = domprovider.LunaRouteModel{ID: id,
 			OutputTokens: domprovider.LimitFact{Tokens: 1000, Evidence: "ev#out"},
 			Efforts:      map[string]domprovider.EffortFact{"chat": {Known: true, Levels: []domprovider.Effort{domprovider.EffortLow, domprovider.EffortXHigh}, Evidence: "ev#eff"}},
@@ -201,6 +201,9 @@ func TestLunaRouteChat_PreflightRefusesBeforeIO(t *testing.T) {
 	}{
 		{"output limit", func(_ *domprovider.ResolvedBinding, r *engine.ChatRequest) { r.MaxTokens = 1001 }, domprovider.ErrLunaRouteSettingConflict},
 		{"lossy effort", func(b *domprovider.ResolvedBinding, _ *engine.ChatRequest) { b.Effort = domprovider.EffortXHigh }, domprovider.ErrLunaRouteAxisUnsupported},
+		{"revoked alias", func(b *domprovider.ResolvedBinding, _ *engine.ChatRequest) { b.Model = "claude-sonnet-5-lr1" }, domprovider.ErrLunaRouteModelSpelling},
+		{"open-weight alias", func(b *domprovider.ResolvedBinding, _ *engine.ChatRequest) { b.Model = "claude-opus-lr29" }, domprovider.ErrLunaRouteModelSpelling},
+		{"weights name", func(b *domprovider.ResolvedBinding, _ *engine.ChatRequest) { b.Model = "deepseek-4.1-flash-1017" }, domprovider.ErrLunaRouteModelSpelling},
 		{"foreign key", func(b *domprovider.ResolvedBinding, _ *engine.ChatRequest) {
 			b.RevealKey = func(context.Context) (string, error) { return "sk-or-v1-foreign", nil }
 		}, domprovider.ErrLunaRouteStoredCredential},
@@ -305,7 +308,8 @@ func TestLunaRouteChat_ExecutionEvidence(t *testing.T) {
 		accepted           bool
 	}{
 		{"glm-5.3", "glm-5.3", true}, {"glm-5.3", "glm-5.4", false},
-		{"claude-sonnet-5-lr1", "claude-sonnet-5-5", true}, {"claude-sonnet-5-lr1", "glm-5.3", false}, {"claude-sonnet-5-lr1", "", false},
+		{"glm-5.3-flash", "glm-5.3-flash", true}, {"glm-5.3-flash", "glm-5.3", false}, {"glm-5.3-flash", "", false},
+		{"deepseek-4.1-flash", "deepseek-4.1-flash", true}, {"deepseek-4.1-flash", "deepseek-4.1-flash-1017", false}, {"deepseek-4.1-flash", "claude-sonnet-5-5", false},
 	} {
 		t.Run(tc.selected+"/"+tc.reported, func(t *testing.T) {
 			g := newChatGW()

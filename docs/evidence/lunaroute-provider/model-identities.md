@@ -1,81 +1,73 @@
 # LunaRoute model identity evidence
 
-This note records source evidence, not live execution verification. LR-03's
-reviewed-alias decision is in
-[`2026-11-10-lunaroute-provider-decisions.md`](../../designs/2026-11-10-lunaroute-provider-decisions.md#lr-03--fixed-executable-ids-and-alias-handling-under-pinning).
+The reviewed executable set is exactly `glm-5.3`, `glm-5.3-flash` and
+`deepseek-4.1-flash`. [Operator ruling R3](../../designs/2026-11-10-lunaroute-provider-decisions.md#r3--lr-03-release-set-and-claude-shaped-aliases)
+(2026-11-11) supersedes the earlier four-candidate decision and the
+Claude-shaped alias mapping. Fixed-id authorization comes from that explicit
+review, not numeric syntax or listing membership alone.
+
+## Sources
+
+- Source title: **Authenticated LunaRoute release-model snapshot**.
+- URL: https://gw.lunaroute.com/v1/models
+- Retrieved: 2026-11-11, authenticated operator run.
+- Committed snapshot: [sources/lr02-live-models-2026-11-11.json](sources/lr02-live-models-2026-11-11.json).
+- Source title: **Operator rulings — R3 release set and Claude-shaped aliases**.
+- Recorded: 2026-11-11 in the linked decisions document. The operator completed
+  a live chat on each canonical id with a `PONG` response. No credential is
+  present in this note or the snapshot.
+
+The snapshot confirms exact executable spellings; its `owned_by: lunaroute`
+field is not a vendor-family assertion. The families below use the existing
+`domain/modelidentity/identity.go:families` prefix table, confirmed by R3.
+This identity review does not establish support for every task/backend, nor
+make any backend release-ready.
 
 ## glm-5.3
 
-- Source title: **Chat completions**.
-- URL: https://docs.lunaroute.com/api/chat-completions/
-- Markdown source: https://docs.lunaroute.com/api/chat-completions.md
-- Accessed: 2026-11-11 (UTC).
-- Source passage: the documented `POST /v1/chat/completions` request contains
-  `"model": "glm-5.3"`.
+- Exact executable id: `glm-5.3` (snapshot `models[].id`, R3).
+- Vendor: `zhipuai` (`glm-` family).
+- Reviewed fixed target: `glm-5.3`.
+- Snapshot weights source: https://huggingface.co/lunaroute/GLM-5.3-Vision-NVFP4
 
-This confirms the exact executable spelling. Vendor `zhipuai` follows the
-existing GLM family mapping in `domain/modelidentity/identity.go:families`;
-LR-03 supplies the reviewed fixed-target decision `glm-5.3 → glm-5.3`.
-The request example does not prove live availability or backend compatibility.
-
-## claude-sonnet-5-lr1
-
-- Source title: **Claude Code — The window describes ANTHROPIC_MODEL, not the aliases**.
-- URL: https://docs.lunaroute.com/getting-started/claude-code/
-- Markdown source: https://docs.lunaroute.com/getting-started/claude-code.md
-- Accessed: 2026-11-11 (UTC).
-- Source passage:
-
-  > Claude Code applies `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the model id in `ANTHROPIC_MODEL`, and ignores it
-  > for the Claude-shaped alias ids (`claude-sonnet-5-lr1`, …) — those resolve to a real Claude model, which
-  > carries its own 1M window.
-
-This confirms the exact alias spelling and its Claude vendor identity. Together
-with LR-03, it supports the exact reviewed mapping
-`lunaroute / claude-sonnet-5-lr1 → anthropic`. It does not establish an immutable
-upstream version, any other `-lrN` alias, or live availability. The classifier
-uses the canonical lab name from `domain/modelidentity/identity.go:families`.
-
-P1-T6 collected this alias-specific prerequisite before populating its map.
-P1-T7 consumes this evidence for the reviewed alias target
-`alias:claude-sonnet-5-lr1`, not an exact upstream-version claim.
+The earlier **Chat completions** example at
+https://docs.lunaroute.com/api/chat-completions.md (accessed 2026-11-11 UTC)
+also names `glm-5.3`; R3 now supplies the reviewed live confirmation.
 
 ## glm-5.3-flash
 
-Identity spelling: **unknown**; not authorized in the production fixed-id table.
+- Exact executable id: `glm-5.3-flash` (snapshot `models[].id`, R3).
+- Vendor: `zhipuai` (`glm-` family).
+- Reviewed fixed target: `glm-5.3-flash`.
+- Snapshot weights source: https://huggingface.co/nvidia/GLM-5.3-Flash-NVFP4
 
-## deepseek-4.1-flash-1017
+## deepseek-4.1-flash
 
-Identity spelling: **unknown**; not authorized in the production fixed-id table.
+- Exact executable id: `deepseek-4.1-flash` (snapshot `models[].id`, R3).
+- Vendor: `deepseek` (`deepseek-` family).
+- Reviewed fixed target: `deepseek-4.1-flash`.
+- Snapshot weights source: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017
 
-### Unconfirmed candidates and population blocker
+`deepseek-4.1-flash-1017` is the upstream weights name, **not** a served
+executable id. It is refused; no automatic suffix removal or model rewriting
+is permitted.
 
-- Source title: **Model catalog**.
-- URL: https://docs.lunaroute.com/models/
-- Markdown source: https://docs.lunaroute.com/models/index.md
-- Additional source: https://docs.lunaroute.com/llms-full.txt (published docs bundle).
-- Accessed: 2026-11-11 (UTC).
+## Revoked Claude-shaped aliases
 
-The catalog documentation says per-model pages are not authored and directs
-callers to the runtime catalog. Neither `glm-5.3-flash` nor
-`deepseek-4.1-flash-1017` occurs in the published docs bundle. Requests to
-`https://docs.lunaroute.com/models/glm-5.3-flash.md` and
-`https://docs.lunaroute.com/models/deepseek-4.1-flash-1017.md` returned HTTP 404.
-This search is not identity evidence and does not establish alternative
-spellings. Listing membership alone would not prove fixed identity either.
+`claude-*-lr*` aliases are excluded from execution and classify as `unresolved`,
+never `anthropic`, including samples without route metadata and names with
+routing/vendor prefixes. R3 reports that the gateway's Claude-client listing
+maps `claude-opus-lr29` to GLM 5.3 and `claude-haiku-lr37` to DeepSeek 4.1
+Flash; numeric suffixes are not stable. `claude-sonnet-5-lr1` returned
+`404 INFERENCE_MODEL_NOT_FOUND`.
 
-The executable reviewed subset is therefore only `glm-5.3` and
-`claude-sonnet-5-lr1`. The other two decided release candidates are excluded
-from authorization, not silently replaced. Completing the four-model release
-set and synchronizing downstream release fixtures requires authoritative
-spelling evidence or an explicit release-set revision; P1-T7 Step 2 remains
-blocked. An alias remains reviewed, so LR-03's no-alias escalation does not
-apply.
+The earlier Claude Code documentation passage claiming that
+`claude-sonnet-5-lr1` resolves to Claude is superseded by R3's live findings.
+Its former `anthropic` vendor mapping and `alias:` fixed target are revoked.
+The spelling may remain only in negative/unavailable-model fixtures, not as
+an authorized proprietary alias. Canonical `glm-5.3` works directly on
+`/v1/messages` (R1); a Claude-shaped selector is unnecessary.
 
-P1-T11 rechecked the published bundle and all four candidate per-model pages
-on 2026-11-11 UTC: each per-model Markdown page returned 404. The model-doc
-source still cannot confirm the missing spellings. The two existing exact-id
-source confirmations above are retained, without promoting API examples to
-per-model capability facts. Capability review is in
-[model-capabilities.md](model-capabilities.md); the register tracks pending
-live verification separately.
+The generic reviewed-alias evidence mechanism remains fixture-tested, but no
+production alias is authorized and no proprietary-model execution is claimed.
+Register/readiness changes belong to their evidence and backend tasks.

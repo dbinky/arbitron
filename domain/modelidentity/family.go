@@ -17,14 +17,9 @@ const FamilyUnresolved Family = "unresolved"
 
 // reviewedAliasVendors maps route provider → exact (lowercased) model id →
 // lab for opaque gateway aliases whose vendor the prefix rules cannot see.
-// LR-03 (docs/designs/2026-11-10-lunaroute-provider-decisions.md) decides the
-// reviewed entry; docs/evidence/lunaroute-provider/model-identities.md records
-// its source. A listing never proves vendor.
-var reviewedAliasVendors = map[string]map[string]string{
-	"lunaroute": {
-		"claude-sonnet-5-lr1": "anthropic", // model-identities.md#claude-sonnet-5-lr1
-	},
-}
+// Operator ruling R3 revokes the Claude-shaped mapping: those aliases route to
+// open-weight models, not Anthropic. No opaque alias is currently reviewed.
+var reviewedAliasVendors = map[string]map[string]string{}
 
 // routerPrefixes are routing namespaces (not vendors) that may precede an id.
 var routerPrefixes = map[string]bool{
@@ -38,6 +33,14 @@ var (
 	openAIReasoningRE  = regexp.MustCompile(`^o\d`)
 	lunaRouteAliasRE   = regexp.MustCompile(`-lr[0-9]+(?:-|$)`)
 )
+
+// lunaRouteClaudeAlias recognizes the entire revoked claude-*-lr* namespace,
+// not just today's numeric suffixes. R3 forbids inferring Anthropic identity
+// from these gateway-assigned names, even if a stale review entry remains.
+func lunaRouteClaudeAlias(model string) bool {
+	model = strings.ToLower(model)
+	return strings.HasPrefix(model, "claude-") && strings.Contains(model, "-lr")
+}
 
 func labForAlias(alias string) string {
 	for _, f := range families {
@@ -97,6 +100,9 @@ func ClassifyFamily(routeProvider, model string) Family {
 		}
 		hint = lab
 		m = m[len(sub[0]):]
+	}
+	if lunaRouteClaudeAlias(m) {
+		return FamilyUnresolved
 	}
 	// Look up aliases AFTER prefix consistency has been established. A vendor-
 	// shaped alias is never authorized by the generic claude- prefix.

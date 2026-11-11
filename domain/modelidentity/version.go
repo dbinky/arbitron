@@ -87,13 +87,15 @@ type lunaRouteFixedID struct {
 var lunaRouteReviewedIDs = map[string]lunaRouteFixedID{
 	// docs/evidence/lunaroute-provider/model-identities.md#glm-5.3
 	"glm-5.3": {Vendor: "zhipuai", FixedTarget: "glm-5.3", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#glm-5.3"},
-	// docs/evidence/lunaroute-provider/model-identities.md#claude-sonnet-5-lr1
-	"claude-sonnet-5-lr1": {Vendor: "anthropic", FixedTarget: "alias:claude-sonnet-5-lr1", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#claude-sonnet-5-lr1"},
+	// docs/evidence/lunaroute-provider/model-identities.md#glm-5.3-flash (operator ruling R3)
+	"glm-5.3-flash": {Vendor: "zhipuai", FixedTarget: "glm-5.3-flash", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#glm-5.3-flash"},
+	// docs/evidence/lunaroute-provider/model-identities.md#deepseek-4.1-flash (operator ruling R3)
+	"deepseek-4.1-flash": {Vendor: "deepseek", FixedTarget: "deepseek-4.1-flash", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#deepseek-4.1-flash"},
 }
 
 func lunaRouteFixed(model string) bool {
 	entry, ok := lunaRouteReviewedIDs[model]
-	return model != "" && ok && entry.Vendor != "" && entry.FixedTarget != "" && entry.Evidence != ""
+	return model != "" && !lunaRouteClaudeAlias(model) && ok && entry.Vendor != "" && entry.FixedTarget != "" && entry.Evidence != ""
 }
 
 // LunaRouteExecutedModelAccepted checks reported execution evidence against a

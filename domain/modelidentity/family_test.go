@@ -13,11 +13,11 @@ func TestClassifyFamily(t *testing.T) {
 		want         modelidentity.Family
 	}{
 		{"", "claude-opus-5-5", "anthropic"},
-		{"lunaroute", "claude-sonnet-5-lr1", "anthropic"},
+		{"lunaroute", "claude-sonnet-5-lr1", modelidentity.FamilyUnresolved},
 		{"lunaroute", "claude-sonnet-5-lr1-background", modelidentity.FamilyUnresolved},
 		{"lunaroute", "claude-sonnet-5-lr999", modelidentity.FamilyUnresolved},
 		{"lunaroute", "glm-5.3-flash", "zhipuai"},
-		{"lunaroute", "deepseek-4.1-flash-1017", "deepseek"},
+		{"lunaroute", "deepseek-4.1-flash", "deepseek"},
 		{"", "anthropic/claude-opus-5-5", "anthropic"},
 		{"", "us.anthropic.claude-sonnet-5-5", "anthropic"},
 		{"bedrock", "anthropic.claude-opus-5-5-v1:0", "anthropic"},
@@ -63,7 +63,7 @@ func TestClassifyFamily_NeverReturnsGateway(t *testing.T) {
 
 func TestFamilyUnreviewedClaudeAliasIsUnresolved(t *testing.T) {
 	for _, route := range []string{"", "lunaroute", "openrouter"} {
-		for _, model := range []string{"claude-sonnet-5-lr999", "claude-sonnet-5-lr1-background", "claude-sonnet-5-lr999-priority"} {
+		for _, model := range []string{"claude-sonnet-5-lr1", "claude-opus-lr29", "claude-haiku-lr37", "claude-sonnet-lr", "claude-sonnet-lr-next", "claude-sonnet-5-lr999", "claude-sonnet-5-lr1-background", "claude-sonnet-5-lr999-priority", "anthropic/claude-opus-lr29", "lunaroute/claude-opus-lr29", "us.anthropic.claude-opus-lr29"} {
 			t.Run(route+"|"+model, func(t *testing.T) {
 				assert.Equal(t, modelidentity.FamilyUnresolved, modelidentity.ClassifyFamily(route, model))
 			})
@@ -83,6 +83,6 @@ func TestFamilyReviewedAliasContradictoryPrefixRefused(t *testing.T) {
 
 func TestFamilyNoRouteReviewedAliasMatchesLunaRoute(t *testing.T) {
 	const model = "claude-sonnet-5-lr1"
-	assert.Equal(t, modelidentity.Family("anthropic"), modelidentity.ClassifyFamily("lunaroute", model))
+	assert.Equal(t, modelidentity.FamilyUnresolved, modelidentity.ClassifyFamily("lunaroute", model))
 	assert.Equal(t, modelidentity.ClassifyFamily("lunaroute", model), modelidentity.ClassifyFamily("", model))
 }

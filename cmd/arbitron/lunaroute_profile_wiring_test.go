@@ -16,10 +16,14 @@ func TestLunaRouteProfileSaveWiring(t *testing.T) {
 		{"lr-default", "", "glm-5.3", "set backend to claude-code, opencode, codex or pi explicitly"},
 		{"lr-oc", "opencode", "glm-5.3", "LunaRoute on opencode not yet supported"},
 		{"lr-numeric", "", "claude-sonnet-5-lr999", "reviewed fixed LunaRoute id"},
+		{"lr-revoked", "", "claude-sonnet-5-lr1", "reviewed fixed LunaRoute id"},
+		{"lr-opus", "", "claude-opus-lr29", "reviewed fixed LunaRoute id"},
+		{"lr-haiku", "", "claude-haiku-lr37", "reviewed fixed LunaRoute id"},
+		{"lr-weights", "", "deepseek-4.1-flash-1017", "reviewed fixed LunaRoute id"},
 	} {
 		t.Run(tc.alias, func(t *testing.T) {
 			kind := "agent"
-			if tc.alias == "lr-numeric" {
+			if tc.backend == "" && tc.alias != "lr-default" {
 				kind = "chat"
 			}
 			args := map[string]any{"alias": tc.alias, "kind": kind, "connection_ref": "lr", "model": tc.model}

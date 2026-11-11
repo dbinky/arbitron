@@ -57,7 +57,7 @@ func TestCheckLunaRouteRoute_HappyPaths(t *testing.T) {
 	require.NoError(t, CheckLunaRouteRoute(caps, LunaRouteRoute{Kind: ProfileKindChat, Model: "glm-5.3", ContextWindow: ContextDefault, Effort: EffortDefault, MaxOutputTokens: 32768}))
 	// Use a reviewed id with no capability entry, not an unconfirmed release id.
 	require.NoError(t, CheckLunaRouteRoute(fakeLRCaps{}, agentRoute("glm-5.3", "codex")))
-	require.NoError(t, CheckLunaRouteRoute(fakeLRCaps{"claude-sonnet-5-lr1": {ContextTokens: LimitFact{Tokens: 1, Evidence: "e"}, OutputTokens: LimitFact{Tokens: 1, Evidence: "e"}}}, agentRoute("claude-sonnet-5-lr1", "claude-code")))
+	require.NoError(t, CheckLunaRouteRoute(fakeLRCaps{"glm-5.3-flash": {ContextTokens: LimitFact{Tokens: 1, Evidence: "e"}, OutputTokens: LimitFact{Tokens: 1, Evidence: "e"}}}, agentRoute("glm-5.3-flash", "claude-code")))
 }
 
 func TestCheckLunaRouteRoute_BackendGate(t *testing.T) {

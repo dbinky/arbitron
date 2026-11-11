@@ -305,11 +305,11 @@ func TestDiscover_SelectorFailurePropagates(t *testing.T) {
 	assert.Zero(t, store.reveals)
 }
 
-func TestDiscover_ReviewedAliasFamily(t *testing.T) {
+func TestDiscover_RevokedAliasFamily(t *testing.T) {
 	probe := &discProbe{result: provider.ProbeResult{Reachable: true, Models: []string{"claude-sonnet-5-lr1", "opaque-lr999"}}}
 	view, err := provider.NewModelDiscoveryService(lrStore(), &discSelector{probe: probe}, discCaps()).Discover(admin(), "lr")
 	require.NoError(t, err)
 	require.Len(t, view.Models, 2)
-	assert.Equal(t, "anthropic", view.Models[0].Family)
+	assert.Equal(t, "unresolved", view.Models[0].Family, "R3: listing cannot turn an open-weight alias into Anthropic")
 	assert.Equal(t, "unresolved", view.Models[1].Family)
 }

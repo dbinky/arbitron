@@ -13,16 +13,16 @@ import (
 )
 
 func TestLunaRouteProductionIdentityEvidence(t *testing.T) {
-	// P1-T11 source preparation has confirmed these spellings. The other two
-	// decided candidates remain blocked pending authoritative identity evidence.
-	for _, id := range []string{"glm-5.3", "claude-sonnet-5-lr1"} {
+	// R3's reviewed release set, not every numeric id or catalog row.
+	require.Len(t, lunaRouteReviewedIDs, 3)
+	for _, id := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
 		require.Contains(t, lunaRouteReviewedIDs, id)
 	}
 	for id, entry := range lunaRouteReviewedIDs {
 		t.Run(id, func(t *testing.T) {
 			assert.True(t, lunaRouteFixed(id))
 			assert.Equal(t, Family(entry.Vendor), ClassifyFamily("lunaroute", id))
-			assert.Contains(t, []string{id, "alias:" + id}, entry.FixedTarget)
+			assert.Equal(t, id, entry.FixedTarget, "R3 authorizes only canonical fixed ids")
 			path, anchor, ok := strings.Cut(entry.Evidence, "#")
 			require.True(t, ok)
 			require.Equal(t, "docs/evidence/lunaroute-provider/model-identities.md", path)
@@ -40,8 +40,8 @@ func installLunaRouteReviews(t *testing.T) {
 	saved := lunaRouteReviewedIDs
 	t.Cleanup(func() { lunaRouteReviewedIDs = saved })
 	lunaRouteReviewedIDs = map[string]lunaRouteFixedID{
-		"glm-98.1":             {Vendor: "zhipuai", FixedTarget: "glm-98.1", Evidence: "fixture#glm"},
-		"claude-sonnet-98-lr1": {Vendor: "anthropic", FixedTarget: "alias:claude-sonnet-98-lr1", Evidence: "fixture#claude"},
+		"glm-98.1":                {Vendor: "zhipuai", FixedTarget: "glm-98.1", Evidence: "fixture#glm"},
+		"reviewed-proprietary-98": {Vendor: "anthropic", FixedTarget: "alias:reviewed-proprietary-98", Evidence: "fixture#claude"},
 	}
 }
 
@@ -142,12 +142,12 @@ func TestLunaRouteExecutedModelAccepted(t *testing.T) {
 		{"glm-98.1", "glm-98.2", false},
 		{"glm-98.1", "GLM-98.1", false},
 		{"glm-98.1", "", false},
-		{"claude-sonnet-98-lr1", "claude-sonnet-5-5", true},
-		{"claude-sonnet-98-lr1", "claude-sonnet-5-6", true},
-		{"claude-sonnet-98-lr1", "glm-5.3", false},
-		{"claude-sonnet-98-lr1", "gpt-6.1-sol", false},
-		{"claude-sonnet-98-lr1", "", false},
-		{"claude-sonnet-98-lr1", "opaque-id", false},
+		{"reviewed-proprietary-98", "claude-sonnet-5-5", true},
+		{"reviewed-proprietary-98", "claude-sonnet-5-6", true},
+		{"reviewed-proprietary-98", "glm-5.3", false},
+		{"reviewed-proprietary-98", "gpt-6.1-sol", false},
+		{"reviewed-proprietary-98", "", false},
+		{"reviewed-proprietary-98", "opaque-id", false},
 		{"unreviewed-1", "unreviewed-1", false},
 		{"", "", false},
 	} {
