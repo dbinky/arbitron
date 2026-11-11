@@ -142,8 +142,8 @@ type Deps struct {
 // (AgentProviderFor) dispatches on the BACKEND axis, NOT the provider
 // (org-readiness Phase 2): claude-code -> the claude-cli agent adapter (which
 // may now carry a non-claude connection; endpoint+key injected in the adapter),
-// opencode -> adapter/opencode, codex -> adapter/codex (subscription-only; no
-// key revealed, no AllowAllTools knob). There is no native-HTTP agent adapter,
+// opencode -> adapter/opencode, codex -> adapter/codex (keyed LunaRoute or
+// subscription; no AllowAllTools knob). There is no native-HTTP agent adapter,
 // so a provider's chat credentials/env flow through the HTTP adapter on the chat
 // path but through the subprocess env on the agent path — the two opencode paths
 // must agree on the provider vocabulary (see domprovider.Canonicalize), which is
@@ -270,7 +270,7 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 //
 //   - claude-code -> the claude-cli AgentAdapter.
 //   - opencode    -> adapter/opencode, with the binding's per-provider env.
-//   - codex       -> adapter/codex (`codex exec`), subscription-only (NO key).
+//   - codex       -> adapter/codex (`codex exec`), keyed LunaRoute or subscription.
 //   - "" (unset) / any other value -> ErrUnknownBackend (fail-closed; never a
 //     silent fallback). The deployment default is owned by ONE place — the config
 //     floor (adapter/config loader) — and is applied by the AgentCallExecutor
@@ -318,11 +318,9 @@ func (f *Factory) agentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			CapabilityRules:  f.deps.CapabilityRules,
 		}), nil
 	case workflow.BackendCodex:
-		// Subscription-only: codex authenticates via its on-disk ~/.codex/auth.json,
-		// so NO key is revealed and NO AllowAllTools knob exists — `codex exec` runs
-		// under the fixed v1 fully-open posture (--dangerously-bypass-approvals-and-
-		// sandbox, documented in the spec's risk section). The binding's provider is
-		// ignored on this arm; only its Model reaches the subprocess.
+		// LunaRoute uses guarded credentials and a private CODEX_HOME; all other
+		// routes keep subscription authentication and ignore the connection key.
+		// Both use the fixed v1 bypass posture, with no AllowAllTools knob.
 		return codex.New(codex.Config{
 			Binding:          b,
 			BinaryPath:       f.deps.CodexBinaryPath,
@@ -335,7 +333,7 @@ func (f *Factory) agentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			CapabilityRules: f.deps.CapabilityRules,
 		}), nil
 	case workflow.BackendPi:
-		// Key-authenticated and multi-provider (unlike codex): the binding's
+		// Key-authenticated and multi-provider: the binding's
 		// provider selects which credential env var carries the revealed key, and
 		// an unknown provider fails the mission closed rather than letting pi fall
 		// back to a key from its own config or the ambient shell. Effort rides

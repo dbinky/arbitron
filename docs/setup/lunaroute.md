@@ -71,8 +71,8 @@ Rules enforced at save and before launch:
 - Non-default `effort` needs per-model evidence for the selected chat/backend
   axis and an exact emission path. OpenCode has no non-default effort emission.
   Unsupported settings fail rather than being dropped or rounded.
-- Enabled agent backends are `claude-code` and `opencode`;
-  **codex and pi are not yet enabled** for LunaRoute.
+- Enabled agent backends are `claude-code`, `opencode` and `codex`;
+  **codex is enabled for keyed LunaRoute routes; pi is not yet enabled**.
 
 Live backend/helper verification and whole-release readiness remain pending.
 Offline enablement and accepted profile examples do not claim live completion;

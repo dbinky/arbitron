@@ -97,7 +97,7 @@ func TestLunaRouteAgentProfileSaveWiring(t *testing.T) {
 		{"tier", "glm-5.3", "claude-code", "context_window", "200k", "Claude-native switch"},
 		{"effort", "glm-5.3", "opencode", "effort", "low", "no exact emission on opencode"},
 		{"pi", "glm-5.3", "pi", "", "", "LunaRoute on pi not yet supported"},
-		{"codex", "glm-5.3", "codex", "", "", "LunaRoute on codex not yet supported"},
+		{"codex", "glm-5.3", "codex", "effort", "none", "no exact emission on codex"},
 		{"numeric", "glm-999.9", "opencode", "", "", "reviewed fixed LunaRoute id"},
 		{"revoked", "claude-sonnet-5-lr1", "claude-code", "", "", "reviewed fixed LunaRoute id"},
 	} {

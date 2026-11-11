@@ -578,7 +578,8 @@ func (b *pathBuilder) add(p provider.Profile, backend, mode string, kind provide
 }
 
 // routeBinding retains actual connection metadata, never the follow target.
-// Codex authenticates independently and must never reveal a connection key; LunaRoute bindings are guarded.
+// Subscription codex never reveals a connection key; LunaRoute bindings,
+// including codex, reveal only through the credential guard.
 func routeBinding(p provider.Profile, backend string, conn provider.Connection, store provider.ConnectionStore) provider.ResolvedBinding {
 	b := provider.ResolvedBinding{
 		Kind: p.Kind, Provider: ProviderClaudeCLI, Model: p.Model, Backend: backend,
@@ -592,14 +593,12 @@ func routeBinding(p provider.Profile, backend string, conn provider.Connection, 
 		for k, v := range conn.Extras {
 			b.Extras[k] = v
 		}
-		if backend != workflow.BackendCodex {
+		if backend != workflow.BackendCodex || provider.IsLunaRoute(conn.Provider) {
 			b.RevealKey = func(ctx context.Context) (string, error) { return store.Reveal(ctx, p.ConnectionRef) }
 		}
 	} else if backend == workflow.BackendCodex {
 		b.Provider = ""
 	}
-	// The codex no-op reveal above fails closed for LunaRoute until its
-	// authenticated backend path is enabled in phase 4.
 	return provider.GuardLunaRouteReveal(b)
 }
 

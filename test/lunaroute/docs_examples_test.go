@@ -177,7 +177,7 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 		{"numeric unreviewed", func(p *docProfile) { p.Model = "glm-999.9" }, provider.ErrSpecificVersionUnavailable},
 		{"revoked alias", func(p *docProfile) { p.Model = "claude-sonnet-5-lr1" }, provider.ErrSpecificVersionUnavailable},
 		{"weights name", func(p *docProfile) { p.Model = "deepseek-4.1-flash-1017" }, provider.ErrSpecificVersionUnavailable},
-		{"codex disabled", func(p *docProfile) { p.Backend = "codex" }, provider.ErrLunaRouteBackendUnsupported},
+		{"codex effort none", func(p *docProfile) { p.Backend = "codex"; p.Effort = "none" }, provider.ErrLunaRouteAxisUnsupported},
 		{"pi disabled", func(p *docProfile) { p.Backend = "pi" }, provider.ErrLunaRouteBackendUnsupported},
 		{"implicit backend", func(p *docProfile) { p.Backend = "" }, provider.ErrLunaRouteBackendRequired},
 		{"following", func(p *docProfile) { p.SelectionMode = "following" }, provider.ErrInvalidSelection},
@@ -208,6 +208,9 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 			require.ErrorIs(t, validateLunaRouteDocProfile(p, caps), provider.ErrLunaRouteIncompatible)
 		})
 	}
+	p := profiles[1]
+	p.Backend = "codex"
+	require.NoError(t, validateLunaRouteDocProfile(p, docFixtureCaps()))
 	for _, backend := range []string{"claude-code", "opencode"} {
 		p := profiles[1]
 		p.Backend = backend
@@ -234,7 +237,7 @@ func TestLunaRouteGuideExamplesAreValid(t *testing.T) {
 	assert.True(t, backends["claude-code"] && backends["opencode"])
 	for _, text := range []string{
 		"claude-code and opencode need known context and output limits",
-		"codex and pi are not yet enabled",
+		"codex is enabled for keyed LunaRoute routes; pi is not yet enabled",
 		"claude-*-lr* aliases are refused and never classified as Anthropic",
 		"Live backend/helper verification and whole-release readiness remain pending",
 		"sources/lr02-live-models-2026-11-11.json",

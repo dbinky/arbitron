@@ -1051,7 +1051,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		Runner:            modelDeps.Runner,
 		OpencodeTimeout:   time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH
+		// Codex (keyed LunaRoute or subscription): binary auto-resolved from PATH
 		// (CodexBinaryPath left empty, mirroring opencode); the per-mission timeout
 		// reuses the shared LLM timeout floor. No allow-all knob: codex runs under
 		// the fixed v1 bypass posture (see adapter/codex args.go).

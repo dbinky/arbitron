@@ -32,6 +32,7 @@ var ErrLunaRouteModelSpelling = fmt.Errorf("%w: %w: use a reviewed fixed LunaRou
 var lunaRouteEnabledBackends = map[string]bool{
 	workflow.BackendClaudeCode: true,
 	workflow.BackendOpencode:   true,
+	workflow.BackendCodex:      true,
 }
 
 // LunaRouteBackendEnabled reports whether backend may carry LunaRoute routes.

@@ -50,11 +50,18 @@ func TestRouteBinding_GuardsLunaRouteReveal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "lr_live_ok", key)
 
-	// Codex reveal stays suppressed until Phase 4; the guard fails it closed.
+	// Keyed LunaRoute codex reveals lazily through the same credential guard.
 	cb := routeBinding(p, workflow.BackendCodex, store.conn, store)
-	_, err = cb.RevealKey(context.Background())
+	assert.Equal(t, 2, store.calls)
+	key, err = cb.RevealKey(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "lr_live_ok", key)
+	assert.Equal(t, 3, store.calls)
+	store.key = "sk-or-v1-foreign"
+	key, err = cb.RevealKey(context.Background())
 	require.ErrorIs(t, err, domprovider.ErrLunaRouteStoredCredential)
-	assert.Equal(t, 2, store.calls, "codex never asks the store")
+	assert.Empty(t, key)
+	assert.Equal(t, 4, store.calls)
 
 	or := domprovider.Connection{Name: "or", Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}
 	orStore := &lrConnStore{conn: or, key: "sk-or-v1-x"}

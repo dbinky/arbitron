@@ -167,10 +167,9 @@ func ValidatePinRoutes(ctx context.Context, p Profile, requests []VersionRequest
 				return "", err
 			}
 		}
-		// Codex agent dispatch authenticates via its subscription, ignoring the
-		// profile's connection. That connection cannot grant a D8 exception or
-		// impose its native provider's version grammar on the subscription.
-		if p.Kind == ProfileKindAgent && request.Backend == "codex" {
+		// Non-LunaRoute codex uses its subscription, ignoring the connection.
+		// Keyed LunaRoute routes keep their provider and fixed-id grammar.
+		if p.Kind == ProfileKindAgent && request.Backend == "codex" && !IsLunaRoute(request.RouteProvider) {
 			request.RouteProvider = ""
 			request.ConnectionRef = ""
 		}
