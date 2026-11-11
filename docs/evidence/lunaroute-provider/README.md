@@ -81,6 +81,70 @@ Only schema, safe routing/model ids, status and terminal/content booleans are
 retained, never response text, auth values or environment dumps. A rejected
 payload must be fixed at its producer, not truncated or written elsewhere.
 
+## Isolated inference capture tooling (P2-T9)
+
+Run the offline tooling gates (no real key or installed backend required):
+
+```sh
+go test ./test/lunaroute -run Capture -count=1
+go test -race ./test/lunaroute -run Capture -count=1
+```
+
+`startInferenceCapture(t, runID, backend, syntheticConnectionHandle, key)` starts
+an owner-private loopback CONNECT proxy for **only** `gw.lunaroute.com:443`.
+Its temporary CA signs only that host. The live upstream is fixed HTTPS with
+normal certificate verification, no ambient proxy and no redirect following.
+Request headers/bodies, response bodies, records and exchange durations are
+bounded. TLS/read/schema/cap failures poison the whole observation; they cannot
+silently drop an unsuccessful exchange while retaining earlier successes.
+
+For an isolated backend experiment, resolve the installed executable's absolute
+path, then pass `capture.WrapBinary(t, absoluteBinary)` to the experiment's
+runner. The launcher preserves argv/stdin/cwd and the production adapter's
+environment; it replaces proxy/CA settings and clears conflicting bypasses.
+It never writes a shared config, auth store or trust store. The launcher, CA and
+private directory are removed by `Close` and test cleanup, including failed
+launches. Do not disable TLS verification. Each installed runtime must actually
+prove its own proxy/trust support; a fixture runtime's success proves tooling,
+not Claude Code, OpenCode, Codex or Pi support. Go's macOS system verifier, for
+example, does not automatically honor `SSL_CERT_FILE`.
+
+Read `Records()` after terminal process completion; it waits for in-flight
+exchanges to drain. Records contain synthetic run/request/connection handles,
+method/host/path, selected and **reported** model ids, auth header **names** and
+a match boolean, timestamps and terminal/failure flags. They contain no auth
+values, hashes, prompts, tool arguments/results, raw response bodies or stderr.
+`extractCapturedResponse` is the shared bounded JSON/SSE extractor for Messages,
+chat completions and Responses (including `response.model`); an absent reported
+model stays absent. A successful capture is routing evidence only: the owning
+experiment must independently assert the finished tool task and workspace sink.
+
+Helper evidence additionally requires the backend experiment's actual forced
+operation/lifecycle parser. Feed its current run/backend, operation/session id,
+trigger, source/version, time interval and exact observed request ids through
+`CorrelateOperation`. Missing/unknown references, stale runs and self-labelled
+helper categories are refused by `validateCapturedInference`. A lifecycle
+fixture tests correlation mechanics only; it is not evidence that an installed
+binary performed compaction, review, a subagent or another helper operation.
+
+Before calling `writeObservation`, require
+`validateCapturedInference(records, selectedModel, requiredCategories)` to pass.
+It rejects empty traffic, mismatched auth/routes, missing helpers, mixed runs,
+duplicate requests, nonterminal responses and unreported/mismatched models.
+Fixed selections require exact reported spelling; reviewed aliases require the
+reviewed vendor and retain observed drift. An observation must still pass the
+shared credential-free JSON writer. Never publish failed/partial records as a
+verified contract or populate backend support from these offline fixtures.
+
+**Consumer wiring is pending:** P2-T8 must feed the actual live HTTP response
+through this extractor (or its transport through the proxy); P3-T5/P4-T1 must
+supply real isolated binary launches and forced lifecycle producers; P4-T7 must
+install the wrappers on its isolated PATH/Claude binary config and consume the
+current MCP run's nonempty correlated records. Those experiments are not yet
+implemented. No live capture artifact or LR verification is claimed here.
+After any binary/version change, rerun its complete owning contract experiment
+and the current MCP matrix, including required helpers, before reusing evidence.
+
 ## Release enforcement
 
 Local missing live inputs explicitly skip with readiness pending. Release mode
