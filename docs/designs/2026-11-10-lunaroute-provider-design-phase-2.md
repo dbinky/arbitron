@@ -93,7 +93,7 @@ classifier, capability table, error classifier).
   an optional structured error-classification hook (status, bounded body,
   transport error, operation); inject the LunaRoute classifier in its factory
   arm. Apply it to `Chat` and `StreamChat`, including immediate and channel
-  errors, body-read/decode failures and structured SSE error frames. Verified codes must be
+  errors, Retry-After response headers, body-read/decode failures and structured SSE error frames. Verified codes must be
   decoded from recorded operation-specific schemas and supplied to the classifier; a permanently
   empty Code input is inert wiring. The existing `statusError` only returns `ErrUpstreamStatus`;
   parsing
@@ -223,8 +223,7 @@ fixture success never flips a decided external contract to `verified`.
   doubled `/v1`); chat posts to `<root>/v1/chat/completions` with no OpenRouter
   headers; CLI `connection validate` lists LunaRoute models; agent wrapper is a
   pure pass-through on success (fake probe asserts zero calls).
-- **Failure:** 401 → credentials rejected; verified unknown-model code / missing
-  model in successful listing → model unavailable; bare listing 404 → cause unknown;
+- **Failure:** 401 → credentials rejected; missing model in an authoritative successful listing → model unavailable; bare listing 404 → cause unknown;
   429 → busy; 503 → service failure; teapot/unknown status → cause unknown;
   non-admin discovery → forbidden; unknown connection → not found.
 - **Error:** transport error / TLS failure → service failure; oversized body →

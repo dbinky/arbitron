@@ -147,10 +147,11 @@ proprietary alias remains, LR-03 becomes `escalated`.
   `data[].id`. The listing request sends Bearer auth and **neither**
   `anthropic-version` **nor** `X-LunaRoute-Client`. The P2-T8 live run must
   confirm the `data` wrapper. A listing without it is a decode failure, which
-  maps to `ErrLunaRouteCauseUnknown`.
+  maps to `ErrLunaRouteServiceFailure` (malformed protocol), preserving the decoder error; never an empty catalog.
 - Error body: accept the error object both bare (`{"error":{"code":…}}` /
   top-level `code`) and wrapped (`{"type":"error","error":{…}}`). Read only
-  `error.code` (and `error.type` for observations). Never surface messages.
+  `error.code` (or top-level `code` for a bare error object; contradictory codes are unknown) and
+  `error.type` for observations. Never surface messages.
 - `domain/provider/lunaroute_classify.go:lunaRouteVerifiedCodes` ships with
   exactly these documented codes, for **every** operation (listing, chat,
   agent):

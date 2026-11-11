@@ -258,3 +258,9 @@ runs the existing same-vendor safeguard rejection; saved profiles, model pins, e
 slices or skipped tests are insufficient. All eight LR items are decided
 (`2026-11-10-lunaroute-provider-decisions.md`); each stays `decided` (not release-ready) until its
 verification artifacts exist and the owning tasks have applied it to runtime sources.
+
+## Plan-owned observation and reported-identity producers
+
+P2-T9 produces `test/lunaroute/capture_test.go` and its isolated TLS observation proxy/wrappers; P3-T5/P4-T1 supply forced, correlated helper operations and P4-T7 observes current real MCP runs. No capture changes the production endpoint/credential policy. Missing traffic or response-model evidence fails verification. `engine.AgentResult.ModelEvidence` (P2-T5) is populated from each backend's verified records by P3-T1/T2/P4-T2/T4 and persisted by AgentCallExecutor in `LLMConversation.model_evidence`; configured Model and pins do not substitute for reported identities or alias drift. A codex turn_context is explicitly labelled harness intent, with gateway response evidence collected separately.
+
+Independent contract observations precede enablement; final register `verified` status also requires production application and follows it. Therefore an enabling task never depends on a register label requiring that same task to have completed. Each live collection task owns its scoped capabilities.default.yaml support-fact update; source notes and skipped runs cannot populate support.

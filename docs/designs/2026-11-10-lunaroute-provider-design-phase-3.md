@@ -204,3 +204,9 @@ harmless. If OpenCode requires model metadata, its Config consumes the shared ca
 through Factory and its root test checks the emitted values. The Claude terminal modelUsage check
 must reject nonselected helper models on LunaRoute while preserving existing non-LunaRoute
 behavior. Sink tests cover both backends' failed-run diagnosis, not only successful env emission.
+
+## Plan-owned observation and reported-identity producers
+
+P2-T9 produces `test/lunaroute/capture_test.go` and its isolated TLS observation proxy/wrappers; P3-T5/P4-T1 supply forced, correlated helper operations and P4-T7 observes current real MCP runs. No capture changes the production endpoint/credential policy. Missing traffic or response-model evidence fails verification. `engine.AgentResult.ModelEvidence` (P2-T5) is populated from each backend's verified records by P3-T1/T2/P4-T2/T4 and persisted by AgentCallExecutor in `LLMConversation.model_evidence`; configured Model and pins do not substitute for reported identities or alias drift. A codex turn_context is explicitly labelled harness intent, with gateway response evidence collected separately.
+
+Independent contract observations precede enablement; final register `verified` status also requires production application and follows it. Therefore an enabling task never depends on a register label requiring that same task to have completed. Each live collection task owns its scoped capabilities.default.yaml support-fact update; source notes and skipped runs cannot populate support.

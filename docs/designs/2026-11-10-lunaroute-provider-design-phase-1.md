@@ -240,13 +240,11 @@ permanent absence from models.dev or let a later catalog refresh auto-select one
 - **Classifier contract:** (operation, HTTP status, verified gateway error code
   if any, transport error, redacted diagnostic text) → one sentinel, carrying a scrubbed
   bounded snippet; never key material.
-  Mapping: 401 or a verified invalid-key code → credentials; a verified
-  unknown-model code or an authoritative successful listing missing the selected
+  Mapping: 401 or a verified invalid-key code → credentials; an authoritative successful listing missing the selected
   model → model unavailable; 429 → service busy; 5xx/transport → service failure.
   A bare 404 from `/models` means a failed listing, not an unavailable selected
   model; unrecognised 403/404/400 causes remain unknown. Endpoint/operation
-  context is therefore also an input. Verified incompatibility codes map to the
-  compatibility sentinel; do not guess codes from prose.
+  context is therefore also an input. Only the LR-04 documented code table refines status mapping, including non-retryable request refusal; never invent unknown-model/incompatibility codes from prose. Gateway messages are not surfaced. Retry-After is preserved as normalized guidance for busy responses, with an actual header producer in probe/chat.
 - Control scrubbing is not secret redaction. Redact the revealed key and auth
   material before truncation in all errors/snippets. Existing
   `adapter/procenv/httpx.go:StatusSnippet` only caps/scrubs controls; it cannot
