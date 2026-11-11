@@ -43,6 +43,8 @@ type BackendCapability struct {
 // startup).
 type CapabilityRules struct {
 	byBackend map[string]BackendCapability
+	// lunaroute is the curated per-model table (lunaroute_capability.go).
+	lunaroute map[string]LunaRouteModel
 }
 
 // NewCapabilityRules constructs a CapabilityRules from a per-backend map. The
