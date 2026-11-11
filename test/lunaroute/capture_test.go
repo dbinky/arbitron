@@ -41,7 +41,7 @@ const (
 
 var errCaptureInvalid = errors.New("inference capture incomplete or invalid")
 
-// These are the only fields retained from the credential-bearing exchange.
+// These are the only fields persisted from the credential-bearing exchange.
 // Operation is supplied by the backend-specific lifecycle parser, never inferred
 // from a user label, argv, configured model or a successful process exit.
 type capturedInference struct {
@@ -89,6 +89,7 @@ type inferenceCapture struct {
 	drained                         *sync.Cond
 	active                          int
 	records                         []capturedInference
+	openCodeTitles                  map[string]string // private response text, never serialized
 	failed                          bool
 	closed                          bool
 	nextID                          int
@@ -451,6 +452,20 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		finish("response_schema")
 		return false
 	}
+	if c.backend == "opencode" && r.URL.Path == "/v1/chat/completions" && isOpenCodeTitleRequest(body) {
+		title, err := openCodeTitleResponse(buffer.Bytes(), stream)
+		if err != nil {
+			c.fail()
+			finish("title_schema")
+			return false
+		}
+		c.mu.Lock()
+		if c.openCodeTitles == nil {
+			c.openCodeTitles = make(map[string]string)
+		}
+		c.openCodeTitles[record.RequestID] = title
+		c.mu.Unlock()
+	}
 	record.ReportedModels = models
 	record.Completed = true
 	finish("")
@@ -579,7 +594,10 @@ func (c *inferenceCapture) Close() error {
 			c.transport.CloseIdleConnections()
 		}
 		c.wg.Wait()
+		c.mu.Lock()
 		c.key = ""
+		c.openCodeTitles = nil
+		c.mu.Unlock()
 		if c.dir != "" && os.RemoveAll(c.dir) != nil {
 			c.closeErr = errors.New("cannot remove private capture files")
 		}

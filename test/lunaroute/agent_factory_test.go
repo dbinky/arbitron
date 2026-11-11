@@ -24,13 +24,17 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	bins := t.TempDir()
+	titleSystem, err := os.ReadFile(filepath.Join(repoRoot(t), evidencePath, "sources/lr06-title-prompt.txt"))
+	require.NoError(t, err)
 	var fixtureStarted time.Time
 	var firstRequest sync.Once
 	c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
 		firstRequest.Do(func() { fixtureStarted = time.Now().UTC() })
 		var body struct {
 			Model    string `json:"model"`
+			Stream   bool   `json:"stream"`
 			Messages []struct {
+				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
@@ -38,12 +42,48 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 		if backend == "opencode" {
 			path = "/v1/chat/completions"
 		}
-		if r.Method != "POST" || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer "+captureFixtureKey || json.NewDecoder(r.Body).Decode(&body) != nil || body.Model != "glm-5.3" || len(body.Messages) != 1 || body.Messages[0].Content != agentMissionPromptFor(backend) {
+		if r.Method != "POST" || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer "+captureFixtureKey || json.NewDecoder(r.Body).Decode(&body) != nil || body.Model != "glm-5.3" {
 			t.Error("Factory mission did not feed authenticated model/prompt to inference")
 			w.WriteHeader(400)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if backend == "opencode" && len(body.Messages) == 3 {
+			prompt := agentMissionPromptFor(backend)
+			if mode == "correlation-title-prompt" {
+				prompt = "unrelated mission"
+			}
+			if body.Messages[0].Role != "system" || body.Messages[0].Content != string(titleSystem) || body.Messages[1].Role != "user" || body.Messages[1].Content != openCodeTitlePrefix || body.Messages[2].Role != "user" || body.Messages[2].Content != prompt || body.Stream != (mode == "correlation-title-stream") {
+				t.Error("title fixture received incorrect source prefix or mission history")
+				w.WriteHeader(400)
+				return
+			}
+			title := "<think>private reasoning</think>\\n Private fixture title \\nignored"
+			if mode == "correlation-title-empty" {
+				title = " "
+			}
+			if mode == "correlation-title-secret" {
+				title = captureFixtureKey
+			}
+			titleModel := "glm-5.3"
+			if mode == "correlation-title-model" {
+				titleModel = "glm-5.3-flash"
+			}
+			if mode == "correlation-title-stream" {
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, "data: {\"model\":\"glm-5.3\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Private fixture title\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			} else if mode == "correlation-title-malformed" {
+				io.WriteString(w, `{"model":"glm-5.3","choices":[`)
+			} else {
+				io.WriteString(w, `{"model":"`+titleModel+`","choices":[{"index":0,"message":{"content":"`+title+`"},"finish_reason":"stop"}]}`)
+			}
+			return
+		}
+		if len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content != agentMissionPromptFor(backend) {
+			t.Error("Factory mission did not feed exact user prompt")
+			w.WriteHeader(400)
+			return
+		}
 		if backend == "opencode" {
 			if err := writeFactorySubagentExports(root, mode, fixtureStarted); err != nil {
 				t.Error("cannot write private lifecycle fixtures")
@@ -136,6 +176,16 @@ case '@MODE@' in correlation-*)
  parent=ses_factory
  if [ '@MODE@' = correlation-parent ]; then parent=ses_other; fi
  /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H 'X-Opencode-Session-Id: ses_child' -H "X-Opencode-Parent-Session-Id: $parent" -d '{"model":"glm-5.3","messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+ if [ '@MODE@' != correlation-title-missing ]; then
+  title_session=ses_factory
+  if [ '@MODE@' = correlation-title-session ]; then title_session=ses_other; fi
+  title_count=1
+  if [ '@MODE@' = correlation-title-duplicate ]; then title_count=2; fi
+  while [ "$title_count" -gt 0 ]; do
+   /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Opencode-Session-Id: $title_session" -d @TITLE_BODY@ "https://gw.lunaroute.com/v1/$path" >/dev/null
+   title_count=$((title_count-1))
+  done
+ fi
  sleep 1
  ;; esac
 if [ '@MODE@' != missing-file ]; then printf LUNAROUTE-OK > lunaroute-proof.txt; fi
@@ -154,7 +204,13 @@ fi
 	if backend == "opencode" {
 		body, name = opencode, "opencode"
 	}
-	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@MODE@", mode).Replace(common + body + finish)
+	titlePrompt := agentMissionPromptFor("opencode")
+	if mode == "correlation-title-prompt" {
+		titlePrompt = "unrelated mission"
+	}
+	titleBody, err := json.Marshal(map[string]any{"model": "glm-5.3", "stream": mode == "correlation-title-stream", "messages": []map[string]string{{"role": "system", "content": string(titleSystem)}, {"role": "user", "content": openCodeTitlePrefix}, {"role": "user", "content": titlePrompt}}})
+	require.NoError(t, err)
+	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

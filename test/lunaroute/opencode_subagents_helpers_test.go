@@ -24,6 +24,7 @@ type openCodeSessionExport struct {
 	Info struct {
 		ID       string `json:"id"`
 		ParentID string `json:"parentID"`
+		Title    string `json:"title"`
 	} `json:"info"`
 	Messages []struct {
 		Info struct {
@@ -270,6 +271,9 @@ func (r openCodeSubagentsRunner) Run(ctx context.Context, spec claudecli.RunSpec
 		if r.capture != nil && correlateOpenCodeSubagent(r.capture, task, proof, version) != nil {
 			return fail()
 		}
+	}
+	if r.capture != nil && correlateOpenCodeTitle(r.capture, []byte(strings.Join(lines, "\n")), spec.Args[1], values.Model, version, r.startedAt) != nil {
+		return fail()
 	}
 	output := make(chan string, len(lines))
 	for _, line := range lines {

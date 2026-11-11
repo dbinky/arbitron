@@ -315,9 +315,9 @@ synthetic: they do not establish installed-helper completion or captured helper
 routing, and no completed-agent artifact is published.
 
 R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
-Remaining offline work includes actual-request correlation/version provenance
-for the OpenCode subagent lifecycle, the other applicable helper lifecycles and
-Claude same-emitted-env effective-control collection. P3-T5 still owns those producers
+OpenCode subagent and first-conversation title correlation/version provenance
+now exist offline. Remaining work includes the other applicable helper
+lifecycles and Claude same-emitted-env effective-control collection. P3-T5 still owns those producers
 and the real live entry points; a main-only mission cannot publish a completed
 agent observation. Operator live runs additionally need a private key and
 explicit canonical models (R6); absence of those inputs does not block offline
@@ -394,6 +394,25 @@ tooling. P4-T2–T5 have implemented and wired the production adapters offline p
 R6; readiness still requires genuine observations. P4-T1's missing source-backed
 helper/effective-control collectors prevent complete live entry points, not the
 already implemented emitters. P4-T7 owns final MCP completion evidence.
+
+### OpenCode captured-title correlation (partial P3-T5)
+
+The captured experiment Factory also requires the actual first-conversation
+`ensureTitle` exchange and its matching exported root-session title. The proxy
+recognizes the versioned system/user wire signature with the exact mission
+history, validates terminal JSON/SSE and keeps normalized title text only in
+private memory. Same-run session, selected request/reported models, auth and
+same-executable version must agree before the request is marked `title`.
+Main traffic cannot stand in for the title request. Missing, duplicated,
+substituted, unsafe or nonmatching evidence refuses publication despite valid
+files and subagent completion. Close discards the private comparison material.
+
+See [the title lifecycle source note](sources/lr06-title-lifecycle.md) and run
+`go test ./test/lunaroute -run TestAgentEvidenceOpenCodeTitle -count=1`.
+Factory protocol fixtures reach the final private JSON sink, not merely an
+intermediate config field. They are not installed-binary observations and do
+not establish support or readiness. Applicable compaction/other helpers and
+Claude controls/helpers still need collectors before complete live entry points.
 
 ### OpenCode captured-subagent correlation (partial P3-T5)
 

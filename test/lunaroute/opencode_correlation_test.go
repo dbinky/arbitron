@@ -166,7 +166,7 @@ func TestAgentEvidenceOpenCodeSubagentCorrelatedFactoryPublication(t *testing.T)
 			config, marshalErr := json.Marshal(agentConfigReference{RunID: "run-one", Backend: "opencode", Model: "glm-5.3", SessionID: "ses_factory", Source: "fixture effective controls"})
 			require.NoError(t, marshalErr)
 			require.NoError(t, os.WriteFile(filepath.Join(root, ref), config, 0600))
-			input := agentEvidenceInput{RunID: "run-one", Backend: "opencode", Model: "glm-5.3", Version: "1.19.5", ConfigRef: ref, StartedAt: started, FinishedAt: time.Now().UTC(), RequiredCategories: []string{"main", "subagent"}, Records: capture.Records(), Result: result}
+			input := agentEvidenceInput{RunID: "run-one", Backend: "opencode", Model: "glm-5.3", Version: "1.19.5", ConfigRef: ref, StartedAt: started, FinishedAt: time.Now().UTC(), RequiredCategories: []string{"main", "subagent", "title"}, Records: capture.Records(), Result: result}
 			if err == nil {
 				err = publishAgentEvidence(root, root, captureFixtureKey, "factory-correlated.json", input)
 			}
@@ -182,7 +182,9 @@ func TestAgentEvidenceOpenCodeSubagentCorrelatedFactoryPublication(t *testing.T)
 			require.NoError(t, err)
 			var obs agentTaskObservation
 			require.NoError(t, json.Unmarshal(raw, &obs))
-			require.Len(t, obs.Inference, 2)
+			require.Len(t, obs.Inference, 3)
+			assert.Equal(t, "title", obs.Inference[2].Category)
+			assert.Equal(t, openCodeTitleSource, obs.Inference[2].Operation.Source)
 			assert.True(t, obs.Completed && obs.CommandOK && obs.FileOK)
 			assert.Equal(t, "ses_child", obs.Inference[1].SessionID)
 			assert.Equal(t, "ses_factory", obs.Inference[1].Operation.Session)

@@ -54,8 +54,15 @@ func writeFactorySubagentExports(root, mode string, started time.Time) error {
 	subagentChildInfo(child)["time"] = map[string]any{"created": now - 2, "completed": now - 1}
 	parent["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": now - 4, "completed": now + 1}
 	if strings.HasPrefix(mode, "correlation-") {
+		parent["info"].(map[string]any)["title"] = "Private fixture title"
+		if mode == "correlation-title-drift" {
+			parent["info"].(map[string]any)["title"] = "Unrelated exported title"
+		}
+		if mode == "correlation-title-secret" {
+			parent["info"].(map[string]any)["title"] = captureFixtureKey
+		}
 		// The protocol executable waits until this synthetic task end before
-		// exporting. Its two real requests fall inside this fixture interval.
+		// exporting. Its main/child requests fall inside this fixture interval.
 		state["time"] = map[string]any{"start": started.UnixMilli(), "end": now + 500}
 		child["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": started.UnixMilli()}
 		subagentChildInfo(child)["time"] = map[string]any{"created": started.UnixMilli(), "completed": now}
