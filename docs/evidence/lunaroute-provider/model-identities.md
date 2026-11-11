@@ -72,5 +72,10 @@ spelling evidence or an explicit release-set revision; P1-T7 Step 2 remains
 blocked. An alias remains reviewed, so LR-03's no-alias escalation does not
 apply.
 
-P1-T11 still owns the remaining source preparation, capability facts, evidence
-register and live gateway verification; none is claimed here.
+P1-T11 rechecked the published bundle and all four candidate per-model pages
+on 2026-11-11 UTC: each per-model Markdown page returned 404. The model-doc
+source still cannot confirm the missing spellings. The two existing exact-id
+source confirmations above are retained, without promoting API examples to
+per-model capability facts. Capability review is in
+[model-capabilities.md](model-capabilities.md); the register tracks pending
+live verification separately.

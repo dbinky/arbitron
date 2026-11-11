@@ -1,0 +1,57 @@
+items:
+  LR-01:
+    title: Hosted destination and dialect/auth contract
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-01
+    evidence: [docs/evidence/lunaroute-provider/sources/lr01-gateway-docs.md]
+    escalation: ""
+    applied_to: []
+  LR-02:
+    title: Published per-model capability facts and completed task support
+    status: escalated
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-02
+    evidence: [docs/evidence/lunaroute-provider/model-capabilities.md]
+    escalation: "Model docs publish none of the required per-model limits/reasoning for the release candidates; per-model pages return 404. No reviewed release model can supply Claude Code/OpenCode/Pi metadata. Keep those backends refused; obtain authoritative model documentation or a revised source decision before readiness."
+    applied_to: []
+  LR-03:
+    title: Reviewed executable identities and alias vendor evidence
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-03
+    evidence: [docs/evidence/lunaroute-provider/model-identities.md]
+    escalation: ""
+    applied_to: []
+  LR-04:
+    title: Listing envelope and documented gateway codes
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-04
+    evidence: [docs/evidence/lunaroute-provider/gateway-contract.md]
+    escalation: ""
+    applied_to: []
+  LR-05:
+    title: Claude Code selectors, isolation and helper routing
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-05
+    evidence: []
+    escalation: ""
+    applied_to: []
+  LR-06:
+    title: OpenCode overlay, limits and helper routing
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-06
+    evidence: []
+    escalation: ""
+    applied_to: []
+  LR-07:
+    title: Codex Responses overrides and private home
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-07
+    evidence: []
+    escalation: ""
+    applied_to: []
+  LR-08:
+    title: Pi provider metadata, relocation and helper routing
+    status: decided
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-08
+    evidence: []
+    escalation: ""
+    applied_to: []
