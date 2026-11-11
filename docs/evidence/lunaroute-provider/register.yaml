@@ -3,15 +3,15 @@ items:
     title: Hosted destination and dialect/auth contract
     status: decided
     decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-01
-    evidence: [docs/evidence/lunaroute-provider/sources/lr01-gateway-docs.md]
+    evidence: [docs/evidence/lunaroute-provider/sources/lr01-gateway-docs.md, docs/evidence/lunaroute-provider/observations/lr01-gateway-20261111T155705.865199000Z.json]
     escalation: ""
     applied_to: []
   LR-02:
     title: Published per-model capability facts and completed task support
-    status: escalated
+    status: decided
     decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-02
-    evidence: [docs/evidence/lunaroute-provider/model-capabilities.md]
-    escalation: "Model docs publish none of the required per-model limits/reasoning for the release candidates; per-model pages return 404. No reviewed release model can supply Claude Code/OpenCode/Pi metadata. Keep those backends refused; obtain authoritative model documentation or a revised source decision before readiness."
+    evidence: [docs/evidence/lunaroute-provider/model-capabilities.md, docs/evidence/lunaroute-provider/sources/lr02-live-models-2026-11-11.json]
+    escalation: ""
     applied_to: []
   LR-03:
     title: Reviewed executable identities and alias vendor evidence
@@ -24,7 +24,7 @@ items:
     title: Listing envelope and documented gateway codes
     status: decided
     decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-04
-    evidence: [docs/evidence/lunaroute-provider/gateway-contract.md]
+    evidence: [docs/evidence/lunaroute-provider/gateway-contract.md, docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json]
     escalation: ""
     applied_to: []
   LR-05:

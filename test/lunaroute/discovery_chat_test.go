@@ -109,7 +109,7 @@ func discoveryFixture(t *testing.T, failure string) (http.RoundTripper, *int) {
 				}
 			} else {
 				require.Equal(t, "glm-5.3", model)
-				assert.Equal(t, float64(64), req["max_tokens"])
+				assert.Equal(t, float64(1024), req["max_tokens"])
 				body = `{"model":"glm-5.3","choices":[{"finish_reason":"stop","message":{"content":"PONG"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`
 				switch failure {
 				case "no terminal":

@@ -5,6 +5,8 @@ approval**. `register.yaml` contains exactly LR-01 through LR-08. Source review
 on 2026-11-11 found unpublished model metadata and two unconfirmed identities.
 LR-02 is escalated; other items remain decided. No live credential was available.
 
+> **Superseded in part, 2026-11-11.** The LR-02 and LR-03 paragraphs below predate the operator's live session. See the decisions doc § Operator rulings: R2 makes the `/v1/models` snapshot the per-model source, and R3 sets the release ids and revokes the Claude-alias mapping.
+
 ## Collection and population
 
 1. Review the LunaRoute documentation, record source title, URL, access date and

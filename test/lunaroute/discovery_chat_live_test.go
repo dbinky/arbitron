@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	discoveryChatTokens     = 64
+	discoveryChatTokens     = 1024
 	discoveryNegativeTokens = 8
 )
 

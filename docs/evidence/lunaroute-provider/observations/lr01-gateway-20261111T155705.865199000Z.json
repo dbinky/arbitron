@@ -1,0 +1,104 @@
+[
+  {
+    "dialect": "models",
+    "path": "/v1/models",
+    "auth_header": "Authorization",
+    "status": 200,
+    "schema": {
+      "data": "array",
+      "object": "string"
+    },
+    "model_count": 15,
+    "terminal": false,
+    "has_content": false
+  },
+  {
+    "dialect": "chat",
+    "path": "/v1/chat/completions",
+    "auth_header": "Authorization",
+    "status": 200,
+    "model": "glm-5.3",
+    "reported_model": "glm-5.3",
+    "schema": {
+      "choices": "array",
+      "created": "number",
+      "id": "string",
+      "metadata": "object",
+      "model": "string",
+      "object": "string",
+      "usage": "object"
+    },
+    "model_count": 0,
+    "terminal": true,
+    "has_content": true
+  },
+  {
+    "dialect": "messages",
+    "path": "/v1/messages",
+    "auth_header": "Authorization",
+    "status": 200,
+    "model": "glm-5.3",
+    "reported_model": "glm-5.3",
+    "schema": {
+      "content": "array",
+      "id": "string",
+      "model": "string",
+      "role": "string",
+      "stop_reason": "string",
+      "type": "string",
+      "usage": "object"
+    },
+    "model_count": 0,
+    "terminal": true,
+    "has_content": true
+  },
+  {
+    "dialect": "responses",
+    "path": "/v1/responses",
+    "auth_header": "Authorization",
+    "status": 200,
+    "model": "glm-5.3",
+    "reported_model": "glm-5.3",
+    "schema": {
+      "created_at": "number",
+      "error": "null",
+      "id": "string",
+      "incomplete_details": "null",
+      "instructions": "null",
+      "max_output_tokens": "number",
+      "metadata": "object",
+      "model": "string",
+      "object": "string",
+      "output": "array",
+      "parallel_tool_calls": "boolean",
+      "previous_response_id": "null",
+      "reasoning": "object",
+      "status": "string",
+      "store": "boolean",
+      "temperature": "null",
+      "text": "null",
+      "tool_choice": "string",
+      "tools": "array",
+      "top_p": "null",
+      "truncation": "string",
+      "usage": "object",
+      "user": "null"
+    },
+    "model_count": 0,
+    "terminal": true,
+    "has_content": true
+  },
+  {
+    "dialect": "invalid-key",
+    "path": "/v1/models",
+    "auth_header": "Authorization",
+    "status": 401,
+    "schema": {
+      "error": "object"
+    },
+    "model_count": 0,
+    "terminal": false,
+    "has_content": false,
+    "error_code": "INVALID_API_KEY"
+  }
+]

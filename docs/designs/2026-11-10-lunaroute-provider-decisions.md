@@ -314,3 +314,87 @@ model, and user files must stay byte-identical.
 **On failure:** if relocation or the schema does not behave as documented,
 pi + LunaRoute stays refused, `~/.pi` is never written, and LR-08 becomes
 `escalated` for a new human decision. Pi is never dropped from scope.
+
+## Operator rulings — 2026-11-11
+
+These rulings come from the operator, a person, after a live session against the hosted gateway with a real `lr_` key.
+They **supersede** the conflicting parts of LR-02, LR-03 and LR-04 above. The key was never given to an agent and appears in no artifact.
+Implementers must follow these rulings over any earlier text in this document or in the plans.
+
+### R1 — LR-01 verified live
+
+`TestLiveGatewayContract` passed, and its observation is `docs/evidence/lunaroute-provider/observations/lr01-gateway-20261111T155705.865199000Z.json`. The test exercised:
+
+- the root `https://gw.lunaroute.com`;
+- `GET /v1/models` (200, `{"object":"list","data":[…]}`);
+- `POST /v1/chat/completions`, `/v1/messages` and `/v1/responses`, each completing with content on `glm-5.3`;
+- Bearer auth;
+- an invalid `lr_` key, which returns `401 INVALID_API_KEY`.
+
+### R2 — LR-02 source revised: the authenticated `/v1/models` entry is authoritative per-model metadata
+
+The model docs pages are unauthored (404), but the gateway's own authenticated listing serves the facts LR-02 asked for. A snapshot of the release models is at `docs/evidence/lunaroute-provider/sources/lr02-live-models-2026-11-11.json`. Each entry carries:
+
+- `context_window` and `max_input_tokens`;
+- `max_output_tokens` (`max_completion_tokens`);
+- `capabilities.{openai_chat, anthropic_messages, openai_responses, tools, reasoning, json_schema, vision}`;
+- `client_compat.pi` (`maxTokensField`, `supportsReasoningEffort`, `thinkingFormat`, `thinkingLevelMap`).
+
+The capability table is populated from these values. The README rule "Do not use `/v1/models` … as static capability evidence" is withdrawn for these fields. The LR-02 escalation is lifted, so LR-02 is **decided** and gets **verified** once the facts are applied. Static facts are recorded from the snapshot; nothing is fetched at runtime.
+
+| id | context | max output | tools | reasoning | chat / messages / responses |
+|---|---|---|---|---|---|
+| glm-5.3 | 524288 | 131072 | yes | yes | yes / yes / yes |
+| glm-5.3-flash | 524288 | 163840 | yes | yes | yes / yes / yes |
+| deepseek-4.1-flash | 1048576 | 262144 | yes | yes | yes / yes / yes |
+
+Tool calling was observed live. `glm-5.3` returned `finish_reason: tool_calls` with a well-formed `get_weather` call.
+
+### R3 — LR-03 release set and Claude-shaped aliases
+
+- **Release executable ids:** `glm-5.3`, `glm-5.3-flash` and `deepseek-4.1-flash`. Each is in the authenticated listing and completed a live chat call that returned `PONG`.
+  - The spelling is `deepseek-4.1-flash`. `deepseek-4.1-flash-1017` is **not** a served id; it is the upstream weights name in `weights_url`.
+  - Families: `glm-*` belongs to zhipuai and `deepseek-*` to deepseek, both by the existing family table.
+- **Claude-shaped aliases (`claude-<tier>-lrN`) are excluded from the executable set and must never classify as anthropic.** Live findings:
+  - `GET /v1/models` with `X-LunaRoute-Client: claude-desktop` maps them to open-weight models. For example, `claude-opus-lr29` is "GLM 5.3" and `claude-haiku-lr37` is "DeepSeek 4.1 Flash".
+  - The numeric suffixes are gateway-assigned and not stable.
+  - `claude-sonnet-5-lr1` returns `404 INFERENCE_MODEL_NOT_FOUND`.
+  - Consequence: the `claude-sonnet-5-lr1 → anthropic` mapping is **revoked**. Mapping these aliases to anthropic would let an open-weight model pass as Claude and defeat the cross-family doer≠approver rules.
+  - Every backend, Claude Code included, selects LunaRoute models by canonical id. `/v1/messages` serves `glm-5.3` directly, as verified in R1. Anything matching `claude-*-lr*` is refused at profile save with an actionable message.
+  - `claude-sonnet-5-lr1` remains useful only as the "reviewed-looking id absent from the listing" fixture.
+
+### R4 — LR-04 codes observed live (in addition to the documented table)
+
+| Case | Status | `error.code` | Classify as |
+|---|---|---|---|
+| no auth header | 401 | `MISSING_LUNAROUTE_HEADER` | credentials rejected |
+| invalid `lr_` key | 401 | `INVALID_API_KEY` | credentials rejected |
+| unknown or unavailable model on inference | 404 | `INFERENCE_MODEL_NOT_FOUND` | model unavailable |
+
+`INFERENCE_MODEL_NOT_FOUND` is a verified code. It may classify as model unavailable directly; the re-list check remains as corroboration.
+From the docs (2026-11-10):
+
+- `BYOK_SPEND_CAP_REACHED` and `MODEL_UNPRICED` are 429s with no `Retry-After`. They are **not** "busy" and are not retryable.
+- `CONCURRENT_REQUEST_LIMIT_EXCEEDED` (429, `Retry-After: 60`) is the chat-path busy code.
+- `INFERENCE_UNAVAILABLE`, `NO_HEALTHY_PROVIDER` and `PROVIDER_KEY_UNAVAILABLE` (503) are service failures.
+
+**Reasoning-model token floor.** These are reasoning models, and the reasoning is billed against `max_tokens`. With `max_tokens` 20 or 64, content came back empty (`finish_reason: length`, all reasoning) intermittently. Any probe, test or smoke call that needs content must allow at least 1024 output tokens. `discoveryChatTokens` was raised from 64 to 1024 for this reason. At 64 the live test failed 4 of 6 runs; at 1024 it passed 6 of 6.
+
+### R5 — P1-T10 contract conflict: existing tests win; the new checks apply to LunaRoute only
+
+The extra route checks from P1-T10 broke shipped (#84) behaviour for every provider. The affected areas:
+
+- **Following profiles:** route inspection before catalog selection, which fails on an empty model.
+- **Unchanged-selection edits:** they no longer skip route checks.
+- **Pinned creates:** extra route reads.
+- **MCP:** missing-port errors replaced catalog errors.
+
+**Ruling:** each new check applies **only when the profile's connection provider is `lunaroute`**. Profiles on every other provider keep the #84 behaviour exactly, and every existing test in `domain/provider` and `adapter/mcp` passes **unmodified**. LunaRoute has no older profiles, so a stricter LunaRoute-only path takes nothing away. Do not edit, loosen or skip the existing tests.
+
+### R6 — Live verification is operator-run; build first, verify live after
+
+Agents never receive a LunaRoute key, so no agent can run a live experiment. Therefore:
+
+1. Every task builds and tests its code offline: emitters, overlays, launch checks, parsers, enablement wiring and docs. Use the documented contract plus R1–R4. **A missing live observation is not a reason to skip building code.** This reverses the "evidence before emitters" ordering in P3-T1, P3-T2, P3-T5, P4-T1, P4-T2 and P4-T4.
+2. Release-readiness flags and register statuses stay gated. A backend is not **marked ready or verified** until its live observation exists. The code to enable it should exist and be tested offline, behind the readiness gate.
+3. A plan step that consists solely of running a live test is left unchecked, with the note `> OPERATOR-LIVE-PASS: pending operator run`. That is expected and is **not** a blocker for implementing anything else. The operator runs the live tests after implementation and commits the observations.
