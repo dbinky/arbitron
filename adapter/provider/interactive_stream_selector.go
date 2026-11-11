@@ -72,6 +72,12 @@ func (s *InteractiveStreamSelector) StreamProviderFor(b provider.ResolvedBinding
 	case provider.ProfileKindChat:
 		return s.chat.ChatProviderFor(b)
 	case provider.ProfileKindAgent:
+		// Refuse before backend defaulting: LunaRoute has no interactive agent
+		// path and must never reach a subscription stream adapter. Batch
+		// agent_call routes are unaffected.
+		if provider.IsLunaRoute(b.Provider) {
+			return nil, fmt.Errorf("%w: LunaRoute agent profiles have no interactive streaming path in this release (backend %q); use agent_call", ErrUnsupportedAgentBackend, b.Backend)
+		}
 		return s.agentStreamFor(b)
 	default:
 		return nil, fmt.Errorf("interactive stream: unknown profile kind %q", b.Kind)
