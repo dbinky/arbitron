@@ -159,9 +159,13 @@ func TestLunaRouteDiscoveryWiringEmbeddedDefaults(t *testing.T) {
 		for _, axis := range []string{"chat", "claude-code", "opencode", "codex"} {
 			assert.Equal(t, provider.EffortView{Levels: []string{}}, m.Efforts[axis])
 		}
-		for _, kind := range []string{"chat", "agent"} {
-			assert.Equal(t, provider.FactView{Support: "unknown"}, m.Tasks[kind])
+		chat := provider.FactView{Support: "unknown"}
+		if m.ID == "glm-5.3" {
+			chat = provider.FactView{Support: "supported", Evidence: "docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json"}
 		}
+		assert.Equal(t, chat, m.Tasks["chat"], "only the observed completed chat is supported")
+		assert.Equal(t, provider.FactView{Support: "unknown"}, m.Tasks["agent"])
+
 		for _, backend := range provider.LunaRouteBackends {
 			assert.Equal(t, provider.FactView{Support: "unknown"}, m.Backends[backend])
 		}

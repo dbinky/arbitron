@@ -126,6 +126,9 @@ func TestLunaRouteChatWiring(t *testing.T) {
 	}{
 		{401, `{"error":"bad key lr_live_chat"}`, provider.ErrLunaRouteCredentialsRejected.Error()},
 		{503, `{"error":"upstream down"}`, provider.ErrLunaRouteServiceFailure.Error()},
+		{400, `{"code":"MISSING_LUNAROUTE_HEADER","message":"lr_live_chat"}`, provider.ErrLunaRouteCredentialsRejected.Error()},
+		{404, `{"type":"error","error":{"code":"INFERENCE_MODEL_NOT_FOUND","message":"lr_live_chat"}}`, provider.ErrLunaRouteModelUnavailable.Error()},
+		{404, `{"code":"MODEL_NOT_FOUND"}`, provider.ErrLunaRouteCauseUnknown.Error()},
 		{429, `{"type":"error","error":{"code":"BYOK_SPEND_CAP_REACHED","message":"lr_live_chat"}}`, provider.ErrLunaRouteRequestRefused.Error()},
 	} {
 		before := len(gw.Requests())

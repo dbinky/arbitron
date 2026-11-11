@@ -27,10 +27,14 @@ const (
 
 const lunaRouteSnippetMax = 256
 
-// LR-04 (docs/designs/2026-11-10-lunaroute-provider-decisions.md). Availability
-// is the re-list's job: MODEL_NOT_FOUND and *_busy are deliberately absent.
+// LR-04 and operator ruling R4 (2026-11-11): documented plus live-observed
+// codes. INFERENCE_MODEL_NOT_FOUND establishes unavailability directly; a fresh
+// re-list corroborates it. MODEL_NOT_FOUND and *_busy remain deliberately absent.
 var lunaRouteDocumentedCodes = map[string]error{
-	"INVALID_API_KEY":                   ErrLunaRouteCredentialsRejected,
+	"INVALID_API_KEY": ErrLunaRouteCredentialsRejected,
+	// R4; docs/evidence/lunaroute-provider/gateway-contract.md#live-confirmation.
+	"MISSING_LUNAROUTE_HEADER":          ErrLunaRouteCredentialsRejected,
+	"INFERENCE_MODEL_NOT_FOUND":         ErrLunaRouteModelUnavailable,
 	"CONCURRENT_REQUEST_LIMIT_EXCEEDED": ErrLunaRouteBusy,
 	"INFERENCE_UNAVAILABLE":             ErrLunaRouteServiceFailure,
 	"NO_HEALTHY_PROVIDER":               ErrLunaRouteServiceFailure,

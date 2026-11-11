@@ -25,12 +25,15 @@ items:
     escalation: ""
     applied_to: []
   LR-04:
-    title: Listing envelope and documented gateway codes
-    status: decided
+    title: Listing envelope and documented plus R4-observed gateway codes
+    status: verified
     decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-04
     evidence: [docs/evidence/lunaroute-provider/gateway-contract.md, docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json]
     escalation: ""
-    applied_to: []
+    applied_to:
+      - domain/provider/lunaroute_classify.go:ClassifyLunaRoute
+      - adapter/probe/lunaroute.go:Probe
+      - adapter/provider/factory.go:ChatProviderFor
   LR-05:
     title: Claude Code selectors, isolation and helper routing
     status: decided

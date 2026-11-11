@@ -75,9 +75,12 @@ func TestProductionCapabilitySnapshot(t *testing.T) {
 		for _, axis := range []string{"chat", "claude-code", "opencode", "codex"} {
 			assert.False(t, m.Effort(axis).Known, "pi compatibility does not establish %s effort support", axis)
 		}
-		for _, kind := range []provider.ProfileKind{provider.ProfileKindChat, provider.ProfileKindAgent} {
-			assert.Equal(t, provider.SupportUnknown, m.Task(kind).Support, "metadata alone is not a completed task")
+		chat := provider.SupportFact{Support: provider.SupportUnknown}
+		if source.ID == "glm-5.3" {
+			chat = provider.SupportFact{Support: provider.SupportSupported, Evidence: evidencePath + "/observations/lr04-discovery-chat.json"}
 		}
+		assert.Equal(t, chat, m.Task(provider.ProfileKindChat), "only independently observed completion authorizes a task")
+		assert.Equal(t, provider.SupportUnknown, m.Task(provider.ProfileKindAgent).Support, "metadata alone is not a completed agent task")
 		for _, backend := range provider.LunaRouteBackends {
 			assert.Equal(t, provider.SupportUnknown, m.Backend(backend).Support)
 		}

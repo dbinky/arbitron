@@ -36,6 +36,8 @@ backends:
 # independently of static metadata. Overrides replace whole model records.
 lunaroute_models:
   glm-5.3:
+    tasks:
+      chat: {support: supported, evidence: "docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json"}
     context_tokens: {tokens: 524288, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
     output_tokens: {tokens: 131072, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
     reasoning: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}

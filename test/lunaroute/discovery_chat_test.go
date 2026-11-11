@@ -21,6 +21,8 @@ func TestDiscoveryErrorCodes(t *testing.T) {
 	for _, op := range []provider.LunaRouteOperation{provider.LunaRouteListModels, provider.LunaRouteChat, provider.LunaRouteAgent} {
 		for code, want := range map[string]error{
 			"INVALID_API_KEY":                   provider.ErrLunaRouteCredentialsRejected,
+			"MISSING_LUNAROUTE_HEADER":          provider.ErrLunaRouteCredentialsRejected,
+			"INFERENCE_MODEL_NOT_FOUND":         provider.ErrLunaRouteModelUnavailable,
 			"CONCURRENT_REQUEST_LIMIT_EXCEEDED": provider.ErrLunaRouteBusy,
 			"INFERENCE_UNAVAILABLE":             provider.ErrLunaRouteServiceFailure,
 			"NO_HEALTHY_PROVIDER":               provider.ErrLunaRouteServiceFailure,
@@ -101,11 +103,11 @@ func discoveryFixture(t *testing.T, failure string) (http.RoundTripper, *int) {
 			assert.Equal(t, []any{map[string]any{"role": "user", "content": gatewayPrompt}}, req["messages"])
 			assert.NotEqual(t, true, req["stream"])
 			model := req["model"]
-			if model == "claude-sonnet-5-lr1" {
-				assert.Equal(t, float64(8), req["max_tokens"])
-				status, body = 400, `{"code":"MODEL_NOT_FOUND","message":"`+discoveryKey+`"}`
+			if model == "glm-5.3-flash" {
+				assert.Equal(t, float64(discoveryNegativeTokens), req["max_tokens"])
+				status, body = 404, `{"error":{"code":"INFERENCE_MODEL_NOT_FOUND","message":"`+discoveryKey+`"}}`
 				if failure == "unavailable succeeds" {
-					status, body = 200, `{"model":"claude-sonnet-5-5","choices":[{"finish_reason":"stop","message":{"content":"PONG"}}]}`
+					status, body = 200, `{"model":"glm-5.3-flash","choices":[{"finish_reason":"stop","message":{"content":"PONG"}}]}`
 				}
 			} else {
 				require.Equal(t, "glm-5.3", model)
@@ -133,14 +135,14 @@ func discoveryFixture(t *testing.T, failure string) (http.RoundTripper, *int) {
 
 func TestDiscoveryChatProductionObservation(t *testing.T) {
 	rt, calls := discoveryFixture(t, "")
-	obs, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3", "claude-sonnet-5-lr1", provider.CapabilityRules{})
+	obs, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3", "glm-5.3-flash", provider.CapabilityRules{})
 	require.NoError(t, err)
 	assert.Equal(t, 5, *calls, "positive listing/chat, invalid key, fresh listing and absent-model inference")
 	require.Len(t, obs.Inference, 1)
 	assert.NoError(t, validateCapturedInference(obs.Inference, "glm-5.3", []string{"main"}))
 	require.Len(t, obs.Errors, 2)
 	assert.Equal(t, "credentials_rejected", obs.Errors[0].Classified)
-	assert.Equal(t, "cause_unknown", obs.Errors[1].Classified, "MODEL_NOT_FOUND is not a documented code")
+	assert.Equal(t, "model_unavailable", obs.Errors[1].Classified, "R4's observed code must reach the evidence sink")
 	root := t.TempDir()
 	rel, err := saveObservation(root, discoveryKey, "discovery.json", obs)
 	require.NoError(t, err)
@@ -158,7 +160,10 @@ func TestDiscoveryChatProductionObservation(t *testing.T) {
 	assert.Equal(t, 3, persisted.Chat.TokensIn)
 	assert.Equal(t, "INVALID_API_KEY", persisted.Errors[0].Codes["error.code"])
 	assert.Equal(t, "application/json", persisted.Errors[0].ContentType)
-	assert.Equal(t, "claude-sonnet-5-lr1", persisted.Errors[1].Model)
+	assert.Equal(t, "glm-5.3-flash", persisted.Errors[1].Model)
+	assert.Equal(t, "INFERENCE_MODEL_NOT_FOUND", persisted.Errors[1].Codes["error.code"])
+	assert.Equal(t, 404, persisted.Errors[1].Status)
+	assert.Equal(t, "model_unavailable", persisted.Errors[1].Classified)
 	assert.Equal(t, []string{"Authorization"}, persisted.Errors[1].AuthHeaderNames)
 	assert.True(t, persisted.Errors[1].AuthMatchesSelected)
 	assert.False(t, persisted.Errors[0].AuthMatchesSelected)
@@ -169,20 +174,34 @@ func TestDiscoveryChatProductionObservation(t *testing.T) {
 func TestDiscoveryChatRejectsIncompleteEvidence(t *testing.T) {
 	for _, failure := range []string{"malformed listing", "empty listing", "unlisted", "duplicate listing", "unsafe listing", "oversized", "transport", "read", "redirect", "no terminal", "missing model", "wrong model", "no pong", "sse error", "contradicted code", "unavailable succeeds"} {
 		t.Run(failure, func(t *testing.T) {
-			rt, _ := discoveryFixture(t, failure)
-			_, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3", "claude-sonnet-5-lr1", provider.CapabilityRules{})
+			rt, calls := discoveryFixture(t, failure)
+			_, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3", "glm-5.3-flash", provider.CapabilityRules{})
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), discoveryKey)
+			wantCalls := 1
+			switch failure {
+			case "no terminal", "missing model", "wrong model", "no pong", "sse error":
+				wantCalls = 2
+			case "contradicted code":
+				wantCalls = 3
+			case "unavailable succeeds":
+				wantCalls = 5
+			}
+			assert.Equal(t, wantCalls, *calls, "must reach the intended failing seam, not fail earlier on grammar")
 		})
 	}
-	for _, model := range []string{"", "glm-999.9", "glm-5.3-flash"} {
+	for _, model := range []string{"", "glm-999.9", "claude-sonnet-5-lr1"} {
 		rt, calls := discoveryFixture(t, "")
 		_, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, model, "", provider.CapabilityRules{})
 		require.Error(t, err)
 		assert.Zero(t, *calls)
 	}
 	rt, calls := discoveryFixture(t, "")
-	_, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3", "glm-999.9", provider.CapabilityRules{})
+	_, err := collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3-flash", "", provider.CapabilityRules{})
+	require.Error(t, err, "reviewed but unlisted selection is refused after discovery")
+	assert.Equal(t, 1, *calls, "only listing, no inference or substitution")
+	rt, calls = discoveryFixture(t, "")
+	_, err = collectDiscoveryChat(context.Background(), rt, discoveryKey, "glm-5.3", "glm-999.9", provider.CapabilityRules{})
 	require.Error(t, err)
 	assert.Zero(t, *calls)
 }

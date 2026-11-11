@@ -23,6 +23,8 @@ func TestLunaRouteCodesAreOperationScoped(t *testing.T) {
 func TestLunaRouteDocumentedCodeTable(t *testing.T) {
 	want := map[string]error{
 		"INVALID_API_KEY":                   ErrLunaRouteCredentialsRejected,
+		"MISSING_LUNAROUTE_HEADER":          ErrLunaRouteCredentialsRejected,
+		"INFERENCE_MODEL_NOT_FOUND":        ErrLunaRouteModelUnavailable,
 		"CONCURRENT_REQUEST_LIMIT_EXCEEDED": ErrLunaRouteBusy,
 		"INFERENCE_UNAVAILABLE":             ErrLunaRouteServiceFailure,
 		"NO_HEALTHY_PROVIDER":               ErrLunaRouteServiceFailure,
@@ -32,7 +34,7 @@ func TestLunaRouteDocumentedCodeTable(t *testing.T) {
 		"MODEL_UNPRICED":                    ErrLunaRouteRequestRefused,
 	}
 	for _, op := range []LunaRouteOperation{LunaRouteListModels, LunaRouteChat, LunaRouteAgent} {
-		assert.Len(t, lunaRouteVerifiedCodes[op], len(want), "op %s carries exactly the documented codes", op)
+		assert.Len(t, lunaRouteVerifiedCodes[op], len(want), "op %s carries exactly the documented and R4-observed codes", op)
 		for code, sentinel := range want {
 			assert.Same(t, sentinel, lunaRouteVerifiedCodes[op][code], "op %s code %s", op, code)
 			for _, status := range []int{400, 401, 429, 503} {

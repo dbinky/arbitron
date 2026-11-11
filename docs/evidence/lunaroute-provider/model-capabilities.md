@@ -34,7 +34,8 @@ Field mapping:
 - All entries publish `openai_chat`, `anthropic_messages`, `openai_responses`,
   `tools` and `reasoning` as true. Protocol/tool metadata is not evidence of a
   completed Arbitron backend task. P2-T8/P3-T5/P4-T1 own scoped completion facts;
-  this static population leaves task/backend support unknown.
+  static metadata alone leaves task/backend support unknown. The independent
+  P2-T8 completed-chat observation below authorizes only glm-5.3 chat.
 
 ## glm-5.3
 
@@ -52,7 +53,8 @@ Source: snapshot `models[id=glm-5.3]`, Models API above, 2026-11-11.
 | efforts.pi | [none, low, high, max] |
 | request_settings.temperature | unknown |
 | request_settings.output_schema | supported |
-| tasks / backends | unknown; completion population owned separately |
+| tasks.chat | supported; observations/lr04-discovery-chat.json |
+| tasks.agent / backends | unknown; no completed agent observation |
 
 ## glm-5.3-flash
 
@@ -89,6 +91,16 @@ Source: snapshot `models[id=deepseek-4.1-flash]`, Models API above, 2026-11-11.
 | request_settings.temperature | unknown |
 | request_settings.output_schema | supported |
 | tasks / backends | unknown; completion population owned separately |
+
+## Scoped chat completion (P2-T8)
+
+The operator's [2026-11-11 discovery/chat observation](observations/lr04-discovery-chat.json)
+records a completed `glm-5.3` chat with matching reported model, terminal content,
+selected Bearer auth and correlated `/v1/chat/completions` inference. Only that
+model's `tasks.chat` is populated as supported, citing the observation directly.
+This proves no new static limit, effort mapping, agent task or backend support.
+MCP discovery consumes the fact from the deployed default loader. Other models'
+chat support stays unknown until their own completed observations are applied.
 
 ## LR-02 application and readiness
 

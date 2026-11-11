@@ -186,8 +186,11 @@ Success writes owner-only `observations/lr04-discovery-chat.json` exclusively;
 move an earlier reviewed artifact aside deliberately before rerunning. Only
 schema, ids, status, code/type, auth header names/match booleans, token counts,
 timing and terminal/pong booleans survive. Never persist raw content or messages.
-Missing prerequisites skip locally and fail in release mode. This environment
-has no live inputs: no artifact or supported fact has been published.
+Missing prerequisites skip locally and fail in release mode. The operator
+completed this experiment on 2026-11-11 and committed
+`observations/lr04-discovery-chat.json`; agents do not receive the private key.
+The current content-bearing smoke budget is 1024 output tokens (R4's reasoning
+floor), not 64.
 
 After genuine collection, review the observation against `gateway-contract.md`.
 Apply LR-01's escalation on path/auth contradiction without editing constants;
@@ -198,8 +201,15 @@ Otherwise cite both sources in LR-04's verified evidence and its actual runtime
 model's `tasks.chat: supported` in `capabilities.default.yaml`, citing this
 observation, with source-consistency tests. Preserve every independent static
 and backend fact. No capability or status change is authorized by an offline
-fixture, local skip, or these instructions; collection/population remains an
-unchecked P2-T8 milestone until real access is available.
+fixture, local skip, or these instructions. R4 and the genuine committed
+observation have now been applied: LR-04 is verified, its two additional codes
+reach production probe/chat errors, and only `glm-5.3` chat is supported by this
+artifact. The historical unavailable-model `cause_unknown` label is retained
+unchanged in the artifact; production now maps `INFERENCE_MODEL_NOT_FOUND` to
+model unavailable. R3 revokes that artifact's Claude-shaped selection, so future
+negative reruns must select an absent canonical reviewed id, or omit the case.
+Manual live MCP acceptance below is still pending; no backend readiness or
+whole-release verification is claimed.
 
 ## Manual MCP acceptance — discovery and chat (live server)
 

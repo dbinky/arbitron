@@ -129,6 +129,8 @@ func TestLunaRouteProbe_VerifiedCodeFromHTTP(t *testing.T) {
 		{"wrapped", `{"type":"error","error":{"code":"NO_HEALTHY_PROVIDER"}}`, 400, domprovider.ErrLunaRouteServiceFailure},
 		{"unpriced", `{"error":{"code":"MODEL_UNPRICED"}}`, 429, domprovider.ErrLunaRouteRequestRefused},
 		{"spend-cap", `{"code":"BYOK_SPEND_CAP_REACHED"}`, 429, domprovider.ErrLunaRouteRequestRefused},
+		{"missing auth", `{"code":"MISSING_LUNAROUTE_HEADER"}`, 400, domprovider.ErrLunaRouteCredentialsRejected},
+		{"inference missing", `{"type":"error","error":{"code":"INFERENCE_MODEL_NOT_FOUND"}}`, 404, domprovider.ErrLunaRouteModelUnavailable},
 		{"undocumented", `{"code":"MODEL_NOT_FOUND"}`, 404, domprovider.ErrLunaRouteCauseUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

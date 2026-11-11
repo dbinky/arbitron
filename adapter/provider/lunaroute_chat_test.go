@@ -171,6 +171,9 @@ func TestLunaRouteChat_ClassifiedErrors(t *testing.T) {
 		{429, `{}`, domprovider.ErrLunaRouteBusy},
 		{503, `{}`, domprovider.ErrLunaRouteServiceFailure},
 		{400, `{}`, domprovider.ErrLunaRouteCauseUnknown},
+		{400, `{"code":"MISSING_LUNAROUTE_HEADER"}`, domprovider.ErrLunaRouteCredentialsRejected},
+		{404, `{"type":"error","error":{"code":"INFERENCE_MODEL_NOT_FOUND","message":"echo ` + lrChatKey + `"}}`, domprovider.ErrLunaRouteModelUnavailable},
+		{404, `{"code":"MODEL_NOT_FOUND"}`, domprovider.ErrLunaRouteCauseUnknown},
 		{429, `{"type":"error","error":{"code":"BYOK_SPEND_CAP_REACHED","message":"echo ` + lrChatKey + `"}}`, domprovider.ErrLunaRouteRequestRefused},
 	} {
 		t.Run(fmt.Sprint(tc.status, tc.want), func(t *testing.T) {
@@ -361,6 +364,8 @@ func TestLunaRouteChat_Stream(t *testing.T) {
 	}{
 		{"success", 200, "data: {\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"content\":\"pong\"}}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\ndata: [DONE]\n", nil},
 		{"status", 401, `nope`, domprovider.ErrLunaRouteCredentialsRejected},
+		{"missing model frame", 200, "data: {\"error\":{\"code\":\"INFERENCE_MODEL_NOT_FOUND\",\"message\":\"" + lrChatKey + "\"}}\n", domprovider.ErrLunaRouteModelUnavailable},
+		{"missing auth frame", 200, "data: {\"error\":{\"code\":\"MISSING_LUNAROUTE_HEADER\"}}\n", domprovider.ErrLunaRouteCredentialsRejected},
 		{"frame", 200, "data: {\"error\":{\"code\":\"BYOK_SPEND_CAP_REACHED\",\"message\":\"" + lrChatKey + "\"}}\n", domprovider.ErrLunaRouteRequestRefused},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
