@@ -74,8 +74,9 @@ or the spec's excluded inference modalities and LunaRoute MCP service.
   paths. A general HTTPS/SSRF check does not enforce the hosted-only rule. Every
   credential sink in phases 2–4 calls this helper before use, including probes.
 - **Why one place:** a doubled/missing `/v1` is the most likely failure mode.
-  Hosted address/dialect/auth evidence is still **UNRESOLVED DEPENDENCY LR-01**
-  (§5); the idea doc records a candidate, not a verified production constant.
+  **LR-01 decided 2026-11-10 ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** the root, the four `/v1` paths and `lr_`
+  auth are verified against LunaRoute's docs. Every sink sends
+  `Authorization: Bearer`. The P1-T11 live test is a release-mode regression check.
 
 ### 3.3 Connection credential rule (domain/provider)
 - **Job:** decide whether a LunaRoute connection write is acceptable.
@@ -175,11 +176,13 @@ Two units, both running inside `ValidateSelection` over the prospective route se
 - Reject empty, floating or unverified fixed-version spellings with an
   actionable refusal. Reads no live catalog (preserves the resolver's
   "outage cannot stop a working run" property).
-- **UNRESOLVED DEPENDENCY LR-03:** verified executable spellings and fixed-version
-  semantics for proprietary aliases are absent. Plans must establish the
-  grammar/mappings; if the service cannot supply a fixed alias target, escalate
-  that existing pinning constraint rather than silently excluding aliases from
-  release readiness or treating a numeric alias as proof.
+- **LR-03 decided 2026-11-10 ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** the reviewed fixed ids are `glm-5.3`,
+  `glm-5.3-flash` and `deepseek-4.1-flash-1017`. The reviewed alias
+  `claude-sonnet-5-lr1` (vendor `anthropic`, target `alias:claude-sonnet-5-lr1`)
+  is a D8-style pinned-only exception: configured-ID continuity, no
+  exact-version claim, execution evidence must report a model in the reviewed
+  vendor family (a different family fails the run; drift inside it is recorded).
+  Unreviewed aliases are refused. A numeric alias is never proof.
 
 **(b) LunaRoute compatibility check** — new domain check, injected with the §3.6
 read port, applied to every route whose canonical provider is `lunaroute`.
@@ -282,17 +285,18 @@ closed before use. Metadata-only factory construction performs no I/O.
 | Revealed key at launch | guarded reveal | `provider.ConnectionStore.Reveal` via the closures in `adapter/provider/dynamic.go:DynamicProfileResolver.Resolve` and `adapter/provider/path_inventory.go:routeBinding` |
 | Route requests (model, route provider, connection ref, backend) | grammar + compatibility check | `adapter/provider/path_inventory.go:ExecutionPathInventory.VersionRequests` via `domain/modelcatalog/candidate_source.go:CandidateService.VersionRequests`, injected by `cmd/arbitron/main.go` (`profileSvc.SetModelSelection(...)`) |
 | Profile kind / explicit backend / context tier / effort | compatibility check | `domain/provider/provider.go:Profile`, parsed by `adapter/mcp/tools_profile.go:profileCreateHandler/profileUpdateHandler`, then `domain/provider/profile_service.go:ProfileService.write`. |
-| Lab/prefix knowledge | family classifier | `domain/modelidentity/identity.go:families` plus existing spelling evidence `samples/sample_harness_test.go:gptModelRE/vendorQualifierRE` and cases in `samples/family_test.go:TestModelFamily`; extend explicitly for LunaRoute, with new vendor/alias facts gated by LR-03. |
-| Per-model capabilities and request-setting conflicts | compatibility check; phases 2–4 | Existing container/loader: `domain/provider/capability.go:CapabilityRules`, `adapter/config/capabilities.go:LoadCapabilityRules`, injected by `cmd/arbitron/main.go` into `ProfileService` and `Factory`. These currently have backend axes only; the new LunaRoute section/read port must be implemented. **UNRESOLVED DEPENDENCY LR-02: no checked-in LunaRoute facts/evidence exist. Obtain authoritative model limits and effort/setting support, plus recorded per-model/task/backend completion observations. A short successful live task cannot establish maximum limits or negative compatibility. Unknown values remain unknown.** |
-| Vendor and alias identity / fixed-version spellings | family classifier, version grammar | Existing prefix evidence: `domain/modelidentity/identity.go:families`; current grammars: `domain/modelidentity/version.go:explicitVersion`. **UNRESOLVED DEPENDENCY LR-03: LunaRoute vendor/alias targets and supported executable spellings need authoritative evidence and reviewed mappings. `/v1/models` availability alone does not prove vendor or immutability.** |
-| Hosted root, dialect URL paths and accepted credential headers | endpoint helper; phases 2–4 sinks | Candidate recorded in `docs/ideas/lunaroute-provider.md` §2. **UNRESOLVED DEPENDENCY LR-01: verify the fixed `https://gw.lunaroute.com` destination, auth/header contract and dialect paths; no existing code symbol defines a LunaRoute endpoint.** |
+| Lab/prefix knowledge | family classifier | `domain/modelidentity/identity.go:families` plus existing spelling evidence `samples/sample_harness_test.go:gptModelRE/vendorQualifierRE` and cases in `samples/family_test.go:TestModelFamily`; extend explicitly for LunaRoute, with LunaRoute vendor/alias facts fixed by the LR-03 decision. |
+| Per-model capabilities and request-setting conflicts | compatibility check; phases 2–4 | Existing container/loader: `domain/provider/capability.go:CapabilityRules`, `adapter/config/capabilities.go:LoadCapabilityRules`, injected by `cmd/arbitron/main.go` into `ProfileService` and `Factory`. These currently have backend axes only; the new LunaRoute section/read port must be implemented. **LR-02 decided 2026-11-10 ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** the release set is `glm-5.3`, `glm-5.3-flash`, `deepseek-4.1-flash-1017` and `claude-sonnet-5-lr1`. Static facts (limits, reasoning, efforts, settings) come only from LunaRoute's model docs, collected by P1-T11 into the embedded default. Task/backend `supported` comes only from completed live runs (P2-T8, P3-T5, P4-T1). There are no placeholders: an unknown limit makes a model unusable on claude-code, opencode and pi. |
+| Vendor and alias identity / fixed-version spellings | family classifier, version grammar | Existing prefix evidence: `domain/modelidentity/identity.go:families`; current grammars: `domain/modelidentity/version.go:explicitVersion`. **LR-03 decided 2026-11-10 ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `version.go:lunaRouteReviewedIDs` ships the release ids with vendors from `identity.go:families` (`zhipuai`, `deepseek`, `anthropic`). `claude-sonnet-5-lr1` is a reviewed alias under the D8-style exception. `/v1/models` availability never proves vendor. |
+| Hosted root, dialect URL paths and accepted credential headers | endpoint helper; phases 2–4 sinks | **LR-01 decided 2026-11-10 ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `https://gw.lunaroute.com`, `/v1/{models,chat/completions,messages,responses}`, `lr_` keys only, Bearer on every sink. Docs-verified (`docs.lunaroute.com/api/`, `/api/models/`, `/getting-started/authentication/`). New producer: `domain/provider/lunaroute_endpoint.go` (P1-T1). |
 | Existing doer/judge pairs and model inputs | safeguard regression tests | `samples/family_test.go:judgePairings`, `judgePairingProblems`, `familyOfNode`; model values from `samples/sample_harness_test.go:profileTable`. These are sample tests; no runtime pair-role field is assumed. |
 | Actual launch model / backend / axes | runtime compatibility check | `domain/provider/pinning.go:PinningResolver.Resolve` supplies pinned model over `DynamicProfileResolver.Resolve`; `domain/engine/executor_agent.go:AgentCallExecutor.Execute` applies effective backend; `domain/provider/provider.go:ResolvedBinding` carries axes. |
-| Classifier status, code, transport error and operation | shared classifier | HTTP response/error from `adapter/openrouter/provider.go:Provider.Chat/StreamChat` and phase-2 probe (new consumer); response body decoding depends on LR-04 in phase 2. Local validation supplies known conflicts directly. |
+| Classifier status, code, transport error and operation | shared classifier | HTTP response/error from `adapter/openrouter/provider.go:Provider.Chat/StreamChat` and phase-2 probe (new consumer); response body decoding follows the LR-04 decision (documented code table, bare or wrapped error envelope). Local validation supplies known conflicts directly. |
 
-New components in this phase are proposed work, not existing producers. Every
-external leaf without evidence remains explicitly unresolved above. Plans must
-retain LR-01–LR-03 until evidence is recorded; fixtures alone do not close them.
+New components in this phase are proposed work, not existing producers. The
+external leaves LR-01–LR-03 are decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)); live evidence verifies them, and
+each decision's On-failure rule applies if it contradicts them. Fixtures alone never
+flip a register item to `verified`.
 
 ### Deferred to plans
 - **Composition-root wiring:** inject the capability table read port into the
@@ -312,9 +316,10 @@ retain LR-01–LR-03 until evidence is recorded; fixtures alone do not close the
   at load). Use per-model override replacement for the new section; preserve
   `unknown` separately from known empty/unsupported values and define independent
   task/backend facts rather than interpreting omissions as denial.
-- **Data population:** authoritative capability values and vendor/alias
-  mappings plus scoped Tier-2 completion observations (LR-01–LR-03); these are
-  prerequisites to the final acceptance profiles, not outputs invented by tests.
+- **Data population:** the LR-02/LR-03 decisions fix the release set. P1-T11
+  collects doc-sourced static facts and confirms the id spellings. P1-T7/P1-T8
+  write them to production sources. Scoped Tier-2 completion observations add
+  task/backend support. None of these are outputs invented by tests.
 - **Samples test:** switch `samples/family_test.go` to the domain classifier and
   delete the private `modelFamily` in `samples/sample_harness_test.go`.
 
@@ -371,7 +376,7 @@ before the code that satisfies it, followed by green tests and refactoring.
   omitted preserves the existing merge behaviour; concurrent provider switches
   cannot retain a foreign credential.
 - **Tier 2 (live, gated — see phase 2/3/4 docs):** collect observations and
-  authoritative evidence for the unresolved items in §5. Validate metadata and
+  verification evidence for the decided LR items in §5 (`2026-11-10-lunaroute-provider-decisions.md`). Validate metadata and
   limits before saving the claude-code acceptance profile; a passing short task
   alone does not populate limits. Missing live credentials skip local tests but
   leave release readiness blocked until the complete acceptance set passes.

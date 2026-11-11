@@ -45,10 +45,16 @@ selected, compatible model. No new node types; selection is by profile only.
     LunaRoute; phase-1 validation already rejects non-default tiers).
 - **Base URL:** the endpoint helper's root form (Claude Code appends
   `/v1/messages`).
-- **Credential:** proposed `ANTHROPIC_API_KEY` path reuses the existing skeleton,
-  with acceptance by LunaRoute still gated by **UNRESOLVED DEPENDENCY LR-01**;
-  reveal through the guard. Verify effective harness config, not just presence
-  of env variables. LR-05 gates claims that all supporting calls honour them.
+- **Credential (LR-01 decided, [decisions](2026-11-10-lunaroute-provider-decisions.md)):** `ANTHROPIC_AUTH_TOKEN=<lr_ key>` (Claude
+  Code sends `Authorization: Bearer`) through the existing `procenv.CredentialEnv`
+  skeleton with the key var switched for LunaRoute. `ANTHROPIC_API_KEY` is stripped
+  and never set. Reveal goes through the guard.
+- **Precedence (LR-05 decided):** every LunaRoute claude-code launch passes
+  `--setting-sources ""` (the mechanism `model_probe.go` already uses), so user,
+  project and local `settings.json` cannot override the env contract. `CLAUDE.md`
+  memory still loads. P3-T5 verifies main and helper routing on Claude Code
+  2.1.322. A selector the binary ignores is dropped, and an unroutable helper
+  stops enablement.
 - **Non-LunaRoute bindings:** env byte-identical to today.
 - **Change-safety:** LunaRoute branch in the capability-env step; reuse the
   credential skeleton and retain/extend its security tests. Before launch apply
@@ -70,12 +76,14 @@ selected, compatible model. No new node types; selection is by profile only.
 - **Required config work:** the current builder copies `binding.BaseURL`
   verbatim, so a descriptor row alone would emit the stored root without `/v1`.
   Add the LunaRoute URL derivation explicitly. The current `providerBlock` also
-  has no custom model definitions or small-model field. **UNRESOLVED DEPENDENCY
-  LR-06:** verify whether the actual OpenCode version requires explicit custom
-  model registration/metadata and how its supporting/small-model calls are
-  selected; implement those fields if required. All such calls must use this
-  connection and the selected compatible model. Do not assume a row controls
-  them. If no supported effort emission exists, reject non-default effort.
+  has no custom model definitions or small-model field. **LR-06 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):**
+  the per-run `OPENCODE_CONFIG_CONTENT` overlay (D12-verified deep merge over all
+  inherited layers) carries `provider.lunaroute.models.<id> = {name, tool_call: true,
+  limit: {context, output}}` from LR-02, `model` and `small_model` =
+  `lunaroute/<id>`, and `enabled_providers: ["lunaroute"]`. The run uses `--pure`.
+  Unknown limits are refused before reveal and at save. Non-default effort is
+  rejected. P3-T5 verifies on opencode 1.19.5: an ignored key is dropped, and
+  unproven `small_model` routing stops enablement.
 - Preserve existing tool permission translation and fail-closed tool scope.
   Sanitize backend errors/logs before wrapper diagnosis for pinned and legacy unpinned LunaRoute
   calls; raw stderr is not safe. Local validation/reveal/config/version failures carry a local
@@ -92,8 +100,9 @@ selected, compatible model. No new node types; selection is by profile only.
 **claude-code:** `agent_call` node → resolver binding (guarded reveal) →
 `AgentProviderFor` (claude-code arm, wrapped) → `NewAgentAdapterForBinding` →
 `agentEnvWithRules`: credential env (`ANTHROPIC_BASE_URL=<root>`,
-`ANTHROPIC_API_KEY=lr_…`) + LunaRoute env (Haiku/small-fast = model, hints,
-limits from table) → `claude` subprocess → `<root>/v1/messages`.
+`ANTHROPIC_AUTH_TOKEN=lr_…`, `ANTHROPIC_API_KEY` stripped) + LunaRoute env (all six
+selectors = model, hints, limits from table) + `--setting-sources ""` → `claude`
+subprocess → `<root>/v1/messages` with Bearer auth.
 
 **opencode:** `agent_call` → binding → `AgentProviderFor` (opencode arm, wrapped) →
 descriptor `lunaroute` → env `LUNAROUTE_API_KEY=lr_…`; config provider block
@@ -105,27 +114,27 @@ argv `-m lunaroute/<id>` → `opencode` subprocess → `<root>/v1/chat/completio
 | Input | Consumer | Production producer |
 |---|---|---|
 | Binding (provider, base URL, model, backend, reveal, axes, tools) | both adapters | `adapter/provider/dynamic.go:DynamicProfileResolver.Resolve`; run pins from `domain/provider/pinning.go:PinningResolver.Resolve`, backend precedence from `domain/engine/executor_agent.go:AgentCallExecutor.Execute`; shape in `domain/provider/provider.go:ResolvedBinding`. |
-| Hosted root / `/v1` URL | both adapters | Stored input from `adapter/sqlite/connection_repo.go:ConnectionRepo.Get` (`BaseURL`); helper is phase-1 work. **UNRESOLVED DEPENDENCY LR-01:** authoritative hosted/dialect contract. |
+| Hosted root / `/v1` URL | both adapters | Stored input from `adapter/sqlite/connection_repo.go:ConnectionRepo.Get` (`BaseURL`); helper is phase-1 work. **LR-01 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** docs-verified root plus `/v1`, Bearer auth. |
 | `lr_` key | both adapters | `adapter/sqlite/connection_repo.go:ConnectionRepo.Reveal`, through phase-1 guard; no ambient credential source. |
 | Background (Haiku / small-fast) model | claude-code env | the binding's own `Model` (`domain/provider.Profile.Model` → `ResolvedBinding.Model`) — no separate source |
-| Max context / max output tokens | claude-code env | phase-1 capability table (`capabilities.default.yaml` → `LoadCapabilityRules` → `adapter/claudecli/provider.go:Config.CapabilityRules`, set in `cmd/arbitron/main.go` on the claude agent Config the factory receives as `Deps.ClaudeAgentConfig`). **UNRESOLVED DEPENDENCY LR-02: authoritative limit values/evidence absent; a short live run does not establish maximum limits. Collect before saving the claude-code acceptance profile, or it remains rejected by phase 1.** |
-| Exact Claude Code env var names for Haiku/small-fast/hint/limits | claude-code env | LunaRoute's Claude Code docs as recorded in `docs/ideas/lunaroute-provider.md` §2. **UNRESOLVED DEPENDENCY LR-05: verify these names and all main/supporting-model overrides against the binary actually executed and its effective user/workspace config; record version and completed-run evidence that helper calls stay on the chosen connection. The repo supports installed binaries, not one universally pinned version.** |
-| Tool-call support on Messages and chat-completions dialects | both backends | **UNRESOLVED DEPENDENCY LR-02:** per-model/dialect/backend tool-task completion observations absent; record tested combinations without generalising to every catalog model. |
-| OpenCode custom model registration, model argv and supporting-model selection | opencode config/argv | Existing container/builders: `adapter/opencode/config.go:providerBlock`, `buildConfig`, `adapter/opencode/args.go:buildArgs`, `modelLeaf`. **UNRESOLVED DEPENDENCY LR-06:** `lunaroute/<id>` and helper routing need verification against the actual binary; no existing custom-model/helper producer is assumed. |
+| Max context / max output tokens | claude-code env | phase-1 capability table (`capabilities.default.yaml` → `LoadCapabilityRules` → `adapter/claudecli/provider.go:Config.CapabilityRules`, set in `cmd/arbitron/main.go` on the claude agent Config the factory receives as `Deps.ClaudeAgentConfig`). **LR-02 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** doc-sourced limits for the release set, loaded in the embedded default by P1-T8/P1-T11. A short live run never sets maxima. Unknown limits keep claude-code (and opencode) refused. |
+| Exact Claude Code env var names for Haiku/small-fast/hint/limits | claude-code env | LunaRoute's Claude Code docs as recorded in `docs/ideas/lunaroute-provider.md` §2. **LR-05 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** six selectors set to the model, `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`, `CLAUDE_CODE_MAX_{CONTEXT,OUTPUT}_TOKENS`, `ANTHROPIC_AUTH_TOKEN`, and `--setting-sources ""` isolation. P3-T5 verifies on 2.1.322 (main plus helper request evidence). |
+| Tool-call support on Messages and chat-completions dialects | both backends | **LR-02 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** backend support is `unknown` until a P3-T5 completed tool task marks the tested model/backend `supported`; nothing is generalised to other catalog models. |
+| OpenCode custom model registration, model argv and supporting-model selection | opencode config/argv | Existing container/builders: `adapter/opencode/config.go:providerBlock`, `buildConfig`, `adapter/opencode/args.go:buildArgs`, `modelLeaf`. **LR-06 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `models.<id>` with `tool_call`/`limit`, `model`/`small_model`, `enabled_providers`, `--pure`, `-m lunaroute/<id>`. P3-T5 verifies on 1.19.5. |
 | Capability rules object | claude adapter | `cmd/arbitron/main.go` `capabilityRules` → `claudecli.Config.CapabilityRules` → `agentEnvWithRules` (existing) |
 | Mission prompt / workspace / tool scope | both subprocesses | `domain/engine/ports.go:AgentMission`, built by `domain/engine/executor_agent.go:AgentCallExecutor.Execute`; instance workspace is `AgentMission.WorkDir`. |
 | Binary / runner / timeout / response cap / tool posture | backend adapters | `adapter/provider/factory.go:Deps` (`ClaudeAgentConfig`, `OpencodeBinaryPath`, `Runner`, `OpencodeTimeout`, `MaxResponseBytes`, `OpencodeAllowAllTools`), populated in `cmd/arbitron/main.go`; `adapter/claudecli/provider.go:Config`. |
-| Family / alias classification | launch check | `domain/modelidentity/identity.go:families` extended in phase 1; **UNRESOLVED DEPENDENCY LR-03** for verified LunaRoute aliases. |
+| Family / alias classification | launch check | `domain/modelidentity/identity.go:families` extended in phase 1; **LR-03 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** reviewed ids plus the D8-style alias exception. |
 
 ### Deferred to plans
 - **Wiring:** none new at the composition root beyond phase 2 (the factory already
   receives `CapabilityRules`; the wrapper's probe selector is wired in phase 2). A
   test must prove the production factory emits the LunaRoute env for a
   claude-code LunaRoute binding (not only a direct adapter unit test).
-- **Evidence first:** settle LR-05/LR-06 before fixing env/config/argv contracts;
-  fetch authoritative LR-02 limits before claude-code profile creation, then
-  record per-backend completion observations in the table. Retain unresolved
-  markers for any fact the live run cannot prove.
+- **Decided contracts first:** LR-05/LR-06 contracts are fixed by the decisions
+  doc. P3-T5 verifies them and applies their On-failure rules. LR-02 doc-sourced
+  limits are loaded before claude-code/opencode profile creation. Per-backend
+  completion observations then mark only the tested support facts `supported`.
 - **Samples/docs:** documented example profiles (connection + chat + claude-code +
   opencode on LunaRoute) in the provider docs / PROFILES guidance — documentation
   only; no bundled sample workflow is changed to depend on LunaRoute.
@@ -151,8 +160,8 @@ argv `-m lunaroute/<id>` → `opencode` subprocess → `<root>/v1/chat/completio
 ## 8. Testing — STRICT TDD (all five categories required)
 
 Write each failing test before implementation, make it pass, then refactor while
-green. Verify production wiring as well as pure builders; mocks cannot close
-LR-01–LR-03/LR-05/LR-06.
+green. Verify production wiring as well as pure builders. Mocks never flip
+LR-01–LR-03/LR-05/LR-06 to `verified`.
 
 - **Happy-path:** production-factory-built claude-code LunaRoute binding yields env
   with root base URL, `lr_` key, Haiku/small-fast = model, hint flag, both limits;
@@ -181,15 +190,16 @@ LR-01–LR-03/LR-05/LR-06.
   tool-call support for the tested combinations and OpenCode custom model form.
   Inspect effective config and capture credential-free request/model evidence
   for main and supporting calls on both backends; one successful main request
-  alone does not close LR-05/LR-06. Include a proprietary/alias selection in the
+  alone does not verify LR-05/LR-06. Include a proprietary/alias selection in the
   overall acceptance matrix and show same-vendor doer/judge rejection through
   the shared classifier. Missing credentials leave release acceptance pending.
 
 ## Alignment contracts for plan execution
 
 P3-T5 has independent evidence preparation before the P3-T1/T2 emitters, then production
-verification after P3-T3; there is no evidence-through-unimplemented-adapter cycle. Missing
-LR-05/LR-06 controls block enablement. An ignored custom-model/helper key is not accepted as
+verification after P3-T3; there is no evidence-through-unimplemented-adapter cycle. LR-05/LR-06
+contracts are decided; verification failures follow the decisions doc's On-failure rules (drop an
+ignored key, or stop enablement). An ignored custom-model/helper key is not accepted as
 harmless. If OpenCode requires model metadata, its Config consumes the shared capability rules
 through Factory and its root test checks the emitted values. The Claude terminal modelUsage check
 must reject nonselected helper models on LunaRoute while preserving existing non-LunaRoute

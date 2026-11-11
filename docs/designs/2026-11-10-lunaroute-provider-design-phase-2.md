@@ -107,8 +107,9 @@ classifier, capability table, error classifier).
   exactly. Never send a request that knowingly exceeds a limit.
 - **No new chat adapter:** reuse the existing request/response implementation.
   Non-LunaRoute hooks/behaviour remain unchanged. A pinned response with a
-  different model remains an execution-evidence error; LR-03 must settle alias
-  response spellings before acceptance, never disable that check to make it pass.
+  different model remains an execution-evidence error. Under the LR-03 decision, a
+  reviewed alias (`alias:` target) passes only when the reported model is in the
+  reviewed vendor family; the check is never disabled to make it pass.
 
 ### 3.5 Agent post-failure diagnosis wrapper (adapter/provider)
 - **Job:** turn opaque agent failures on LunaRoute into classified errors.
@@ -154,15 +155,15 @@ classified, wrapped error → engine node failure (no fallback).
 | Connection metadata (provider, base URL) | discovery service | `domain/provider/connection.go:ConnectionStore.Get` — production instance `adapter/sqlite.ConnectionRepo`, already on MCP deps as `adapter/mcp/deps.go:Deps.Connections` |
 | Key for listing | LunaRoute probe | `domain/provider/connection.go:ConnectionStore.Reveal`, implemented by `adapter/sqlite/connection_repo.go:ConnectionRepo.Reveal`; phase-1 guard is applied inside the probe as well as by discovery binding construction. |
 | Probe selector | discovery service, agent wrapper | `adapter/probe/factory.go:NewProbeFactory` — **today constructed only in `cmd/arbitron/connection.go` (CLI)**; must be constructed in the serve composition root (deferred item) |
-| Available model ids | discovery service, agent wrapper | LunaRoute `GET /v1/models` via the new probe arm. **UNRESOLVED DEPENDENCY LR-04: the exact response envelope (assumed OpenAI-style `data[].id`) and the gateway's error-code bodies (assumed `INVALID_API_KEY` / `SERVICE_UNAVAILABLE` / `*_busy`, per the idea doc) are unverified offline; confirm in the Tier-2 live run before relying on code-level mapping beyond HTTP status.** |
-| Family per model | discovery service | Existing prefix table `domain/modelidentity/identity.go:families`, extended by phase 1. **UNRESOLVED DEPENDENCY LR-03: verified LunaRoute vendors/aliases, never inferred from listing membership.** |
-| Task kinds / backends / limits / efforts | discovery service | phase-1 capability table (`capabilities.default.yaml` → `LoadCapabilityRules`). **UNRESOLVED DEPENDENCY LR-02 (phase 1): authoritative facts and scoped completion observations are absent; unknowns remain explicit until evidence is checked in.** |
+| Available model ids | discovery service, agent wrapper | LunaRoute `GET /v1/models` via the new probe arm. **LR-04 decided 2026-11-10 ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** parse `{"data":[{"id":…}]}` reading only `data[].id`. Send Bearer only, with no `anthropic-version` or `X-LunaRoute-Client`. Error bodies are accepted bare or wrapped (`{"type":"error","error":{…}}`). The documented code table in `lunaroute_classify.go:lunaRouteVerifiedCodes` maps `INVALID_API_KEY`, `CONCURRENT_REQUEST_LIMIT_EXCEEDED`, the four service-failure codes, and `BYOK_SPEND_CAP_REACHED`/`MODEL_UNPRICED` → new non-retryable `ErrLunaRouteRequestRefused`. A body code beats the status mapping. There is no `MODEL_NOT_FOUND`/`*_busy`; availability comes from the re-list. P2-T8 confirms the `data` wrapper. |
+| Family per model | discovery service | Existing prefix table `domain/modelidentity/identity.go:families`, extended by phase 1. **LR-03 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** reviewed ids and the D8-style alias exception; never inferred from listing membership. |
+| Task kinds / backends / limits / efforts | discovery service | phase-1 capability table (`capabilities.default.yaml` → `LoadCapabilityRules`). **LR-02 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** doc-sourced static facts for the release set; task/backend support only from completed live runs; unknowns stay explicit. |
 | HTTP client, timeout, response cap | probe, chat route | `cmd/arbitron/main.go:newOutboundHTTPClient` → factory `Deps.HTTPClient`; limits from `domain/config/config.go:LLMConfig` through serve wiring and `adapter/probe/factory.go:Deps`. New LunaRoute client clone disables redirects; the existing client does not. |
 | Chat binding (model, base URL, reveal) | chat route | `adapter/provider/dynamic.go:DynamicProfileResolver.Resolve`, with run model applied by `domain/provider/pinning.go:PinningResolver.Resolve`; fields defined in `domain/provider/provider.go:ResolvedBinding`. |
 | Chat request settings / prompts | chat preflight and body | `domain/engine/ports.go:ChatRequest`, constructed by `domain/engine/executor_llm.go:LLMCallExecutor.Execute`; node settings originate in `domain/workflow/workflow.go:NodeConfig`. |
 | Original agent failure | diagnosis wrapper | `domain/engine/ports.go:AgentProvider.RunAgent` error; concrete producers are each backend's `provider.go:Provider.RunAgent` (Claude: `agent_adapter.go:AgentAdapter.RunAgent`). There is no separate stderr port. |
 | Caller identity / cancellation | admin gate, bounded diagnosis | Authenticated context from `adapter/http/auth_middleware.go:AuthMiddleware.Handler`, using `domain/identity/identity.go:WithIdentity/FromContext`; service gate is `domain/provider/authz.go:requireAdmin`. Context also flows through `AgentProvider.RunAgent`. |
-| Hosted endpoint / auth contract | probe, chat | **UNRESOLVED DEPENDENCY LR-01 (phase 1)**; phase-1 helper is proposed work over stored `Connection.BaseURL`, not existing endpoint evidence. |
+| Hosted endpoint / auth contract | probe, chat | **LR-01 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** docs-verified root and `/v1` paths, with `Authorization: Bearer lr_…` on probe and chat. Phase-1 helper `lunaroute_endpoint.go` (P1-T1) is the producer. |
 
 ### Deferred to plans
 - **Composition-root wiring (serve path):** construct one `ProbeFactory` with the
@@ -179,8 +180,9 @@ classified, wrapped error → engine node failure (no fallback).
   subscription adapter is selected.
 - **Chat error seam:** add the optional classification hook and LunaRoute
   redirect policy; defaults preserve other providers.
-- **Discovery evidence:** complete LR-01/LR-04 verification before writing parser
-  fixtures; collect LR-02/LR-03 evidence before acceptance profile creation.
+- **Discovery evidence:** parser fixtures follow the decided LR-01/LR-04 contracts.
+  P2-T8 confirms them live. LR-02 static facts and LR-03 spellings come from P1-T11
+  before acceptance profile creation.
 - **Error mapping tables:** MCP connection/profile error results for every
   phase-1 sentinel.
 - **Docs:** MCP authoring guidance (`adapter/mcp/authoring_guidance.go`) mentions
@@ -212,7 +214,7 @@ classified, wrapped error → engine node failure (no fallback).
 
 For every change, write a failing test first, implement the minimum to pass,
 then refactor while green. Use recorded protocol fixtures only after verification;
-fixture success does not close an unresolved external dependency.
+fixture success never flips a decided external contract to `verified`.
 
 - **Happy-path:** `connection_models` against a transport-injected fake gateway returns
   every listed id with family and table-backed fields; a LunaRoute chat call
@@ -241,7 +243,7 @@ fixture success does not close an unresolved external dependency.
   through the real MCP tools — create connection, `connection_models`, create a
   chat profile, run a representative chat task to completion; invalid key and
   unknown model produce the distinct errors; confirms the `/v1/models` envelope
-  and error bodies (LR-04) and records observed chat support only. Obtain authoritative
-  LR-02 limits/efforts and
-  LR-03 vendor/alias evidence separately; discovery alone does not supply them.
+  and error bodies against the LR-04 decision and records observed chat support only.
+  LR-02 static facts and LR-03 spellings come from P1-T11's doc source notes;
+  discovery alone does not supply them.
   Missing credentials skip the test, leaving release acceptance outstanding.

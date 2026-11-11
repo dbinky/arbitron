@@ -43,19 +43,22 @@ every non-LunaRoute codex and pi path is byte-identical to today.
   else → existing subscription mode (unchanged, including ignoring the provider).
 - **Env contract:** base env + exactly one credential variable carrying the
   guarded-revealed `lr_` key (fail closed on reveal error: no env, no launch).
-  Preserve the existing non-LunaRoute `CODEX_HOME` forwarding. For LunaRoute,
-  explicitly override all provider/auth/model and helper selectors that could
-  conflict with the connection. Whether forwarding ambient `CODEX_HOME` remains
-  compatible with this isolation is part of LR-07; no shared auth/config writes
-  are allowed. A per-launch private config home is acceptable only after its
-  runtime contract is verified, with cleanup on every exit path.
+  Preserve the existing non-LunaRoute `CODEX_HOME` forwarding. **LR-07 decided
+  ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** a LunaRoute launch gets a per-launch private 0700 `CODEX_HOME` (no
+  `auth.json`, no `config.toml`), removed on every exit path after the pinned
+  rollout check reads it. Operator `CODEX_HOME`, `OPENAI_API_KEY` and
+  `OPENAI_BASE_URL` are not forwarded. There are no shared auth/config writes.
 - **Argv contract:** `-c` overrides that define a `lunaroute` model provider —
   base URL = endpoint helper's `/v1` form, wire API = Responses, credential =
   *name* of the env var (never the key) — and select it as the model provider;
   model passed as today. Effort overrides continue to ride the same `-c` channel
   only after phase-1 exact support validation (no generic flooring). All
   supporting model calls use the same connection and the selected compatible
-  model. The exact supported overrides remain gated by LR-07.
+  model. Decided overrides (LR-07): `model_provider="lunaroute"`,
+  `model_providers.lunaroute.{name, base_url, env_key="LUNAROUTE_API_KEY", wire_api="responses"}`
+  and `review_model="<id>"`. Compaction uses the main model. P4-T1 verifies on
+  codex-cli 0.167.0: an ignored override is dropped, and a login requirement or
+  off-connection traffic stops enablement.
 - **Auth independence:** LunaRoute mode does not read or require
   `~/.codex/auth.json` or `$CODEX_HOME/auth.json`; prove this with absent and
   conflicting local subscription files. The global backend-health login verdict
@@ -87,15 +90,17 @@ every non-LunaRoute codex and pi path is byte-identical to today.
   custom.
 - **Per-launch provider definition:** before launch, the adapter writes a
   provider definition (OpenAI-compatible API, base URL = endpoint helper's `/v1`
-  form, key referenced by env var name, the binding's model) into a private
+  form, key referenced as `"$LUNAROUTE_API_KEY"` with `authHeader: true`, the
+  binding's model; LR-08 decided) into a private
   temporary directory (owner-only permissions) and points pi at that directory for
   this run only; the directory is removed after the run on every exit path.
   Reasoning is an independent supported/unsupported/unknown fact (supported → true, unsupported →
   false); neither missing efforts nor a nonempty effort list supplies that boolean. Unknown
   required reasoning blocks save and launch. Any required model limits/tool/reasoning metadata
   must come from the phase-1
-  evidence-backed table, not invented defaults. Unknown required fields block
-  this route until LR-02/LR-08 are resolved.
+  evidence-backed table, not invented defaults (pi's own 128000/16384/false
+  defaults are never relied on). Unknown required fields block this route for
+  that model (LR-02/LR-08 decisions).
 - **Env contract:** base env + the one credential var (guarded reveal) + the
   config-dir pointer. No key in argv or in the written file.
 - **Model selection:** argv selects the LunaRoute custom provider and the
@@ -133,25 +138,25 @@ LunaRoute provider too, and `routeBinding` supplies guarded reveal for this rout
 | Input | Consumer | Production producer |
 |---|---|---|
 | Binding (provider, base URL, model, reveal, axes, tools) | codex, pi adapters | `adapter/provider/dynamic.go:DynamicProfileResolver.Resolve`, model from `domain/provider/pinning.go:PinningResolver.Resolve`; backend precedence from `domain/engine/executor_agent.go:AgentCallExecutor.Execute`. Inventory also produces bindings via `adapter/provider/path_inventory.go:routeBinding`, whose codex reveal suppression must change for LunaRoute. |
-| `/v1` endpoint | codex argv, pi provider definition | Stored input: `adapter/sqlite/connection_repo.go:ConnectionRepo.Get` (`BaseURL`); phase-1 helper is new work. **UNRESOLVED DEPENDENCY LR-01:** authoritative hosted/dialect/auth contract. |
+| `/v1` endpoint | codex argv, pi provider definition | Stored input: `adapter/sqlite/connection_repo.go:ConnectionRepo.Get` (`BaseURL`); phase-1 helper is new work. **LR-01 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** docs-verified root plus `/v1`, with Bearer auth. |
 | `lr_` key | codex env, pi env | `adapter/sqlite/connection_repo.go:ConnectionRepo.Reveal`, wrapped by phase-1 guard; current codex inventory no-op is not a credential source. |
 | Effort override | codex argv, pi argv | `domain/provider/provider.go:ResolvedBinding.Effort`; existing `adapter/codex/args.go:codexEffortArgs` from factory `Deps.CapabilityRules`, and `adapter/pi/args.go:thinkingLevel`. LunaRoute must validate exact supported emission, avoiding codex flooring. |
 | Route requests for codex profiles | codex validation | `adapter/provider/path_inventory.go:ExecutionPathInventory.VersionRequests` (existing) |
-| codex custom-provider override keys and wire-API value | codex argv | **UNRESOLVED DEPENDENCY LR-07: exact `-c model_providers.<id>.*` keys, Responses wire API, credential env-key field, auth independence, user/project-config precedence and all supporting-model routing need verification against the actual installed binary. Record version/effective config and complete a tool task before fixing the contract; there is no universally pinned binary in this repo.** |
-| pi custom-provider definition format | pi provider definition | **UNRESOLVED DEPENDENCY LR-08: pi custom-provider format (API type, base URL, env-referenced key, required model metadata), exact provider/model argv and main/supporting-model config precedence for the actual installed version are unverified.** |
-| pi config-directory relocation mechanism | pi env/argv | **UNRESOLVED DEPENDENCY LR-08: per-run config-directory relocation is not implemented or verified. If no supported mechanism exists, plans must escalate the blocked required pi outcome; do not write `~/.pi`, drop pi from scope or claim readiness.** |
-| Tool-call support on Responses (codex) and chat-completions (pi) | both backends | **UNRESOLVED DEPENDENCY LR-02:** per-model/backend completed tool-task evidence absent. Record only tested combinations; authoritative limits/effort facts are separate inputs. |
-| Temp-dir root / permissions / cleanup | pi adapter | **UNRESOLVED DEPENDENCY LR-08:** no per-launch pi directory producer exists in `adapter/pi/provider.go:Provider.RunAgent`. Implement using OS temp-directory input (`os.TempDir`), `os.MkdirTemp`, owner-only files and deferred `os.RemoveAll`, once the relocation contract is verified. |
-| Required pi model metadata / supported settings | pi definition and launch check | Existing loaded container `domain/provider/capability.go:CapabilityRules` and `adapter/config/capabilities.go:LoadCapabilityRules` require the phase-1 section/read port, and new pi Config injection. **UNRESOLVED DEPENDENCY LR-02:** authoritative per-model facts; LR-08 determines required fields. |
+| codex custom-provider override keys and wire-API value | codex argv | **LR-07 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `-c model_provider="lunaroute"`, `model_providers.lunaroute.{name,base_url=<root>/v1,env_key="LUNAROUTE_API_KEY",wire_api="responses"}`, `review_model=<id>`, private `CODEX_HOME`, auth independent of the user's login. P4-T1 verifies on codex-cli 0.167.0. |
+| pi custom-provider definition format | pi provider definition | **LR-08 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `models.json` `providers.lunaroute = {baseUrl:<root>/v1, api:"openai-completions", apiKey:"$LUNAROUTE_API_KEY", authHeader:true, models:[{id,name,reasoning,input:["text"],contextWindow,maxTokens}]}`; argv `--model lunaroute/<id>`. Source: pi 1.5.1 installed docs (`models-configuration.md`). |
+| pi config-directory relocation mechanism | pi env/argv | **LR-08 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `PI_CODING_AGENT_DIR` relocates the whole agent dir (pi 1.5.1 `configuration.md`). A private dir is untrusted, so project `.pi` config does not load. If P4-T1 contradicts this, pi + LunaRoute stays refused and LR-08 escalates; `~/.pi` is never written and pi is never dropped. |
+| Tool-call support on Responses (codex) and chat-completions (pi) | both backends | **LR-02 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** `unknown` until a P4-T1 completed tool task marks the tested model/backend `supported`. |
+| Temp-dir root / permissions / cleanup | pi adapter | New producer `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunch` (P4-T4, LR-08 decided): `os.MkdirTemp` under `os.TempDir`, 0700 dir, 0600 `models.json`, deferred `os.RemoveAll`. |
+| Required pi model metadata / supported settings | pi definition and launch check | Existing loaded container `domain/provider/capability.go:CapabilityRules` and `adapter/config/capabilities.go:LoadCapabilityRules` require the phase-1 section/read port, and new pi Config injection. **LR-02/LR-08 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** required fields are `reasoning`, `contextWindow` and `maxTokens`, from doc-sourced LR-02 facts; unknown → refuse. |
 | Mission prompt / workspace | both backends | `domain/engine/ports.go:AgentMission`, built by `domain/engine/executor_agent.go:AgentCallExecutor.Execute`; `WorkDir` stays the instance workspace even if config is temporary. |
 | Binary / runner / timeout / response cap | both backends | `adapter/provider/factory.go:Deps` (`CodexBinaryPath`, `PiBinaryPath`, `Runner`, per-backend timeout, `MaxResponseBytes`) wired by `cmd/arbitron/main.go`. |
-| Vendor / alias identity | launch/pin check | `domain/modelidentity/identity.go:families` plus phase-1 extensions; **UNRESOLVED DEPENDENCY LR-03** for verified LunaRoute aliases. |
+| Vendor / alias identity | launch/pin check | `domain/modelidentity/identity.go:families` plus phase-1 extensions; **LR-03 decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)):** reviewed ids plus the D8-style alias exception. |
 | Original failure / current diagnostic | error wrapper | `adapter/codex/provider.go:Provider.RunAgent`, `adapter/pi/provider.go:Provider.RunAgent` errors; phase-2 probe adds a later observation, not proof of original cause. |
 
 ### Deferred to plans
-- **Live verification tasks first:** one task per backend that settles its
-  UNRESOLVED items against the actual installed binary version, before any
-  argv/config contract is coded.
+- **Live verification tasks first:** one task per backend verifies its decided
+  LR-07/LR-08 contract against the actual installed binary version and applies
+  the decisions doc's On-failure rule.
 - **Wiring:** factory already passes binding, runner and timeouts; add LunaRoute
   capability rules/model metadata to pi Config, and implement codex inventory
   guarded reveal. Wrapper and shared rules originate in phases 1–2. A
@@ -191,8 +196,8 @@ LunaRoute provider too, and `routeBinding` supplies guarded reveal for this rout
 ## 8. Testing — STRICT TDD (all five categories required)
 
 Write failing tests before each implementation change, pass them with the
-minimum code, then refactor while green. Use a version-recorded protocol
-contract once LR-07/LR-08 are verified; mock launches do not close those items.
+minimum code, then refactor while green. Build to the decided LR-07/LR-08
+contracts. Mock launches never flip those items to `verified`.
 
 - **Happy-path:** production-factory codex LunaRoute binding → env carries one
   credential var, argv carries the provider overrides with `<root>/v1` and the env
@@ -222,8 +227,8 @@ contract once LR-07/LR-08 are verified; mock launches do not close those items.
   model each, using the real MCP connection/profile/workflow tools through
   completion. Prove the selected connection/model also handles supporting calls
   with credential-free request/effective-config evidence, and no subscription
-  credentials or shared config writes. LR-07/LR-08 close only with recorded
-  evidence; LR-01–LR-03 still require their own authoritative inputs.
+  credentials or shared config writes. LR-07/LR-08 become `verified` only with
+  recorded evidence; LR-01–LR-03 have their own decided sources.
 
 ## 9. Release acceptance across all phases
 
@@ -239,8 +244,8 @@ Test invalid credentials, unavailable models, known incompatible settings/routes
 and service failures through MCP; assert no credential disclosure and no silent
 model/backend/provider substitution. Observe supporting calls for every backend.
 No launch-only smoke test, skipped live suite or missing required backend meets
-readiness. All LR-01–LR-08 items must have recorded evidence or remain visible
-plan-stage tasks/escalations; do not remove an unresolved marker on a mock pass.
+readiness. All LR-01–LR-08 items are decided ([decisions](2026-11-10-lunaroute-provider-decisions.md)); the release gate requires each
+to be `verified` with recorded evidence. A mock pass never changes a register status.
 
 ## Alignment contracts for release evidence
 
@@ -250,5 +255,6 @@ with the credential removed, rather than inheriting subscription CODEX_HOME. Err
 local-failure markers apply to legacy unpinned calls as well. The release matrix executes the
 proprietary/alias selection, validates actual output/tool traces and main/helper requests, and
 runs the existing same-vendor safeguard rejection; saved profiles, model pins, empty observation
-slices or skipped tests are insufficient. All eight LR leaves remain open until
-authoritative/runtime artifacts exist and the owning tasks populate runtime sources.
+slices or skipped tests are insufficient. All eight LR items are decided
+(`2026-11-10-lunaroute-provider-decisions.md`); each stays `decided` (not release-ready) until its
+verification artifacts exist and the owning tasks have applied it to runtime sources.

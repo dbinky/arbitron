@@ -4,30 +4,30 @@ Read the spec and the phase design before the task. Task paths are stable workfl
 
 ## Execution order and external gates
 
-1. P1-T11 **evidence preparation** is independent research, before production constants/fixtures are finalized: obtain LR-01 hosted/auth/dialect evidence, LR-02 model facts, and LR-03 vendor/fixed-target evidence. The test/register framework portion of P1-T11 runs after P1-T10. These are two milestones of one owner, not a cycle through implemented adapters.
+1. P1-T11 **evidence preparation** is independent research, before production fixtures are finalized: write the LR-01 docs source note, collect LR-02 static facts for the decided release set from LunaRoute's model docs, and confirm the LR-03 release-id spellings (decisions doc). The test/register framework portion of P1-T11 runs after P1-T10. These are two milestones of one owner, not a cycle through implemented adapters.
 2. P1-T1–T10 establish the domain rules, store and binding producers. P2-T1–T8 add discovery/chat and shared launch/diagnosis wiring.
 3. P3-T5 **contract preparation** uses direct isolated harness experiments before P3-T1/T2. Final adapter observations run after P3-T3. P3-T3 alone enables Claude Code/OpenCode.
 4. P4-T1 settles codex/pi runtime contracts independently of their production adapters. P4-T2/T3 implement and enable codex; P4-T4/T5 implement and feed pi; P4-T6 updates guidance; P4-T7 owns the full MCP acceptance matrix.
 
-External evidence is a prerequisite, not a default/no-op implementation. No task may mark an LR item verified merely because it creates a register, skips a live test, emits a candidate config key, or passes a fake runner. When access/evidence is missing, preserve the unresolved item and stop the dependent production-enablement work. The document alignment review leaves LR-01–LR-08 open below; no service or binary contract was verified by editing these plans.
+Live evidence verifies the decided contracts. It is not a default/no-op implementation. No task may mark an LR item verified merely because it creates a register, skips a live test, emits a candidate config key, or passes a fake runner. When live access is missing, the item stays `decided` (not `verified`) and the release gate stays closed. Contracts are fixed by the 2026-11-10 decisions below and are implemented now. No service or binary contract was live-verified by editing these plans.
 
-Candidate ids such as `glm-5.3` are illustrative test inputs, not production facts. Before downstream root/live tests, P1-T11 preparation must supply reviewed executable ids and P1-T7 must populate the production fixed-id table; replace candidate literals consistently if evidence names different ids. Pure grammar/family tests use injected internal fixture tables and restore them. Never add a production id or a vendor mapping merely to green a test.
+The release ids (`glm-5.3`, `glm-5.3-flash`, `deepseek-4.1-flash-1017`, `claude-sonnet-5-lr1`) are decided (LR-02/LR-03). P1-T11 confirms their spelling, and P1-T7 populates the production fixed-id table. If LunaRoute spells an id differently, replace every literal consistently. Pure grammar/family tests use injected internal fixture tables and restore them. Never add a production id or a vendor mapping merely to green a test.
 
 ## Shared producers, consumers and sink proofs
 
 | Input/component | Production producer / owner | Consumers and root proof |
 |---|---|---|
-| Hosted root, dialect paths, auth | LR-01 authoritative evidence → P1-T1 endpoint helper | Repo P1-T4, probe P2-T1/T6, chat P2-T4, each agent sink P3-T3/P4-T3/T5 |
+| Hosted root, dialect paths, auth | LR-01 decision (docs-verified 2026-11-10) → P1-T1 endpoint helper | Repo P1-T4, probe P2-T1/T6, chat P2-T4, each agent sink P3-T3/P4-T3/T5 |
 | Submitted key / prior provider | MCP connection arguments → ConnectionService → ConnectionRepo; stored provider from `GetConnectionMeta` (P1-T4) | P1-T3 rule, conditional metadata update; MCP write tests assert persisted row and rejected writes |
 | Lazy key / route metadata | `ConnectionRepo.Get/Reveal` → dynamic resolver, inventory `routeBinding`, CLI binding and discovery binding; P1-T5 guards all | Probe HTTP header and each agent env; invalid foreign key produces zero requests/launches |
 | Explicit backend provenance | P1-T5 `ResolvedBinding.BackendExplicit` from profile; P2-T5 executor ORs explicit node override before defaulting | Actual-call validation rejects a legacy profile relying on deployment defaults; pinned resolver preserves the flag |
-| Capability facts, reasoning metadata and request conflicts | LR-02 source notes/completion observations → P1-T8 `lunaroute_models` loader on shared `CapabilityRules` | Profile service/pin snapshotter P1-T10, discovery JSON P2-T6, request preflight P2-T4, Claude limits P3-T3, pi definition P4-T5 |
-| Actual vendor / fixed executable identity | LR-03 authoritative mapping → P1-T6 family table and P1-T7 reviewed fixed ids | Discovery, save, pins, launch; sample same-vendor and unresolved-family safeguard rejection |
-| Parsed gateway code | LR-04 protocol evidence → P1-T2 `LunaRouteErrorCode` → probe/chat classifier calls | P2-T1/T3/T4 tests drive recorded code via actual HTTP/SSE response to node/MCP error |
+| Capability facts, reasoning metadata and request conflicts | LR-02 decision: doc-sourced static facts plus live completion observations → P1-T8 `lunaroute_models` loader on shared `CapabilityRules` | Profile service/pin snapshotter P1-T10, discovery JSON P2-T6, request preflight P2-T4, Claude limits P3-T3, pi definition P4-T5 |
+| Actual vendor / fixed executable identity | LR-03 decision (reviewed ids + D8-style alias exception) → P1-T6 family table and P1-T7 reviewed fixed ids | Discovery, save, pins, launch; sample same-vendor and unresolved-family safeguard rejection |
+| Parsed gateway code | LR-04 decision (documented codes) → P1-T2 `LunaRouteErrorCode` → probe/chat classifier calls | P2-T1/T3/T4 tests drive recorded code via actual HTTP/SSE response to node/MCP error |
 | Shared probe selector / discovery service | P2-T6 `initDomainWithModelDependencies` constructs one ProbeFactory, injects Factory.Probes, discovery, MCP deps | Registered `connection_models` HTTP sink and P3-T3 diagnosed failed agent HTTP sink; pointer equality alone is insufficient |
-| Claude/OpenCode selectors and limits | LR-05/LR-06 actual-version evidence → P3-T1/T2 emitters; `Deps.ClaudeAgentConfig.CapabilityRules` existing root feed | P3-T3 fake-binary sink plus P3-T5 real config/helper requests |
-| Codex overrides / private home | LR-07 → P4-T2, routing/reveal narrowing P4-T3 | Root agent run validates private home, retained route, model and cleanup; all credential/error sinks covered |
-| Pi definition / relocation / facts | LR-08 format + LR-02 separate reasoning/limits facts → P4-T4; Factory rules injection P4-T5 | Fake pi parses complete definition before returning success; missing facts/injection fail before reveal/launch |
+| Claude/OpenCode selectors and limits | LR-05/LR-06 decisions → P3-T1/T2 emitters (verified by P3-T5); `Deps.ClaudeAgentConfig.CapabilityRules` existing root feed | P3-T3 fake-binary sink plus P3-T5 real config/helper requests |
+| Codex overrides / private home | LR-07 decision → P4-T2, routing/reveal narrowing P4-T3 | Root agent run validates private home, retained route, model and cleanup; all credential/error sinks covered |
+| Pi definition / relocation / facts | LR-08 decision (corrected `models.json`) + LR-02 separate reasoning/limits facts → P4-T4; Factory rules injection P4-T5 | Fake pi parses complete definition before returning success; missing facts/injection fail before reveal/launch |
 | Readiness | P1-T11 register schema + referenced source artifacts; P4-T7 completed MCP matrix | Gate checks exact LR set, existing evidence files, populated runtime facts and current completion artifacts; skipped tests cannot yield readiness |
 
 All new services remain domain-port based. No new workflow node kinds, subscriptions, global following catalog, recommendations, fallback, billing fields or dedicated model browser are introduced.
@@ -40,15 +40,24 @@ Each task owns happy, success, failure, error and edge cases; the task's additio
 
 Use the full exit code of `go test`/`go vet`; filtered output requires `set -o pipefail`. Run `go test ./...` once at final implementation validation. Live tests may skip locally, but release mode fails missing prerequisites or absent observations. This review edits plans only; it does not claim their future Go tests were executed.
 
-## Open external leaves (dependency provenance)
+## Resolved dependency decisions (2026-11-10)
 
-| ID | Missing input / consumer | Required evidence or human decision |
-|---|---|---|
-| LR-01 | `domain/provider/lunaroute_endpoint.go:LunaRouteHostedRoot`, auth/header and all dialect contracts | Confirm hosted destination and supported auth/path per operation from authoritative source plus successful per-dialect inference; model listing alone is insufficient. |
-| LR-02 | `capabilities.default.yaml:lunaroute_models` limits, settings, reasoning and task/backend facts | Obtain authoritative values and separately scoped completion observations; decide which model per backend satisfies readiness. Unknown required pi metadata must block. |
-| LR-03 | `domain/modelidentity/version.go:lunaRouteReviewedIDs`, `family.go:reviewedAliasVendors` | Establish vendor and fixed executable/response spelling of open-weight and proprietary/alias selections. If aliases are mutable, a human must resolve the existing immutable-pinning requirement without dropping the spec's alias outcome. |
-| LR-04 | `domain/provider/lunaroute_classify.go:LunaRouteErrorCode` protocol envelope / verified codes | Confirm listing/error/SSE schemas and operation-specific meanings; unobserved codes remain unknown, never guessed from prose. |
-| LR-05 | `adapter/claudecli/lunaroute_env.go` effective main/helper/limit controls | Verify supported installed version, all helper paths and ambient/project override precedence, or choose a supported isolation/control mechanism. |
-| LR-06 | `adapter/opencode/config.go` model registration/helper/provider precedence | Verify actual custom-model metadata and routing controls; ignored keys cannot satisfy the supporting-call requirement. |
-| LR-07 | `adapter/codex/lunaroute.go` Responses/auth/private-home/helper contract | Verify actual installed version, all provider overrides and project/helper isolation; recorded turn model alone is insufficient. |
-| LR-08 | `adapter/pi/lunaroute.go` custom schema, relocation, required metadata/helper precedence | Verify actual pi version and per-run relocation; if unavailable, a human must resolve the required Pi outcome rather than writing shared dotfiles or removing Pi. |
+LR-01 to LR-08 are **decided**. The binding record is
+[`docs/designs/2026-11-10-lunaroute-provider-decisions.md`](../../designs/2026-11-10-lunaroute-provider-decisions.md).
+Implement each contract now. The live tasks verify contracts and apply each
+decision's **On failure** rule. They never invent or silently change contracts.
+
+| ID | Producer `file:symbol` | Decided contract (summary) | Verifier / on failure |
+|---|---|---|---|
+| LR-01 | `domain/provider/lunaroute_endpoint.go:LunaRouteHostedRoot` (P1-T1) | Docs-verified root `https://gw.lunaroute.com`; `/v1/models`, `/v1/chat/completions`, `/v1/messages`, `/v1/responses`; `lr_` keys only; **every sink sends `Authorization: Bearer`** (Claude Code through `ANTHROPIC_AUTH_TOKEN`); `LUNAROUTE-PROJECT-ID` not sent | P1-T11 live gateway test; on failure → `escalated`, constants unchanged |
+| LR-02 | `adapter/config/capabilities.default.yaml:lunaroute_models` (P1-T8, populated in P1-T11) | Release set `glm-5.3`, `glm-5.3-flash`, `deepseek-4.1-flash-1017`, `claude-sonnet-5-lr1`; static facts only from LunaRoute model docs; task/backend `supported` only from completed live runs; no placeholders | Unknown limit → model not usable on claude-code/opencode/pi; no model for a backend → `escalated` |
+| LR-03 | `domain/modelidentity/version.go:lunaRouteReviewedIDs` (P1-T7) | Open-weight ids are fixed ids; reviewed aliases (`claude-sonnet-5-lr1` → `anthropic`, `alias:` target) are a D8-style pinned-only exception: no exact-version claim, vendor-family execution check, drift recorded; unreviewed aliases refused | Unconfirmed id removed from the set; no alias left → `escalated` |
+| LR-04 | `domain/provider/lunaroute_classify.go:lunaRouteVerifiedCodes`, `LunaRouteErrorCode` (P1-T2) | `data[].id` listing; bare or `{"type":"error","error":{…}}` bodies; documented codes table plus new `ErrLunaRouteRequestRefused`; body code beats status; no `MODEL_NOT_FOUND`/`*_busy`; availability by re-list | P2-T8 confirms; mismatch → code removed, `escalated` |
+| LR-05 | `adapter/claudecli/lunaroute_env.go:lunaRouteModelSelectorVars` (P3-T1) | Bearer via `ANTHROPIC_AUTH_TOKEN`; six selectors = binding model; hints; limits; `--setting-sources ""` on LunaRoute launches | P3-T5; ignored selector dropped; unroutable helper → enablement stops |
+| LR-06 | `adapter/opencode/config.go:buildConfig` (P3-T2) | Overlay with registered model (`tool_call`, `limit`), `model`/`small_model`, `enabled_providers:["lunaroute"]`, `--pure`; unknown limits refused | P3-T5; ignored key dropped; unproven `small_model` → enablement stops |
+| LR-07 | `adapter/codex/lunaroute.go:lunaRouteExecExtra` (P4-T2) | Private `CODEX_HOME`; five provider `-c` overrides plus `-c review_model=<id>`; `LUNAROUTE_API_KEY` env key; no user auth | P4-T1; login needed or traffic leaves → enablement stops |
+| LR-08 | `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunch` (P4-T4) | Relocation supported (`PI_CODING_AGENT_DIR`); `models.json` with `apiKey:"$LUNAROUTE_API_KEY"`, `authHeader:true`, LR-02 metadata; unknown metadata refused | P4-T1; misbehaviour → pi + LunaRoute stays refused, `escalated` |
+
+Register statuses: `decided` (contract fixed, verification pending) →
+`verified` (evidence plus `applied_to`) or `escalated`. Only `verified` passes the
+release gate.
