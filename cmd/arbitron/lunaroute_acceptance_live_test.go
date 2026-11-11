@@ -19,6 +19,7 @@ import (
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
 
@@ -27,6 +28,7 @@ const (
 	acceptanceIdentityLimit = 200
 	acceptanceWaitLimit     = 15 * time.Minute
 	acceptancePollInterval  = 100 * time.Millisecond
+	acceptanceChatTokens    = 1024 // R4: content-producing reasoning calls need this budget.
 )
 
 var errAcceptanceEvidence = errors.New("incomplete or unsafe MCP acceptance evidence; release readiness pending")
@@ -51,6 +53,30 @@ func parseAcceptanceTrigger(raw string) (uuid.UUID, error) {
 		return uuid.Nil, errAcceptanceEvidence
 	}
 	return id, nil
+}
+
+func writeTemplateWorkflow(t *testing.T, ws, name, nodeType, alias, prompt string) {
+	t.Helper()
+	if nodeType != string(workflow.NodeTypeLLMCall) && nodeType != string(workflow.NodeTypeAgentCall) {
+		t.Fatal("MCP acceptance requires a chat or agent node")
+	}
+	config := map[string]any{"model_profile": alias, "templateFile": "templates/p.md", "timeoutSeconds": int(acceptanceWaitLimit.Seconds())}
+	if nodeType == string(workflow.NodeTypeLLMCall) {
+		config["maxTokens"] = acceptanceChatTokens
+	}
+	raw, err := json.Marshal(map[string]any{
+		"name":  name,
+		"nodes": []any{map[string]any{"id": "work", "type": nodeType, "entrypoint": true, "config": config}},
+		"edges": []any{},
+	})
+	if err != nil {
+		t.Fatal("cannot encode MCP acceptance workflow")
+	}
+	writeWorkflow(t, ws, name, string(raw))
+	dir := filepath.Join(ws, "users", localDefaultUser.String(), name, "templates")
+	if os.MkdirAll(dir, 0700) != nil || os.WriteFile(filepath.Join(dir, "p.md"), []byte(prompt), 0600) != nil {
+		t.Fatal("cannot write MCP acceptance template")
+	}
 }
 
 func triggerViaMCP(t *testing.T, call func(string, map[string]any) (bool, string), name string) uuid.UUID {
