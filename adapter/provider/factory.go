@@ -183,7 +183,8 @@ var (
 // OpenAI-compatible openai/ollama (incl. the ollama-cloud alias) map to
 // adapter/openrouter; azure-openai/azure-foundry map to adapter/azurefoundry;
 // anthropic-api maps to adapter/anthropicapi; bedrock (incl. the amazon-bedrock
-// alias) maps to adapter/bedrock. Unknown providers return ErrUnknownProvider.
+// alias) maps to adapter/bedrock; lunaroute uses adapter/openrouter at the
+// hosted /v1 base. Unknown providers return ErrUnknownProvider.
 func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatProvider, error) {
 	if err := validatePinnedRoute(b, ""); err != nil {
 		return nil, err
@@ -234,6 +235,8 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 			Timeout:          f.deps.HTTPTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
+	case domprovider.CanonicalLunaRoute:
+		return f.lunaRouteChat(b), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, b.Provider)
 	}
