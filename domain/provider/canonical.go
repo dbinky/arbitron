@@ -15,6 +15,9 @@ const (
 	// CanonicalAzure is the canonical id for the Azure family (aliases:
 	// "azure-openai", "azure-foundry", "azure").
 	CanonicalAzure = "azure"
+	// CanonicalLunaRoute is the canonical id for the LunaRoute hosted gateway.
+	// It has no aliases: only the exact (trim+lowercase) spelling selects it.
+	CanonicalLunaRoute = "lunaroute"
 )
 
 // providerAliases maps a normalized (trim+lowercase) provider alias to its
