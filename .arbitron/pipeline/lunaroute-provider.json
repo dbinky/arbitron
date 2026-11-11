@@ -135,6 +135,19 @@
       "finished_at": "2026-11-11T02:56:11Z",
       "instance_id": "a349951a-556b-43eb-9213-54c4126f679f",
       "workflow": "plan"
+    },
+    {
+      "stage": "implement",
+      "status": "blocked",
+      "outputs": {
+        "status": "blocked",
+        "blocked_reason": "Phase 1 Task 10 (save/pin integration) is blocked because the regression tests and the plan's requirements conflict. The later tasks are blocked because the live evidence, metadata or agent producers they need do not exist. The last pass changed no code or tests (blocker update only, commit d5dce8e), and 17 tasks remain.",
+        "baseline_path": ".arbitron/pipeline/lunaroute-provider.baseline.json"
+      },
+      "commit": "d5dce8e7db08351b6a7e70db5898e0a4f2a0cb89",
+      "finished_at": "2026-11-11T09:31:39Z",
+      "instance_id": "a5259bec-bdd3-4626-bed7-38eae53b53cb",
+      "workflow": "implement"
     }
   ]
 }
