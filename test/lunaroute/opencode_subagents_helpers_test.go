@@ -192,6 +192,7 @@ func validateOpenCodeSubagentChild(raw []byte, task openCodeSubagentTask) (openC
 type openCodeSubagentsRunner struct {
 	next      claudecli.CommandRunner
 	startedAt time.Time
+	capture   *inferenceCapture
 }
 
 func (r openCodeSubagentsRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -239,6 +240,20 @@ func (r openCodeSubagentsRunner) Run(ctx context.Context, spec claudecli.RunSpec
 	if err != nil {
 		return fail()
 	}
+	version := ""
+	if r.capture != nil {
+		versionQuery := query
+		versionQuery.Args = []string{"--version"}
+		versionQuery.MaxResponseBytes = agentVersionLimit
+		versions, err := runCapturedLines(queryCtx, r.next, versionQuery)
+		if err != nil || len(versions) != 1 {
+			return fail()
+		}
+		version = strings.TrimPrefix(strings.TrimSpace(versions[0]), "opencode ")
+		if version != "1.19.5" {
+			return fail()
+		}
+	}
 	for _, task := range tasks {
 		if r.startedAt.IsZero() || task.StartedMS < r.startedAt.UnixMilli() || task.FinishedMS > time.Now().UnixMilli() {
 			return fail()
@@ -248,7 +263,11 @@ func (r openCodeSubagentsRunner) Run(ctx context.Context, spec claudecli.RunSpec
 		if err != nil {
 			return fail()
 		}
-		if _, err := validateOpenCodeSubagentChild([]byte(strings.Join(child, "\n")), task); err != nil {
+		proof, err := validateOpenCodeSubagentChild([]byte(strings.Join(child, "\n")), task)
+		if err != nil {
+			return fail()
+		}
+		if r.capture != nil && correlateOpenCodeSubagent(r.capture, task, proof, version) != nil {
 			return fail()
 		}
 	}

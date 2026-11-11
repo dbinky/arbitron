@@ -45,7 +45,7 @@ func subagentChildInfo(child map[string]any) map[string]any {
 }
 
 // Called by the authenticated inference fixture, not a lifecycle observation.
-func writeFactorySubagentExports(root, mode string) error {
+func writeFactorySubagentExports(root, mode string, started time.Time) error {
 	parent, child := openCodeSubagentFixture()
 	now := time.Now().UnixMilli()
 	state := subagentTaskState(parent)
@@ -53,6 +53,13 @@ func writeFactorySubagentExports(root, mode string) error {
 	child["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": now - 2}
 	subagentChildInfo(child)["time"] = map[string]any{"created": now - 2, "completed": now - 1}
 	parent["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": now - 4, "completed": now + 1}
+	if strings.HasPrefix(mode, "correlation-") {
+		// The protocol executable waits until this synthetic task end before
+		// exporting. Its two real requests fall inside this fixture interval.
+		state["time"] = map[string]any{"start": started.UnixMilli(), "end": now + 500}
+		child["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": started.UnixMilli()}
+		subagentChildInfo(child)["time"] = map[string]any{"created": started.UnixMilli(), "completed": now}
+	}
 	switch mode {
 	case "subagent-missing":
 		parent["messages"].([]any)[0].(map[string]any)["parts"] = []any{}

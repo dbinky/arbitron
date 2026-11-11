@@ -106,7 +106,11 @@ func liveFactory(ws, claudeBin string, rules provider.CapabilityRules) *provider
 }
 
 func liveFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client) *providersadapter.Factory {
-	runner := openCodeSubagentsRunner{next: openCodeControlsRunner{next: claudecli.NewExecRunner()}, startedAt: time.Now().UTC()}
+	return liveCapturedFactoryWithClient(ws, claudeBin, rules, client, nil)
+}
+
+func liveCapturedFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture) *providersadapter.Factory {
+	runner := openCodeSubagentsRunner{next: openCodeControlsRunner{next: claudecli.NewExecRunner()}, startedAt: time.Now().UTC(), capture: capture}
 	return providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeAgentConfig: claudecli.Config{
 			BinaryPath: claudeBin, WorkspaceRoot: ws, Runner: runner,

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,7 +24,10 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	bins := t.TempDir()
+	var fixtureStarted time.Time
+	var firstRequest sync.Once
 	c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
+		firstRequest.Do(func() { fixtureStarted = time.Now().UTC() })
 		var body struct {
 			Model    string `json:"model"`
 			Messages []struct {
@@ -41,7 +45,7 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if backend == "opencode" {
-			if err := writeFactorySubagentExports(root, mode); err != nil {
+			if err := writeFactorySubagentExports(root, mode, fixtureStarted); err != nil {
 				t.Error("cannot write private lifecycle fixtures")
 				w.WriteHeader(http.StatusInternalServerError)
 				return
@@ -54,7 +58,10 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	c.backend = backend
 	common := `#!/bin/sh
 set -eu
-if [ "${1-}" = --version ]; then echo 'opencode 1.19.5'; exit 0; fi
+if [ "${1-}" = --version ]; then
+ if [ '@MODE@' = correlation-version ]; then echo '1.19.6'; else echo '1.19.5'; fi
+ exit 0
+fi
 case "$PWD" in '@ROOT@'|'@ROOT@'/*) ;; *) exit 40 ;; esac
 case "$*" in *'@KEY@'*) exit 41 ;; esac
 `
@@ -122,7 +129,15 @@ case '@MODE@' in
  exit) echo 'upstream @KEY@' >&2; exit 1 ;;
  cancel) exec sleep 30 ;;
 esac
-/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -d '{"model":"glm-5.3","messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+session_header=
+case '@MODE@' in correlation-*) session_header='X-Opencode-Session-Id: ses_factory' ;; esac
+/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d '{"model":"glm-5.3","messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+case '@MODE@' in correlation-*)
+ parent=ses_factory
+ if [ '@MODE@' = correlation-parent ]; then parent=ses_other; fi
+ /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H 'X-Opencode-Session-Id: ses_child' -H "X-Opencode-Parent-Session-Id: $parent" -d '{"model":"glm-5.3","messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+ sleep 1
+ ;; esac
 if [ '@MODE@' != missing-file ]; then printf LUNAROUTE-OK > lunaroute-proof.txt; fi
 if [ '@MODE@' = wrong-file ]; then printf WRONG > lunaroute-proof.txt; fi
 if [ '@MODE@' != missing-command ] && [ -f lunaroute-proof.txt ]; then wc -c < lunaroute-proof.txt > lunaroute-command.txt; fi

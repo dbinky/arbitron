@@ -395,6 +395,22 @@ R6; readiness still requires genuine observations. P4-T1's missing source-backed
 helper/effective-control collectors prevent complete live entry points, not the
 already implemented emitters. P4-T7 owns final MCP completion evidence.
 
+### OpenCode captured-subagent correlation (partial P3-T5)
+
+`liveCapturedFactoryWithClient` feeds the actual P2-T9 proxy into the existing
+Factory/control/subagent collectors. It joins safe session/parent request
+headers and completed gateway model responses to validated parent/child exports,
+task intervals and a bounded same-executable/env/cwd version query. Only exact
+child requests are marked `subagent`; parent traffic alone cannot pass.
+`TestAgentEvidenceOpenCodeSubagentCorrelatedFactoryPublication` checks the final
+private JSON sink through real Factory → subprocess → CONNECT/TLS → workspace
+proofs. See `sources/lr06-subagent-lifecycle.md` for versioned header sources.
+
+The protocol exports are synthetic and establish tooling only. Installed-binary
+collection, the other OpenCode helper categories and Claude controls/helpers
+still precede full live entry points and any support/status publication. No new
+live observation is claimed and no release gate is opened by these tests.
+
 ## Release enforcement
 
 Local missing live inputs explicitly skip with readiness pending. Release mode

@@ -62,6 +62,8 @@ type capturedInference struct {
 	FinishedAt          time.Time          `json:"finished_at"`
 	Failure             string             `json:"failure,omitempty"`
 	Operation           *capturedOperation `json:"operation,omitempty"`
+	SessionID           string             `json:"session_id,omitempty"`
+	ParentSessionID     string             `json:"parent_session_id,omitempty"`
 }
 
 type capturedOperation struct {
@@ -375,6 +377,21 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 	if r.Method != "POST" || r.Host != captureHost || !capturePath(r.URL.Path) || r.URL.RawQuery != "" || r.URL.RawPath != "" || r.URL.User != nil || r.URL.IsAbs() || !record.AuthMatchesSelected || !slices.Equal(record.AuthHeaderNames, []string{"Authorization"}) {
 		r.Body.Close()
 		return reject("request_refused")
+	}
+	if c.backend == "opencode" {
+		for _, field := range []struct {
+			name string
+			dest *string
+		}{{"X-Opencode-Session-Id", &record.SessionID}, {"X-Opencode-Parent-Session-Id", &record.ParentSessionID}} {
+			values := r.Header.Values(field.name)
+			if len(values) > 1 || len(values) == 1 && (!openCodeID(values[0], "ses_") || !safeCaptureText(values[0], c.key)) {
+				r.Body.Close()
+				return reject("session_schema")
+			}
+			if len(values) == 1 {
+				*field.dest = values[0]
+			}
+		}
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(c.limits.BodyBytes)+1))
 	closeErr := r.Body.Close()
