@@ -293,9 +293,20 @@ fixtures inject a bounded offline HTTP client into the same probe composition;
 no diagnostic request leaves the fixture. They are
 not installed-binary contract or helper evidence.
 
+The Factory's experiment runner now queries OpenCode `debug config --pure`
+with the actual adapter-emitted executable/env/cwd before launching each mission.
+It validates the resolved main/helper selection, provider, destination, registered
+tool/limit facts and redacted credential field against that emitted overlay;
+unsafe/drifting/failed queries stop before inference. Raw debug output stays in
+bounded memory. The installed 1.19.5 schema/precedence check also uses isolated,
+conflicting user/project configs with a no-overlay control and unchanged-byte
+assertions. See [the versioned source note](sources/lr06-effective-controls.md).
+This verifies neither actual helper calls nor Bearer auth; capture still owns
+those proofs. No completed-agent artifact is published by a control query.
+
 R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
 The remaining offline dependency is source-backed forced-helper lifecycle and
-same-emitted-env effective-control collection. P3-T5 still owns those producers
+Claude same-emitted-env effective-control collection. P3-T5 still owns those producers
 and the real live entry points; a main-only mission cannot publish a completed
 agent observation. Operator live runs additionally need a private key and
 explicit canonical models (R6); absence of those inputs does not block offline

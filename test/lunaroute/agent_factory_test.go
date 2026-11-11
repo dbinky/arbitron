@@ -80,6 +80,19 @@ case "$OPENCODE_CONFIG_CONTENT" in *'@KEY@'*) exit 45 ;; esac
 for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"small_model":"lunaroute/glm-5.3"' '"model":"lunaroute/glm-5.3"' '"enabled_providers":["lunaroute"]' '"limit":{"context":202752,"output":32768}' '"tool_call":true' '"permission":{"*":"deny","bash":"allow","read":"allow","write":"allow"}'; do
  case "$OPENCODE_CONFIG_CONTENT" in *"$field"*) ;; *) exit 47 ;; esac
 done
+if [ "$1" = debug ]; then
+ [ "$*" = 'debug config --pure' ] || exit 48
+ printf '%s' "$*" > '@ROOT@/controls-marker'
+ case '@MODE@' in
+  controls-secret-exit) echo 'debug @KEY@' >&2; exit 1 ;;
+  controls-overflow) /usr/bin/awk 'BEGIN { for(i=0;i<1048577;i++) printf "x"; print "" }'; exit 0 ;;
+  controls-malformed) echo '{'; exit 0 ;;
+  controls-helper) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/"small_model":"lunaroute\/glm-5.3"/"small_model":"foreign\/other"/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;;
+  controls-limit) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/202752/202753/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;;
+ esac
+ printf '%s\n' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/{env:LUNAROUTE_API_KEY}/***/'
+ exit 0
+fi
 if [ "$1" = export ]; then
  [ "$*" = 'export ses_factory --pure' ] || exit 48
  echo '{"info":{"id":"ses_factory"},"messages":[{"info":{"id":"msg_answer","sessionID":"ses_factory","role":"assistant","providerID":"lunaroute","modelID":"glm-5.3","time":{"created":1,"completed":2}},"parts":[]}]}'

@@ -95,7 +95,7 @@ func liveFactory(ws, claudeBin string, rules provider.CapabilityRules) *provider
 }
 
 func liveFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client) *providersadapter.Factory {
-	runner := claudecli.NewExecRunner()
+	runner := openCodeControlsRunner{next: claudecli.NewExecRunner()}
 	return providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeAgentConfig: claudecli.Config{
 			BinaryPath: claudeBin, WorkspaceRoot: ws, Runner: runner,
