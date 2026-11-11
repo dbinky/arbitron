@@ -261,6 +261,67 @@ agent artifact, supported capability or verified register label is shipped.
 P3-T5 still owns those experiments, the production helpers and scoped population
 when prerequisites exist. P4-T7 will consume current real MCP-run captures.
 
+## Codex / Pi independent evidence tooling (P4-T1)
+
+Run the deterministic tooling checks with:
+
+```sh
+go test ./test/lunaroute -run 'BackendEvidence|Captured' -count=1
+go test -race ./test/lunaroute -run 'BackendEvidence|Captured' -count=1
+```
+
+`runCaptured(t,ctx,bin,args,env,cwd,stdin)` delegates to the existing bounded
+real runner (now named `runCapturedLines` for line-oriented consumers). Its
+caller supplies explicit env/cwd; it never inherits ambient provider auth.
+Raw stdout/rollout bytes remain in memory and all launch/read/exit/timeout
+errors return fixed safe text, never stderr. `seedConflictingHome` seeds only a
+test-private HOME and workspace with conflicting codex/pi config and auth.
+Protected user/project trees are compared by bytes, paths and modes; symlinks,
+read failures, oversized trees and unexpected writes are refused. No shared
+`~/.codex` or `~/.pi` files are touched.
+
+`collectBackendEvidence` requires bounded, valid JSONL, a correlated session,
+nonempty model records, successful final completion and tool-call evidence.
+Pi tool-use intermediate messages are allowed, but an error, abort, length stop
+or unfinished final tool turn fails even with exit zero. Codex needs its same
+thread's rollout plus terminal turn completion; `codex_turn_context_intent`
+explicitly denotes harness intent, **not** a gateway-reported model. Independent
+nonempty main/helper request/response records are mandatory for both backends.
+Pi's separate reasoning fact and both limits must be known; absent metadata is
+never replaced by defaults or inferred from effort. Reviewed alias drift stays
+visible in the reported identities.
+
+The validator reads the exact `ok` proof from `lunaroute-ok.txt` and the derived
+byte count `2` from command-generated `listing.txt`, rejects precreated/symlinked
+files, checks the existing same-run configuration identity reference and
+protected home snapshots, and refuses publication before private-dir cleanup.
+This identity projection alone is not evidence that runtime overrides took
+effect. Only after validation does the shared private/exclusive writer persist
+sanitized fields; no prompts, command output, auth values, raw config, stderr
+or subscription snapshots enter JSON.
+
+Offline protocol subprocess fixtures use the real wrapper, CONNECT/TLS proxy,
+nonce stdin/cwd and credential-bearing HTTP requests, then create both workspace
+files with a command. Tests inspect the final JSON sink and missing-feed
+failures. Their synthetic compaction lifecycle and model/config output prove
+plumbing **only**, not installed codex/pi controls or helper routing. Both
+present/absent subscription-file fixtures remain distinct from real auth
+independence experiments.
+
+Version-only inventory on 2026-11-11 UTC returned codex-cli `0.167.0` and pi
+`1.5.1` under a temporary HOME and credential-free environment. No direct live
+experiment ran: key, explicit codex/pi models and documented required pi facts
+are absent. The planned `TestLiveCodexHelp`, `TestLiveCodexLunaRoute`,
+`TestLivePiHelp` and `TestLivePiLunaRoute` experiments are not implemented as
+placeholder skips; selecting those names currently runs no tests and is **not**
+acceptance. P4-T1 still owns the real conflicting-config/auth/isolation runs,
+backend-specific forced lifecycle collectors, credential-free contract/run
+artifacts and scoped support-fact publication when prerequisites exist. A
+binary upgrade requires rerunning those experiments, not only these fixtures.
+No supported capability, LR-07/LR-08 verified status or enablement is authorized
+by this tooling; P4-T2/T4 implement adapters, P4-T3/T5 enable them only after
+genuine contract observations, and P4-T7 owns final MCP completion evidence.
+
 ## Release enforcement
 
 Local missing live inputs explicitly skip with readiness pending. Release mode

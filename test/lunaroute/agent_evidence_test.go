@@ -23,7 +23,7 @@ func agentEvidenceFixture(t *testing.T) (string, string, agentEvidenceInput) {
 	started := time.Now().UTC()
 	// Produce both workspace sinks with an actual subprocess, not prefilled booleans.
 	spec := claudecli.RunSpec{Bin: "/bin/sh", Args: []string{"-c", "printf LUNAROUTE-OK > lunaroute-proof.txt; wc -c < lunaroute-proof.txt > lunaroute-command.txt"}, Dir: ws, Env: []string{"PATH=/usr/bin:/bin"}, MaxResponseBytes: 1024}
-	_, err := runCaptured(context.Background(), claudecli.NewExecRunner(), spec)
+	_, err := runCapturedLines(context.Background(), claudecli.NewExecRunner(), spec)
 	require.NoError(t, err)
 	main := validCaptureRecord()
 	main.Backend, main.Path = "claude-code", "/v1/messages"
@@ -178,7 +178,7 @@ func TestAgentEvidenceBoundedCommandAndVersion(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	_, err := runCaptured(ctx, claudecli.NewExecRunner(), claudecli.RunSpec{Bin: "/bin/sh", Args: []string{"-c", "sleep 5"}, Env: []string{"PATH=/usr/bin:/bin"}, MaxResponseBytes: 1024})
+	_, err := runCapturedLines(ctx, claudecli.NewExecRunner(), claudecli.RunSpec{Bin: "/bin/sh", Args: []string{"-c", "sleep 5"}, Env: []string{"PATH=/usr/bin:/bin"}, MaxResponseBytes: 1024})
 	require.Error(t, err)
 }
 

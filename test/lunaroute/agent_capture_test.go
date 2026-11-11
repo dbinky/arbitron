@@ -47,7 +47,7 @@ func TestAgentEvidenceCapturedProcessToObservation(t *testing.T) {
 	require.NoError(t, err)
 	spec := claudecli.RunSpec{Bin: c.WrapBinary(t, bin), Args: []string{"-test.run=^TestAgentEvidenceProcessFixture$"}, Stdin: "fixture-prompt-nonce", Dir: ws, MaxResponseBytes: 8192, Env: []string{"PATH=/usr/bin:/bin", "ARBITRON_AGENT_PROCESS_FIXTURE=1", "LUNAROUTE_API_KEY=" + key, "FIXTURE_MODEL=" + binding.Model, "FIXTURE_CONFIG=" + filepath.Join(root, ref)}}
 	started := time.Now().UTC()
-	lines, err := runCaptured(context.Background(), claudecli.NewExecRunner(), spec)
+	lines, err := runCapturedLines(context.Background(), claudecli.NewExecRunner(), spec)
 	require.NoError(t, err)
 	var result *engine.AgentResult
 	for _, line := range lines {

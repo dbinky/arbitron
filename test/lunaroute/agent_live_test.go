@@ -88,7 +88,7 @@ func liveBinding(key, model, backend string) provider.ResolvedBinding {
 
 // Raw lines remain in memory for the owning binary's lifecycle parser. Neither
 // stderr nor exec errors may escape this boundary into console/artifact text.
-func runCaptured(ctx context.Context, runner claudecli.CommandRunner, spec claudecli.RunSpec) ([]string, error) {
+func runCapturedLines(ctx context.Context, runner claudecli.CommandRunner, spec claudecli.RunSpec) ([]string, error) {
 	if runner == nil || spec.MaxResponseBytes <= 0 || spec.MaxResponseBytes > captureBodyLimit {
 		return nil, errAgentEvidence
 	}
@@ -120,7 +120,7 @@ func runCaptured(ctx context.Context, runner claudecli.CommandRunner, spec claud
 func queryVersion(ctx context.Context, bin string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, agentVersionTimeout)
 	defer cancel()
-	lines, err := runCaptured(ctx, claudecli.NewExecRunner(), claudecli.RunSpec{Bin: bin, Args: []string{"--version"}, Env: procenv.BaseEnv(), MaxResponseBytes: agentVersionLimit})
+	lines, err := runCapturedLines(ctx, claudecli.NewExecRunner(), claudecli.RunSpec{Bin: bin, Args: []string{"--version"}, Env: procenv.BaseEnv(), MaxResponseBytes: agentVersionLimit})
 	if err != nil || len(lines) != 1 {
 		return "", errAgentEvidence
 	}
