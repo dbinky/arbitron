@@ -32,3 +32,10 @@ SELECT api_key_cipher, api_key_nonce FROM connections WHERE name = ?;
 
 -- name: CountConnections :one
 SELECT COUNT(*) FROM connections;
+
+-- name: UpdateConnectionMetadataIfProvider :execrows
+UPDATE connections
+SET provider = ?, base_url = ?, extras = ?,
+    config_revision = config_revision + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+WHERE name = ? AND provider = ?;
