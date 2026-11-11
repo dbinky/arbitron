@@ -54,10 +54,10 @@ func (s *ProfileService) ValidateAdvance(ctx context.Context, req AdvanceRequest
 	}
 	next.Model = req.Model
 	// Keep requested axes unchanged; runtime emission applies effort flooring.
-	if _, err := s.validateAxes(next); err != nil {
+	if _, err := s.validateAxes(ctx, next); err != nil {
 		return err
 	}
-	return checkRouteVersions(ctx, next, s.versions, s.source)
+	return checkRouteVersions(ctx, next, s.versions, s.source, s.rules)
 }
 
 // AdvanceModel is the trusted, unauthenticated automatic path (never

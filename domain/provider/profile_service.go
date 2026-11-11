@@ -6,10 +6,11 @@ import (
 	"fmt"
 )
 
-// Effective is the floored, runtime-effective view of a profile's axes echoed
+// Effective is the runtime-effective view of a profile's axes echoed
 // back on a write. It is what the emitter will actually emit at launch: a
 // requested effort the backend/model cannot honor floors to its ceiling, so the
 // caller sees the value that will take effect rather than the value requested.
+// LunaRoute routes instead preserve validated requested axes without flooring.
 type Effective struct {
 	ContextWindow ContextWindow
 	Effort        Effort
@@ -155,7 +156,7 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 	var selection PreparedSelection
 	var err error
 	if changed {
-		selection, err = ValidateSelection(ctx, p, s.versions, s.source)
+		selection, err = ValidateSelection(ctx, p, s.versions, s.source, s.rules)
 	} else {
 		selection.Profile, err = NormalizeSelection(p)
 	}
@@ -163,12 +164,18 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 		return Profile{}, Effective{}, &preparationError{err}
 	}
 	p = selection.Profile
-	eff, err := s.validateAxes(p)
+	eff, err := s.validateAxes(ctx, p)
 	if err != nil {
 		return Profile{}, Effective{}, &preparationError{err}
 	}
 	var out Profile
 	err = s.mutate(ctx, func(ctx context.Context) error {
+		// Report axes from the route metadata protected by this lease, not
+		// a native-provider floor computed before a connection edit.
+		eff, err = s.validateAxes(ctx, p)
+		if err != nil {
+			return &preparationError{err}
+		}
 		if changed {
 			out, err = s.persistPrepared(ctx, selection, prior, persist)
 		} else {
@@ -186,8 +193,8 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 }
 
 // persistPrepared runs only under the caller's mutation lease. Following proof
-// revalidation is read-only; pinned routes need only policy-independent version
-// checks, never discovery or probing.
+// revalidation is read-only; pinned routes repeat local route/version/axis
+// policy checks, never discovery or probing.
 func (s *ProfileService) persistPrepared(ctx context.Context, selection PreparedSelection, prior *Profile, persist func(context.Context, Profile) (Profile, error)) (Profile, error) {
 	if err := s.revalidatePrepared(ctx, selection); err != nil {
 		return Profile{}, err
@@ -197,8 +204,11 @@ func (s *ProfileService) persistPrepared(ctx context.Context, selection Prepared
 
 func (s *ProfileService) revalidatePrepared(ctx context.Context, selection PreparedSelection) error {
 	p := selection.Profile
+	if _, err := s.validateAxes(ctx, p); err != nil {
+		return &preparationError{err}
+	}
 	if p.SelectionMode != SelectionFollowing {
-		if err := checkRouteVersions(ctx, p, s.versions, s.source); err != nil {
+		if err := checkRouteVersions(ctx, p, s.versions, s.source, s.rules); err != nil {
 			return &preparationError{err}
 		}
 		return nil
@@ -255,8 +265,9 @@ func (s *ProfileService) mutate(ctx context.Context, fn func(context.Context) er
 	return s.gate.WithMutation(ctx, fn)
 }
 
-// validateAxes checks capabilities before acquiring the mutation lease.
-func (s *ProfileService) validateAxes(p Profile) (Effective, error) {
+// validateAxes checks local route and axis policy during preparation and again
+// under the mutation lease. It never discovers or probes models.
+func (s *ProfileService) validateAxes(ctx context.Context, p Profile) (Effective, error) {
 	backend := EffectiveBackend(p)
 	// Normalize the unset ("") axes to their explicit default sentinel before
 	// validating, exactly as the seed path does: an empty string is not a Valid()
@@ -270,6 +281,47 @@ func (s *ProfileService) validateAxes(p Profile) (Effective, error) {
 	effort, err := ParseEffort(string(p.Effort))
 	if err != nil {
 		return Effective{}, err
+	}
+	requested := Effective{ContextWindow: tier, Effort: effort}
+	var hasLunaRoute bool
+	var otherRoutes []VersionRequest
+	if s.source != nil {
+		requests, err := s.source.VersionRequests(ctx, p.Clone())
+		if err != nil {
+			return Effective{}, err
+		}
+		if len(requests) == 0 {
+			return Effective{}, fmt.Errorf("%w: no prospective routes", ErrExecutionRevisionUnavailable)
+		}
+		for _, request := range requests {
+			if request.Model != p.Model {
+				return Effective{}, fmt.Errorf("%w: route model differs from prospective model", ErrInvalidSelection)
+			}
+			if IsLunaRoute(request.RouteProvider) {
+				hasLunaRoute = true
+				if err := checkLunaRouteProfile(s.rules, p, request); err != nil {
+					return Effective{}, err
+				}
+			} else {
+				otherRoutes = append(otherRoutes, request)
+			}
+		}
+		if hasLunaRoute {
+			for _, request := range otherRoutes {
+				otherBackend := backend
+				if p.Kind == ProfileKindAgent {
+					otherBackend = request.Backend
+				}
+				otherTier, otherEffort, err := s.resolveAxes(p, otherBackend, tier, effort)
+				if err != nil {
+					return Effective{}, err
+				}
+				if requested != (Effective{ContextWindow: otherTier, Effort: otherEffort}) {
+					return Effective{}, fmt.Errorf("%w: mixed routes require different effective axes", ErrInvalidSelection)
+				}
+			}
+			return requested, nil
+		}
 	}
 	effTier, effEffort, err := s.resolveAxes(p, backend, tier, effort)
 	if err != nil {

@@ -35,7 +35,7 @@ func TestModelPinsMissingRouteInventoryCreatesNothing(t *testing.T) {
 				ctx := installLifecycleProfile(t, ds, sink)
 				cache := providersadapter.NewProfileCache(adaptsqlite.NewProfileRepo(ds.db))
 				require.NoError(t, cache.Load(ctx))
-				ds.eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(cache, ds.connStore, modelidentity.NewVersionResolver(), routes))
+				ds.eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(cache, ds.connStore, modelidentity.NewVersionResolver(), routes, ds.capabilityRules))
 
 				var id uuid.UUID
 				var started bool
@@ -55,7 +55,7 @@ func TestModelPinsMissingRouteInventoryCreatesNothing(t *testing.T) {
 				leaseCtx, cancel := context.WithTimeout(ctx, time.Second)
 				require.NoError(t, ds.executionGate.WithMutation(leaseCtx, func(context.Context) error { return nil }))
 				cancel()
-				ds.eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(cache, ds.connStore, modelidentity.NewVersionResolver(), ds.pathInventory))
+				ds.eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(cache, ds.connStore, modelidentity.NewVersionResolver(), ds.pathInventory, ds.capabilityRules))
 				id, _, err = ds.eng.Trigger(ctx, name, nil, "normal")
 				require.NoError(t, err)
 				require.Equal(t, instance.StateCompleted, waitTerminal(t, ds, id).State)

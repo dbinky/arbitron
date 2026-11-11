@@ -22,7 +22,7 @@ func newSnapshotter(t *testing.T, store *fakeConnectionStore, profiles ...provid
 		f.conns.fakeConnectionStore = *store
 		connections = store
 	}
-	return cache, adapterprovider.NewModelSnapshotter(cache, connections, modelidentity.NewVersionResolver(), f.build(t))
+	return cache, adapterprovider.NewModelSnapshotter(cache, connections, modelidentity.NewVersionResolver(), f.build(t), nil)
 }
 
 func TestSnapshotD8RouteValidation(t *testing.T) {
@@ -36,7 +36,7 @@ func TestSnapshotD8RouteValidation(t *testing.T) {
 					p.FollowTarget = &provider.FollowTarget{Provider: "openai", Tier: "sol"}
 				}
 				cache := adapterprovider.NewProfileCacheFromProfiles(p)
-				snap := adapterprovider.NewModelSnapshotter(cache, f.conns, modelidentity.NewVersionResolver(), f.build(t))
+				snap := adapterprovider.NewModelSnapshotter(cache, f.conns, modelidentity.NewVersionResolver(), f.build(t), nil)
 				wf := &workflow.Workflow{Nodes: []workflow.Node{{ID: "call", Type: workflow.NodeTypeLLMCall, Config: workflow.NodeConfig{ModelProfile: "a"}}}}
 				got, err := snap.SnapshotModels(context.Background(), []string{"a"}, wf)
 				if mode == provider.SelectionFollowing {
@@ -61,7 +61,7 @@ func TestSnapshotD8RouteValidation(t *testing.T) {
 func TestSnapshotMissingVersionsFails(t *testing.T) {
 	f := newInvFixture()
 	cache := adapterprovider.NewProfileCacheFromProfiles(provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Model: "claude-opus-4-1"})
-	snap := adapterprovider.NewModelSnapshotter(cache, nil, nil, f.build(t))
+	snap := adapterprovider.NewModelSnapshotter(cache, nil, nil, f.build(t), nil)
 	for _, aliases := range [][]string{nil, {"a"}} {
 		got, err := snap.SnapshotModels(context.Background(), aliases, &workflow.Workflow{})
 		require.ErrorIs(t, err, provider.ErrSelectionPortsMissing)
@@ -73,7 +73,7 @@ func TestSnapshotFollowingCannotUseFixedBedrockSpelling(t *testing.T) {
 	f := newInvFixture()
 	f.addConn(provider.Connection{Name: "native", Provider: "bedrock", Extras: map[string]string{"region": "us-east-1"}})
 	p := provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, ConnectionRef: "native", Model: "anthropic.claude-sonnet-4-5-20250929-v1:0", SelectionMode: provider.SelectionFollowing, FollowTarget: &provider.FollowTarget{Provider: "anthropic", Tier: "sonnet"}}
-	snap := adapterprovider.NewModelSnapshotter(adapterprovider.NewProfileCacheFromProfiles(p), f.conns, modelidentity.NewVersionResolver(), f.build(t))
+	snap := adapterprovider.NewModelSnapshotter(adapterprovider.NewProfileCacheFromProfiles(p), f.conns, modelidentity.NewVersionResolver(), f.build(t), nil)
 	got, err := snap.SnapshotModels(context.Background(), []string{"a"}, &workflow.Workflow{})
 	require.ErrorIs(t, err, provider.ErrInvalidSelection)
 	assert.Empty(t, got)
@@ -87,7 +87,7 @@ func TestSnapshotSpecificVersionsMustAgree(t *testing.T) {
 			p := provider.Profile{Alias: "a", Kind: provider.ProfileKindAgent, ConnectionRef: "route", Backend: "pi", Model: "deepseek/deepseek-v4-flash"}
 			wf := &workflow.Workflow{Nodes: []workflow.Node{{ID: "other", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{ModelProfile: "a", Backend: "opencode"}}}}
 			versions := &snapshotVersions{profile: p, different: different}
-			snap := adapterprovider.NewModelSnapshotter(adapterprovider.NewProfileCacheFromProfiles(p), f.conns, versions, f.build(t))
+			snap := adapterprovider.NewModelSnapshotter(adapterprovider.NewProfileCacheFromProfiles(p), f.conns, versions, f.build(t), nil)
 			got, err := snap.SnapshotModels(context.Background(), []string{"a"}, wf)
 			if different {
 				require.Error(t, err)
@@ -128,7 +128,7 @@ func TestSnapshotCodexCannotInheritD8ConnectionException(t *testing.T) {
 	for _, model := range []string{"gpt-6.1-sol", "Configured/Deployment:ID"} {
 		t.Run(model, func(t *testing.T) {
 			p := provider.Profile{Alias: "a", Kind: provider.ProfileKindAgent, ConnectionRef: "native", Model: model}
-			snap := adapterprovider.NewModelSnapshotter(adapterprovider.NewProfileCacheFromProfiles(p), f.conns, modelidentity.NewVersionResolver(), f.build(t))
+			snap := adapterprovider.NewModelSnapshotter(adapterprovider.NewProfileCacheFromProfiles(p), f.conns, modelidentity.NewVersionResolver(), f.build(t), nil)
 			got, err := snap.SnapshotModels(context.Background(), []string{"a"}, &workflow.Workflow{})
 			if model == "gpt-6.1-sol" {
 				require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestModelSnapshotter_RejectsNilCacheAtConstruction(t *testing.T) {
 	f := newInvFixture()
 	routes := f.build(t)
 	assert.PanicsWithValue(t, "provider: NewModelSnapshotter requires a non-nil profile cache", func() {
-		adapterprovider.NewModelSnapshotter(nil, nil, modelidentity.NewVersionResolver(), routes)
+		adapterprovider.NewModelSnapshotter(nil, nil, modelidentity.NewVersionResolver(), routes, nil)
 	})
 }
 
@@ -242,7 +242,7 @@ func TestModelSnapshotter_ActualRoutes(t *testing.T) {
 			f.policy.err = errors.New("policy unavailable")
 			p := provider.Profile{Alias: "a", Kind: provider.ProfileKindAgent, Model: tc.model}
 			cache := adapterprovider.NewProfileCacheFromProfiles(p)
-			snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t))
+			snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t), nil)
 			got, err := snap.SnapshotModels(context.Background(), []string{"a"}, &workflow.Workflow{})
 			if tc.wantErr {
 				require.ErrorIs(t, err, provider.ErrSpecificVersionUnavailable)
@@ -271,7 +271,7 @@ func TestModelSnapshotter_PiSubscriptionProfile(t *testing.T) {
 			f := newInvFixture()
 			p := provider.Profile{Alias: "coder-pi-sol-high", Kind: provider.ProfileKindAgent, Backend: workflow.BackendPi, Model: tc.model}
 			cache := adapterprovider.NewProfileCacheFromProfiles(p)
-			snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t))
+			snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t), nil)
 			wf := &workflow.Workflow{Nodes: []workflow.Node{{ID: "implement", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{ModelProfile: p.Alias}}}}
 			got, err := snap.SnapshotModels(context.Background(), []string{p.Alias}, wf)
 			if tc.wantErr {
@@ -291,7 +291,7 @@ func TestModelSnapshotter_UnrelatedReadFaultDoesNotStopSnapshot(t *testing.T) {
 	boom := errors.New("workflow read fault")
 	f.wfs = &invWorkflows{scopeErr: boom}
 	cache := adapterprovider.NewProfileCacheFromProfiles(provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Model: "claude-opus-4-1"})
-	snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t))
+	snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), f.build(t), nil)
 	got, err := snap.SnapshotModels(context.Background(), []string{"a"}, &workflow.Workflow{})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"a": "claude-opus-4-1"}, got.Models)
@@ -299,7 +299,7 @@ func TestModelSnapshotter_UnrelatedReadFaultDoesNotStopSnapshot(t *testing.T) {
 
 func TestModelSnapshotter_MissingRouteSourceFails(t *testing.T) {
 	cache := adapterprovider.NewProfileCacheFromProfiles(provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Model: "claude-opus-4-1"})
-	snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), nil)
+	snap := adapterprovider.NewModelSnapshotter(cache, nil, modelidentity.NewVersionResolver(), nil, nil)
 	got, err := snap.SnapshotModels(context.Background(), []string{"a"}, &workflow.Workflow{})
 	require.ErrorContains(t, err, "route source")
 	assert.Empty(t, got)

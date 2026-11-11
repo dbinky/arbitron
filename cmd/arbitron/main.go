@@ -1417,7 +1417,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// proof commits before the validated seed batch writes and reloads the cache.
 	// Capture one profile generation and validate it on actual deployment/node
 	// routes under the engine's shared lease, before persistence or enqueue.
-	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, modelidentity.NewVersionResolver(), pathInventory))
+	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, modelidentity.NewVersionResolver(), pathInventory, capabilityRules))
 
 	// Register one interactive executor instance under BOTH interactive node
 	// types. Notification creation is handled by the engine when it processes the

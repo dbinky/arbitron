@@ -31,7 +31,7 @@ func (s *ProfileService) PinPreflight(ctx context.Context) (refusals, unchecked 
 		if p.SelectionMode == SelectionFollowing {
 			continue
 		}
-		cerr := checkRouteVersions(ctx, p, s.versions, s.source)
+		cerr := checkRouteVersions(ctx, p, s.versions, s.source, s.rules)
 		switch {
 		case cerr == nil:
 		case errors.Is(cerr, ErrSpecificVersionUnavailable), errors.Is(cerr, ErrInvalidSelection):

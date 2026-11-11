@@ -90,7 +90,7 @@ func RegisterProfileTools(srv *Server) {
 				})),
 			gomcp.WithString("connection_ref", gomcp.Description("Connection name supplying the endpoint+key; empty = claude-cli no-key subscription")),
 			gomcp.WithString("model", gomcp.Description("Model id / Azure deployment / provider-model")),
-			gomcp.WithString("backend", gomcp.Description("Agent backend (claude-code | codex | opencode); empty inherits")),
+			gomcp.WithString("backend", gomcp.Description("Agent backend (claude-code | codex | opencode | pi); empty inherits. LunaRoute agent profiles must name it explicitly")),
 			gomcp.WithArray("allowed_tools", gomcp.Description("Per-profile tool allowlist (agent kind)")),
 			gomcp.WithString("context_window", gomcp.Description("Context tier: default | 200k | 1m")),
 			gomcp.WithString("effort", gomcp.Description("Reasoning effort: default | none | low | medium | high | xhigh | max")),
@@ -111,7 +111,7 @@ func RegisterProfileTools(srv *Server) {
 			gomcp.WithNumber("revision", gomcp.Description("Optional expected revision from profile_get; the edit is rejected if the stored profile has changed since")),
 			gomcp.WithString("connection_ref", gomcp.Description("Connection name; empty = claude-cli no-key subscription")),
 			gomcp.WithString("model", gomcp.Description("Model id / Azure deployment / provider-model")),
-			gomcp.WithString("backend", gomcp.Description("Agent backend; empty inherits")),
+			gomcp.WithString("backend", gomcp.Description("Agent backend (claude-code | codex | opencode | pi); empty inherits. LunaRoute agent profiles must name it explicitly")),
 			gomcp.WithArray("allowed_tools", gomcp.Description("Per-profile tool allowlist (agent kind)")),
 			gomcp.WithString("context_window", gomcp.Description("Context tier: default | 200k | 1m")),
 			gomcp.WithString("effort", gomcp.Description("Reasoning effort: default | none | low | medium | high | xhigh | max")),
@@ -150,11 +150,16 @@ func RegisterProfileTools(srv *Server) {
 // messages. Never return the error chain: even a recognized sentinel can be
 // wrapped by inventory, discovery or persistence diagnostics containing secrets.
 func profileErrorResult(err error) *gomcp.CallToolResult {
+	var lunaRefusal *provider.LunaRouteRefusal
 	switch {
 	case errors.Is(err, provider.ErrForbidden):
 		return gomcp.NewToolResultError("forbidden: admin only")
 	case errors.Is(err, provider.ErrUnauthenticated):
 		return gomcp.NewToolResultError("authentication required")
+	// Typed LunaRoute refusals carry only model/backend/static guidance,
+	// never the enclosing inventory or credential-bearing error chain.
+	case errors.As(err, &lunaRefusal):
+		return gomcp.NewToolResultError(lunaRefusal.Error())
 	case errors.Is(err, provider.ErrAxisNotApplicable):
 		return gomcp.NewToolResultError("requested axis is not applicable; check provider_capabilities for the backend/model")
 	case errors.Is(err, provider.ErrProfileExists):

@@ -18,6 +18,7 @@ type ModelSnapshotter struct {
 	store    provider.ConnectionStore
 	versions provider.VersionResolver
 	routes   provider.WorkflowVersionRequestSource
+	caps     provider.LunaRouteCapabilities
 }
 
 var _ provider.ModelSnapshotter = (*ModelSnapshotter)(nil)
@@ -26,8 +27,9 @@ var _ provider.ModelSnapshotter = (*ModelSnapshotter)(nil)
 // and route-only inventory. The store may be nil for subscription-only profiles.
 // A nil cache is a construction fault, rejected before any trigger can run.
 // Nil and typed-nil route sources both make SnapshotModels return an error,
-// including for workflows with no model aliases.
-func NewModelSnapshotter(cache *ProfileCache, store provider.ConnectionStore, versions provider.VersionResolver, routes provider.WorkflowVersionRequestSource) *ModelSnapshotter {
+// including for workflows with no model aliases. caps is the root-loaded
+// LunaRoute capability table; nil fails LunaRoute routes closed.
+func NewModelSnapshotter(cache *ProfileCache, store provider.ConnectionStore, versions provider.VersionResolver, routes provider.WorkflowVersionRequestSource, caps provider.LunaRouteCapabilities) *ModelSnapshotter {
 	if cache == nil {
 		panic("provider: NewModelSnapshotter requires a non-nil profile cache")
 	}
@@ -40,7 +42,7 @@ func NewModelSnapshotter(cache *ProfileCache, store provider.ConnectionStore, ve
 			}
 		}
 	}
-	return &ModelSnapshotter{cache: cache, store: store, versions: versions, routes: routes}
+	return &ModelSnapshotter{cache: cache, store: store, versions: versions, routes: routes, caps: caps}
 }
 
 // SnapshotModels captures each configured model and any native D8 exception,
@@ -93,7 +95,7 @@ func (s *ModelSnapshotter) SnapshotModels(ctx context.Context, aliases []string,
 			}
 		}
 		versions := &snapshotVersionResolver{delegate: s.versions}
-		opaque, err := provider.ValidatePinRoutes(ctx, p, requests, versions)
+		opaque, err := provider.ValidatePinRoutes(ctx, p, requests, versions, s.caps)
 		if err != nil {
 			return snapshot, fmt.Errorf("profile %q: %w", alias, err)
 		}

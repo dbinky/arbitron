@@ -168,9 +168,9 @@ func (s *ProfileService) SeedBatch(ctx context.Context, seeds ProfileSeedStore, 
 // prepareSeed validates one seed's selection and capability axes outside the
 // mutation lease. A refusal is wrapped as a preparationError.
 func (s *ProfileService) prepareSeed(ctx context.Context, p Profile) (PreparedSelection, error) {
-	selection, invalid := ValidateSelection(ctx, p, s.versions, s.source)
+	selection, invalid := ValidateSelection(ctx, p, s.versions, s.source, s.rules)
 	if invalid == nil {
-		_, invalid = s.validateAxes(selection.Profile)
+		_, invalid = s.validateAxes(ctx, selection.Profile)
 	}
 	if invalid != nil {
 		return selection, &preparationError{invalid}
