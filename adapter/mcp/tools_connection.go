@@ -31,7 +31,7 @@ func metaOf(c provider.Connection) connectionMeta {
 	}
 }
 
-// RegisterConnectionTools registers the connection-management CRUD tools. The
+// RegisterConnectionTools registers connection CRUD and model discovery. The
 // plaintext api_key is accepted only by connection_create / connection_update,
 // handed straight to the store (which seals it), and is never echoed in a
 // response or logged.
@@ -82,6 +82,7 @@ func RegisterConnectionTools(srv *Server) {
 		),
 		connectionListHandler(srv),
 	)
+	registerConnectionModelsTool(srv)
 }
 
 // connLogger returns the server's logger or the process default. SECURITY: the

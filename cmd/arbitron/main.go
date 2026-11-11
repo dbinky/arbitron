@@ -36,6 +36,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/observability"
 	adaptoidc "github.com/arbitron/arbitron/adapter/oidc"
 	"github.com/arbitron/arbitron/adapter/outbound"
+	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
@@ -309,6 +310,10 @@ type domainStack struct {
 	profileSvc      *provider.ProfileService
 	connSvc         *provider.ConnectionService
 	capabilityRules provider.CapabilityRules
+	// One serve-path probe factory feeds discovery and agent failure diagnosis.
+	probeFactory    *adaptprobe.ProbeFactory
+	providerFactory *providersadapter.Factory
+	modelDiscovery  *provider.ModelDiscoveryService
 	tracingShutdown func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler is nil in local mode; Start owns the org-only sweeps.
@@ -454,6 +459,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Connections:         ds.connStore,
 		ProfileAdmin:        ds.profileSvc,
 		ConnectionAdmin:     ds.connSvc,
+		ModelDiscovery:      ds.modelDiscovery,
 		Capabilities:        ds.capabilityRules,
 		Tokens:              ds.tokenSvc,
 		Users:               ds.userSvc,
@@ -1019,6 +1025,14 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		httpClient.Transport = modelDeps.ProviderTransport
 	}
 
+	// Share the outbound transport, timeout and response cap with discovery and
+	// LunaRoute agent diagnosis. The CLI validate command owns its own factory.
+	probeFactory := adaptprobe.NewProbeFactory(adaptprobe.Deps{
+		HTTPClient:       httpClient,
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		ClaudeBinaryPath: cfg.LLM.BinaryPath,
+	})
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
@@ -1033,6 +1047,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		// degrades to the local subscription env.
 		ClaudeAgentConfig: agentCfg,
 		HTTPClient:        httpClient,
+		Probes:            probeFactory,
 		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		Runner:            modelDeps.Runner,
 		OpencodeTimeout:   time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
@@ -1060,6 +1075,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		// which carries CapabilityRules).
 		CapabilityRules: capabilityRules,
 	})
+	modelDiscovery := provider.NewModelDiscoveryService(connStore, probeFactory, capabilityRules)
 
 	// 9. Create all node executors and build the executor map.
 	modelConsumers := newRunModelConsumers(fileReader, providerFactory, pinningResolver, cfg.LLM.DefaultAgentBackend)
@@ -1566,6 +1582,9 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		connStore:             connStore,
 		profileSvc:            profileSvc,
 		connSvc:               connSvc,
+		probeFactory:          probeFactory,
+		providerFactory:       providerFactory,
+		modelDiscovery:        modelDiscovery,
 		capabilityRules:       capabilityRules,
 		tracingShutdown:       tracingShutdown,
 		sessionRepo:           sessionRepo,

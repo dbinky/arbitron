@@ -91,12 +91,13 @@ var expectedTools = []string{
 	"interactive_end_session",
 	"interactive_get_history",
 	"interactive_abandon_session",
-	// Connection management (5)
+	// Connection management and discovery (6)
 	"connection_create",
 	"connection_update",
 	"connection_delete",
 	"connection_get",
 	"connection_list",
+	"connection_models",
 	// Profile management (6)
 	"profile_create",
 	"profile_update",
