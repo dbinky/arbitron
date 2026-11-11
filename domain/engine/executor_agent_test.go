@@ -2,7 +2,9 @@ package engine_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -491,4 +493,74 @@ func TestAgentCallExecutor_MissingIncludeFailsClosed(t *testing.T) {
 	_, err := exec.Execute(context.Background(), node, storeWithWorkspace("/workspace/inst-1"), "test-wf")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gone.md")
+}
+
+// Reported identities are separate from the selected model and must survive
+// the conversation JSON boundary used by node persistence.
+func TestAgentCallExecutor_ModelEvidence(t *testing.T) {
+	for _, evidence := range [][]engine.ModelEvidence{
+		{{Model: "claude-sonnet-5-6", Provider: "lunaroute", Source: "export:main"}, {Model: "claude-sonnet-5-5", Provider: "lunaroute", Source: "export:helper"}},
+		nil,
+	} {
+		t.Run(fmt.Sprint(len(evidence)), func(t *testing.T) {
+			fr := newMockFileReader()
+			fr.files["test-wf/mission.txt"] = []byte("nonce evidence")
+			ap := &fakeAgent{runFn: func(_ context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
+				require.Equal(t, "nonce evidence", m.Prompt)
+				require.Equal(t, "claude-sonnet-5-lr1", m.Model)
+				return &engine.AgentResult{Summary: "done", Model: m.Model, ModelEvidence: evidence}, nil
+			}}
+			node := workflow.Node{ID: "agent", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{TemplateFile: "mission.txt", ModelProfile: "agent-default"}}
+			exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-sonnet-5-lr1"), "opencode")
+			result, err := exec.Execute(context.Background(), node, storeWithWorkspace("/ws/evidence"), "test-wf")
+			require.NoError(t, err)
+			assert.Equal(t, "claude-sonnet-5-lr1", result.LLMModel)
+			raw, err := json.Marshal(result.LLMConversation)
+			require.NoError(t, err)
+			var trace struct {
+				ModelEvidence []engine.ModelEvidence `json:"model_evidence"`
+				Summary       string                 `json:"summary"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &trace))
+			assert.Equal(t, evidence, trace.ModelEvidence)
+			assert.Equal(t, "done", trace.Summary)
+			if len(evidence) == 0 {
+				assert.NotContains(t, string(raw), "model_evidence", "legacy traces remain unchanged")
+			} else {
+				assert.JSONEq(t, `{"steps":null,"summary":"done","model_evidence":[{"model":"claude-sonnet-5-6","provider":"lunaroute","source":"export:main"},{"model":"claude-sonnet-5-5","provider":"lunaroute","source":"export:helper"}]}`, string(raw))
+			}
+		})
+	}
+}
+
+type intentResolver struct{ binding provider.ResolvedBinding }
+
+func (r intentResolver) Resolve(context.Context, string) (provider.ResolvedBinding, error) {
+	return r.binding, nil
+}
+
+func TestAgentCallExecutor_BackendExplicitProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name, node, profile string
+		explicit, want      bool
+	}{
+		{"default is not intent", "", "", false, false},
+		{"unmarked backend stays unmarked", "", "opencode", false, false},
+		{"preserve resolver intent", "", "opencode", true, true},
+		{"node declares intent", "opencode", "", false, true},
+		{"whitespace is not intent", "   ", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := newMockFileReader()
+			fr.files["test-wf/mission.txt"] = []byte("do work")
+			sel := &capturingAgentSelector{provider: &fakeAgent{runFn: func(context.Context, engine.AgentMission) (*engine.AgentResult, error) {
+				return &engine.AgentResult{Summary: "done"}, nil
+			}}}
+			resolver := intentResolver{provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Model: "glm-5.3", Backend: tc.profile, BackendExplicit: tc.explicit}}
+			exec := engine.NewAgentCallExecutor(fr, sel, resolver, "opencode")
+			_, err := exec.Execute(context.Background(), workflow.Node{ID: "a", Config: workflow.NodeConfig{TemplateFile: "mission.txt", Backend: tc.node}}, storeWithWorkspace("/ws"), "test-wf")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, sel.got.BackendExplicit)
+		})
+	}
 }

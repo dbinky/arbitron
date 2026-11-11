@@ -135,11 +135,20 @@ type AgentMission struct {
 	Timeout   time.Duration
 }
 
+// ModelEvidence is an identity reported by an executed main or helper call,
+// not inferred from the configured model or pin.
+type ModelEvidence struct {
+	Model    string `json:"model"`
+	Provider string `json:"provider,omitempty"`
+	Source   string `json:"source"`
+}
+
 // AgentResult holds the outcome of an agentic mission.
 type AgentResult struct {
-	Summary string      // result/summary text
-	Steps   []AgentStep // step events (tool calls, edits) for the trace
-	Model   string
+	Summary       string      // result/summary text
+	Steps         []AgentStep // step events (tool calls, edits) for the trace
+	Model         string
+	ModelEvidence []ModelEvidence
 	// DroppedTools are requested tools the backend could not map to a native
 	// tool and silently trimmed from the effective allowlist. Surfaced so the
 	// (security-relevant) narrowing of the tool posture is observable in the

@@ -56,6 +56,9 @@ const (
 // client and CommandRunner are injected into the per-binding adapters the
 // Factory builds on demand.
 type Deps struct {
+	// Probes is the shared serve-path selector for a single post-failure
+	// LunaRoute gateway observation. Nil leaves the cause explicitly unknown.
+	Probes domprovider.ProbeSelector
 	// ClaudeChat is the tool-suppressed claude-cli chat adapter used for the
 	// empty/claude-cli provider path as a back-compat fallback when
 	// ClaudeChatConfig is not supplied. Required when ClaudeChatConfig is absent.
@@ -155,6 +158,9 @@ func NewFactory(deps Deps) *Factory {
 	return &Factory{deps: deps}
 }
 
+// ProbeSelector returns the shared selector used for agent diagnosis.
+func (f *Factory) ProbeSelector() domprovider.ProbeSelector { return f.deps.Probes }
+
 // claudeChatConfigSupplied reports whether a usable claude chat Config was wired
 // (so the claude-cli chat arm builds per-binding adapters). A bare zero-value
 // Config is treated as "not supplied" so test factories that wire only
@@ -242,7 +248,21 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 	}
 }
 
-// AgentProviderFor returns the concrete engine.AgentProvider for an agent-kind
+// AgentProviderFor adds launch policy and post-failure diagnosis only to
+// LunaRoute bindings; other providers retain their existing concrete adapters.
+func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
+	lunaroute := domprovider.IsLunaRoute(b.Provider)
+	if lunaroute {
+		b = domprovider.GuardLunaRouteReveal(b)
+	}
+	inner, err := f.agentProviderFor(b)
+	if err != nil || !lunaroute {
+		return inner, err
+	}
+	return wrapLunaRouteAgent(inner, b, f.deps.Probes, f.deps.CapabilityRules), nil
+}
+
+// agentProviderFor returns the concrete engine.AgentProvider for an agent-kind
 // binding, dispatching on the BACKEND axis (b.Backend), NOT the provider
 // (org-readiness Phase 2). The backend is INDEPENDENT of the provider: a
 // claude-code binding may carry any connection (endpoint+key injected in the
@@ -258,7 +278,7 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 //     The factory deliberately does NOT re-default: a future non-executor caller
 //     gets a clear ErrUnknownBackend telling it to set a backend, rather than a
 //     second silent default to hunt down when the policy changes.
-func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
+func (f *Factory) agentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
 	// Trim whitespace only (NOT lowercase): the allowed vocabulary is exact-match
 	// lowercase, identical to the workflow validator. A near-miss case (e.g.
 	// "OPENCODE") was already rejected at load and must stay unknown here so the
