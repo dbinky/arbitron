@@ -47,19 +47,14 @@ func TestLiveOpencodeCompaction(t *testing.T) {
 			t.Error("cannot remove experiment")
 		}
 	}()
-	// Only the temporary HOME is forwarded by the production env allowlist.
-	// Both inherited config layers are hostile; --pure excludes their plugins.
+	// Bind snapshots of both inherited config layers and conflicting auth to
+	// the real adapter-emitted HOME/cwd, not a reconstructed launch environment.
 	home := filepath.Join(root, "home")
+	isolation, err := seedOpenCodeIsolation(home, root)
+	if err != nil {
+		t.Fatal("cannot seed isolated config/auth")
+	}
 	t.Setenv("HOME", home)
-	seeds := map[string]string{
-		filepath.Join(home, ".config/opencode/opencode.json"): `{"$schema":"https://opencode.ai/config.json","model":"foreign/user","small_model":"foreign/helper","enabled_providers":["foreign"]}`,
-		filepath.Join(root, "opencode.json"):                  `{"$schema":"https://opencode.ai/config.json","model":"foreign/project","small_model":"foreign/project-helper"}`,
-	}
-	for path, body := range seeds {
-		if os.MkdirAll(filepath.Dir(path), 0700) != nil || os.WriteFile(path, []byte(body), 0600) != nil {
-			t.Fatal("cannot seed isolated config")
-		}
-	}
 	runID := "opencode-compaction-" + time.Now().UTC().Format("20060102T150405.000000000Z")
 	capture := startInferenceCapture(t, runID, "opencode", binding.ConnectionRef, key)
 	wrapper := capture.WrapBinary(t, bin)
@@ -69,18 +64,12 @@ func TestLiveOpencodeCompaction(t *testing.T) {
 	}
 	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	started := time.Now().UTC()
-	journal := &openCodeControlJournal{}
+	journal := &openCodeControlJournal{isolation: isolation}
 	factory := liveObservedCompactingFactoryWithClient(root, "", rules, client, capture, source, journal)
 	result, workdir := runLiveMission(t, factory, binding, root)
 	observation, err := collectOpenCodeSupportingEvidence(workdir, capture, journal, result, started, time.Now().UTC())
 	if err != nil {
 		t.Fatal("current-run controls/workspace/supporting inference incomplete")
-	}
-	for path, body := range seeds {
-		after, err := os.ReadFile(path)
-		if err != nil || string(after) != body {
-			t.Fatal("seeded config changed during experiment")
-		}
 	}
 	if capture.Close() != nil {
 		t.Fatal("capture cleanup failed; no observation written")

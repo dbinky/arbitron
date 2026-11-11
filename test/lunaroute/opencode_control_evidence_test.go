@@ -19,10 +19,16 @@ func TestAgentEvidenceOpenCodeControlsToSupportingObservation(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			started := time.Now().UTC()
 			root, bin, capture := agentFactoryFixture(t, "opencode", "correlation-force-success")
-			journal := &openCodeControlJournal{}
+			home := filepath.Join(t.TempDir(), "home")
+			isolation, err := seedOpenCodeIsolation(home, root)
+			require.NoError(t, err)
+			t.Setenv("HOME", home)
+			ws := filepath.Join(root, "mission")
+			require.NoError(t, os.Mkdir(ws, 0700))
+			journal := &openCodeControlJournal{isolation: isolation}
 			client, _ := agentFactoryProbeClient(t)
 			factory := liveObservedCompactingFactoryWithClient(root, bin, agentFactoryRules(t), client, capture, []byte(forcingSnapshot), journal)
-			result, err := executeAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "opencode"), root)
+			result, err := executeAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "opencode"), ws)
 			require.NoError(t, err)
 			if mode != "success" {
 				require.Len(t, journal.checks(), 2, "negative setup must retain both real runner checks")
@@ -47,9 +53,9 @@ func TestAgentEvidenceOpenCodeControlsToSupportingObservation(t *testing.T) {
 				capture.records = capture.records[:len(capture.records)-1]
 				capture.mu.Unlock()
 			case "missing-file":
-				require.NoError(t, os.Remove(filepath.Join(root, agentProofFile)))
+				require.NoError(t, os.Remove(filepath.Join(ws, agentProofFile)))
 			}
-			obs, err := collectOpenCodeSupportingEvidence(root, capture, journal, result, started, time.Now().UTC())
+			obs, err := collectOpenCodeSupportingEvidence(ws, capture, journal, result, started, time.Now().UTC())
 			sink := filepath.Join(root, evidencePath, "observations/controls-support.json")
 			if err == nil {
 				_, err = saveObservation(root, captureFixtureKey, "controls-support.json", obs)
@@ -69,6 +75,7 @@ func TestAgentEvidenceOpenCodeControlsToSupportingObservation(t *testing.T) {
 			assert.Equal(t, "run-one", saved.RunID)
 			assert.Equal(t, "ses_factory", saved.SessionID)
 			assert.True(t, saved.FileOK && saved.CommandOK)
+			assert.True(t, saved.Isolation.ConfigUnchanged && saved.Isolation.AuthUnchanged && saved.Isolation.PrivateHome)
 			require.Len(t, saved.Controls, 2)
 			assert.Empty(t, saved.Controls[0].SessionID)
 			assert.Equal(t, saved.SessionID, saved.Controls[1].SessionID)

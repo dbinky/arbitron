@@ -465,6 +465,20 @@ publication. Executable/cwd stay private, and raw debug/config/auth text is neve
 serialized. Run `go test ./test/lunaroute -run TestAgentEvidenceOpenCodeControlsToSupportingObservation -count=1`
 for the real Factory/subprocess/TLS/private-file sink fixtures. Those remain
 synthetic protocol tests, not installed-backend verification.
+
+The same experiment now seeds conflicting private user/project config and
+provider auth and snapshots their bounded bytes/modes. Both real emitted
+launches must use those protected HOME/project roots, checked before even the
+debug query runs. Publication additionally requires the complete user config
+tree, project config and auth file to remain unchanged, with no missing input,
+new config entry, symlink or relocation override. Only safe isolation booleans
+and the [versioned source reference](sources/lr06-isolation.md) enter the artifact;
+paths and snapshot/auth bytes stay private. The installed inference-free schema
+check verifies that both seed layers actually load without the overlay and that
+the overlay restores selected controls without changing the protected inputs.
+Run `go test ./test/lunaroute -run 'TestAgentEvidenceOpenCode(Isolation|InstalledIsolationSeeds)' -count=1`.
+This is not a live contract observation.
+
 This supporting artifact does not replace the full LR-06 contract/agent
 milestones or populate capabilities. Remaining complete helper/control
 collection, full agent entry points and operator observations stay pending.

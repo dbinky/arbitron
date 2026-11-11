@@ -23,15 +23,20 @@ type openCodeControlCheck struct {
 	StartedAt  time.Time            `json:"started_at"`
 	FinishedAt time.Time            `json:"finished_at"`
 	bin, dir   string
+	isolation  *openCodeIsolation
 }
 
 type openCodeControlJournal struct {
-	mu      sync.Mutex
-	entries []openCodeControlCheck
+	mu        sync.Mutex
+	entries   []openCodeControlCheck
+	isolation *openCodeIsolation
 }
 
 func (j *openCodeControlJournal) record(spec claudecli.RunSpec, proof openCodeControlProof, started, finished time.Time) error {
-	check := openCodeControlCheck{Controls: proof, StartedAt: started, FinishedAt: finished, bin: spec.Bin, dir: spec.Dir}
+	check := openCodeControlCheck{Controls: proof, StartedAt: started, FinishedAt: finished, bin: spec.Bin, dir: spec.Dir, isolation: j.isolation}
+	if j.isolation != nil && j.isolation.validateLaunch(spec) != nil {
+		return errAgentEvidence
+	}
 	for i, arg := range spec.Args {
 		if arg == "--session" {
 			if check.SessionID != "" || i+1 >= len(spec.Args) || !openCodeID(spec.Args[i+1], "ses_") {
@@ -73,6 +78,7 @@ type openCodeSupportingObservation struct {
 	CommandOK          bool                   `json:"command_ok"`
 	RequiredCategories []string               `json:"required_categories"`
 	Controls           []openCodeControlCheck `json:"effective_controls"`
+	Isolation          openCodeIsolationProof `json:"isolation"`
 	Inference          []capturedInference    `json:"inference"`
 }
 
@@ -85,6 +91,13 @@ func collectOpenCodeSupportingEvidence(ws string, capture *inferenceCapture, jou
 	if capture == nil || capture.backend != "opencode" || result == nil || !openCodeID(result.SessionID, "ses_") || !safeCaptureModel(result.Model) || started.IsZero() || !finished.After(started) {
 		return fail()
 	}
+	if journal == nil || journal.isolation == nil {
+		return fail()
+	}
+	isolation, err := journal.isolation.proof()
+	if err != nil {
+		return fail()
+	}
 	checks := journal.checks()
 	if len(checks) != 2 || checks[0].SessionID != "" || checks[1].SessionID != result.SessionID || checks[0].Controls != checks[1].Controls || checks[0].Controls.Model != result.Model || checks[0].Controls.ContextTokens <= 0 || checks[0].Controls.OutputTokens <= 0 {
 		return fail()
@@ -95,7 +108,7 @@ func collectOpenCodeSupportingEvidence(ws string, capture *inferenceCapture, jou
 	}
 	for i, check := range checks {
 		dir, err := filepath.EvalSymlinks(check.dir)
-		if err != nil || dir != workspace || check.bin == "" || check.bin != checks[0].bin || check.StartedAt.Before(started) || !check.FinishedAt.After(check.StartedAt) || check.FinishedAt.After(finished) || i > 0 && check.StartedAt.Before(checks[i-1].FinishedAt) {
+		if err != nil || check.isolation != journal.isolation || dir != workspace || check.bin == "" || check.bin != checks[0].bin || check.StartedAt.Before(started) || !check.FinishedAt.After(check.StartedAt) || check.FinishedAt.After(finished) || i > 0 && check.StartedAt.Before(checks[i-1].FinishedAt) {
 			return fail()
 		}
 	}
@@ -145,7 +158,7 @@ func collectOpenCodeSupportingEvidence(ws string, capture *inferenceCapture, jou
 		InputSource: evidencePath + "/sources/lr02-live-models-2026-11-11.json",
 		Scope:       "supporting-call experiment only; no contract verification or supported capability population",
 		FileOK:      true, CommandOK: true, RequiredCategories: categories,
-		Controls: checks, Inference: records,
+		Controls: checks, Isolation: isolation, Inference: records,
 	}
 	raw, err := json.Marshal(obs)
 	if err != nil || validateObservationJSON(raw, capture.key) != nil {

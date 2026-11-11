@@ -113,6 +113,9 @@ func (r openCodeControlsRunner) Run(ctx context.Context, spec claudecli.RunSpec)
 	}
 	for _, entry := range spec.Env {
 		if strings.HasPrefix(entry, "LUNAROUTE_API_KEY=") {
+			if r.journal != nil && r.journal.isolation != nil && r.journal.isolation.validateLaunch(spec) != nil {
+				return nil, nil, provider.LocalLunaRouteError("isolated config/auth", errAgentEvidence)
+			}
 			started := time.Now().UTC()
 			proof, err := queryOpenCodeEffectiveControls(ctx, r.next, spec)
 			if err != nil || r.journal != nil && r.journal.record(spec, proof, started, time.Now().UTC()) != nil {
