@@ -226,6 +226,53 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 	}
 }
 
+func docCompleteFixtureCaps() provider.CapabilityRules {
+	caps := docFixtureCaps()
+	models := map[string]provider.LunaRouteModel{}
+	for _, m := range caps.LunaRouteModels() {
+		m.Reasoning = provider.SupportFact{Support: provider.SupportUnsupported, Evidence: "doc-fixture#independent-reasoning"}
+		models[m.ID] = m
+	}
+	return caps.WithLunaRouteModels(models)
+}
+
+func TestLunaRouteDocBackendMetadata(t *testing.T) {
+	for _, backend := range []string{"claude-code", "opencode", "codex", "pi"} {
+		t.Run(backend, func(t *testing.T) {
+			p := docProfile{Kind: "agent", Backend: backend, Model: "glm-5.3", ConnectionRef: "lr"}
+			caps := docCompleteFixtureCaps()
+			require.NoError(t, validateLunaRouteDocProfile(p, caps))
+			for _, missing := range []string{"context", "output", "reasoning"} {
+				m, ok := caps.LunaRouteModel(p.Model)
+				require.True(t, ok)
+				switch missing {
+				case "context":
+					m.ContextTokens = provider.LimitFact{}
+				case "output":
+					m.OutputTokens = provider.LimitFact{}
+				case "reasoning":
+					m.Reasoning = provider.SupportFact{}
+				}
+				err := validateLunaRouteDocProfile(p, caps.WithLunaRouteModels(map[string]provider.LunaRouteModel{p.Model: m}))
+				if backend == "codex" || missing == "reasoning" && backend != "pi" {
+					require.NoError(t, err, "%s does not require %s metadata", backend, missing)
+				} else {
+					require.ErrorIs(t, err, provider.ErrLunaRouteLimitsUnknown, missing)
+				}
+			}
+			if backend == "pi" {
+				// Known false is valid; it is not the same as absent reasoning.
+				for _, reasoning := range []provider.Support{provider.SupportSupported, provider.SupportUnsupported} {
+					m, ok := caps.LunaRouteModel(p.Model)
+					require.True(t, ok)
+					m.Reasoning = provider.SupportFact{Support: reasoning, Evidence: "doc-fixture#independent-reasoning"}
+					require.NoError(t, validateLunaRouteDocProfile(p, caps.WithLunaRouteModels(map[string]provider.LunaRouteModel{p.Model: m})))
+				}
+			}
+		})
+	}
+}
+
 func TestLunaRouteGuideExamplesAreValid(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs/setup/lunaroute.md"))
 	require.NoError(t, err)
@@ -235,16 +282,32 @@ func TestLunaRouteGuideExamplesAreValid(t *testing.T) {
 	kinds, backends := map[string]bool{}, map[string]bool{}
 	for _, p := range profiles {
 		kinds[p.Kind], backends[p.Backend] = true, true
-		require.NoError(t, validateLunaRouteDocProfile(p, docFixtureCaps()), p.Alias)
+		require.NoError(t, validateLunaRouteDocProfile(p, docCompleteFixtureCaps()), p.Alias)
 		if p.Kind == "agent" {
-			assert.ErrorIs(t, validateLunaRouteDocProfile(p, provider.NewCapabilityRules(nil)), provider.ErrLunaRouteLimitsUnknown, p.Alias)
+			assert.True(t, provider.LunaRouteBackendEnabled(p.Backend), p.Alias)
+			if p.Backend == "codex" {
+				assert.NoError(t, validateLunaRouteDocProfile(p, provider.NewCapabilityRules(nil)), "codex does not require model limits")
+			} else {
+				assert.ErrorIs(t, validateLunaRouteDocProfile(p, provider.NewCapabilityRules(nil)), provider.ErrLunaRouteLimitsUnknown, p.Alias)
+			}
 		}
 	}
 	assert.True(t, kinds["chat"] && kinds["agent"])
-	assert.True(t, backends["claude-code"] && backends["opencode"])
+	for _, backend := range []string{"claude-code", "opencode", "codex", "pi"} {
+		assert.True(t, backends[backend], "missing validated example for %s", backend)
+	}
+	assert.Equal(t, 1, strings.Count(doc, "## codex and pi"))
+	assert.NotContains(t, doc, "not yet enabled")
+	assert.NotContains(t, doc, "not yet supported")
 	for _, text := range []string{
-		"claude-code and opencode need known context and output limits",
-		"codex is enabled for keyed LunaRoute routes; pi is not yet enabled",
+		"claude-code, opencode and pi need known context and output limits",
+		"Enabled agent backends are `claude-code`, `opencode`, `codex` and `pi`",
+		"private CODEX_HOME", "backend-health login verdict", "does not gate",
+		"PI_CODING_AGENT_DIR", "models.json", "$LUNAROUTE_API_KEY", "authHeader:true",
+		"known reasoning metadata", "independent evidence-backed reasoning fact",
+		"requested/effective effort stays exact", "generic native-provider flooring does not apply",
+		"only `low|medium|high|xhigh`", "`none` through `max` when recorded",
+		"LR-07", "LR-08", "not release-ready", "`verified`",
 		"claude-*-lr* aliases are refused and never classified as Anthropic",
 		"Live backend/helper verification and whole-release readiness remain pending",
 		"sources/lr02-live-models-2026-11-11.json",

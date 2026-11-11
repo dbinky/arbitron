@@ -79,7 +79,7 @@ func effectiveBodyOf(e provider.Effective) effectiveBody {
 func RegisterProfileTools(srv *Server) {
 	srv.AddTool(
 		gomcp.NewTool("profile_create",
-			gomcp.WithDescription("Create a model profile (admin only). Validates context_window/effort against the backend/model capability rules and echoes the floored effective values. The response carries both profile.* (your requested axes, as stored) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling."),
+			gomcp.WithDescription("Create a model profile (admin only). Validates context_window/effort against the backend/model capability rules and echoes the effective values. The response carries both profile.* (your requested axes, as stored) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling (native providers)."+LunaRouteBackendHint),
 			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Unique profile alias referenced by workflow nodes")),
 			gomcp.WithString("kind", gomcp.Required(), gomcp.Description("'chat' or 'agent'")),
 			gomcp.WithString("selection_mode", gomcp.Description("'pinned' (default) keeps the model you give; 'following' tracks the newest eligible model for follow_target")),
@@ -99,7 +99,7 @@ func RegisterProfileTools(srv *Server) {
 	)
 	srv.AddTool(
 		gomcp.NewTool("profile_update",
-			gomcp.WithDescription("Update a model profile by alias (admin only). MERGE, not replace: omitted fields keep their stored value; pass a field (even empty) to change or clear it. The response carries both profile.* (the merged stored axes) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling."),
+			gomcp.WithDescription("Update a model profile by alias (admin only). MERGE, not replace: omitted fields keep their stored value; pass a field (even empty) to change or clear it. The response carries both profile.* (the merged stored axes) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling (native providers)."+LunaRouteBackendHint),
 			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Profile alias to update")),
 			gomcp.WithString("kind", gomcp.Description("'chat' or 'agent'; omit to keep the stored kind")),
 			gomcp.WithString("selection_mode", gomcp.Description("omit to keep the stored mode; 'pinned' keeps the model you give; 'following' tracks the newest eligible model for follow_target")),

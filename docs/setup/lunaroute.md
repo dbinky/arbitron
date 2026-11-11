@@ -41,14 +41,17 @@ profile     chat-glm53-flash kind=chat connection=lunaroute-main model=glm-5.3-f
 profile     coder-glm53-oc   kind=agent backend=opencode connection=lunaroute-main model=glm-5.3
 profile     coder-glm53-cc   kind=agent backend=claude-code connection=lunaroute-main model=glm-5.3 context_window=default effort=default
 profile     coder-ds41-oc    kind=agent backend=opencode connection=lunaroute-main model=deepseek-4.1-flash
+profile     coder-glm-codex  kind=agent backend=codex connection=lunaroute-main model=glm-5.3 effort=default
+profile     coder-glm-pi     kind=agent backend=pi connection=lunaroute-main model=glm-5.3 effort=default
 ```
 
 Agent examples are conditional on the configured capability table:
-**claude-code and opencode need known context and output limits** for the
-selected model. An empty or incomplete override makes these examples fail at
-save and launch, even though the executable spelling is reviewed. Known
-unsupported task/backend facts also refuse a selection; unknown support is
-not proof of a completed live task.
+**claude-code, opencode and pi need known context and output limits** for the
+selected model; pi also needs known reasoning metadata from an independent
+evidence-backed reasoning fact. Unknown required metadata makes these examples
+fail at save and launch, even though the executable spelling is reviewed.
+Codex does not require model limits. Known unsupported task/backend facts also
+refuse a selection; unknown support is not proof of a completed live task.
 
 Rules enforced at save and before launch:
 
@@ -70,9 +73,9 @@ Rules enforced at save and before launch:
   tiers are not LunaRoute limits.
 - Non-default `effort` needs per-model evidence for the selected chat/backend
   axis and an exact emission path. OpenCode has no non-default effort emission.
+  LunaRoute requested/effective effort stays exact: generic native-provider flooring does not apply.
   Unsupported settings fail rather than being dropped or rounded.
-- Enabled agent backends are `claude-code`, `opencode` and `codex`;
-  **codex is enabled for keyed LunaRoute routes; pi is not yet enabled**.
+- Enabled agent backends are `claude-code`, `opencode`, `codex` and `pi`.
 
 Live backend/helper verification and whole-release readiness remain pending.
 Offline enablement and accepted profile examples do not claim live completion;
@@ -99,6 +102,7 @@ lunaroute_models:
   glm-5.3:
     context_tokens: {tokens: <from evidence>, evidence: "docs/evidence/lunaroute-provider/<file>#<anchor>"}
     output_tokens: {tokens: <from evidence>, evidence: "docs/evidence/lunaroute-provider/<file>#<anchor>"}
+    reasoning: {support: <supported|unsupported>, evidence: "docs/evidence/lunaroute-provider/<file>#<anchor>"}
     backends:
       opencode: {support: supported, evidence: "<completed live observation>"}
 ```
@@ -119,10 +123,49 @@ actually deployed defaults/overrides before selecting a profile.
 | `LunaRoute service failure` | Gateway/transport failure; retry later. |
 | `LunaRoute refused this request for account or pricing reasons` | Spend cap reached (`BYOK_SPEND_CAP_REACHED`) or model unpriced (`MODEL_UNPRICED`); retrying does not help. Resolve the account/pricing issue. |
 | `LunaRoute request failed and the cause is unknown` | The original cause is uncertain. A later availability observation on an agent failure does not prove the earlier cause. |
-| `… not yet supported` / `… needs known context and output limits` / `… use a reviewed fixed LunaRoute id` | Refused locally before inference. Correct the explicit selection or provide the required evidence-backed facts. |
+| `… needs known context and output limits` / `… needs known reasoning metadata` / `… use a reviewed fixed LunaRoute id` | Refused locally before inference. Correct the explicit selection or provide the required evidence-backed facts. |
 
 Nothing falls back to another model, backend or provider. For a live chat smoke
 call that needs visible content, allow at least **1024 output tokens**: these
 reasoning models may spend a smaller budget entirely on reasoning. This is the
 operator-observed smoke-test floor, not a new model limit or an automatic
 request rewrite.
+
+## codex and pi
+
+Both backends run LunaRoute keyed against `https://gw.lunaroute.com/v1` using
+the explicitly selected connection/model. The codex/pi profiles in the single
+example block above are conditional examples, not model recommendations: choose
+an id listed by `connection_models` and verify the required `lunaroute_models`
+facts in the deployed capability table.
+
+- **codex** gets `LUNAROUTE_API_KEY` and a private CODEX_HOME per run
+  (removed after the run), plus `-c model_provider="lunaroute"`,
+  `-c model_providers.lunaroute.{name,base_url,env_key,wire_api}` overrides
+  and `-c review_model="<selected id>"`. Its wire API is `responses`.
+  Personal `~/.codex/auth.json` and config are not used or modified.
+  The codex backend-health login verdict (dashboard / `system_config`)
+  describes the ChatGPT subscription only; it does not gate LunaRoute codex runs.
+- **pi** gets `LUNAROUTE_API_KEY` and a private per-run `PI_CODING_AGENT_DIR`
+  containing `models.json` for custom provider `lunaroute`, removed after the run.
+  The definition uses `api:"openai-completions"`, `apiKey:"$LUNAROUTE_API_KEY"`
+  (an environment reference, never a literal key), `authHeader:true`, and
+  `--model lunaroute/<selected id>`. Personal `~/.pi` config is not modified.
+  Known context/output limits and an independent evidence-backed reasoning fact
+  are required; neither an effort list nor pi's defaults supplies those facts.
+  Supported reasoning becomes `true`; known unsupported reasoning becomes
+  `false`; unknown reasoning is refused, not silently treated as false.
+
+Non-default `effort` on codex accepts only `low|medium|high|xhigh` (no
+`none`/`max`), and only when the table records exact support on codex for that
+model. On pi: `none` through `max` when recorded for that model, with an exact
+emission mapping. Unknown or unsupported explicit efforts are refused rather
+than floored. Default effort does not assert support for any explicit level.
+
+The private codex overrides (including `review_model`) and pi provider/relocation
+contracts are decided in LR-07 / LR-08 of
+[the decisions](../designs/2026-11-10-lunaroute-provider-decisions.md) and tracked
+in [`register.yaml`](../evidence/lunaroute-provider/register.yaml). They are
+not release-ready until those items are `verified` with genuine runtime and
+helper observations plus production application; offline enablement alone
+never establishes completed live work or whole-release readiness.
