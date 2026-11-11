@@ -334,9 +334,10 @@ ARBITRON_LUNAROUTE_RELEASE_GATE=1 go test ./test/lunaroute -run '^TestReleaseGat
 ARBITRON_LUNAROUTE_RELEASE_GATE=1 go test ./cmd/arbitron -run '^TestLunaRouteReleaseAcceptance$' -count=1 -timeout 90m
 ```
 
-P4-T7 owns the second test and extends the first with full matrix validation;
-it is not implemented yet. Do not treat running a nonexistent test or placing
-an arbitrary file at the artifact path as acceptance. Current pending/escalated
+P4-T7 owns the second test and the first gate's full matrix-content extension;
+neither is implemented yet. Its independent node/workspace tooling is described
+below, not a completed release validator. Do not treat running a nonexistent
+test or placing an arbitrary file at the artifact path as acceptance. Current pending/escalated
 register entries already fail the first command. Before release also run the
 direct gateway regression in release mode; it must not skip.
 
@@ -349,6 +350,40 @@ main and helper requests. Acceptance env vocabulary is shared:
 `_E2E_CLAUDE_MODEL`, `_E2E_CODEX_MODEL`, `_E2E_OPENCODE_MODEL`, `_E2E_PI_MODEL`,
 `_E2E_UNAVAILABLE_MODEL` (all with the `ARBITRON_LUNAROUTE` prefix), and
 `ARBITRON_LUNAROUTE_ACCEPTANCE=1` for local opt-in MCP runs.
+
+### Partial MCP acceptance tooling (P4-T7)
+
+`cmd/arbitron/lunaroute_acceptance_live_test.go` currently supplies stable
+primitives only: exact `{id, queued}` trigger parsing, context-bounded polling
+(up to 15 minutes), persisted-node/output/model-proof validation, bounded
+workspace proof reads and successful bounded server-log reads with credential
+scanning before truncation. `triggerViaMCP` and `waitLunaRouteTerminal` use the
+registered production MCP handlers. Polling rejects failed/cancelled or
+mismatched instances; its fetch callback must honor the supplied context.
+SQLite's second-precision node timestamps are handled without allowing proof
+files from a later second. Missing, unreadable, symlinked, stale or oversized
+files cannot pass. Chat uses the actual response model; agent traces require
+nonempty `model_evidence` and a persisted `tool_call`, preserve permitted alias
+drift and reject unsafe identity fields. `codex_turn_context` remains explicitly
+harness intent, not gateway response evidence.
+
+`go test ./cmd/arbitron -run 'LunaRouteAcceptanceEvidence' -count=1` exercises
+these boundaries. Its offline real-MCP chat case loads a distinctive capability
+file, creates/discovers/selects through MCP, triggers and polls via MCP, checks
+the actual authenticated HTTP sink, then reads the persisted node and real
+server log. Separate node parser fixtures cover all four planned backend
+source labels; a real local command derives their second workspace artifact.
+Those synthetic traces are **not** installed-backend evidence. No artifact is
+published by this partial tooling, and no new release acceptance test is
+present to masquerade as a live skip.
+
+Full matrix collection/validation, current-run P2-T9 captures plus genuine
+forced-helper lifecycle/session/version correlation, live binary configuration,
+metadata/runtime-source checks, and the final register gate extension remain
+blocked on the owning P3/P4 producers and live prerequisites. Missing inputs
+are not accepted as a no-op; Steps 1–5 of P4-T7 stay unchecked. No
+`observations/mcp-release-acceptance.json` is fabricated and no register label
+or supported capability changes.
 
 Negative busy/service/unknown-cause/conflict cases are deterministic offline
 fault injection, labelled as such; do not induce a live outage. Live invalid
