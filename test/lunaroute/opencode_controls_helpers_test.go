@@ -102,7 +102,10 @@ func validateOpenCodeEffectiveControls(emitted, effective []byte) (openCodeContr
 // The experiment's composition root decorates the real runner, so debug config
 // receives the actual adapter-emitted binary, env and cwd, not os.Environ or a
 // rebuilt overlay. Invalid controls refuse before the mission subprocess starts.
-type openCodeControlsRunner struct{ next claudecli.CommandRunner }
+type openCodeControlsRunner struct {
+	next    claudecli.CommandRunner
+	journal *openCodeControlJournal
+}
 
 func (r openCodeControlsRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
 	if len(spec.Args) == 0 || spec.Args[0] != "run" {
@@ -110,7 +113,9 @@ func (r openCodeControlsRunner) Run(ctx context.Context, spec claudecli.RunSpec)
 	}
 	for _, entry := range spec.Env {
 		if strings.HasPrefix(entry, "LUNAROUTE_API_KEY=") {
-			if _, err := queryOpenCodeEffectiveControls(ctx, r.next, spec); err != nil {
+			started := time.Now().UTC()
+			proof, err := queryOpenCodeEffectiveControls(ctx, r.next, spec)
+			if err != nil || r.journal != nil && r.journal.record(spec, proof, started, time.Now().UTC()) != nil {
 				return nil, nil, provider.LocalLunaRouteError("effective controls", errAgentEvidence)
 			}
 			return r.next.Run(ctx, spec)

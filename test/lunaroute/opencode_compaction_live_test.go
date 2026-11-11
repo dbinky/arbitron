@@ -68,17 +68,13 @@ func TestLiveOpencodeCompaction(t *testing.T) {
 		t.Fatal("cannot expose isolated capture wrapper")
 	}
 	t.Setenv("PATH", pathDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	factory := liveCompactingFactoryWithClient(root, "", rules, client, capture, source)
-	result, _ := runLiveMission(t, factory, binding, root)
-	records := capture.Records()
-	categories := []string{"main", "subagent", "title", "compaction"}
-	if validateCapturedInference(records, model, categories) != nil {
-		t.Fatal("current-run supporting inference incomplete")
-	}
-	for _, record := range records {
-		if record.Operation != nil && (record.Operation.Session != result.SessionID || record.Operation.Version != "1.19.5") {
-			t.Fatal("supporting inference session/version mismatch")
-		}
+	started := time.Now().UTC()
+	journal := &openCodeControlJournal{}
+	factory := liveObservedCompactingFactoryWithClient(root, "", rules, client, capture, source, journal)
+	result, workdir := runLiveMission(t, factory, binding, root)
+	observation, err := collectOpenCodeSupportingEvidence(workdir, capture, journal, result, started, time.Now().UTC())
+	if err != nil {
+		t.Fatal("current-run controls/workspace/supporting inference incomplete")
 	}
 	for path, body := range seeds {
 		after, err := os.ReadFile(path)
@@ -92,10 +88,5 @@ func TestLiveOpencodeCompaction(t *testing.T) {
 	if os.RemoveAll(root) != nil {
 		t.Fatal("experiment cleanup failed; no observation written")
 	}
-	writeObservation(t, key, "lr06-opencode-compaction.json", map[string]any{
-		"run_id": runID, "backend": "opencode", "version": "1.19.5", "model": model, "session_id": result.SessionID,
-		"source": openCodeCompactionSource, "input_source": evidencePath + "/sources/lr02-live-models-2026-11-11.json",
-		"scope":   "supporting-call experiment only; no contract verification or supported capability population",
-		"file_ok": true, "command_ok": true, "required_categories": categories, "inference": records,
-	})
+	writeObservation(t, key, "lr06-opencode-compaction.json", observation)
 }

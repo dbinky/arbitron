@@ -63,8 +63,23 @@ inference and command-created workspace proofs. Bad effective controls must
 leave both inference and mission workspace output absent. These executables
 are fixtures, not installed-backend completion evidence.
 
-Still missing: source-backed forced title/summary/compaction/subagent lifecycle
-collectors, their correlated actual traffic, Claude's effective-control
-collector, and the complete installed-binary live entry points/observations.
-No supported capability, contract/register verification or release readiness
-is inferred from these partial checks.
+## Same-run supporting-artifact feed
+
+`TestLiveOpencodeCompaction` now constructs an `openCodeControlJournal` in the
+actual experiment Factory. `openCodeControlsRunner` retains only the validated
+model/context/output projection and query interval for its warm-up and
+same-session continuation. Executable and cwd remain private join keys. Before
+cleanup, `collectOpenCodeSupportingEvidence` requires two ordered checks in that
+workspace from the same executable, the exact resumed session, matching model
+and limits, main traffic after the initial query and completed compaction after
+the continuation query. It validates all four correlated traffic categories and
+real command-created workspace/tool/model proofs. Only the safe projections,
+source reference and intervals enter the supporting artifact after cleanup.
+
+`TestAgentEvidenceOpenCodeControlsToSupportingObservation` exercises this actual
+Factory/runner/TLS/file sink and zero-write refusals. Its executables and exports
+are synthetic; it is not installed-backend verification. Source-backed title,
+subagent and first automatic-compaction joins/forcing now exist separately.
+Claude's controls/helpers, full prescribed contract/agent entry points and
+genuine operator observations remain incomplete. No supported capability,
+contract/register verification or release readiness follows from these checks.

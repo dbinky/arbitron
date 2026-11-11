@@ -455,6 +455,16 @@ release mode fails them. The actual Factory/runner uses private HOME, conflictin
 user/project seeds and the hosted-only capture wrapper. Only after real tool
 proofs, correlated main/subagent/title/compaction traffic, unchanged seeds and
 successful cleanup does it write `observations/lr06-opencode-compaction.json`.
+The artifact now includes bounded effective-control projections from both actual
+same-emitted-env debug queries (initial launch and exact-session continuation),
+not reconstructed configuration or caller-set success booleans. The collector
+requires matching model/limits, executable/workspace, ordered current query and
+inference times, and the resumed session. It checks real workspace/tool/model
+proofs before cleanup; absent, extra, drifting or stale controls prevent any
+publication. Executable/cwd stay private, and raw debug/config/auth text is never
+serialized. Run `go test ./test/lunaroute -run TestAgentEvidenceOpenCodeControlsToSupportingObservation -count=1`
+for the real Factory/subprocess/TLS/private-file sink fixtures. Those remain
+synthetic protocol tests, not installed-backend verification.
 This supporting artifact does not replace the full LR-06 contract/agent
 milestones or populate capabilities. Remaining complete helper/control
 collection, full agent entry points and operator observations stay pending.

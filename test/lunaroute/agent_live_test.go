@@ -110,16 +110,20 @@ func liveFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules,
 }
 
 func liveCapturedFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture) *providersadapter.Factory {
-	return newLiveAgentFactory(ws, claudeBin, rules, client, capture, nil, false)
+	return newLiveAgentFactory(ws, claudeBin, rules, client, capture, nil, false, nil)
 }
 
 func liveCompactingFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte) *providersadapter.Factory {
-	return newLiveAgentFactory(ws, claudeBin, rules, client, capture, snapshot, true)
+	return liveObservedCompactingFactoryWithClient(ws, claudeBin, rules, client, capture, snapshot, nil)
 }
 
-func newLiveAgentFactory(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte, forceCompaction bool) *providersadapter.Factory {
+func liveObservedCompactingFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte, journal *openCodeControlJournal) *providersadapter.Factory {
+	return newLiveAgentFactory(ws, claudeBin, rules, client, capture, snapshot, true, journal)
+}
+
+func newLiveAgentFactory(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte, forceCompaction bool, journal *openCodeControlJournal) *providersadapter.Factory {
 	started := time.Now().UTC()
-	var next claudecli.CommandRunner = openCodeControlsRunner{next: claudecli.NewExecRunner()}
+	var next claudecli.CommandRunner = openCodeControlsRunner{next: claudecli.NewExecRunner(), journal: journal}
 	if forceCompaction {
 		next = openCodeCompactionRunner{next: next, snapshot: snapshot, started: started}
 	}
