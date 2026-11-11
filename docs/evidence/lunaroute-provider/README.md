@@ -136,14 +136,81 @@ reviewed vendor and retain observed drift. An observation must still pass the
 shared credential-free JSON writer. Never publish failed/partial records as a
 verified contract or populate backend support from these offline fixtures.
 
-**Consumer wiring is pending:** P2-T8 must feed the actual live HTTP response
-through this extractor (or its transport through the proxy); P3-T5/P4-T1 must
-supply real isolated binary launches and forced lifecycle producers; P4-T7 must
-install the wrappers on its isolated PATH/Claude binary config and consume the
-current MCP run's nonempty correlated records. Those experiments are not yet
-implemented. No live capture artifact or LR verification is claimed here.
+**Consumer wiring:** P2-T8 now feeds the production probe/chat factories' actual
+HTTP responses through the shared extractor and validates nonempty current-run
+chat records before publication. Its offline fixture proves the private JSON
+sink, not live completion. P3-T5/P4-T1 must still supply real isolated binary
+launches and forced lifecycle producers; P4-T7 must install wrappers on its
+isolated PATH/Claude binary config and consume the current MCP run's correlated
+records. Those binary experiments are not yet implemented. No live capture
+artifact or LR verification is claimed here.
 After any binary/version change, rerun its complete owning contract experiment
 and the current MCP matrix, including required helpers, before reusing evidence.
+
+## Discovery/chat adapter experiment (P2-T8)
+
+With the key supplied privately and an explicit reviewed
+`ARBITRON_LUNAROUTE_E2E_CHAT_MODEL`, run:
+
+```sh
+go test ./test/lunaroute -run '^TestLiveDiscoveryAndChat$' -count=1 -v
+```
+
+`ARBITRON_LUNAROUTE_E2E_CAPABILITIES` optionally names the deployed capability
+override. The experiment loads that file through the production loader and
+uses the real `ProbeFactory` and `Factory.ChatProviderFor` LunaRoute arms at the
+canonical hosted root. It checks the full listing row ids, explicit membership,
+terminal response/model, actual output containing pong, and invalid-key
+401/INVALID_API_KEY through the real probe. No automatic model choice, fallback,
+redirect, custom destination or insecure TLS is allowed. The same actual HTTP
+response feeds the shared P2-T9 schema/model extractor; config and pins are not
+traffic evidence. Read/cap/schema failures invalidate the whole experiment.
+
+An optional reviewed `ARBITRON_LUNAROUTE_E2E_UNAVAILABLE_MODEL` must be absent
+from a fresh successful listing and produce an actual non-success inference
+response. Omission records deterministic root-fixture coverage, not a fabricated
+live negative. No local grammar/preflight refusal counts as a gateway error.
+
+Success writes owner-only `observations/lr04-discovery-chat.json` exclusively;
+move an earlier reviewed artifact aside deliberately before rerunning. Only
+schema, ids, status, code/type, auth header names/match booleans, token counts,
+timing and terminal/pong booleans survive. Never persist raw content or messages.
+Missing prerequisites skip locally and fail in release mode. This environment
+has no live inputs: no artifact or supported fact has been published.
+
+After genuine collection, review the observation against `gateway-contract.md`.
+Apply LR-01's escalation on path/auth contradiction without editing constants;
+remove any contradicted documented code from `lunaRouteDocumentedCodes`, update
+the actual probe/chat sink fixtures, and escalate LR-04 in that same change.
+Otherwise cite both sources in LR-04's verified evidence and its actual runtime
+`applied_to` references. This task also owns populating **only** the selected
+model's `tasks.chat: supported` in `capabilities.default.yaml`, citing this
+observation, with source-consistency tests. Preserve every independent static
+and backend fact. No capability or status change is authorized by an offline
+fixture, local skip, or these instructions; collection/population remains an
+unchecked P2-T8 milestone until real access is available.
+
+## Manual MCP acceptance — discovery and chat (live server)
+
+The offline root tests (`cmd/arbitron/lunaroute_*_wiring_test.go`) prove the
+MCP → service → adapter wiring against a fake gateway. Live acceptance through
+the real MCP tools is a manual run against a server started with a real master
+key; record the outcome credential-free in
+`observations/mcp-discovery-chat-<YYYY-MM-DD>.md` (supplementary manual notes,
+not a JSON register observation).
+
+1. `connection_create` `{name: "lunaroute-main", provider: "lunaroute", base_url: "", api_key: "<lr_ key>"}` → created with `base_url` = `https://gw.lunaroute.com`.
+2. `connection_create` with an `sk-…` key → refused with the `lr_` guidance, no key echoed.
+3. `connection_models` `{name: "lunaroute-main"}` → listed ids, `family`, explicit unknowns and availability note. Record ids/families, not credentials.
+4. `profile_create` `{alias: "lr-chat", kind: "chat", connection_ref: "lunaroute-main", model: "<listed reviewed id>"}` → created. Listing alone does not authorize an unreviewed id.
+5. `workflow_create` a one-node workflow (`llm_call`, `model_profile: "lr-chat"`, template asking for pong); `instance_trigger`; poll `instance_get` until completed and assert the output. A launch is not success.
+6. `connection_update` with an invalid `lr_` key; `connection_models` → credential rejection; re-trigger → node fails with classified credential rejection. Restore the real key privately.
+7. If a reviewed id is genuinely absent, save it explicitly (availability is not checked at save), then trigger → classified non-success/explicit uncertainty, no substitution. Otherwise record this live negative as not applicable and cite deterministic fixtures.
+8. Inspect responses, logs and observations for credential leakage. Assert log reads succeeded; never copy keys or raw request/response content into notes.
+
+Phase 4 Task 7 extends this to the completed release matrix on all four agent
+backends, with actual main/helper capture. This procedure is not itself live
+evidence and cannot flip a register status.
 
 ## Release enforcement
 
