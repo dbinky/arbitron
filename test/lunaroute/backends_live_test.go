@@ -177,7 +177,11 @@ func parseBackendTurn(backend, selected, key string, stdout, rollout []byte) (ba
 	if backend != "codex" && backend != "pi" {
 		return fail()
 	}
+	activeTurn, agentEnded := false, false
 	err := backendJSONLines(stdout, func(line []byte) error {
+		if agentEnded {
+			return errBackendEvidence
+		}
 		var event struct {
 			Type     string `json:"type"`
 			ThreadID string `json:"thread_id"`
@@ -203,15 +207,21 @@ func parseBackendTurn(backend, selected, key string, stdout, rollout []byte) (ba
 				}
 				proof.SessionID = event.ThreadID
 			case "turn.started":
-				proof.Completed = false
-			case "turn.completed":
-				if proof.SessionID == "" {
+				if proof.SessionID == "" || activeTurn {
 					return errBackendEvidence
 				}
-				proof.Completed = true
+				activeTurn, proof.Completed = true, false
+			case "turn.completed":
+				if !activeTurn {
+					return errBackendEvidence
+				}
+				activeTurn, proof.Completed = false, true
 			case "turn.failed", "error":
 				return errBackendEvidence
 			case "item.completed":
+				if !activeTurn {
+					return errBackendEvidence
+				}
 				if event.Item != nil && event.Item.Type == "command_execution" && event.Item.Status == "completed" && event.Item.ExitCode != nil && *event.Item.ExitCode == 0 {
 					proof.ToolCalled = true
 				}
@@ -225,7 +235,7 @@ func parseBackendTurn(backend, selected, key string, stdout, rollout []byte) (ba
 				proof.SessionID = event.ID
 			case "message_end":
 				m := event.Message
-				if m == nil {
+				if proof.SessionID == "" || m == nil {
 					return errBackendEvidence
 				}
 				if m.Role != "assistant" {
@@ -250,14 +260,22 @@ func parseBackendTurn(backend, selected, key string, stdout, rollout []byte) (ba
 					}
 				}
 			case "agent_start", "turn_start":
+				if proof.SessionID == "" {
+					return errBackendEvidence
+				}
 				proof.Completed = false
+			case "agent_end":
+				if !proof.Completed {
+					return errBackendEvidence
+				}
+				agentEnded = true
 			case "error":
 				return errBackendEvidence
 			}
 		}
 		return nil
 	})
-	if err != nil || !proof.Completed || !proof.ToolCalled || proof.SessionID == "" {
+	if err != nil || !proof.Completed || !proof.ToolCalled || proof.SessionID == "" || backend == "pi" && !agentEnded {
 		return fail()
 	}
 	if backend == "codex" {
@@ -280,6 +298,9 @@ func parseBackendTurn(backend, selected, key string, stdout, rollout []byte) (ba
 				}
 				session = event.Payload.ID
 			case "turn_context":
+				if session != proof.SessionID {
+					return errBackendEvidence
+				}
 				model, err := backendModel(selected, event.Payload.Model, event.Payload.Provider, "codex_turn_context_intent", key)
 				if err != nil {
 					return err

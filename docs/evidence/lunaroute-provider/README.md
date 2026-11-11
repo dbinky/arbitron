@@ -320,13 +320,18 @@ read failures, oversized trees and unexpected writes are refused. No shared
 `collectBackendEvidence` requires bounded, valid JSONL, a correlated session,
 nonempty model records, successful final completion and tool-call evidence.
 Pi tool-use intermediate messages are allowed, but an error, abort, length stop
-or unfinished final tool turn fails even with exit zero. Codex needs its same
-thread's rollout plus terminal turn completion; `codex_turn_context_intent`
+or unfinished final tool turn fails even with exit zero. Its successful final
+assistant message must precede exactly one final `agent_end`; missing, premature,
+duplicate or trailing lifecycle events prevent publication. Codex requires a
+thread before its turn, an active turn for tool/completion events, and the same
+thread's rollout session before model contexts; `codex_turn_context_intent`
 explicitly denotes harness intent, **not** a gateway-reported model. Independent
 nonempty main/helper request/response records are mandatory for both backends.
 Pi's separate reasoning fact and both limits must be known; absent metadata is
-never replaced by defaults or inferred from effort. Reviewed alias drift stays
-visible in the reported identities.
+never replaced by defaults or inferred from effort. R3 requires exact requested
+and reported canonical identities for all three release models. Revoked
+Claude-shaped aliases, the old DeepSeek weights spelling and fixed-id drift
+cannot publish an observation, even when config and traffic otherwise agree.
 
 The validator reads the exact `ok` proof from `lunaroute-ok.txt` and the derived
 byte count `2` from command-generated `listing.txt`, rejects precreated/symlinked
@@ -347,17 +352,21 @@ independence experiments.
 
 Version-only inventory on 2026-11-11 UTC returned codex-cli `0.167.0` and pi
 `1.5.1` under a temporary HOME and credential-free environment. No direct live
-experiment ran: key, explicit codex/pi models and documented required pi facts
-are absent. The planned `TestLiveCodexHelp`, `TestLiveCodexLunaRoute`,
+experiment ran: private key and explicit codex/pi model selections remain
+operator-only inputs. R2's required pi facts and the production adapters are now
+implemented; missing access does not block offline code under R6. The planned
+`TestLiveCodexHelp`, `TestLiveCodexLunaRoute`,
 `TestLivePiHelp` and `TestLivePiLunaRoute` experiments are not implemented as
 placeholder skips; selecting those names currently runs no tests and is **not**
 acceptance. P4-T1 still owns the real conflicting-config/auth/isolation runs,
 backend-specific forced lifecycle collectors, credential-free contract/run
 artifacts and scoped support-fact publication when prerequisites exist. A
 binary upgrade requires rerunning those experiments, not only these fixtures.
-No supported capability, LR-07/LR-08 verified status or enablement is authorized
-by this tooling; P4-T2/T4 implement adapters, P4-T3/T5 enable them only after
-genuine contract observations, and P4-T7 owns final MCP completion evidence.
+No supported capability or LR-07/LR-08 verified status is authorized by this
+tooling. P4-T2–T5 have implemented and wired the production adapters offline per
+R6; readiness still requires genuine observations. P4-T1's missing source-backed
+helper/effective-control collectors prevent complete live entry points, not the
+already implemented emitters. P4-T7 owns final MCP completion evidence.
 
 ## Release enforcement
 

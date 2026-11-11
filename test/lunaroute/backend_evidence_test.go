@@ -225,29 +225,91 @@ func TestBackendEvidencePiSeparateUnknownLimitsRefused(t *testing.T) {
 }
 
 func TestBackendEvidenceReviewedAliasDrift(t *testing.T) {
+	// R3 revokes the former alias exception. Only exact canonical identities
+	// can reach this sink, even when all configuration and traffic agree.
+	cases := []struct {
+		selected, reported string
+		accepted           bool
+	}{
+		{"glm-5.3", "glm-5.3", true},
+		{"glm-5.3-flash", "glm-5.3-flash", true},
+		{"deepseek-4.1-flash", "deepseek-4.1-flash", true},
+		{"glm-5.3", "glm-5.3-flash", false},
+		{"glm-5.3", "deepseek-4.1-flash", false},
+		{"claude-sonnet-5-lr1", "claude-sonnet-5-5", false},
+		{"claude-sonnet-5-lr1", "glm-5.3", false},
+		{"claude-opus-lr29", "glm-5.3", false},
+		{"deepseek-4.1-flash-1017", "deepseek-4.1-flash-1017", false},
+	}
 	for _, backend := range []string{"codex", "pi"} {
-		t.Run(backend, func(t *testing.T) {
-			root, ws, in := backendEvidenceFixture(t, backend, false)
-			in.Model = "claude-sonnet-5-lr1"
-			in.Stdout = []byte(strings.ReplaceAll(string(in.Stdout), "glm-5.3", "claude-sonnet-5-5"))
-			in.Rollout = []byte(strings.ReplaceAll(string(in.Rollout), "glm-5.3", "claude-sonnet-5-5"))
-			m, _ := in.Rules.LunaRouteModel("glm-5.3")
-			m.ID = in.Model
-			in.Rules = in.Rules.WithLunaRouteModels(map[string]provider.LunaRouteModel{m.ID: m})
-			for i := range in.Records {
-				in.Records[i].RequestedModel = in.Model
-				in.Records[i].ReportedModels = []string{"claude-sonnet-5-5"}
-			}
-			raw, err := json.Marshal(agentConfigReference{RunID: in.RunID, Backend: backend, Model: in.Model, SessionID: "session-one", Source: "fixture emitted configuration"})
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(filepath.Join(root, in.ConfigRef), raw, 0600))
-			require.NoError(t, publishBackendEvidence(root, ws, captureFixtureKey, "alias.json", in))
-			raw, err = os.ReadFile(filepath.Join(root, evidencePath, "observations/alias.json"))
-			require.NoError(t, err)
-			var sink backendTaskObservation
-			require.NoError(t, json.Unmarshal(raw, &sink))
-			assert.Equal(t, in.Model, sink.Model)
-			assert.Equal(t, "claude-sonnet-5-5", sink.ModelEvidence[0].Model)
+		for _, tc := range cases {
+			t.Run(backend+"/"+tc.selected+"/"+tc.reported, func(t *testing.T) {
+				root, ws, in := backendEvidenceFixture(t, backend, false)
+				in.Model = tc.selected
+				in.Stdout = []byte(strings.ReplaceAll(string(in.Stdout), "glm-5.3", tc.reported))
+				in.Rollout = []byte(strings.ReplaceAll(string(in.Rollout), "glm-5.3", tc.reported))
+				m, _ := in.Rules.LunaRouteModel("glm-5.3")
+				m.ID = in.Model
+				in.Rules = in.Rules.WithLunaRouteModels(map[string]provider.LunaRouteModel{m.ID: m})
+				for i := range in.Records {
+					in.Records[i].RequestedModel = in.Model
+					in.Records[i].ReportedModels = []string{tc.reported}
+				}
+				raw, err := json.Marshal(agentConfigReference{RunID: in.RunID, Backend: backend, Model: in.Model, SessionID: "session-one", Source: "fixture emitted configuration"})
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(root, in.ConfigRef), raw, 0600))
+				err = publishBackendEvidence(root, ws, captureFixtureKey, "identity.json", in)
+				path := filepath.Join(root, evidencePath, "observations/identity.json")
+				if !tc.accepted {
+					require.ErrorIs(t, err, errBackendEvidence)
+					_, err = os.Stat(path)
+					assert.True(t, os.IsNotExist(err))
+					return
+				}
+				require.NoError(t, err)
+				raw, err = os.ReadFile(path)
+				require.NoError(t, err)
+				var sink backendTaskObservation
+				require.NoError(t, json.Unmarshal(raw, &sink))
+				assert.Equal(t, tc.selected, sink.Model)
+				require.NotEmpty(t, sink.ModelEvidence)
+				for _, model := range sink.ModelEvidence {
+					assert.Equal(t, tc.reported, model.Model)
+					assert.Equal(t, "lunaroute", model.Provider)
+				}
+				require.Len(t, sink.Inference, 2)
+				for _, record := range sink.Inference {
+					assert.Equal(t, tc.selected, record.RequestedModel)
+					assert.Equal(t, []string{tc.reported}, record.ReportedModels)
+				}
+			})
+		}
+	}
+}
+
+func TestBackendEvidenceRequiresOrderedTerminalLifecycle(t *testing.T) {
+	cases := []struct {
+		backend, name, stdout, rollout string
+	}{
+		{"pi", "missing agent end", strings.ReplaceAll(piFixtureOutput, "{\"type\":\"agent_end\"}\n", ""), ""},
+		{"pi", "duplicate agent end", piFixtureOutput + "{\"type\":\"agent_end\"}\n", ""},
+		{"pi", "restart after agent end", piFixtureOutput + "{\"type\":\"agent_start\"}\n", ""},
+		{"pi", "premature agent end", strings.Replace(piFixtureOutput, "{\"type\":\"message_end\"", "{\"type\":\"agent_end\"}\n{\"type\":\"message_end\"", 1), ""},
+		{"pi", "late session", strings.ReplaceAll(piFixtureOutput, "{\"type\":\"session\",\"id\":\"session-one\"}\n", "") + "{\"type\":\"session\",\"id\":\"session-one\"}\n", ""},
+		{"codex", "missing turn start", strings.ReplaceAll(codexFixtureOutput, "{\"type\":\"turn.started\"}\n", ""), codexFixtureRollout},
+		{"codex", "duplicate completion", codexFixtureOutput + "{\"type\":\"turn.completed\"}\n", codexFixtureRollout},
+		{"codex", "tool after completion", codexFixtureOutput + "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"status\":\"completed\",\"exit_code\":0}}\n", codexFixtureRollout},
+		{"codex", "late thread", strings.ReplaceAll(codexFixtureOutput, "{\"type\":\"thread.started\",\"thread_id\":\"session-one\"}\n", "") + "{\"type\":\"thread.started\",\"thread_id\":\"session-one\"}\n", codexFixtureRollout},
+		{"codex", "late rollout session", codexFixtureOutput, "{\"type\":\"turn_context\",\"payload\":{\"model\":\"glm-5.3\",\"model_provider\":\"lunaroute\"}}\n{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-one\"}}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.backend+"/"+tc.name, func(t *testing.T) {
+			root, ws, in := backendEvidenceFixture(t, tc.backend, false)
+			in.Stdout, in.Rollout = []byte(tc.stdout), []byte(tc.rollout)
+			err := publishBackendEvidence(root, ws, captureFixtureKey, "invalid-lifecycle.json", in)
+			require.ErrorIs(t, err, errBackendEvidence)
+			_, err = os.Stat(filepath.Join(root, evidencePath, "observations/invalid-lifecycle.json"))
+			assert.True(t, os.IsNotExist(err), "invalid lifecycle must not reach the observation sink")
 		})
 	}
 }
