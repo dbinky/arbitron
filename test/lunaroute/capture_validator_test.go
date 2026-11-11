@@ -90,11 +90,21 @@ func TestCaptureValidatorModelsAndRoutes(t *testing.T) {
 	if err := validateCapturedInference([]capturedInference{good}, "glm-5.3", []string{"main"}); err != nil {
 		t.Fatal(err)
 	}
-	alias := good
-	alias.RequestedModel = "claude-sonnet-5-lr1"
-	alias.ReportedModels = []string{"claude-sonnet-5-6"}
-	if err := validateCapturedInference([]capturedInference{alias}, alias.RequestedModel, []string{"main"}); err != nil {
-		t.Fatal(err)
+	for _, model := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
+		r := validCaptureRecord()
+		r.RequestedModel, r.ReportedModels = model, []string{model}
+		if err := validateCapturedInference([]capturedInference{r}, model, []string{"main"}); err != nil {
+			t.Fatalf("canonical identity rejected: %s", model)
+		}
+		for _, other := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash", "claude-sonnet-5-lr1", "claude-sonnet-5-6"} {
+			if other == model {
+				continue
+			}
+			r.ReportedModels = []string{other}
+			if validateCapturedInference([]capturedInference{r}, model, []string{"main"}) == nil {
+				t.Fatal("fixed-id response substitution accepted")
+			}
+		}
 	}
 	mutations := []func(*capturedInference){
 		func(r *capturedInference) { r.Host = "foreign.example" }, func(r *capturedInference) { r.Path = "/v1/models" },
@@ -112,9 +122,14 @@ func TestCaptureValidatorModelsAndRoutes(t *testing.T) {
 			t.Fatalf("invalid capture accepted: %d", i)
 		}
 	}
-	alias.ReportedModels = []string{"glm-5.3"}
-	if validateCapturedInference([]capturedInference{alias}, alias.RequestedModel, []string{"main"}) == nil {
-		t.Fatal("cross-vendor alias accepted")
+	for _, selected := range []string{"claude-sonnet-5-lr1", "claude-opus-lr29", "claude-haiku-lr37", "deepseek-4.1-flash-1017"} {
+		for _, reported := range []string{selected, "claude-sonnet-5-6", "glm-5.3", "deepseek-4.1-flash"} {
+			r := validCaptureRecord()
+			r.RequestedModel, r.ReportedModels = selected, []string{reported}
+			if validateCapturedInference([]capturedInference{r}, selected, []string{"main"}) == nil {
+				t.Fatal("revoked or unserved identity accepted")
+			}
+		}
 	}
 }
 func TestCaptureRequiresCorrelatedHelpers(t *testing.T) {

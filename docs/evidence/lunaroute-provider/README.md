@@ -127,8 +127,12 @@ a match boolean, timestamps and terminal/failure flags. They contain no auth
 values, hashes, prompts, tool arguments/results, raw response bodies or stderr.
 `extractCapturedResponse` is the shared bounded JSON/SSE extractor for Messages,
 chat completions and Responses (including `response.model`); an absent reported
-model stays absent. A successful capture is routing evidence only: the owning
-experiment must independently assert the finished tool task and workspace sink.
+model stays absent. Messages streams require a start before content/deltas,
+no content or repeated finish after the stop reason, and a final message stop;
+pings do not count as content or completion. Reordered streams cannot publish
+a completed agent observation even when tool/workspace proofs exist. A successful
+capture is routing evidence only: the owning experiment must independently
+assert the finished tool task and workspace sink.
 
 Helper evidence additionally requires the backend experiment's actual forced
 operation/lifecycle parser. Feed its current run/backend, operation/session id,
@@ -142,8 +146,9 @@ Before calling `writeObservation`, require
 `validateCapturedInference(records, selectedModel, requiredCategories)` to pass.
 It rejects empty traffic, mismatched auth/routes, missing helpers, mixed runs,
 duplicate requests, nonterminal responses and unreported/mismatched models.
-Fixed selections require exact reported spelling; reviewed aliases require the
-reviewed vendor and retain observed drift. An observation must still pass the
+R3's three canonical selections require exact reported spelling. Revoked
+Claude-shaped aliases and the unserved DeepSeek weights spelling are rejected,
+regardless of the reported vendor/model. An observation must still pass the
 shared credential-free JSON writer. Never publish failed/partial records as a
 verified contract or populate backend support from these offline fixtures.
 

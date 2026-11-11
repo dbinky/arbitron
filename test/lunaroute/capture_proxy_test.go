@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,6 +133,101 @@ func TestCaptureHostedRequestResponse(t *testing.T) {
 		t.Fatal("persisted sink lost routing evidence")
 	}
 }
+
+// The helper record is a synthetic tooling fixture; only the main request here
+// is captured traffic. This checks the existing consumer's publication boundary,
+// not an installed binary's helper behavior or LR-05 verification.
+func TestCaptureMessagesLifecycleToObservation(t *testing.T) {
+	start := `data: {"type":"message_start","message":{"model":"glm-5.3"}}` + "\n\n"
+	content := `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"private-response"}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n"
+	ping := `data: {"type":"ping"}` + "\n\n"
+	delta := `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}` + "\n\n"
+	stop := `data: {"type":"message_stop"}` + "\n\n"
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"ordered", start + content + delta + stop, true},
+		{"ping-control-events", ping + start + content + delta + ping + stop, true},
+		{"delta-before-start", delta + start + stop, false},
+		{"content-before-start", content + start + delta + stop, false},
+		{"content-after-finish", start + delta + content + stop, false},
+		{"duplicate-finish", start + delta + delta + stop, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, ws, in := agentEvidenceFixture(t)
+			var calls atomic.Int32
+			c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var body struct {
+					Model     string
+					Stream    bool
+					MaxTokens int `json:"max_tokens"`
+					Messages  []struct{ Role, Content string }
+				}
+				if r.Method != "POST" || r.Host != captureHost || r.URL.Path != "/v1/messages" || r.Header.Get("Authorization") != "Bearer "+captureFixtureKey || json.NewDecoder(r.Body).Decode(&body) != nil || body.Model != in.Model || !body.Stream || body.MaxTokens != discoveryChatTokens || len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content != "private-nonce" {
+					t.Error("missing selected credential-bearing request")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, tc.body)
+			}, captureLimits{})
+			c.backend = in.Backend
+			requestBody, err := json.Marshal(map[string]any{"model": in.Model, "stream": true, "max_tokens": discoveryChatTokens, "messages": []map[string]string{{"role": "user", "content": "private-nonce"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest("POST", hostedRoot+"/v1/messages", strings.NewReader(string(requestBody)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+captureFixtureKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := captureClient(t, c, true).Do(req)
+			if err != nil {
+				t.Fatal("captured request failed")
+			}
+			_, readErr := io.Copy(io.Discard, resp.Body)
+			closeErr := resp.Body.Close()
+			if readErr != nil || closeErr != nil || resp.StatusCode != http.StatusOK || calls.Load() != 1 {
+				t.Fatal("fixture did not exercise a complete HTTP response")
+			}
+			in.Records = append(c.Records(), in.Records[1])
+			in.FinishedAt = time.Now().UTC()
+			err = publishAgentEvidence(root, ws, captureFixtureKey, "stream.json", in)
+			path := filepath.Join(root, evidencePath, "observations/stream.json")
+			if !tc.valid {
+				if err == nil {
+					t.Fatal("out-of-order gateway stream published as completed evidence")
+				}
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Fatal("rejected stream wrote an observation")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sink agentTaskObservation
+			if json.Unmarshal(raw, &sink) != nil || len(sink.Inference) != 2 || sink.Inference[0].RequestedModel != in.Model || !slices.Equal(sink.Inference[0].ReportedModels, []string{in.Model}) || !sink.Inference[0].Completed || !sink.Completed || !sink.FileOK || !sink.CommandOK {
+				t.Fatal("persisted observation lost actual completion/model proof")
+			}
+			for _, secret := range []string{captureFixtureKey, "private-response", "private-nonce"} {
+				if strings.Contains(string(raw), secret) {
+					t.Fatal("raw gateway content persisted")
+				}
+			}
+		})
+	}
+}
+
 func TestCaptureRejectsWrongRouteOrAuth(t *testing.T) {
 	for _, tc := range []struct{ name, host, key, extra string }{{"host", "foreign.example", captureFixtureKey, ""}, {"key", "gw.lunaroute.com", "lr_wrong", ""}, {"extra", "gw.lunaroute.com", captureFixtureKey, "x-api-key"}, {"other-auth", "gw.lunaroute.com", captureFixtureKey, "LUNAROUTE-API-KEY"}} {
 		t.Run(tc.name, func(t *testing.T) {

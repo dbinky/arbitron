@@ -778,7 +778,7 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 				started = true
 			case "message_delta":
 				nested, ok := decode(object["delta"])
-				if !ok {
+				if !ok || !started || finished {
 					return false
 				}
 				finished = messageStopped(text(nested, "stop_reason"))
@@ -787,7 +787,11 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 					return false
 				}
 				terminal = true
-			case "content_block_start", "content_block_delta", "content_block_stop", "ping":
+			case "content_block_start", "content_block_delta", "content_block_stop":
+				if !started || finished {
+					return false
+				}
+			case "ping":
 			default:
 				return false
 			}
