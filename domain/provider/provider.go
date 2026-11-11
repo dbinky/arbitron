@@ -107,6 +107,9 @@ type ResolvedBinding struct {
 	// default) and overwrites this field before the factory dispatches on it.
 	// Independent of Provider: a claude-code backend may carry any connection.
 	Backend string
+	// BackendExplicit records author intent independently of the effective
+	// Backend, which may be filled from deployment defaults at execution time.
+	BackendExplicit bool
 	// AllowedTools is the resolved per-profile tool allowlist (PR #18 item 1b).
 	// Adapters prefer it over their global scope as the per-request tool scope
 	// for agent-kind bindings. Empty means "use the adapter's global scope".

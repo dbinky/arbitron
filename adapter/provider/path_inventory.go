@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -560,10 +561,11 @@ func (b *pathBuilder) add(p provider.Profile, backend, mode string, kind provide
 }
 
 // routeBinding retains actual connection metadata, never the follow target.
-// Codex authenticates independently and must never reveal a connection key.
+// Codex authenticates independently and must never reveal a connection key; LunaRoute bindings are guarded.
 func routeBinding(p provider.Profile, backend string, conn provider.Connection, store provider.ConnectionStore) provider.ResolvedBinding {
 	b := provider.ResolvedBinding{
 		Kind: p.Kind, Provider: ProviderClaudeCLI, Model: p.Model, Backend: backend,
+		ConnectionRef: p.ConnectionRef, BackendExplicit: strings.TrimSpace(p.Backend) != "",
 		AllowedTools: slices.Clone(p.AllowedTools), ContextWindow: p.ContextWindow, Effort: p.Effort,
 		RevealKey: func(context.Context) (string, error) { return "", nil },
 	}
@@ -579,7 +581,9 @@ func routeBinding(p provider.Profile, backend string, conn provider.Connection, 
 	} else if backend == workflow.BackendCodex {
 		b.Provider = ""
 	}
-	return b
+	// The codex no-op reveal above fails closed for LunaRoute until its
+	// authenticated backend path is enabled in phase 4.
+	return provider.GuardLunaRouteReveal(b)
 }
 
 // harnessBackend names the harness binary a route runs: the agent backend, or

@@ -22,7 +22,7 @@ func (s *stubLive) Resolve(_ context.Context, alias string) (provider.ResolvedBi
 	if s.err != nil {
 		return provider.ResolvedBinding{}, s.err
 	}
-	return provider.ResolvedBinding{Provider: "anthropic", BaseURL: "https://live", Backend: "claude-code", Model: s.model, AllowedTools: []string{"Read"}}, nil
+	return provider.ResolvedBinding{Provider: "anthropic", BaseURL: "https://live", Backend: "claude-code", BackendExplicit: true, Model: s.model, AllowedTools: []string{"Read"}}, nil
 }
 
 type stubLookup struct {
@@ -54,7 +54,7 @@ func TestPinningResolverReplacesOnlyModel(t *testing.T) {
 	if b.Model != "version-X" {
 		t.Fatalf("model = %q, want version-X", b.Model)
 	}
-	if b.BaseURL != "https://live" || b.Backend != "claude-code" || len(b.AllowedTools) != 1 {
+	if b.BaseURL != "https://live" || b.Backend != "claude-code" || !b.BackendExplicit || len(b.AllowedTools) != 1 {
 		t.Fatalf("live fields not preserved: %+v", b)
 	}
 }
