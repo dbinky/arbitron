@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 )
 
 const (
@@ -60,8 +63,9 @@ func resolveCodexHome(env []string) (string, error) {
 // (session_meta) and the model of every turn_context in file order. Compaction
 // can record more than one context for a turn.
 type rolloutEvidence struct {
-	ThreadID   string
-	TurnModels []string
+	ThreadID      string
+	TurnModels    []string
+	TurnProviders []json.RawMessage // validated only by the LunaRoute consumer
 }
 
 // findRollout locates exactly one stored rollout for threadID under
@@ -158,8 +162,9 @@ func (ev *rolloutEvidence) add(line []byte) error {
 		Payload json.RawMessage `json:"payload"`
 	}
 	var payload struct {
-		ID    string `json:"id"`
-		Model string `json:"model"`
+		ID       string          `json:"id"`
+		Model    string          `json:"model"`
+		Provider json.RawMessage `json:"model_provider"`
 	}
 	if err := json.Unmarshal(line, &ident); err != nil || json.Unmarshal(ident.Payload, &payload) != nil {
 		return fmt.Errorf("%w: malformed rollout identity", ErrModelEvidence)
@@ -172,6 +177,7 @@ func (ev *rolloutEvidence) add(line []byte) error {
 		ev.ThreadID = payload.ID
 	case "turn_context":
 		ev.TurnModels = append(ev.TurnModels, payload.Model)
+		ev.TurnProviders = append(ev.TurnProviders, payload.Provider)
 	}
 	return nil
 }
@@ -203,6 +209,32 @@ func (v *rolloutVerifier) evidence(threadID string) (rolloutEvidence, error) {
 		return rolloutEvidence{}, fmt.Errorf("%w: rollout belongs to another thread", ErrModelEvidence)
 	}
 	return ev, nil
+}
+
+// lunaRouteAfterTurn reads the completed launch's private rollout once, using
+// the same session correlation and bounded parser as subscription pins. These
+// records declare harness routing intent, not a gateway-reported response.
+func (v *rolloutVerifier) lunaRouteAfterTurn(threadID, selected string) ([]engine.ModelEvidence, error) {
+	ev, err := v.evidence(threadID)
+	if err != nil {
+		return nil, err
+	}
+	if len(ev.TurnModels) == 0 {
+		return nil, ErrModelEvidence
+	}
+	evidence := make([]engine.ModelEvidence, 0, len(ev.TurnModels))
+	for i, model := range ev.TurnModels {
+		var p string
+		if raw := ev.TurnProviders[i]; len(raw) > 0 && json.Unmarshal(raw, &p) != nil {
+			return nil, ErrModelEvidence
+		}
+		if !safeLunaRouteIdentity(model) || !modelidentity.LunaRouteExecutedModelAccepted(selected, model) ||
+			p != "" && (!safeLunaRouteIdentity(p) || p != "lunaroute") {
+			return nil, ErrModelEvidence
+		}
+		evidence = append(evidence, engine.ModelEvidence{Model: model, Provider: p, Source: "codex_turn_context"})
+	}
+	return evidence, nil
 }
 
 // beforeResume checks the stored session before it is resumed: it must have at

@@ -25,6 +25,8 @@ type parsed struct {
 	// A pinned batch result requires a completed turn without any failure.
 	completed bool
 	failed    bool
+	// LunaRoute requires the last started turn to have reached completion too.
+	finalTurnCompleted bool
 }
 
 // agentStep mirrors engine.AgentStep so parse.go stays independent of the engine
@@ -107,6 +109,8 @@ func decodeLine(line string) (codexEvent, bool, error) {
 //     (forward-compat).
 func foldEvent(out *parsed, ev codexEvent) (newText string) {
 	switch ev.Type {
+	case "turn.started":
+		out.finalTurnCompleted = false
 	case "thread.started":
 		if ev.ThreadID != "" {
 			out.sessionID = ev.ThreadID
@@ -115,11 +119,13 @@ func foldEvent(out *parsed, ev codexEvent) (newText string) {
 		return foldItem(out, ev.Item)
 	case "turn.completed":
 		out.completed = true
+		out.finalTurnCompleted = true
 		if ev.Usage != nil {
 			out.tokensIn = ev.Usage.InputTokens
 			out.tokensOut = ev.Usage.OutputTokens
 		}
 	case "error", "turn.failed":
+		out.finalTurnCompleted = false
 		msg := failureMessage(ev)
 		// A failed turn must surface its cause, not a silent empty result.
 		// codex emits BOTH an `error` and a `turn.failed` event carrying the

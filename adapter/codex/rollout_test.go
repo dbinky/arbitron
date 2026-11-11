@@ -33,6 +33,38 @@ func writeRollout(t *testing.T, home, id string, lines ...string) string {
 	return p
 }
 
+func TestRolloutLunaRouteReportedEvidence(t *testing.T) {
+	home := t.TempDir()
+	v := &rolloutVerifier{home: home}
+	writeRollout(t, home, rolloutThread, metaLine(rolloutThread), ctxLine("glm-5.3"), `{"type":"turn_context","payload":{"model":"glm-5.3","model_provider":"lunaroute"}}`)
+	ev, err := v.lunaRouteAfterTurn(rolloutThread, "glm-5.3")
+	require.NoError(t, err)
+	require.Len(t, ev, 2)
+	assert.Equal(t, "glm-5.3", ev[0].Model)
+	assert.Empty(t, ev[0].Provider, "never invent a provider from the selected binding")
+	assert.Equal(t, "lunaroute", ev[1].Provider)
+	assert.Equal(t, "codex_turn_context", ev[1].Source)
+	for _, model := range []string{"", "glm-5.3-flash", "gpt-6.1-sol", "claude-sonnet-5-lr1", "glm-5.3 lr_private", "glm-5.3\u00a0", strings.Repeat("x", 257)} {
+		writeRollout(t, home, rolloutThread, metaLine(rolloutThread), ctxLine(model))
+		ev, err := v.lunaRouteAfterTurn(rolloutThread, "glm-5.3")
+		require.ErrorIs(t, err, ErrModelEvidence)
+		assert.Empty(t, ev)
+		assert.NotContains(t, err.Error(), "lr_private")
+	}
+	writeRollout(t, home, rolloutThread, metaLine(rolloutThread), ctxLine("glm-5.3"))
+	_, err = v.lunaRouteAfterTurn(rolloutThread, "claude-sonnet-5-lr1")
+	require.ErrorIs(t, err, ErrModelEvidence, "revoked aliases cannot be selected even with canonical evidence")
+}
+
+func TestRolloutLunaRouteProviderValidationDoesNotChangeSubscription(t *testing.T) {
+	home := t.TempDir()
+	writeRollout(t, home, rolloutThread, metaLine(rolloutThread), `{"type":"turn_context","payload":{"model":"glm-5.3","model_provider":42}}`)
+	v := &rolloutVerifier{home: home}
+	require.NoError(t, v.afterTurn(rolloutThread, "glm-5.3", 0), "subscription proof still ignores unknown fields")
+	_, err := v.lunaRouteAfterTurn(rolloutThread, "glm-5.3")
+	require.ErrorIs(t, err, ErrModelEvidence, "LunaRoute rejects malformed identity fields")
+}
+
 func TestRolloutVerifier_BeforeResume(t *testing.T) {
 	home := t.TempDir()
 	v := &rolloutVerifier{home: home}
