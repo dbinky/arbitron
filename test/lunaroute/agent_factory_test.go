@@ -26,6 +26,10 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	bins := t.TempDir()
 	titleSystem, err := os.ReadFile(filepath.Join(repoRoot(t), evidencePath, "sources/lr06-title-prompt.txt"))
 	require.NoError(t, err)
+	compactionSystem, err := os.ReadFile(filepath.Join(repoRoot(t), evidencePath, "sources/lr06-compaction-prompt.txt"))
+	require.NoError(t, err)
+	compactionTemplate, err := os.ReadFile(filepath.Join(repoRoot(t), evidencePath, "sources/lr06-compaction-template.txt"))
+	require.NoError(t, err)
 	var fixtureStarted time.Time
 	var firstRequest sync.Once
 	c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +80,43 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 				io.WriteString(w, `{"model":"glm-5.3","choices":[`)
 			} else {
 				io.WriteString(w, `{"model":"`+titleModel+`","choices":[{"index":0,"message":{"content":"`+title+`"},"finish_reason":"stop"}]}`)
+			}
+			return
+		}
+		if backend == "opencode" && len(body.Messages) == 2 {
+			prompt := agentMissionPromptFor(backend)
+			if mode == "correlation-compaction-prompt" {
+				prompt = "unrelated mission"
+			}
+			want := openCodeCompactionPrefix + "[User]: " + prompt + "\n</conversation>\n\n" + openCodeCompactionInstruction + "\n\n" + string(compactionTemplate)
+			if body.Messages[0].Role != "system" || body.Messages[0].Content != string(compactionSystem) || body.Messages[1].Role != "user" || body.Messages[1].Content != want || body.Stream != (mode == "correlation-compaction-stream") {
+				t.Error("compaction fixture received incorrect source prompt or mission history")
+				w.WriteHeader(400)
+				return
+			}
+			if mode != "correlation-compaction-export-missing" {
+				if err := writeFactoryCompactionExport(root, mode, fixtureStarted); err != nil {
+					t.Error("cannot write private compaction fixture")
+					w.WriteHeader(500)
+					return
+				}
+			}
+			summary, model := "Private compaction summary", "glm-5.3"
+			if mode == "correlation-compaction-secret" {
+				summary = captureFixtureKey
+			}
+			if mode == "correlation-compaction-model" {
+				model = "glm-5.3-flash"
+			}
+			if mode == "correlation-compaction-stream" {
+				w.Header().Set("Content-Type", "text/event-stream")
+				if _, err := io.WriteString(w, "data: {\"model\":\"glm-5.3\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Private compaction summary\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"); err != nil {
+					t.Error("cannot write private compaction stream")
+				}
+			} else {
+				if err := json.NewEncoder(w).Encode(map[string]any{"model": model, "choices": []any{map[string]any{"index": 0, "message": map[string]string{"content": summary}, "finish_reason": "stop"}}}); err != nil {
+					t.Error("cannot write private compaction response")
+				}
 			}
 			return
 		}
@@ -186,6 +227,18 @@ case '@MODE@' in correlation-*)
    title_count=$((title_count-1))
   done
  fi
+ if [ '@MODE@' != correlation-compaction-missing ]; then
+  compact_session=ses_factory
+  compact_parent=
+  if [ '@MODE@' = correlation-compaction-session ]; then compact_session=ses_other; fi
+  if [ '@MODE@' = correlation-compaction-parent ]; then compact_parent='X-Opencode-Parent-Session-Id: ses_other'; fi
+  compact_count=1
+  if [ '@MODE@' = correlation-compaction-duplicate ]; then compact_count=2; fi
+  while [ "$compact_count" -gt 0 ]; do
+   /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Opencode-Session-Id: $compact_session" -H "$compact_parent" -d @COMPACTION_BODY@ "https://gw.lunaroute.com/v1/$path" >/dev/null
+   compact_count=$((compact_count-1))
+  done
+ fi
  sleep 1
  ;; esac
 if [ '@MODE@' != missing-file ]; then printf LUNAROUTE-OK > lunaroute-proof.txt; fi
@@ -210,7 +263,13 @@ fi
 	}
 	titleBody, err := json.Marshal(map[string]any{"model": "glm-5.3", "stream": mode == "correlation-title-stream", "messages": []map[string]string{{"role": "system", "content": string(titleSystem)}, {"role": "user", "content": openCodeTitlePrefix}, {"role": "user", "content": titlePrompt}}})
 	require.NoError(t, err)
-	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	compactionPrompt := agentMissionPromptFor("opencode")
+	if mode == "correlation-compaction-prompt" {
+		compactionPrompt = "unrelated mission"
+	}
+	compactionBody, err := json.Marshal(map[string]any{"model": "glm-5.3", "stream": mode == "correlation-compaction-stream", "messages": []map[string]string{{"role": "system", "content": string(compactionSystem)}, {"role": "user", "content": openCodeCompactionPrefix + "[User]: " + compactionPrompt + "\n</conversation>\n\n" + openCodeCompactionInstruction + "\n\n" + string(compactionTemplate)}}})
+	require.NoError(t, err)
+	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

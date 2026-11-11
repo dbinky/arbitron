@@ -28,15 +28,22 @@ type openCodeSessionExport struct {
 	} `json:"info"`
 	Messages []struct {
 		Info struct {
-			ID         string          `json:"id"`
-			SessionID  string          `json:"sessionID"`
-			ParentID   string          `json:"parentID"`
-			Role       string          `json:"role"`
-			ProviderID string          `json:"providerID"`
-			ModelID    string          `json:"modelID"`
-			Finish     string          `json:"finish"`
-			Error      json.RawMessage `json:"error"`
-			Time       struct {
+			ID         string `json:"id"`
+			SessionID  string `json:"sessionID"`
+			ParentID   string `json:"parentID"`
+			Role       string `json:"role"`
+			ProviderID string `json:"providerID"`
+			ModelID    string `json:"modelID"`
+			Finish     string `json:"finish"`
+			Agent      string `json:"agent"`
+			Mode       string `json:"mode"`
+			Summary    bool   `json:"summary"`
+			Model      struct {
+				ProviderID string `json:"providerID"`
+				ModelID    string `json:"modelID"`
+			} `json:"model"`
+			Error json.RawMessage `json:"error"`
+			Time  struct {
 				Created   int64 `json:"created"`
 				Completed int64 `json:"completed"`
 			} `json:"time"`
@@ -47,6 +54,8 @@ type openCodeSessionExport struct {
 			MessageID string `json:"messageID"`
 			Type      string `json:"type"`
 			Tool      string `json:"tool"`
+			Auto      *bool  `json:"auto"`
+			Text      string `json:"text"`
 			State     struct {
 				Status string `json:"status"`
 				Time   struct {
@@ -272,8 +281,11 @@ func (r openCodeSubagentsRunner) Run(ctx context.Context, spec claudecli.RunSpec
 			return fail()
 		}
 	}
-	if r.capture != nil && correlateOpenCodeTitle(r.capture, []byte(strings.Join(lines, "\n")), spec.Args[1], values.Model, version, r.startedAt) != nil {
-		return fail()
+	if r.capture != nil {
+		raw := []byte(strings.Join(lines, "\n"))
+		if correlateOpenCodeTitle(r.capture, raw, spec.Args[1], values.Model, version, r.startedAt) != nil || correlateOpenCodeCompaction(r.capture, raw, spec.Args[1], values.Model, version, r.startedAt) != nil {
+			return fail()
+		}
 	}
 	output := make(chan string, len(lines))
 	for _, line := range lines {

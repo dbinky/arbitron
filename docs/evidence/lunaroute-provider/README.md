@@ -315,9 +315,11 @@ synthetic: they do not establish installed-helper completion or captured helper
 routing, and no completed-agent artifact is published.
 
 R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
-OpenCode subagent and first-conversation title correlation/version provenance
-now exist offline. Remaining work includes the other applicable helper
-lifecycles and Claude same-emitted-env effective-control collection. P3-T5 still owns those producers
+OpenCode subagent, first-conversation title and first automatic-compaction
+correlation/version provenance now exist offline. Remaining work includes a
+source-backed installed-binary automatic-compaction context/threshold forcing
+driver, the other applicable helper lifecycles and Claude same-emitted-env
+effective-control collection. P3-T5 still owns those producers
 and the real live entry points; a main-only mission cannot publish a completed
 agent observation. Operator live runs additionally need a private key and
 explicit canonical models (R6); absence of those inputs does not block offline
@@ -413,6 +415,28 @@ Factory protocol fixtures reach the final private JSON sink, not merely an
 intermediate config field. They are not installed-binary observations and do
 not establish support or readiness. Applicable compaction/other helpers and
 Claude controls/helpers still need collectors before complete live entry points.
+
+### OpenCode captured-compaction correlation (partial P3-T5)
+
+The captured Factory requires a first automatic-compaction exchange in addition
+to main, synchronous subagent and title evidence. The proxy recognizes the
+versioned system/prompt/template signature and exact mission history, validates
+terminal JSON/SSE and retains bounded summary text privately. The actual
+adapter-requested same-env export must contain its ordered current automatic
+compaction user/part and successful selected-model summary. Exact root session,
+request interval, exported text and executable version must agree before that
+request is labelled `compaction`. Missing/duplicate/foreign/stale/unsafe or
+incomplete evidence prevents final publication despite completed workspace
+proofs and the other helper exchanges. Close clears private summary material.
+
+See [the compaction lifecycle source note](sources/lr06-compaction-lifecycle.md)
+and run `go test ./test/lunaroute -run TestAgentEvidenceOpenCodeCompaction -count=1`.
+The Factory/proxy/subprocess fixtures inspect final private JSON and actual
+command-created files. They synthesize the lifecycle and are not evidence that
+the installed binary performed compaction. Source-backed installed-binary
+context/threshold forcing, remaining helpers/Claude controls and complete live
+entry points are still required. No supported fact, register status or live
+artifact follows from these fixtures.
 
 ### OpenCode captured-subagent correlation (partial P3-T5)
 

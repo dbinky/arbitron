@@ -81,6 +81,10 @@ func writeFactorySubagentExports(root, mode string, started time.Time) error {
 		child["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": now - 60002}
 		subagentChildInfo(child)["time"] = map[string]any{"created": now - 60002, "completed": now - 60001}
 	}
+	if mode == "correlation-compaction-missing" {
+		// A valid exported lifecycle without an actual exchange must still fail.
+		parent["messages"] = append(parent["messages"].([]any), openCodeCompactionFixture(started.UnixMilli(), now+500)...)
+	}
 	for name, value := range map[string]any{"parent-export.json": parent, "child-export.json": child} {
 		raw, err := json.Marshal(value)
 		if err != nil {

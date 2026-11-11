@@ -90,6 +90,7 @@ type inferenceCapture struct {
 	active                          int
 	records                         []capturedInference
 	openCodeTitles                  map[string]string // private response text, never serialized
+	openCodeCompactions             map[string]string // private summary comparison, never serialized
 	failed                          bool
 	closed                          bool
 	nextID                          int
@@ -466,6 +467,20 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		c.openCodeTitles[record.RequestID] = title
 		c.mu.Unlock()
 	}
+	if c.backend == "opencode" && r.URL.Path == "/v1/chat/completions" && isOpenCodeCompactionRequest(body) {
+		text, err := openCodeTextResponse(buffer.Bytes(), stream)
+		if err != nil {
+			c.fail()
+			finish("compaction_schema")
+			return false
+		}
+		c.mu.Lock()
+		if c.openCodeCompactions == nil {
+			c.openCodeCompactions = make(map[string]string)
+		}
+		c.openCodeCompactions[record.RequestID] = text
+		c.mu.Unlock()
+	}
 	record.ReportedModels = models
 	record.Completed = true
 	finish("")
@@ -597,6 +612,7 @@ func (c *inferenceCapture) Close() error {
 		c.mu.Lock()
 		c.key = ""
 		c.openCodeTitles = nil
+		c.openCodeCompactions = nil
 		c.mu.Unlock()
 		if c.dir != "" && os.RemoveAll(c.dir) != nil {
 			c.closeErr = errors.New("cannot remove private capture files")

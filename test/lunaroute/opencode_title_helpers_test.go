@@ -75,6 +75,18 @@ func isOpenCodeTitleRequest(raw []byte) bool {
 // Called only after the shared parser validates the full selected-model terminal
 // response. Read text solely to join ensureTitle's setTitle result to export.
 func openCodeTitleResponse(raw []byte, stream bool) (string, error) {
+	text, err := openCodeTextResponse(raw, stream)
+	if err != nil {
+		return "", err
+	}
+	title := normalizeOpenCodeTitle(text)
+	if title == "" {
+		return "", errAgentEvidence
+	}
+	return title, nil
+}
+
+func openCodeTextResponse(raw []byte, stream bool) (string, error) {
 	var text strings.Builder
 	finished := false
 	consume := func(raw []byte) bool {
@@ -145,11 +157,10 @@ func openCodeTitleResponse(raw []byte, stream bool) (string, error) {
 			return "", errAgentEvidence
 		}
 	}
-	title := normalizeOpenCodeTitle(text.String())
-	if !finished || title == "" {
+	if !finished || strings.TrimSpace(text.String()) == "" {
 		return "", errAgentEvidence
 	}
-	return title, nil
+	return strings.TrimSpace(text.String()), nil
 }
 
 func correlateOpenCodeTitle(c *inferenceCapture, raw []byte, session, model, version string, started time.Time) error {
