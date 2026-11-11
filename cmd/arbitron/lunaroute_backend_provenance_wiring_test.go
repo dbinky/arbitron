@@ -30,7 +30,8 @@ func runLunaRouteProvenance(t *testing.T, nodeBackend string, contextWindow prov
 	gw := newFakeLunaRouteGateway(t, "lr_provenance", "glm-5.3")
 	const name = "lr-intent"
 	manifest := fmt.Sprintf(`{"name":%q,"nodes":[{"id":"work","type":"agent_call","entrypoint":true,"config":{"model_profile":"lr-legacy-intent","templateFile":"templates/p.md","backend":%q}}],"edges":[]}`, name, nodeBackend)
-	ds := bootLunaRouteRoot(t, "llm:\n  defaultagentbackend: opencode\n", gw, func(ws string) {
+	caps := lunaRouteCapsFile(t, "lunaroute_models:\n  glm-5.3: {}\n")
+	ds := bootLunaRouteRoot(t, "capabilitiespath: "+caps+"\nllm:\n  defaultagentbackend: opencode\n", gw, func(ws string) {
 		writeWorkflow(t, ws, name, manifest)
 		writePinTemplate(t, ws, name)
 	})
@@ -58,20 +59,18 @@ func TestLunaRouteLegacyDefaultBackendRefused(t *testing.T) {
 	assert.Contains(t, runLunaRouteProvenance(t, "", ""), provider.ErrLunaRouteBackendRequired.Error())
 }
 func TestLunaRouteExplicitNodeOverrideChecked(t *testing.T) {
-	for _, contextWindow := range []provider.ContextWindow{"", provider.Context1M} {
-		t.Run(string(contextWindow), func(t *testing.T) {
-			// No backend is enabled in this phase. Later enablement must reach the
-			// known context conflict, while compatible emission belongs to P3-T3.
-			want := provider.ErrLunaRouteBackendUnsupported
-			if provider.LunaRouteBackendEnabled("opencode") {
-				if contextWindow == provider.Context1M {
-					want = provider.ErrLunaRouteAxisUnsupported
-				} else {
-					want = provider.ErrLunaRouteLimitsUnknown
-				}
-			}
-			msg := runLunaRouteProvenance(t, "opencode", contextWindow)
-			assert.Contains(t, msg, want.Error())
+	for _, tc := range []struct {
+		context provider.ContextWindow
+		want    error
+	}{
+		{"", provider.ErrLunaRouteLimitsUnknown},
+		{provider.Context1M, provider.ErrLunaRouteAxisUnsupported},
+	} {
+		t.Run(string(tc.context), func(t *testing.T) {
+			// Explicit intent reaches a stable typed conflict before corrupt
+			// ciphertext can be revealed or a binary can launch.
+			msg := runLunaRouteProvenance(t, "opencode", tc.context)
+			assert.Contains(t, msg, tc.want.Error())
 			assert.NotContains(t, msg, provider.ErrLunaRouteBackendRequired.Error())
 		})
 	}

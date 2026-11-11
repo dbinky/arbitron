@@ -32,11 +32,7 @@ func TestFactory_AgentProviderFor_WrapsLunaRouteOnly(t *testing.T) {
 	_, unwrapped := ap.(*opencode.Provider)
 	assert.False(t, unwrapped)
 	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "nonce", WorkDir: t.TempDir()})
-	want := provider.ErrLunaRouteBackendUnsupported
-	if provider.LunaRouteBackendEnabled("opencode") {
-		want = provider.ErrLunaRouteAxisUnsupported
-	}
-	require.ErrorIs(t, err, want)
+	require.ErrorIs(t, err, provider.ErrLunaRouteAxisUnsupported)
 	assert.Zero(t, reveals)
 	assert.Zero(t, probes.calls)
 	b.Backend = ""
