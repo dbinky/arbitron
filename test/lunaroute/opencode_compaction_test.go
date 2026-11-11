@@ -45,6 +45,13 @@ func writeFactoryCompactionExport(root, mode string, started time.Time) error {
 		info["finish"] = "length"
 	}
 	parent["messages"] = append(parent["messages"].([]any), messages...)
+	if strings.HasPrefix(mode, "correlation-force-") && mode != "correlation-force-resume-missing" {
+		finish := "stop"
+		if mode == "correlation-force-resume-incomplete" {
+			finish = "length"
+		}
+		parent["messages"] = append(parent["messages"].([]any), map[string]any{"info": map[string]any{"id": "msg_resumed", "sessionID": "ses_factory", "role": "assistant", "providerID": "lunaroute", "modelID": "glm-5.3", "finish": finish, "time": map[string]any{"created": time.Now().UnixMilli() + 501, "completed": time.Now().UnixMilli() + 502}}, "parts": []any{}})
+	}
 	raw, err = json.Marshal(parent)
 	if err != nil {
 		return err

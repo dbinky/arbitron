@@ -42,8 +42,9 @@ type openCodeSessionExport struct {
 				ProviderID string `json:"providerID"`
 				ModelID    string `json:"modelID"`
 			} `json:"model"`
-			Error json.RawMessage `json:"error"`
-			Time  struct {
+			Error  json.RawMessage `json:"error"`
+			Tokens json.RawMessage `json:"tokens"`
+			Time   struct {
 				Created   int64 `json:"created"`
 				Completed int64 `json:"completed"`
 			} `json:"time"`
@@ -287,10 +288,5 @@ func (r openCodeSubagentsRunner) Run(ctx context.Context, spec claudecli.RunSpec
 			return fail()
 		}
 	}
-	output := make(chan string, len(lines))
-	for _, line := range lines {
-		output <- line
-	}
-	close(output)
-	return output, func() error { return nil }, nil
+	return bufferedOpenCodeLines(lines)
 }

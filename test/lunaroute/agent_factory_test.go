@@ -170,7 +170,8 @@ path=messages
 	opencode := `
 [ "$LUNAROUTE_API_KEY" = '@KEY@' ] || exit 44
 case "$OPENCODE_CONFIG_CONTENT" in *'@KEY@'*) exit 45 ;; esac
-for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"small_model":"lunaroute/glm-5.3"' '"model":"lunaroute/glm-5.3"' '"enabled_providers":["lunaroute"]' '"limit":{"context":202752,"output":32768}' '"tool_call":true' '"permission":{"*":"deny","bash":"allow","read":"allow","task":"allow","write":"allow"}'; do
+case '@MODE@' in correlation-force-*) limit='"context":202752';; *) limit='"limit":{"context":202752,"output":32768}';; esac
+for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"small_model":"lunaroute/glm-5.3"' '"model":"lunaroute/glm-5.3"' '"enabled_providers":["lunaroute"]' "$limit" '"tool_call":true' '"permission":{"*":"deny","bash":"allow","read":"allow","task":"allow","write":"allow"}'; do
  case "$OPENCODE_CONFIG_CONTENT" in *"$field"*) ;; *) exit 47 ;; esac
 done
 if [ "$1" = debug ]; then
@@ -180,6 +181,9 @@ if [ "$1" = debug ]; then
   controls-secret-exit) echo 'debug @KEY@' >&2; exit 1 ;;
   controls-overflow) /usr/bin/awk 'BEGIN { for(i=0;i<1048577;i++) printf "x"; print "" }'; exit 0 ;;
   controls-malformed) echo '{'; exit 0 ;;
+  correlation-force-controls-input) case "$OPENCODE_CONFIG_CONTENT" in *'"reserved":'*) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/"input":202752/"input":202753/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;; esac ;;
+  correlation-force-controls-auto) case "$OPENCODE_CONFIG_CONTENT" in *'"reserved":'*) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/"auto":true/"auto":false/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;; esac ;;
+  correlation-force-controls-reserve) case "$OPENCODE_CONFIG_CONTENT" in *'"reserved":'*) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/"reserved":200704/"reserved":0/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;; esac ;;
   controls-helper) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/"small_model":"lunaroute\/glm-5.3"/"small_model":"foreign\/other"/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;;
   controls-limit) printf '%s' "$OPENCODE_CONFIG_CONTENT" | /usr/bin/sed 's/202752/202753/;s/{env:LUNAROUTE_API_KEY}/***/'; exit 0 ;;
  esac
@@ -197,6 +201,22 @@ if [ "$1" = export ]; then
  elif [ "$*" = 'export ses_factory --pure' ]; then
   cat '@ROOT@/parent-export.json'
  else exit 48; fi
+ exit 0
+fi
+if [ "$1" = run ] && [ "$2" = '@CONTINUATION@' ]; then
+ [ "$*" = 'run @CONTINUATION@ -m lunaroute/glm-5.3 --session ses_factory --dangerously-skip-permissions --format json --pure' ] || exit 52
+ reserve='"reserved":200704'
+ if [ '@MODE@' = correlation-force-usage-total ]; then reserve='"reserved":198656'; fi
+ for field in '"input":202752' '"output":32768' "$reserve" '"auto":true'; do
+  case "$OPENCODE_CONFIG_CONTENT" in *"$field"*) ;; *) exit 53 ;; esac
+ done
+ printf resumed > '@ROOT@/resume-marker'
+ if [ '@MODE@' = correlation-force-resume-exit ]; then echo '@KEY@' >&2; exit 1; fi
+ if [ '@MODE@' != correlation-force-no-traffic ]; then
+  /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $LUNAROUTE_API_KEY" -H 'Content-Type: application/json' -H 'X-Opencode-Session-Id: ses_factory' -d @COMPACTION_BODY@ https://gw.lunaroute.com/v1/chat/completions >/dev/null
+  sleep 1
+ fi
+ echo '{"type":"text","sessionID":"ses_factory","part":{"type":"text","text":"acknowledged"}}'
  exit 0
 fi
 [ "$1" = run ] && [ "$2" = '@PROMPT@' ] || exit 42
@@ -228,11 +248,11 @@ case '@MODE@' in correlation-*)
   done
  fi
  if [ '@MODE@' != correlation-compaction-missing ]; then
+  case '@MODE@' in correlation-force-*) compact_count=0 ;; *) compact_count=1 ;; esac
   compact_session=ses_factory
   compact_parent=
   if [ '@MODE@' = correlation-compaction-session ]; then compact_session=ses_other; fi
   if [ '@MODE@' = correlation-compaction-parent ]; then compact_parent='X-Opencode-Parent-Session-Id: ses_other'; fi
-  compact_count=1
   if [ '@MODE@' = correlation-compaction-duplicate ]; then compact_count=2; fi
   while [ "$compact_count" -gt 0 ]; do
    /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Opencode-Session-Id: $compact_session" -H "$compact_parent" -d @COMPACTION_BODY@ "https://gw.lunaroute.com/v1/$path" >/dev/null
@@ -269,7 +289,7 @@ fi
 	}
 	compactionBody, err := json.Marshal(map[string]any{"model": "glm-5.3", "stream": mode == "correlation-compaction-stream", "messages": []map[string]string{{"role": "system", "content": string(compactionSystem)}, {"role": "user", "content": openCodeCompactionPrefix + "[User]: " + compactionPrompt + "\n</conversation>\n\n" + openCodeCompactionInstruction + "\n\n" + string(compactionTemplate)}}})
 	require.NoError(t, err)
-	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

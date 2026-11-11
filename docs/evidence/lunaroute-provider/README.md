@@ -316,10 +316,11 @@ routing, and no completed-agent artifact is published.
 
 R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
 OpenCode subagent, first-conversation title and first automatic-compaction
-correlation/version provenance now exist offline. Remaining work includes a
-source-backed installed-binary automatic-compaction context/threshold forcing
-driver, the other applicable helper lifecycles and Claude same-emitted-env
-effective-control collection. P3-T5 still owns those producers
+correlation/version provenance and the source-backed automatic-compaction
+threshold/continuation driver now exist offline. The supporting-call experiment
+has a real `TestLiveOpencodeCompaction` operator entry point. Remaining work
+includes complete applicable helper/control collection and Claude
+same-emitted-env effective-control collection. P3-T5 still owns those producers
 and the real live entry points; a main-only mission cannot publish a completed
 agent observation. Operator live runs additionally need a private key and
 explicit canonical models (R6); absence of those inputs does not block offline
@@ -433,10 +434,30 @@ See [the compaction lifecycle source note](sources/lr06-compaction-lifecycle.md)
 and run `go test ./test/lunaroute -run TestAgentEvidenceOpenCodeCompaction -count=1`.
 The Factory/proxy/subprocess fixtures inspect final private JSON and actual
 command-created files. They synthesize the lifecycle and are not evidence that
-the installed binary performed compaction. Source-backed installed-binary
-context/threshold forcing, remaining helpers/Claude controls and complete live
-entry points are still required. No supported fact, register status or live
-artifact follows from these fixtures.
+the installed binary performed compaction. The forcing driver now reads actual
+warm-up usage, registers R2's input limit without changing context/output facts,
+validates the effective reserve/input/auto controls, and continues the exact
+session before the adapter's normal export/request joins. A successful final
+post-compaction turn is mandatory. The installed offline debug test proves
+schema acceptance only. No supported fact, register status or live artifact
+follows from fixtures.
+
+Operator supporting-call run (private inputs supplied outside the repo):
+
+```sh
+go test ./test/lunaroute -run '^TestLiveOpencodeCompaction$' -count=1 -v
+```
+
+Requires `ARBITRON_LUNAROUTE_E2E_KEY`, explicit canonical
+`ARBITRON_LUNAROUTE_E2E_OPENCODE_MODEL`, installed OpenCode 1.19.5 and optionally
+`ARBITRON_LUNAROUTE_E2E_CAPABILITIES`. Local missing inputs explicitly skip;
+release mode fails them. The actual Factory/runner uses private HOME, conflicting
+user/project seeds and the hosted-only capture wrapper. Only after real tool
+proofs, correlated main/subagent/title/compaction traffic, unchanged seeds and
+successful cleanup does it write `observations/lr06-opencode-compaction.json`.
+This supporting artifact does not replace the full LR-06 contract/agent
+milestones or populate capabilities. Remaining complete helper/control
+collection, full agent entry points and operator observations stay pending.
 
 ### OpenCode captured-subagent correlation (partial P3-T5)
 

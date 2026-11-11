@@ -81,6 +81,31 @@ func writeFactorySubagentExports(root, mode string, started time.Time) error {
 		child["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)["time"] = map[string]any{"created": now - 60002}
 		subagentChildInfo(child)["time"] = map[string]any{"created": now - 60002, "completed": now - 60001}
 	}
+	if strings.HasPrefix(mode, "correlation-force-") {
+		info := parent["messages"].([]any)[0].(map[string]any)["info"].(map[string]any)
+		info["finish"] = "stop"
+		info["tokens"] = map[string]any{"input": 1024, "output": 1024, "cache": map[string]any{"read": 0, "write": 0}}
+		switch mode {
+		case "correlation-force-usage-total":
+			info["tokens"].(map[string]any)["total"] = 4096
+		case "correlation-force-usage-missing":
+			delete(info, "tokens")
+		case "correlation-force-usage-zero":
+			info["tokens"] = map[string]any{"total": 0}
+		case "correlation-force-usage-negative":
+			info["tokens"] = map[string]any{"total": -1}
+		case "correlation-force-usage-fraction":
+			info["tokens"] = map[string]any{"input": 1.5}
+		case "correlation-force-usage-overflow":
+			info["tokens"] = map[string]any{"input": int64(9223372036854775807), "output": 1}
+		case "correlation-force-usage-foreign":
+			info["modelID"] = "glm-5.3-flash"
+		case "correlation-force-usage-stale":
+			info["time"] = map[string]any{"created": started.UnixMilli() - 60000, "completed": started.UnixMilli() - 59000}
+		case "correlation-force-existing-summary":
+			info["summary"] = true
+		}
+	}
 	if mode == "correlation-compaction-missing" {
 		// A valid exported lifecycle without an actual exchange must still fail.
 		parent["messages"] = append(parent["messages"].([]any), openCodeCompactionFixture(started.UnixMilli(), now+500)...)
