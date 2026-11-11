@@ -34,12 +34,16 @@ func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding, d 
 		return nil, ErrModelRequired
 	}
 	modelRef := d.opencodeID + "/" + modelLeaf(binding.Model, d.opencodeID)
-	return []string{
+	args := []string{
 		runSubcommand, mission.Prompt,
 		"-m", modelRef,
 		skipPermsFlag,
 		formatFlag, formatJSON,
-	}, nil
+	}
+	if provider.IsLunaRoute(binding.Provider) {
+		args = append(args, pureFlag)
+	}
+	return args, nil
 }
 
 // modelLeaf strips a leading "<opencodeID>/" prefix from a model string so a

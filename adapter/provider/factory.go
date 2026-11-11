@@ -315,6 +315,7 @@ func (f *Factory) agentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			Timeout:          f.deps.OpencodeTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 			AllowAllTools:    f.deps.OpencodeAllowAllTools,
+			CapabilityRules:  f.deps.CapabilityRules,
 		}), nil
 	case workflow.BackendCodex:
 		// Subscription-only: codex authenticates via its on-disk ~/.codex/auth.json,

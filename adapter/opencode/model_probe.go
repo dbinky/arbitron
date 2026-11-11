@@ -8,10 +8,13 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/modelidentity"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // ErrModelExecutionEvidence means the requested model could not be verified in
@@ -78,7 +81,7 @@ func modelProof(lines []string) (runModelProof, error) {
 // verifyModelExport consumes the source-recorded export envelope, not a model
 // field from stdout's text/request. All assistant steps must match, and every
 // observed run message must be present and complete in the same session.
-func verifyModelExport(raw []byte, proof runModelProof, providerID, model string) error {
+func verifyModelExport(raw []byte, proof runModelProof, providerID, model string) ([]engine.ModelEvidence, error) {
 	var data struct {
 		Info struct {
 			ID string `json:"id"`
@@ -98,27 +101,47 @@ func verifyModelExport(raw []byte, proof runModelProof, providerID, model string
 		} `json:"messages"`
 	}
 	if json.Unmarshal(raw, &data) != nil || data.Info.ID != proof.sessionID {
-		return ErrModelExecutionEvidence
+		return nil, ErrModelExecutionEvidence
 	}
+	var evidence []engine.ModelEvidence
 	seen := make(map[string]bool)
 	for _, message := range data.Messages {
 		info := message.Info
 		if info.Role != "assistant" {
 			continue
 		}
+		accepted := info.ModelID == model
+		if provider.IsLunaRoute(providerID) {
+			accepted = safeModelIdentity(info.ModelID) && safeModelIdentity(info.ProviderID) &&
+				modelidentity.LunaRouteExecutedModelAccepted(model, info.ModelID)
+		}
 		if info.ID == "" || seen[info.ID] || info.SessionID != proof.sessionID ||
-			info.ProviderID != providerID || info.ModelID != model || info.Time.Completed <= 0 ||
+			info.ProviderID != providerID || !accepted || info.Time.Completed <= 0 ||
 			len(info.Error) > 0 && string(info.Error) != "null" {
-			return ErrModelExecutionEvidence
+			return nil, ErrModelExecutionEvidence
 		}
 		seen[info.ID] = true
+		evidence = append(evidence, engine.ModelEvidence{Model: info.ModelID, Provider: info.ProviderID, Source: "opencode_export"})
 	}
 	for id := range proof.messageIDs {
 		if !seen[id] {
-			return ErrModelExecutionEvidence
+			return nil, ErrModelExecutionEvidence
 		}
 	}
-	return nil
+	return evidence, nil
+}
+
+const maxModelIdentityBytes = 256
+
+func safeModelIdentity(s string) bool {
+	return s != "" && len(s) <= maxModelIdentityBytes && !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) && provider.RedactLunaRoute(s) == s
+}
+
+type verifiedModelProof struct {
+	sessionID string
+	evidence  []engine.ModelEvidence
 }
 
 // checkModelExecution reuses the run's binary, cwd and credential/config env.
@@ -127,12 +150,12 @@ func verifyModelExport(raw []byte, proof runModelProof, providerID, model string
 // bounded independently even when normal agent output has no cap.
 // No transcript, credential-bearing stderr or runner error is surfaced.
 //
-// It returns the verified session id. A probe launch carries --pure, and its
-// export keeps it so the export cannot load inherited plugins either.
-func (p *Provider) checkModelExecution(ctx context.Context, spec claudecli.RunSpec, lines []string, d providerDescriptor) (string, error) {
+// It returns the verified session id and the same parsed reported identities.
+// A --pure launch keeps that flag on export to exclude inherited plugins.
+func (p *Provider) checkModelExecution(ctx context.Context, spec claudecli.RunSpec, lines []string, d providerDescriptor) (verifiedModelProof, error) {
 	proof, err := modelProof(lines)
 	if err != nil {
-		return "", err
+		return verifiedModelProof{}, err
 	}
 	exportCtx, cancel := context.WithTimeout(ctx, modelExportTimeout)
 	defer cancel()
@@ -145,7 +168,7 @@ func (p *Provider) checkModelExecution(ctx context.Context, spec claudecli.RunSp
 	spec.MaxResponseBytes = maxModelExportBytes
 	output, wait, err := p.runner.Run(exportCtx, spec)
 	if err != nil {
-		return "", fmt.Errorf("%w: export launch failed", ErrModelExecutionEvidence)
+		return verifiedModelProof{}, fmt.Errorf("%w: export launch failed", ErrModelExecutionEvidence)
 	}
 	var raw strings.Builder
 	var total int64
@@ -166,15 +189,16 @@ func (p *Provider) checkModelExecution(ctx context.Context, spec claudecli.RunSp
 	}
 	waitErr := wait()
 	if exportCtx.Err() != nil {
-		return "", fmt.Errorf("%w: export: %w", ErrModelExecutionEvidence, exportCtx.Err())
+		return verifiedModelProof{}, fmt.Errorf("%w: export: %w", ErrModelExecutionEvidence, exportCtx.Err())
 	}
 	if waitErr != nil || total > maxModelExportBytes {
-		return "", fmt.Errorf("%w: export failed or exceeded limit", ErrModelExecutionEvidence)
+		return verifiedModelProof{}, fmt.Errorf("%w: export failed or exceeded limit", ErrModelExecutionEvidence)
 	}
-	if err := verifyModelExport([]byte(raw.String()), proof, d.opencodeID, modelLeaf(p.binding.Model, d.opencodeID)); err != nil {
-		return "", err
+	evidence, err := verifyModelExport([]byte(raw.String()), proof, d.opencodeID, modelLeaf(p.binding.Model, d.opencodeID))
+	if err != nil {
+		return verifiedModelProof{}, err
 	}
-	return proof.sessionID, nil
+	return verifiedModelProof{sessionID: proof.sessionID, evidence: evidence}, nil
 }
 
 // ProbeExecutedModel is this agent route's discovery probe (D6), isolated per
@@ -198,6 +222,9 @@ func (p *Provider) ProbeExecutedModel(ctx context.Context, prompt, workDir strin
 	if workDir == "" {
 		return "", "", ErrWorkDirRequired
 	}
+	if err := provider.CheckLunaRouteAdapterLaunch(p.rules, p.binding, 0); err != nil {
+		return "", "", p.localError("preflight", err)
+	}
 	d, ok := descriptorFor(p.binding.Provider)
 	if !ok {
 		return "", "", ErrUnknownProvider
@@ -206,17 +233,23 @@ func (p *Provider) ProbeExecutedModel(ctx context.Context, prompt, workDir strin
 	if err != nil {
 		return "", "", err
 	}
+	base, _, err := buildConfig(d, p.binding, Posture{}, p.rules)
+	if err != nil {
+		if provider.IsLunaRoute(p.binding.Provider) {
+			return "", "", p.localError("config", err)
+		}
+		return "", "", fmt.Errorf("%w: config", ErrModelExecutionEvidence)
+	}
 	env, err := opencodeEnv(ctx, d, p.binding)
 	if err != nil {
+		if provider.IsLunaRoute(p.binding.Provider) {
+			return "", "", p.localError("environment", err)
+		}
 		return "", "", fmt.Errorf("%w: credential env", ErrModelExecutionEvidence)
-	}
-	base, _, err := buildConfig(d, p.binding, Posture{})
-	if err != nil {
-		return "", "", fmt.Errorf("%w: config", ErrModelExecutionEvidence)
 	}
 	if err := p.ensureCompatible(ctx, workDir); err != nil {
 		// Version output can carry account/config details; expose a static verdict.
-		return "", "", fmt.Errorf("%w: version check", ErrModelExecutionEvidence)
+		return "", "", p.localError("version", fmt.Errorf("%w: version check", ErrModelExecutionEvidence))
 	}
 	if compareVersion(p.version, mustParseVersion(minOpencodeProbeVersion)) < 0 {
 		return "", "", fmt.Errorf("%w: isolated discovery probe requires >= %s", ErrIncompatibleOpencode, minOpencodeProbeVersion)
@@ -242,7 +275,10 @@ func (p *Provider) ProbeExecutedModel(ctx context.Context, prompt, workDir strin
 
 	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
-	probeArgs := append([]string{args[0], pureFlag}, args[1:]...)
+	probeArgs := args
+	if !slices.Contains(probeArgs, pureFlag) {
+		probeArgs = append([]string{args[0], pureFlag}, args[1:]...)
+	}
 	spec := claudecli.RunSpec{Bin: p.binPath, Args: probeArgs, Dir: workDir,
 		Env: append(slices.Clone(env), "OPENCODE_CONFIG_CONTENT="+overlay), MaxResponseBytes: p.maxResponseBytes}
 	lines, wait, err := p.runner.Run(runCtx, spec)
@@ -256,11 +292,11 @@ func (p *Provider) ProbeExecutedModel(ctx context.Context, prompt, workDir strin
 	if wait() != nil {
 		return "", "", fmt.Errorf("%w: exit", ErrModelExecutionEvidence)
 	}
-	session, err := p.checkModelExecution(ctx, spec, collected, d)
+	proof, err := p.checkModelExecution(ctx, spec, collected, d)
 	if err != nil {
 		return "", "", err
 	}
-	return p.binding.Model, session, nil
+	return p.binding.Model, proof.sessionID, nil
 }
 
 // resolvedMCP runs `opencode debug config --pure` with the probe's cwd, env and

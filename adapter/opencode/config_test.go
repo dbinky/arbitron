@@ -20,7 +20,7 @@ func decodeConfig(t *testing.T, s string) map[string]any {
 func TestBuildConfig_OllamaCloudScoped(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "ollama-cloud", Model: "deepseek-v4-flash", BaseURL: "https://ollama.com/v1"}
 	post := Posture{AllowedTools: []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}}
-	out, _, err := buildConfig(mustDesc(t, b.Provider), b, post)
+	out, _, err := buildConfig(mustDesc(t, b.Provider), b, post, provider.CapabilityRules{})
 	require.NoError(t, err)
 	m := decodeConfig(t, out)
 	assert.Equal(t, "https://opencode.ai/config.json", m["$schema"])
@@ -35,7 +35,7 @@ func TestBuildConfig_OllamaCloudScoped(t *testing.T) {
 
 func TestBuildConfig_LiteLLMEmitsProviderBlock(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "litellm", Model: "gpt-4o", BaseURL: "https://gw.example/v1"}
-	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: true})
+	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: true}, provider.CapabilityRules{})
 	require.NoError(t, err)
 	m := decodeConfig(t, out)
 	prov := m["provider"].(map[string]any)["litellm"].(map[string]any)
@@ -49,7 +49,7 @@ func TestBuildConfig_LiteLLMEmitsProviderBlock(t *testing.T) {
 
 func TestBuildConfig_OpenAICustomBaseURL(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "openai", Model: "gpt-4o", BaseURL: "https://org-gw.example/v1"}
-	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: true})
+	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: true}, provider.CapabilityRules{})
 	require.NoError(t, err)
 	m := decodeConfig(t, out)
 	opts := m["provider"].(map[string]any)["openai"].(map[string]any)["options"].(map[string]any)
@@ -59,7 +59,7 @@ func TestBuildConfig_OpenAICustomBaseURL(t *testing.T) {
 
 func TestBuildConfig_AnthropicDefaultNoProviderBlock(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "anthropic-api", Model: "claude-x"}
-	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: true})
+	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: true}, provider.CapabilityRules{})
 	require.NoError(t, err)
 	m := decodeConfig(t, out)
 	_, hasProvider := m["provider"]
@@ -68,7 +68,7 @@ func TestBuildConfig_AnthropicDefaultNoProviderBlock(t *testing.T) {
 
 func TestBuildConfig_EmptyEffectiveAllowlistFailsClosed(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "ollama-cloud", Model: "m"}
-	_, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowedTools: []string{"MultiEdit"}})
+	_, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowedTools: []string{"MultiEdit"}}, provider.CapabilityRules{})
 	require.Error(t, err)
 }
 
@@ -79,7 +79,7 @@ func TestBuildConfig_EmptyEffectiveAllowlistFailsClosed(t *testing.T) {
 // secrets-bearing workspace. (Security HIGH, manager Must-Fix #1.)
 func TestBuildConfig_DefaultPostureDeniesAll(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "anthropic-api", Model: "claude-x"}
-	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: false})
+	out, _, err := buildConfig(mustDesc(t, b.Provider), b, Posture{AllowAll: false}, provider.CapabilityRules{})
 	require.NoError(t, err)
 	m := decodeConfig(t, out)
 	perm, ok := m["permission"].(map[string]any)
