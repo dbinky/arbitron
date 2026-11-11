@@ -252,7 +252,7 @@ drains and waits, and retains raw lifecycle lines only in memory for parsers.
 
 `collectAgentEvidence` requires current-run completed main **and** correlated
 helper records, the backend's actual dialect, matching session/version, nonempty
-reported identities (including permitted alias drift), a safe existing same-run
+reported canonical identities (R3 rejects Claude-shaped aliases), a safe existing same-run
 configuration identity projection, a tool-call trace, and both actual workspace
 sinks. The primary file is exactly `LUNAROUTE-OK`; `wc -c` must produce `12` in
 the second file. Both must be regular files written within the run interval;
@@ -275,12 +275,28 @@ A version-only local query on 2026-11-11 UTC returned Claude Code `2.1.322`
 and OpenCode `1.19.5` under a minimal credential-free environment. This is a
 binary inventory, not a contract/helper observation or readiness evidence.
 
-Direct live experiments remain blocked on the key, explicit models and required
-documented static limits; production Factory/mission integration remains blocked
-on P3-T1/T2/T3. No empty placeholder live test, contract observation, completed
-agent artifact, supported capability or verified register label is shipped.
-P3-T5 still owns those experiments, the production helpers and scoped population
-when prerequisites exist. P4-T7 will consume current real MCP-run captures.
+`liveFactory` now composes the real production Factory with its real runner,
+probe selector, workspace and shared capability table (including the separate
+Claude configuration feed). `runLiveMission` creates a fresh private child
+workspace and runs the actual selected adapter, requiring both file/command
+proof and a tool-call trace. OpenCode retains the current session established by
+its verified export and emits LunaRoute tool steps as `tool_call`; other
+providers retain their existing session/trace contract. The Factory fixtures
+exercise both backend protocols, authenticated CONNECT/TLS inference, capability
+limits, actual command-created files and safe launch-failure handling. Failure
+fixtures inject a bounded offline HTTP client into the same probe composition;
+no diagnostic request leaves the fixture. They are
+not installed-binary contract or helper evidence.
+
+R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
+The remaining offline dependency is source-backed forced-helper lifecycle and
+same-emitted-env effective-control collection. P3-T5 still owns those producers
+and the real live entry points; a main-only mission cannot publish a completed
+agent observation. Operator live runs additionally need a private key and
+explicit canonical models (R6); absence of those inputs does not block offline
+implementation. No placeholder live test, completed agent artifact, supported
+capability or verified register label is shipped. P4-T7 will consume current real
+MCP-run captures.
 
 ## Codex / Pi independent evidence tooling (P4-T1)
 

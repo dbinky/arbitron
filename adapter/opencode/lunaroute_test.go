@@ -121,12 +121,16 @@ func TestRunAgent_LunaRouteHappyPathSpec(t *testing.T) {
 		calls := 0
 		b := lrOCBinding("https://gw.lunaroute.com", "glm-5.3", lrKey, &calls)
 		b.Pinned = pinned
-		r := &multiRunner{scripts: lrRunScripts()}
+		scripts := lrRunScripts()
+		scripts[1].lines = append(scripts[1].lines, `{"type":"tool_use","sessionID":"ses_run","part":{"sessionID":"ses_run","messageID":"msg_answer","type":"tool","tool":"bash","state":{"status":"completed"}}}`)
+		r := &multiRunner{scripts: scripts}
 		res, err := New(Config{Binding: b, CapabilityRules: lrOCRules(), BinaryPath: "opencode", Runner: r}).RunAgent(context.Background(), engine.AgentMission{Prompt: "p", WorkDir: t.TempDir()})
 		require.NoError(t, err)
 		require.NotNil(t, res)
 		assert.Equal(t, "glm-5.3", res.Model)
 		assert.Equal(t, "verified output", res.Summary)
+		assert.Equal(t, "ses_run", res.SessionID, "retain the current verified export session for helper correlation")
+		assert.Contains(t, res.Steps, engine.AgentStep{Kind: "tool_call", Summary: "bash"})
 		assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "opencode_export"}}, res.ModelEvidence)
 		require.Len(t, r.calls, 3)
 		run := r.calls[1]

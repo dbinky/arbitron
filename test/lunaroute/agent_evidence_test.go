@@ -221,34 +221,57 @@ func TestAgentEvidencePrerequisiteChild(t *testing.T) {
 	t.Fatal("missing input was silently defaulted")
 }
 
-func TestAgentEvidenceAliasDriftAndOpencode(t *testing.T) {
+func TestAgentEvidenceCanonicalModelsAndOpencode(t *testing.T) {
 	for _, backend := range []string{"claude-code", "opencode"} {
-		t.Run(backend, func(t *testing.T) {
+		for _, model := range []string{"glm-5.3", "glm-5.3-flash", "deepseek-4.1-flash"} {
+			t.Run(backend+"/"+model, func(t *testing.T) {
+				root, ws, in := agentEvidenceFixture(t)
+				in.Backend, in.Model = backend, model
+				in.Result.Model = in.Model
+				in.Result.ModelEvidence = []engine.ModelEvidence{{Model: model, Provider: "lunaroute", Source: "fixture_reported_identity"}}
+				for i := range in.Records {
+					r := &in.Records[i]
+					r.Backend = backend
+					r.RequestedModel = in.Model
+					r.ReportedModels = []string{model}
+					if backend == "opencode" {
+						r.Path = "/v1/chat/completions"
+					}
+					if r.Operation != nil {
+						r.Operation.Backend = backend
+					}
+				}
+				config := agentConfigReference{RunID: in.RunID, Backend: backend, Model: in.Model, SessionID: in.Result.SessionID, Source: "fixture emitted config"}
+				raw, err := json.Marshal(config)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(root, in.ConfigRef), raw, 0600))
+				obs, err := collectAgentEvidence(root, ws, captureFixtureKey, in)
+				require.NoError(t, err)
+				assert.Equal(t, model, obs.ModelEvidence[0].Model)
+				in.Records[1].ReportedModels = []string{"gpt-6.1-sol"}
+				require.Error(t, publishAgentEvidence(root, ws, captureFixtureKey, "foreign-helper.json", in))
+			})
+		}
+	}
+}
+
+func TestAgentEvidenceRevokedAliasNeverPublished(t *testing.T) {
+	for _, reported := range []string{"claude-sonnet-5-5", "glm-5.3"} {
+		t.Run(reported, func(t *testing.T) {
 			root, ws, in := agentEvidenceFixture(t)
-			in.Backend, in.Model = backend, "claude-sonnet-5-lr1"
-			in.Result.Model = in.Model
-			in.Result.ModelEvidence = []engine.ModelEvidence{{Model: "claude-sonnet-5-5", Provider: "anthropic", Source: "fixture_reported_identity"}}
+			in.Model, in.Result.Model = "claude-sonnet-5-lr1", "claude-sonnet-5-lr1"
+			in.Result.ModelEvidence[0].Model = reported
 			for i := range in.Records {
-				r := &in.Records[i]
-				r.Backend = backend
-				r.RequestedModel = in.Model
-				r.ReportedModels = []string{"claude-sonnet-5-5"}
-				if backend == "opencode" {
-					r.Path = "/v1/chat/completions"
-				}
-				if r.Operation != nil {
-					r.Operation.Backend = backend
-				}
+				in.Records[i].RequestedModel = in.Model
+				in.Records[i].ReportedModels = []string{reported}
 			}
-			config := agentConfigReference{RunID: in.RunID, Backend: backend, Model: in.Model, SessionID: in.Result.SessionID, Source: "fixture emitted config"}
+			config := agentConfigReference{RunID: in.RunID, Backend: in.Backend, Model: in.Model, SessionID: in.Result.SessionID, Source: "fixture emitted config"}
 			raw, err := json.Marshal(config)
 			require.NoError(t, err)
 			require.NoError(t, os.WriteFile(filepath.Join(root, in.ConfigRef), raw, 0600))
-			obs, err := collectAgentEvidence(root, ws, captureFixtureKey, in)
-			require.NoError(t, err)
-			assert.Equal(t, "claude-sonnet-5-5", obs.ModelEvidence[0].Model, "preserve reported drift, not configured alias")
-			in.Records[1].ReportedModels = []string{"glm-5.3"}
-			require.Error(t, publishAgentEvidence(root, ws, captureFixtureKey, "foreign-helper.json", in))
+			require.Error(t, publishAgentEvidence(root, ws, captureFixtureKey, "revoked.json", in))
+			_, err = os.Stat(filepath.Join(root, evidencePath, "observations/revoked.json"))
+			assert.True(t, os.IsNotExist(err), "R3 forbids accepting an alias even if it reports an open-weight canonical id")
 		})
 	}
 }

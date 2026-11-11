@@ -206,6 +206,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	}
 
 	var evidence []engine.ModelEvidence
+	var sessionID string
 	if lunaRouteSanitize(p.binding) {
 		proof, err := p.checkModelExecution(ctx, spec, collected, d)
 		if err != nil {
@@ -213,6 +214,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		}
 		if provider.IsLunaRoute(p.binding.Provider) {
 			evidence = proof.evidence
+			sessionID = proof.sessionID
 		}
 	}
 
@@ -228,7 +230,11 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		})
 	}
 	for _, s := range steps {
-		engineSteps = append(engineSteps, engine.AgentStep{Kind: s.Kind, Summary: s.Summary})
+		kind := s.Kind
+		if provider.IsLunaRoute(p.binding.Provider) && kind == "tool" {
+			kind = "tool_call"
+		}
+		engineSteps = append(engineSteps, engine.AgentStep{Kind: kind, Summary: s.Summary})
 	}
 
 	return &engine.AgentResult{
@@ -239,7 +245,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		DroppedTools:  droppedTools,
 		TokensIn:      tokensIn,
 		TokensOut:     tokensOut,
-		// SessionID empty per the single-shot contract.
+		// LunaRoute evidence correlates the verified current run/export session;
+		// other providers retain the single-shot empty-session contract.
+		SessionID: sessionID,
 	}, nil
 }
 

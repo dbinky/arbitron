@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,9 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
+	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/procenv"
+	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -32,6 +35,7 @@ const (
 	agentProofFile         = "lunaroute-proof.txt"
 	agentCommandFile       = "lunaroute-command.txt"
 	agentProofText         = "LUNAROUTE-OK"
+	agentMissionPrompt     = "Create lunaroute-proof.txt containing exactly LUNAROUTE-OK with no newline. Run wc -c < lunaroute-proof.txt > lunaroute-command.txt using the shell tool. Read both files to verify the results."
 )
 
 var errAgentEvidence = errors.New("agent task evidence incomplete or unsafe")
@@ -84,6 +88,78 @@ func liveRules(t *testing.T) provider.CapabilityRules {
 }
 func liveBinding(key, model, backend string) provider.ResolvedBinding {
 	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "lunaroute", BaseURL: hostedRoot, ConnectionRef: "live-agent", Model: model, Backend: backend, BackendExplicit: true, Pinned: true, AllowedTools: []string{"Read", "Write", "Bash"}, RevealKey: func(context.Context) (string, error) { return key, nil }})
+}
+
+func liveFactory(ws, claudeBin string, rules provider.CapabilityRules) *providersadapter.Factory {
+	return liveFactoryWithClient(ws, claudeBin, rules, liveClient())
+}
+
+func liveFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client) *providersadapter.Factory {
+	runner := claudecli.NewExecRunner()
+	return providersadapter.NewFactory(providersadapter.Deps{
+		ClaudeAgentConfig: claudecli.Config{
+			BinaryPath: claudeBin, WorkspaceRoot: ws, Runner: runner,
+			Timeout: agentExperimentTimeout, MaxResponseBytes: captureBodyLimit,
+			AllowedTools: []string{"Read", "Write", "Bash"}, CapabilityRules: rules,
+		},
+		Runner: runner, OpencodeTimeout: agentExperimentTimeout,
+		MaxResponseBytes: captureBodyLimit, CapabilityRules: rules,
+		Probes: adaptprobe.NewProbeFactory(adaptprobe.Deps{
+			HTTPClient: client, Timeout: agentExperimentTimeout, MaxResponseBytes: captureBodyLimit,
+		}),
+	})
+}
+
+// The production Factory and adapters own selection, credentials and emitted
+// controls. This helper accepts completion only from their actual workspace and
+// tool trace; capture/config/helper verification remains a separate requirement.
+func executeAgentMission(ctx context.Context, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, error) {
+	if factory == nil || requireEmptyAgentWorkspace(ws) != nil {
+		return nil, errAgentEvidence
+	}
+	ctx, cancel := context.WithTimeout(ctx, agentExperimentTimeout)
+	defer cancel()
+	started := time.Now().UTC()
+	agent, err := factory.AgentProviderFor(binding)
+	if err != nil {
+		return nil, errAgentEvidence
+	}
+	result, err := agent.RunAgent(ctx, engine.AgentMission{
+		Model: binding.Model, Prompt: agentMissionPrompt, WorkDir: ws,
+		ToolScope: binding.AllowedTools, Timeout: agentExperimentTimeout,
+	})
+	finished := time.Now().UTC()
+	if err != nil || ctx.Err() != nil || result == nil || result.Model != binding.Model || result.SessionID == "" || len(result.ModelEvidence) == 0 {
+		return nil, errAgentEvidence
+	}
+	toolCall := false
+	for _, step := range result.Steps {
+		toolCall = toolCall || step.Kind == "tool_call"
+	}
+	proof, proofErr := workspaceProof(ws, agentProofFile, agentProofLimit, started, finished)
+	command, commandErr := workspaceProof(ws, agentCommandFile, agentProofLimit, started, finished)
+	if !toolCall || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
+		return nil, errAgentEvidence
+	}
+	return result, nil
+}
+
+func runLiveMission(t *testing.T, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, string) {
+	t.Helper()
+	workdir, err := os.MkdirTemp(ws, "lunaroute-mission-")
+	if err != nil {
+		t.Fatal("cannot create isolated mission workspace")
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(workdir); err != nil {
+			t.Error("cannot remove isolated mission workspace")
+		}
+	})
+	result, err := executeAgentMission(context.Background(), factory, binding, workdir)
+	if err != nil {
+		t.Fatal(errAgentEvidence)
+	}
+	return result, workdir
 }
 
 // Raw lines remain in memory for the owning binary's lifecycle parser. Neither
