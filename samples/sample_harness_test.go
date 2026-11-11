@@ -4,11 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/google/uuid"
 
@@ -134,39 +132,6 @@ func parseProfileTable(t *testing.T, doc string) map[string]profileRow {
 		rows[r.Alias] = r
 	}
 	return rows
-}
-
-// vendorQualifierRE strips Bedrock-style region and vendor qualifiers such as
-// `us.anthropic.`. It cannot match `gpt-6.1-sol` because a hyphen precedes the
-// first dot.
-var vendorQualifierRE = regexp.MustCompile(`^(?:[a-z]{2}\.)?[a-z]+\.`)
-
-var gptModelRE = regexp.MustCompile(`^(gpt-|o\d)`)
-
-// modelFamily implements the spec §3.4 (R14) vendor-family rule on a model id.
-// An empty id is unclassifiable (it inherits the deployment default).
-func modelFamily(model string) (family string, ok bool) {
-	m := strings.ToLower(strings.TrimSpace(model))
-	// Placeholder cells such as "(inherit)", "—" and "-" are not model ids.
-	if strings.HasPrefix(m, "(") || !strings.ContainsFunc(m, func(r rune) bool {
-		return unicode.IsLetter(r) || unicode.IsDigit(r)
-	}) {
-		return "", false
-	}
-	if i := strings.LastIndex(m, "/"); i >= 0 {
-		m = m[i+1:]
-	}
-	m = vendorQualifierRE.ReplaceAllString(m, "")
-	if m == "" {
-		return "", false
-	}
-	switch {
-	case strings.HasPrefix(m, "claude-"):
-		return "claude", true
-	case gptModelRE.MatchString(m):
-		return "gpt", true
-	}
-	return strings.SplitN(m, "-", 2)[0], true
 }
 
 func findNode(wf *workflow.Workflow, id string) (workflow.Node, bool) {
