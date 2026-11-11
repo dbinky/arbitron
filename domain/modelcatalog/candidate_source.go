@@ -14,6 +14,7 @@ import (
 
 // CandidateInventory reads the routes of a prospective profile without mutation.
 type CandidateInventory interface {
+	provider.ProfileConnectionSource
 	PathsForProfile(context.Context, provider.Profile) (PathSnapshot, error)
 	VersionRequests(context.Context, provider.Profile) ([]modelidentity.VersionRequest, error)
 }
@@ -215,6 +216,11 @@ func persistedProof(pr prospect, e modelidentity.Entry) bool {
 		}
 	}
 	return true
+}
+
+// ConnectionProvider forwards the metadata-only policy seam to the inventory.
+func (c *CandidateService) ConnectionProvider(ctx context.Context, p provider.Profile) (string, error) {
+	return c.d.Inventory.ConnectionProvider(ctx, p.Clone())
 }
 
 func (c *CandidateService) VersionRequests(ctx context.Context, p provider.Profile) ([]modelidentity.VersionRequest, error) {

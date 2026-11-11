@@ -283,9 +283,13 @@ func (s *ProfileService) validateAxes(ctx context.Context, p Profile) (Effective
 		return Effective{}, err
 	}
 	requested := Effective{ContextWindow: tier, Effort: effort}
+	lunaRoute, err := profileUsesLunaRoute(ctx, s.source, p)
+	if err != nil {
+		return Effective{}, err
+	}
 	var hasLunaRoute bool
 	var otherRoutes []VersionRequest
-	if s.source != nil {
+	if lunaRoute {
 		requests, err := s.source.VersionRequests(ctx, p.Clone())
 		if err != nil {
 			return Effective{}, err

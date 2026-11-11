@@ -128,6 +128,23 @@ func (i *ExecutionPathInventory) PathsForProfile(ctx context.Context, p provider
 	return snap, nil
 }
 
+// ConnectionProvider reads only connection metadata, even before a following
+// profile has a model. Unrelated workflow, run and catalog faults cannot change
+// whether the stricter LunaRoute profile policy applies.
+func (i *ExecutionPathInventory) ConnectionProvider(ctx context.Context, p provider.Profile) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if p.ConnectionRef == "" {
+		return "", nil
+	}
+	conn, err := i.d.Connections.Get(ctx, p.ConnectionRef)
+	if err != nil {
+		return "", fmt.Errorf("%w: connection metadata: %w", modelcatalog.ErrInventoryIncomplete, err)
+	}
+	return conn.Provider, nil
+}
+
 // VersionRequests uses the supplied coherent profile, not another profile read.
 // It enumerates global routes for profile validation. Policy, catalog and
 // harness proof availability do not affect these fixed-version requests.

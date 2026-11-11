@@ -95,22 +95,17 @@ func ValidateSelection(ctx context.Context, p Profile, versions VersionResolver,
 	if source == nil {
 		return PreparedSelection{}, fmt.Errorf("%w: candidate source", ErrSelectionPortsMissing)
 	}
-	if versions == nil {
-		return PreparedSelection{}, fmt.Errorf("%w: version resolver", ErrSelectionPortsMissing)
-	}
-	// Inspect the original routes before any catalog selection, even when the
-	// model is empty. LunaRoute is never a following-catalog source.
-	requests, err := source.VersionRequests(ctx, p.Clone())
+	// Read connection metadata, not model-dependent routes, before discovery.
+	// Other providers retain their catalog-first selection/error ordering.
+	lunaRoute, err := profileUsesLunaRoute(ctx, source, p)
 	if err != nil {
 		return PreparedSelection{}, err
 	}
-	if len(requests) == 0 {
-		return PreparedSelection{}, fmt.Errorf("%w: no prospective routes", ErrExecutionRevisionUnavailable)
-	}
-	for _, request := range requests {
-		if IsLunaRoute(request.RouteProvider) {
-			return PreparedSelection{}, checkLunaRouteProfile(caps, p, request)
+	if lunaRoute {
+		if versions == nil {
+			return PreparedSelection{}, fmt.Errorf("%w: version resolver", ErrSelectionPortsMissing)
 		}
+		return PreparedSelection{}, checkLunaRouteProfile(caps, p, VersionRequest{Backend: p.Backend})
 	}
 	if p.Model == "" {
 		c, err := source.Newest(ctx, p.Clone())
@@ -221,6 +216,23 @@ func checkRouteVersions(ctx context.Context, p Profile, versions VersionResolver
 	}
 	_, err = ValidatePinRoutes(ctx, p, requests, versions, caps)
 	return err
+}
+
+// ProfileConnectionSource reads only the profile connection's stored provider.
+// It must work before a following model is selected, without catalog/probe I/O.
+// Production candidate sources implement it; older selection-only callers keep
+// their existing behavior without adding model-dependent route inspections.
+type ProfileConnectionSource interface {
+	ConnectionProvider(context.Context, Profile) (string, error)
+}
+
+func profileUsesLunaRoute(ctx context.Context, source EligibleCandidateSource, p Profile) (bool, error) {
+	metadata, ok := source.(ProfileConnectionSource)
+	if !ok {
+		return false, nil
+	}
+	routing, err := metadata.ConnectionProvider(ctx, p.Clone())
+	return IsLunaRoute(routing), err
 }
 
 // checkLunaRouteProfile checks the original route before subscription routing
