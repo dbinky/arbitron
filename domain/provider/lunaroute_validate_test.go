@@ -44,6 +44,32 @@ func requireRefusal(t *testing.T, err error, reason error) *LunaRouteRefusal {
 	return r
 }
 
+func TestCheckLunaRouteRoute_PiNeedsLimitsAndReasoning(t *testing.T) {
+	EnableLunaRouteBackendsForTest(t, "pi")
+	for _, name := range []string{"missing", "one limit", "reasoning", "supported", "unsupported"} {
+		t.Run(name, func(t *testing.T) {
+			m := fullGLM()
+			switch name {
+			case "missing":
+				m = LunaRouteModel{}
+			case "one limit":
+				m.OutputTokens = LimitFact{}
+			case "reasoning":
+				m.Reasoning = SupportFact{}
+			case "unsupported":
+				m.Reasoning.Support = SupportUnsupported
+			}
+			err := CheckLunaRouteRoute(fakeLRCaps{"glm-5.3": m}, agentRoute("glm-5.3", "pi"))
+			if name == "supported" || name == "unsupported" {
+				require.NoError(t, err)
+			} else {
+				r := requireRefusal(t, err, ErrLunaRouteLimitsUnknown)
+				assert.Contains(t, r.Error(), "pi on LunaRoute needs known")
+			}
+		})
+	}
+}
+
 func TestCheckLunaRouteRoute_HappyPaths(t *testing.T) {
 	EnableLunaRouteBackendsForTest(t, "opencode", "claude-code", "codex", "pi")
 	caps := fakeLRCaps{"glm-5.3": fullGLM()}
@@ -222,7 +248,12 @@ func TestCheckLunaRouteRoute_PiReasoningIndependent(t *testing.T) {
 		glm := fullGLM()
 		glm.Reasoning = SupportFact{Support: support, Evidence: "ev#reasoning"}
 		glm.Efforts = nil
-		require.NoError(t, CheckLunaRouteRoute(fakeLRCaps{"glm-5.3": glm}, agentRoute("glm-5.3", "pi")), "phase 1 does not require pi metadata or infer effort from reasoning")
+		err := CheckLunaRouteRoute(fakeLRCaps{"glm-5.3": glm}, agentRoute("glm-5.3", "pi"))
+		if support == SupportSupported || support == SupportUnsupported {
+			require.NoError(t, err, "reasoning metadata is independent of effort support")
+		} else {
+			requireRefusal(t, err, ErrLunaRouteLimitsUnknown)
+		}
 	}
 }
 

@@ -149,7 +149,9 @@ func TestPiEnv_OAuthProviderWithoutRevealKeySucceeds(t *testing.T) {
 // naming a credential variable. That combination would let a provider whose key
 // failed to resolve silently fall through to an unauthenticated launch.
 func TestProviderDescriptors_OAuthRowsCarryNoCredentialVar(t *testing.T) {
+	assert.True(t, providerDescriptors["lunaroute"].custom)
 	for id, d := range providerDescriptors {
+		assert.False(t, d.oauth && d.custom, "descriptor %q cannot be OAuth and custom", id)
 		if d.oauth {
 			assert.Empty(t, d.credEnvVar,
 				"descriptor %q: an OAuth row must not also set credEnvVar", id)

@@ -97,12 +97,9 @@ func buildArgs(binding provider.ResolvedBinding) ([]string, error) {
 // otherwise reject it at startup, costing a subprocess launch to learn what the
 // axis already knows.
 //
-// NOTE: this is a direct axis mapping, not a capability-ruleset emission. It
-// therefore does NOT floor a requested level to a model's supported ceiling the
-// way the codex path does via provider.CapabilityRules. Threading pi through
-// that ruleset (a new backend arm in the domain's Emit switch plus capability
-// rows) is deliberately left to a follow-up; until then a level pi's chosen
-// model does not support is the provider's to reject.
+// This mapping never floors a requested level. LunaRoute additionally validates
+// exact model/axis support through CheckLunaRouteAdapterLaunch before building
+// argv; other providers retain their existing direct mapping.
 func thinkingLevel(e provider.Effort) (string, error) {
 	switch e {
 	case "", provider.EffortDefault:

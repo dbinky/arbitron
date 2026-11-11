@@ -41,6 +41,8 @@ type Config struct {
 	// Binding is the resolved backend selection. Provider selects the credential
 	// env var (env.go), Model routes argv, and Effort becomes --thinking.
 	Binding provider.ResolvedBinding
+	// CapabilityRules supplies required LunaRoute metadata and exact effort facts.
+	CapabilityRules provider.CapabilityRules
 	// BinaryPath is the pi binary; "" resolves from PATH / standard bin dirs.
 	BinaryPath string
 	// Runner is the subprocess seam; nil uses the shared production os/exec
@@ -63,6 +65,7 @@ type Config struct {
 // result for the trace.
 type Provider struct {
 	binding          provider.ResolvedBinding
+	rules            provider.CapabilityRules
 	binPath          string
 	runner           claudecli.CommandRunner
 	timeout          time.Duration
@@ -87,6 +90,7 @@ func New(cfg Config) *Provider {
 	}
 	return &Provider{
 		binding:          cfg.Binding,
+		rules:            cfg.CapabilityRules,
 		binPath:          resolveBinary(cfg.BinaryPath),
 		runner:           runner,
 		timeout:          cfg.Timeout,
@@ -131,10 +135,9 @@ func (p *Provider) ensureCompatible(ctx context.Context) error {
 // RunAgent runs one pi mission and folds its JSON event stream into an
 // AgentResult.
 //
-// Strict ordering guarantees a fail-closed launch with no partial state:
-// WorkDir guard → build args (fail-closed on empty model / bad effort) → build
-// credential env (fail-closed on unknown provider / reveal failure) → memoized
-// version probe → run. Any of those failing produces ZERO subprocess launches.
+// LunaRoute validates before reveal and prepares a private provider definition;
+// its directory survives through evidence parsing and is removed on every exit.
+// Other routes retain args → credential env → memoized version probe → run.
 //
 // THE CRITICAL DIFFERENCE from the other CLI adapters: pi exits 0 even when the
 // turn failed, so a zero exit is NOT success. The stream's verdict decides, and
@@ -142,29 +145,47 @@ func (p *Provider) ensureCompatible(ctx context.Context) error {
 // provider message, which may contain credentials.
 func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*engine.AgentResult, error) {
 	if mission.WorkDir == "" {
-		return nil, ErrWorkDirRequired
+		return nil, p.localError("workspace", ErrWorkDirRequired)
+	}
+	if provider.IsLunaRoute(p.binding.Provider) {
+		if mission.Model != "" && mission.Model != p.binding.Model {
+			return nil, p.localError("model selection", ErrModelEvidence)
+		}
+		if err := provider.CheckLunaRouteAdapterLaunch(p.rules, p.binding, 0); err != nil {
+			return nil, p.localError("preflight", err)
+		}
 	}
 
 	// Single model source: argv is built from p.binding.Model, so bind that ONE
 	// value here and use it for argv, every error string AND the result.
-	// mission.Model is deliberately unused for labels — if it ever diverged, the
-	// result and errors would name a model pi never ran.
+	// Non-LunaRoute callers retain the historical binding-only model source;
+	// LunaRoute has already rejected a conflicting mission model.
 	model := p.binding.Model
 
-	args, err := buildArgs(p.binding)
-	if err != nil {
-		return nil, fmt.Errorf("pi agent (model %q): %w", model, err)
-	}
-
-	// Build the credential env BEFORE any subprocess: an unknown provider or a
-	// reveal failure must not reach a launch.
-	env, err := piEnv(ctx, p.binding)
-	if err != nil {
-		return nil, fmt.Errorf("pi agent (model %q): %w", model, err)
-	}
-
-	if err := p.ensureCompatible(ctx); err != nil {
-		return nil, err
+	var args, env []string
+	var err error
+	if provider.IsLunaRoute(p.binding.Provider) {
+		launch, err := prepareLunaRoutePiLaunch(ctx, p.binding, p.rules)
+		if err != nil {
+			return nil, err
+		}
+		defer launch.cleanup()
+		args, env = launch.args, launch.env
+		if err := p.ensureLunaRouteCompatible(ctx, env); err != nil {
+			return nil, err
+		}
+	} else {
+		args, err = buildArgs(p.binding)
+		if err != nil {
+			return nil, fmt.Errorf("pi agent (model %q): %w", model, err)
+		}
+		env, err = piEnv(ctx, p.binding)
+		if err != nil {
+			return nil, fmt.Errorf("pi agent (model %q): %w", model, err)
+		}
+		if err := p.ensureCompatible(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	timeout := mission.Timeout
@@ -183,7 +204,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		MaxResponseBytes: p.maxResponseBytes,
 	})
 	if err != nil {
-		if p.binding.Pinned {
+		if p.safeProcessErrors() {
 			err = claudecli.SanitizeProcessError(err)
 		}
 		return nil, fmt.Errorf("pi: run (model %q): %w", model, err)
@@ -206,7 +227,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	if waitErr != nil {
 		// A pinned run must not copy untrusted harness stderr into errors or
 		// logs; it can carry account credentials. errors.Is still classifies.
-		if p.binding.Pinned {
+		if p.safeProcessErrors() {
 			waitErr = claudecli.SanitizeProcessError(waitErr)
 		} else {
 			claudecli.LogStderrTail("pi", waitErr)
@@ -214,12 +235,15 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("pi: mission timed out (model %q): %w (%v)", model, ctxErr, waitErr)
 		}
-		if !p.binding.Pinned && parseErr == nil && res.failureMsg != "" {
+		if !p.safeProcessErrors() && parseErr == nil && res.failureMsg != "" {
 			return nil, fmt.Errorf("pi: mission failed (model %q): %s: %w", model, res.failureMsg, waitErr)
 		}
 		return nil, fmt.Errorf("pi: mission failed (model %q): %w", model, waitErr)
 	}
 	if parseErr != nil {
+		if provider.IsLunaRoute(p.binding.Provider) {
+			parseErr = ErrParse
+		}
 		return nil, fmt.Errorf("pi: parse output (model %q): %w", model, parseErr)
 	}
 
@@ -227,7 +251,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	// turn actually did. Preserve the refusal verdict, but never include an
 	// untrusted provider message in a pinned execution error.
 	if res.failed {
-		if p.binding.Pinned {
+		if p.safeProcessErrors() {
 			return nil, fmt.Errorf("%w (model %q)", ErrTurnFailed, model)
 		}
 		if res.failureMsg != "" {
@@ -236,7 +260,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, fmt.Errorf("%w (model %q): pi reported a failed turn with no message", ErrTurnFailed, model)
 	}
 
-	if p.binding.Pinned {
+	if p.safeProcessErrors() {
 		if err := res.verifyExecutedModel(p.binding); err != nil {
 			return nil, err
 		}
@@ -246,13 +270,18 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	for _, s := range res.steps {
 		steps = append(steps, engine.AgentStep{Kind: s.Kind, Summary: s.Summary})
 	}
+	var evidence []engine.ModelEvidence
+	if provider.IsLunaRoute(p.binding.Provider) {
+		evidence = res.modelEvidence()
+	}
 	return &engine.AgentResult{
-		Summary:   res.summary,
-		Steps:     steps,
-		Model:     model,
-		TokensIn:  res.tokensIn,
-		TokensOut: res.tokensOut,
-		SessionID: res.sessionID,
+		ModelEvidence: evidence,
+		Summary:       res.summary,
+		Steps:         steps,
+		Model:         model,
+		TokensIn:      res.tokensIn,
+		TokensOut:     res.tokensOut,
+		SessionID:     res.sessionID,
 	}, nil
 }
 
@@ -267,6 +296,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 func (p *Provider) ProbeExecutedModel(ctx context.Context, prompt, workDir string) (string, string, error) {
 	if workDir == "" {
 		return "", "", ErrWorkDirRequired
+	}
+	if provider.IsLunaRoute(p.binding.Provider) {
+		return "", "", fmt.Errorf("%w: LunaRoute pi routes are pinned-only and have no usability probe", ErrModelEvidence)
 	}
 	args, err := buildArgs(p.binding)
 	if err != nil {

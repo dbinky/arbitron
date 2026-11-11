@@ -65,6 +65,25 @@ func (r *modelRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan str
 	}, nil
 }
 
+func TestModelProbePiLunaRouteReportedModelEvidence(t *testing.T) {
+	binding := lrPiBinding()
+	lines := []string{modelMessage("assistant", "lunaroute", binding.Model), modelMessage("assistant", "", binding.Model)}
+	out, err := parseOutput(lines)
+	require.NoError(t, err)
+	require.NoError(t, out.verifyExecutedModel(binding))
+	evidence := out.modelEvidence()
+	require.Len(t, evidence, 2)
+	assert.Equal(t, "lunaroute", evidence[0].Provider)
+	assert.Empty(t, evidence[1].Provider)
+	assert.Equal(t, binding.Model, evidence[1].Model)
+	assert.Equal(t, "pi_message_end", evidence[1].Source)
+	for _, wrong := range []string{"glm-5.3-flash", "claude-sonnet-5-lr1", "", "glm-" + lrPiKey} {
+		out, err := parseOutput(append([]string{modelMessage("assistant", "lunaroute", wrong)}, lines...))
+		require.NoError(t, err)
+		require.ErrorIs(t, out.verifyExecutedModel(binding), ErrModelEvidence, "later exact matches cannot hide an invalid earlier identity")
+	}
+}
+
 func TestModelProbePiExactExecution(t *testing.T) {
 	exact := modelMessage("assistant", "anthropic", "uncatalogued-model")
 	wrong := modelMessage("assistant", "anthropic", "fallback")

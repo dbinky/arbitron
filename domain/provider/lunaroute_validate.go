@@ -49,7 +49,7 @@ var lunaRouteExactEffort = map[string]map[Effort]bool{
 }
 
 // These emitters register model limits and must never assume native defaults.
-var lunaRouteNeedsLimits = map[string]bool{workflow.BackendClaudeCode: true, workflow.BackendOpencode: true}
+var lunaRouteNeedsLimits = map[string]bool{workflow.BackendClaudeCode: true, workflow.BackendOpencode: true, workflow.BackendPi: true}
 
 func evidenceNote(ev string) string {
 	if ev == "" {
@@ -128,6 +128,10 @@ func checkLunaRouteRoute(caps LunaRouteCapabilities, r LunaRouteRoute, requireEn
 	}
 	if r.Kind == ProfileKindAgent && lunaRouteNeedsLimits[r.Backend] && (!m.ContextTokens.Known() || !m.OutputTokens.Known()) {
 		return refuse(ErrLunaRouteLimitsUnknown, r.Backend+" on LunaRoute needs known context and output limits for this model in the capability table (lunaroute_models)")
+	}
+	if r.Kind == ProfileKindAgent && r.Backend == workflow.BackendPi &&
+		m.Reasoning.Support != SupportSupported && m.Reasoning.Support != SupportUnsupported {
+		return refuse(ErrLunaRouteLimitsUnknown, "pi on LunaRoute needs known reasoning metadata from an independent evidence-backed reasoning fact")
 	}
 	if r.MaxOutputTokens > 0 && m.OutputTokens.Known() && r.MaxOutputTokens > m.OutputTokens.Tokens {
 		return refuse(ErrLunaRouteSettingConflict, fmt.Sprintf("max tokens %d exceeds the model's known output limit %d; lower max tokens", r.MaxOutputTokens, m.OutputTokens.Tokens))
