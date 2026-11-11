@@ -212,6 +212,55 @@ Phase 4 Task 7 extends this to the completed release matrix on all four agent
 backends, with actual main/helper capture. This procedure is not itself live
 evidence and cannot flip a register status.
 
+## Claude Code / OpenCode evidence tooling (P3-T5)
+
+The independent preparation helpers and validator can be checked offline:
+
+```sh
+go test ./test/lunaroute -run 'AgentEvidence|Observation' -count=1
+go test -race ./test/lunaroute -run AgentEvidence -count=1
+```
+
+`liveModel` requires an explicitly supplied, reviewed id via `os.LookupEnv`;
+missing input skips using the calling test locally and fails in release mode.
+`liveBinary`, bounded/safe `versionOf`, `liveRules` (the production capability
+loader) and guarded `liveBinding` share the later backend experiments' inputs.
+There is no recommended/default model. Raw version/process stderr is never
+printed. `runCaptured` invokes the real runner with bounded context/output,
+drains and waits, and retains raw lifecycle lines only in memory for parsers.
+
+`collectAgentEvidence` requires current-run completed main **and** correlated
+helper records, the backend's actual dialect, matching session/version, nonempty
+reported identities (including permitted alias drift), a safe existing same-run
+configuration identity projection, a tool-call trace, and both actual workspace
+sinks. The primary file is exactly `LUNAROUTE-OK`; `wc -c` must produce `12` in
+the second file. Both must be regular files written within the run interval;
+pre-existing or symlinked proofs are refused. The owning launch must first call
+`requireEmptyAgentWorkspace`. No summary text or caller-supplied success boolean
+substitutes for these checks. `publishAgentEvidence` validates everything before
+using the existing owner-private, exclusive JSON writer; rejection writes no
+partial artifact. Captured request/response models survive into the JSON sink,
+while summaries, prompts, command contents, credentials and stderr do not.
+
+The subprocess/CONNECT/TLS fixture tests feed those sinks with actual traffic
+and command-created files. Their simulated lifecycle and configuration identity
+projection prove validation plumbing **only**, not effective Claude/OpenCode
+controls, installed binary proxy support, or an actual helper operation. The
+projection is not a replacement for the full same-emitted-env/config inspection
+required by the real experiments. A backend-specific lifecycle parser must
+produce each applicable helper category from a forced operation, not a label.
+
+A version-only local query on 2026-11-11 UTC returned Claude Code `2.1.322`
+and OpenCode `1.19.5` under a minimal credential-free environment. This is a
+binary inventory, not a contract/helper observation or readiness evidence.
+
+Direct live experiments remain blocked on the key, explicit models and required
+documented static limits; production Factory/mission integration remains blocked
+on P3-T1/T2/T3. No empty placeholder live test, contract observation, completed
+agent artifact, supported capability or verified register label is shipped.
+P3-T5 still owns those experiments, the production helpers and scoped population
+when prerequisites exist. P4-T7 will consume current real MCP-run captures.
+
 ## Release enforcement
 
 Local missing live inputs explicitly skip with readiness pending. Release mode
