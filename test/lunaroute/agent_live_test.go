@@ -87,7 +87,18 @@ func liveRules(t *testing.T) provider.CapabilityRules {
 	return rules
 }
 func liveBinding(key, model, backend string) provider.ResolvedBinding {
-	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "lunaroute", BaseURL: hostedRoot, ConnectionRef: "live-agent", Model: model, Backend: backend, BackendExplicit: true, Pinned: true, AllowedTools: []string{"Read", "Write", "Bash"}, RevealKey: func(context.Context) (string, error) { return key, nil }})
+	tools := []string{"Read", "Write", "Bash"}
+	if backend == "opencode" {
+		tools = append(tools, "Task")
+	}
+	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "lunaroute", BaseURL: hostedRoot, ConnectionRef: "live-agent", Model: model, Backend: backend, BackendExplicit: true, Pinned: true, AllowedTools: tools, RevealKey: func(context.Context) (string, error) { return key, nil }})
+}
+
+func agentMissionPromptFor(backend string) string {
+	if backend == "opencode" {
+		return agentMissionPrompt + " Also use the task tool to invoke a synchronous general subagent to read and verify both files. Wait for its successful completion; do not run it in the background."
+	}
+	return agentMissionPrompt
 }
 
 func liveFactory(ws, claudeBin string, rules provider.CapabilityRules) *providersadapter.Factory {
@@ -95,7 +106,7 @@ func liveFactory(ws, claudeBin string, rules provider.CapabilityRules) *provider
 }
 
 func liveFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client) *providersadapter.Factory {
-	runner := openCodeControlsRunner{next: claudecli.NewExecRunner()}
+	runner := openCodeSubagentsRunner{next: openCodeControlsRunner{next: claudecli.NewExecRunner()}, startedAt: time.Now().UTC()}
 	return providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeAgentConfig: claudecli.Config{
 			BinaryPath: claudeBin, WorkspaceRoot: ws, Runner: runner,
@@ -125,7 +136,7 @@ func executeAgentMission(ctx context.Context, factory *providersadapter.Factory,
 		return nil, errAgentEvidence
 	}
 	result, err := agent.RunAgent(ctx, engine.AgentMission{
-		Model: binding.Model, Prompt: agentMissionPrompt, WorkDir: ws,
+		Model: binding.Model, Prompt: agentMissionPromptFor(binding.Backend), WorkDir: ws,
 		ToolScope: binding.AllowedTools, Timeout: agentExperimentTimeout,
 	})
 	finished := time.Now().UTC()

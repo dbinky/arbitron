@@ -304,8 +304,19 @@ assertions. See [the versioned source note](sources/lr06-effective-controls.md).
 This verifies neither actual helper calls nor Bearer auth; capture still owns
 those proofs. No completed-agent artifact is published by a control query.
 
+The experiment Factory also consumes source-grounded synchronous OpenCode
+`task` lifecycles at the actual parent-export seam, querying each child with the
+same emitted executable/env/cwd. Its mission permits Task and explicitly asks
+for a synchronous general subagent. A missing, stale, failed, background,
+substituted or incomplete child refuses the mission despite valid workspace
+files and main inference. See [the lifecycle source note](sources/lr06-subagent-lifecycle.md)
+and `TestAgentEvidenceOpenCodeSubagent`. Protocol exports in those tests are
+synthetic: they do not establish installed-helper completion or captured helper
+routing, and no completed-agent artifact is published.
+
 R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
-The remaining offline dependency is source-backed forced-helper lifecycle and
+Remaining offline work includes actual-request correlation/version provenance
+for the OpenCode subagent lifecycle, the other applicable helper lifecycles and
 Claude same-emitted-env effective-control collection. P3-T5 still owns those producers
 and the real live entry points; a main-only mission cannot publish a completed
 agent observation. Operator live runs additionally need a private key and

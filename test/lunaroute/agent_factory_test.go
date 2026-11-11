@@ -34,13 +34,18 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 		if backend == "opencode" {
 			path = "/v1/chat/completions"
 		}
-		if r.Method != "POST" || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer "+captureFixtureKey || json.NewDecoder(r.Body).Decode(&body) != nil || body.Model != "glm-5.3" || len(body.Messages) != 1 || body.Messages[0].Content != agentMissionPrompt {
+		if r.Method != "POST" || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer "+captureFixtureKey || json.NewDecoder(r.Body).Decode(&body) != nil || body.Model != "glm-5.3" || len(body.Messages) != 1 || body.Messages[0].Content != agentMissionPromptFor(backend) {
 			t.Error("Factory mission did not feed authenticated model/prompt to inference")
 			w.WriteHeader(400)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if backend == "opencode" {
+			if err := writeFactorySubagentExports(root, mode); err != nil {
+				t.Error("cannot write private lifecycle fixtures")
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			io.WriteString(w, `{"model":"glm-5.3","choices":[{"message":{"content":"done"},"finish_reason":"stop"}]}`)
 		} else {
 			io.WriteString(w, `{"type":"message","model":"glm-5.3","stop_reason":"end_turn"}`)
@@ -77,7 +82,7 @@ path=messages
 	opencode := `
 [ "$LUNAROUTE_API_KEY" = '@KEY@' ] || exit 44
 case "$OPENCODE_CONFIG_CONTENT" in *'@KEY@'*) exit 45 ;; esac
-for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"small_model":"lunaroute/glm-5.3"' '"model":"lunaroute/glm-5.3"' '"enabled_providers":["lunaroute"]' '"limit":{"context":202752,"output":32768}' '"tool_call":true' '"permission":{"*":"deny","bash":"allow","read":"allow","write":"allow"}'; do
+for field in '"baseURL":"https://gw.lunaroute.com/v1"' '"apiKey":"{env:LUNAROUTE_API_KEY}"' '"small_model":"lunaroute/glm-5.3"' '"model":"lunaroute/glm-5.3"' '"enabled_providers":["lunaroute"]' '"limit":{"context":202752,"output":32768}' '"tool_call":true' '"permission":{"*":"deny","bash":"allow","read":"allow","task":"allow","write":"allow"}'; do
  case "$OPENCODE_CONFIG_CONTENT" in *"$field"*) ;; *) exit 47 ;; esac
 done
 if [ "$1" = debug ]; then
@@ -94,8 +99,16 @@ if [ "$1" = debug ]; then
  exit 0
 fi
 if [ "$1" = export ]; then
- [ "$*" = 'export ses_factory --pure' ] || exit 48
- echo '{"info":{"id":"ses_factory"},"messages":[{"info":{"id":"msg_answer","sessionID":"ses_factory","role":"assistant","providerID":"lunaroute","modelID":"glm-5.3","time":{"created":1,"completed":2}},"parts":[]}]}'
+ if [ "$*" = 'export ses_child --pure' ]; then
+  printf ses_child > '@ROOT@/subagent-export-marker'
+  case '@MODE@' in
+   subagent-export-exit) echo 'export @KEY@' >&2; exit 1 ;;
+   subagent-export-overflow) /usr/bin/awk 'BEGIN { for(i=0;i<1048577;i++) printf "x"; print "" }'; exit 0 ;;
+  esac
+  cat '@ROOT@/child-export.json'
+ elif [ "$*" = 'export ses_factory --pure' ]; then
+  cat '@ROOT@/parent-export.json'
+ else exit 48; fi
  exit 0
 fi
 [ "$1" = run ] && [ "$2" = '@PROMPT@' ] || exit 42
@@ -126,7 +139,7 @@ fi
 	if backend == "opencode" {
 		body, name = opencode, "opencode"
 	}
-	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPrompt, "@MODE@", mode).Replace(common + body + finish)
+	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@MODE@", mode).Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)
