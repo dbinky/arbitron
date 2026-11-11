@@ -120,18 +120,33 @@ func (c *adapterCore) chatEnvWithBinding(binding provider.ResolvedBinding) []str
 	return env
 }
 
-// collectResult runs spec to completion via runner, draining the stdout lines
-// and returning the parsed terminal result event plus every non-result event
-// that preceded it (in order). It encapsulates the non-streaming consume loop
-// shared by ChatAdapter.Chat (which discards the steps) and
-// AgentAdapter.RunAgent (which folds them into AgentResult.Steps): it surfaces
-// start errors, mid-stream parse errors, process exit errors, a missing result
-// event, and an is_error result. When wantModel is non-empty, exactly one
-// successful result must include it in modelUsage (D3); helper models are allowed.
+// collectPolicy applies route-specific safety and identity rules before a
+// terminal result is accepted, including calls without a legacy pin.
+type collectPolicy struct {
+	sanitize     bool
+	acceptModels func(expected string, reported []string) bool
+}
+
+// collectResult retains the existing non-LunaRoute protocol: drain and reap,
+// surface failures, and (when required) prove the main model while permitting
+// helper models. Route-specific callers use collectResultWithPolicy instead.
 func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, wantModel string) (streamEvent, []streamEvent, error) {
+	return collectResultWithPolicy(ctx, runner, spec, wantModel, collectPolicy{})
+}
+
+func (p collectPolicy) accepts(want string, used []string) bool {
+	if p.acceptModels != nil {
+		return p.acceptModels(want, used)
+	}
+	return executedModelMatches(want, used)
+}
+
+func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec RunSpec, wantModel string, policy collectPolicy) (streamEvent, []streamEvent, error) {
+	verified := wantModel != "" || policy.acceptModels != nil
+	sanitize := verified || policy.sanitize
 	lines, wait, err := runner.Run(ctx, spec)
 	if err != nil {
-		if wantModel != "" {
+		if sanitize {
 			err = SanitizeProcessError(err)
 		}
 		return streamEvent{}, nil, fmt.Errorf("claudecli: call: %w", err)
@@ -147,6 +162,9 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, want
 		}
 		ev, ok, perr := parseEvent([]byte(line))
 		if perr != nil {
+			if policy.sanitize {
+				perr = SanitizeProcessError(perr)
+			}
 			parseErr = perr
 			continue
 		}
@@ -154,7 +172,7 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, want
 			continue
 		}
 		if ev.Kind == eventResult {
-			if wantModel != "" && (haveResult || ev.IsError || !executedModelMatches(wantModel, ev.ModelUsage)) {
+			if verified && (haveResult || ev.IsError || !policy.accepts(wantModel, ev.ModelUsage)) {
 				parseErr = errModelExecutionEvidence
 				continue
 			}
@@ -164,7 +182,7 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, want
 		steps = append(steps, ev)
 	}
 	if waitErr := wait(); waitErr != nil {
-		if wantModel != "" {
+		if sanitize {
 			waitErr = SanitizeProcessError(waitErr)
 		} else {
 			LogStderrTail("claudecli", waitErr)
@@ -183,6 +201,9 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, want
 		return streamEvent{}, nil, fmt.Errorf("claudecli: no result event in claude output")
 	}
 	if result.IsError {
+		if policy.sanitize {
+			return streamEvent{}, nil, errModelExecutionEvidence
+		}
 		return streamEvent{}, nil, fmt.Errorf("claudecli: claude reported an error: %s", result.Text)
 	}
 	return result, steps, nil

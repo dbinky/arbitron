@@ -23,6 +23,7 @@ type streamState struct {
 	// wantModel, when set, is the pinned model the result's modelUsage must
 	// contain; a result without it fails the stream instead of completing.
 	wantModel string
+	policy    collectPolicy
 	sawResult bool
 }
 
@@ -39,6 +40,9 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 	}
 	ev, ok, parseErr := parseEvent([]byte(rawLine))
 	if parseErr != nil {
+		if s.policy.sanitize {
+			parseErr = SanitizeProcessError(parseErr)
+		}
 		if !sendChunk(engine.ChatChunk{Error: parseErr}) {
 			// consumer gone; still mark failed so Finalize knows
 		}
@@ -69,16 +73,18 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 		}
 		s.sawResult = true
 		s.tokensIn, s.tokensOut = ev.TokensIn, ev.TokensOut
-		if !ev.IsError && s.wantModel != "" && !executedModelMatches(s.wantModel, ev.ModelUsage) {
-			sendChunk(engine.ChatChunk{
-				Error: fmt.Errorf("claudecli: pinned model %q absent from result modelUsage", s.wantModel),
-			})
+		if !ev.IsError && s.wantModel != "" && !s.policy.accepts(s.wantModel, ev.ModelUsage) {
+			err := errModelExecutionEvidence
+			if !s.policy.sanitize {
+				err = fmt.Errorf("claudecli: pinned model %q absent from result modelUsage", s.wantModel)
+			}
+			sendChunk(engine.ChatChunk{Error: err})
 			s.failed = true
 			return
 		}
 		if ev.IsError {
 			err := errModelExecutionEvidence
-			if s.wantModel == "" {
+			if s.wantModel == "" && !s.policy.sanitize {
 				err = fmt.Errorf("claudecli: claude reported an error: %s", ev.Text)
 			}
 			sendChunk(engine.ChatChunk{Error: err})
@@ -96,7 +102,7 @@ func (s *streamState) Finalize(waitErr error, sendChunk func(engine.ChatChunk) b
 		return
 	}
 	if waitErr != nil {
-		if s.wantModel != "" {
+		if s.wantModel != "" || s.policy.sanitize {
 			waitErr = SanitizeProcessError(waitErr)
 		}
 		sendChunk(engine.ChatChunk{

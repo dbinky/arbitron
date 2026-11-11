@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/modelidentity"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // maxContentBlockChars caps the length of a single text content block we
@@ -27,6 +30,9 @@ import (
 // output mid-word. 1 MiB leaves generous headroom for legitimate turns while
 // staying 256x below the per-request MaxResponseBytes backstop.
 const maxContentBlockChars = 1 << 20
+
+// Bound reported identities before they reach model evidence or traces.
+const maxModelIdentityBytes = 256
 
 // NOTE on json.Decoder.DisallowUnknownFields(): the stream-json envelope
 // from the claude CLI carries forward-compat fields the engine intentionally
@@ -207,6 +213,37 @@ func executedModelMatches(want string, used []string) bool {
 		}
 	}
 	return false
+}
+
+// LunaRoute proves every billed main/helper identity, including legacy calls.
+// No upstream spelling is normalized or replaced by the configured selection.
+func lunaRouteModelsAccepted(selected string, used []string) bool {
+	if len(used) == 0 {
+		return false
+	}
+	for _, m := range used {
+		if m == "" || len(m) > maxModelIdentityBytes || strings.ContainsFunc(m, func(r rune) bool {
+			return unicode.IsSpace(r) || unicode.IsControl(r)
+		}) || provider.RedactLunaRoute(m) != m || !modelidentity.LunaRouteExecutedModelAccepted(selected, m) {
+			return false
+		}
+	}
+	return true
+}
+
+func lunaRouteCollectPolicy(b provider.ResolvedBinding) collectPolicy {
+	if !provider.IsLunaRoute(b.Provider) {
+		return collectPolicy{}
+	}
+	return collectPolicy{sanitize: true, acceptModels: lunaRouteModelsAccepted}
+}
+
+func (ev streamEvent) modelEvidence() []engine.ModelEvidence {
+	evidence := make([]engine.ModelEvidence, 0, len(ev.ModelUsage))
+	for _, m := range ev.ModelUsage {
+		evidence = append(evidence, engine.ModelEvidence{Model: m, Source: "claude_model_usage"})
+	}
+	return evidence
 }
 
 func baseModelID(m string) string {
