@@ -337,14 +337,15 @@ func (f *Factory) agentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 		// provider selects which credential env var carries the revealed key, and
 		// an unknown provider fails the mission closed rather than letting pi fall
 		// back to a key from its own config or the ambient shell. Effort rides
-		// argv as --thinking; pi has no context knob, so CapabilityRules is not
-		// threaded here (see args.go on the follow-up).
+		// argv as --thinking. CapabilityRules supplies LunaRoute's per-run model
+		// definition and exact effort facts; other providers do not read it.
 		return pi.New(pi.Config{
 			Binding:          b,
 			BinaryPath:       f.deps.PiBinaryPath,
 			Runner:           f.deps.Runner,
 			Timeout:          f.deps.PiTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
+			CapabilityRules:  f.deps.CapabilityRules,
 		}), nil
 	default:
 		// Fail-closed: an unrecognized (or empty-with-empty-default) backend never

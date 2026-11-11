@@ -33,7 +33,7 @@ func DisableLunaRouteBackendsForTest(t *testing.T, backends ...string) {
 }
 
 func TestLunaRouteEnabledBackends_ShippedSet(t *testing.T) {
-	want := map[string]bool{"claude-code": true, "opencode": true, "codex": true}
+	want := map[string]bool{"claude-code": true, "opencode": true, "codex": true, "pi": true}
 	if len(lunaRouteEnabledBackends) != len(want) {
 		t.Fatalf("shipped LunaRoute backends = %v, want %v", lunaRouteEnabledBackends, want)
 	}

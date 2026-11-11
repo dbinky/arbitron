@@ -13,7 +13,6 @@ func TestLunaRouteProfileSaveWiring(t *testing.T) {
 	require.False(t, isErr, text)
 	for _, tc := range []struct{ alias, backend, model, want string }{
 		{"lr-default", "", "glm-5.3", "set backend to claude-code, opencode, codex or pi explicitly"},
-		{"lr-pi", "pi", "glm-5.3", "LunaRoute on pi not yet supported"},
 		{"lr-numeric", "", "claude-sonnet-5-lr999", "reviewed fixed LunaRoute id"},
 		{"lr-revoked", "", "claude-sonnet-5-lr1", "reviewed fixed LunaRoute id"},
 		{"lr-opus", "", "claude-opus-lr29", "reviewed fixed LunaRoute id"},

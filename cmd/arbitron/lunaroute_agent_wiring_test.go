@@ -67,6 +67,7 @@ func writeLunaRouteCaps(t *testing.T) string {
   glm-5.3:
     context_tokens: {tokens: 202752, evidence: "test-fixture#glm-5.3"}
     output_tokens: {tokens: 32768, evidence: "test-fixture#glm-5.3"}
+    reasoning: {support: unsupported, evidence: "test-fixture#reasoning"}
   deepseek-4.1-flash: {} # known executable, deliberately unknown fixture limits
 `)
 }
@@ -83,7 +84,7 @@ func TestLunaRouteAgentProfileSaveWiring(t *testing.T) {
 		}
 		return call("profile_create", args)
 	}
-	for _, b := range []string{"opencode", "claude-code"} {
+	for _, b := range []string{"opencode", "claude-code", "pi"} {
 		bad, text = save("lr-"+b, "glm-5.3", b, nil)
 		require.False(t, bad, text)
 		var model, backend, connection string
@@ -96,7 +97,7 @@ func TestLunaRouteAgentProfileSaveWiring(t *testing.T) {
 		{"unknown", "deepseek-4.1-flash", "claude-code", "", "", "claude-code on LunaRoute needs known context and output limits"},
 		{"tier", "glm-5.3", "claude-code", "context_window", "200k", "Claude-native switch"},
 		{"effort", "glm-5.3", "opencode", "effort", "low", "no exact emission on opencode"},
-		{"pi", "glm-5.3", "pi", "", "", "LunaRoute on pi not yet supported"},
+		{"pi-unknown", "deepseek-4.1-flash", "pi", "", "", "pi on LunaRoute needs known context and output limits"},
 		{"codex", "glm-5.3", "codex", "effort", "none", "no exact emission on codex"},
 		{"numeric", "glm-999.9", "opencode", "", "", "reviewed fixed LunaRoute id"},
 		{"revoked", "claude-sonnet-5-lr1", "claude-code", "", "", "reviewed fixed LunaRoute id"},

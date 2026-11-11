@@ -27,12 +27,13 @@ type LunaRouteRoute struct {
 // retaining the existing selection and pin-preflight refusal classifications.
 var ErrLunaRouteModelSpelling = fmt.Errorf("%w: %w: use a reviewed fixed LunaRoute id", ErrInvalidSelection, ErrSpecificVersionUnavailable)
 
-// Backends are enabled with production emitter and composition-root sink proofs.
-// Live contract verification and release readiness remain separately gated.
+// All four agent backends have LunaRoute execution paths. This map remains the
+// single enablement gate; live verification and release readiness are separate.
 var lunaRouteEnabledBackends = map[string]bool{
 	workflow.BackendClaudeCode: true,
 	workflow.BackendOpencode:   true,
 	workflow.BackendCodex:      true,
+	workflow.BackendPi:         true,
 }
 
 // LunaRouteBackendEnabled reports whether backend may carry LunaRoute routes.

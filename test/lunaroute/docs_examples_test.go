@@ -178,7 +178,7 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 		{"revoked alias", func(p *docProfile) { p.Model = "claude-sonnet-5-lr1" }, provider.ErrSpecificVersionUnavailable},
 		{"weights name", func(p *docProfile) { p.Model = "deepseek-4.1-flash-1017" }, provider.ErrSpecificVersionUnavailable},
 		{"codex effort none", func(p *docProfile) { p.Backend = "codex"; p.Effort = "none" }, provider.ErrLunaRouteAxisUnsupported},
-		{"pi disabled", func(p *docProfile) { p.Backend = "pi" }, provider.ErrLunaRouteBackendUnsupported},
+		{"pi unknown reasoning", func(p *docProfile) { p.Backend = "pi" }, provider.ErrLunaRouteLimitsUnknown},
 		{"implicit backend", func(p *docProfile) { p.Backend = "" }, provider.ErrLunaRouteBackendRequired},
 		{"following", func(p *docProfile) { p.SelectionMode = "following" }, provider.ErrInvalidSelection},
 		{"bad mode", func(p *docProfile) { p.SelectionMode = "typo" }, provider.ErrInvalidSelection},
@@ -211,6 +211,13 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 	p := profiles[1]
 	p.Backend = "codex"
 	require.NoError(t, validateLunaRouteDocProfile(p, docFixtureCaps()))
+	p.Backend = "pi"
+	m, ok := docFixtureCaps().LunaRouteModel(p.Model)
+	require.True(t, ok)
+	require.Empty(t, m.Reasoning.Support, "the independent reasoning fact is absent")
+	require.ErrorContains(t, validateLunaRouteDocProfile(p, docFixtureCaps()), "pi on LunaRoute needs known reasoning metadata")
+	m.Reasoning = provider.SupportFact{Support: provider.SupportUnsupported, Evidence: "doc-fixture#reasoning"}
+	require.NoError(t, validateLunaRouteDocProfile(p, docFixtureCaps().WithLunaRouteModels(map[string]provider.LunaRouteModel{p.Model: m})))
 	for _, backend := range []string{"claude-code", "opencode"} {
 		p := profiles[1]
 		p.Backend = backend
