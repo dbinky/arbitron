@@ -19,7 +19,7 @@ const claudeTitleFixtureBudget = 1024
 // Protocol processes prove the experiment's data path, not installed helper
 // behavior. A title exchange must survive to the cleanup-before-publication sink.
 func TestAgentEvidenceClaudeTitlePublication(t *testing.T) {
-	for _, mode := range []string{"success", "stream", "late", "missing", "duplicate", "session", "class", "model", "prompt", "system", "empty", "secret", "malformed", "stale", "agent", "memory-on-helper", "none-title-absent", "none-title-disabled", "missing-feed", "missing-source"} {
+	for _, mode := range []string{"success", "stream", "late", "missing", "duplicate", "session", "class", "model", "prompt", "system", "empty", "secret", "malformed", "stale", "agent", "memory-on-helper", "none-title-absent", "none-title-disabled", "missing-feed", "missing-source", "adoption-missing", "adoption-drift", "adoption-session", "adoption-duplicate", "adoption-unsafe", "adoption-missing-feed", "adoption-missing-response", "adoption-response-drift", "adoption-unreadable", "adoption-symlink", "adoption-ancestor-symlink", "adoption-stale", "adoption-oversized", "adoption-malformed", "adoption-workspace", "adoption-custom"} {
 		t.Run(mode, func(t *testing.T) {
 			selected := provider.EffortDefault
 			if strings.HasPrefix(mode, "none-title-") {
@@ -92,6 +92,44 @@ func TestAgentEvidenceClaudeTitlePublication(t *testing.T) {
 				}
 				capture.mu.Unlock()
 			}
+			if mode == "adoption-missing-feed" {
+				transcript := filepath.Join(isolation.home, ".claude/projects", claudeProjectKeyUnsafe.ReplaceAllString(ws, "-"), "ses_factory.jsonl")
+				require.NoError(t, os.Remove(transcript))
+			}
+			if mode == "adoption-missing-response" {
+				capture.mu.Lock()
+				capture.claudeTitles = nil
+				capture.mu.Unlock()
+			}
+			transcript := filepath.Join(isolation.home, ".claude/projects", claudeProjectKeyUnsafe.ReplaceAllString(ws, "-"), "ses_factory.jsonl")
+			switch mode {
+			case "adoption-unreadable":
+				require.NoError(t, os.Chmod(transcript, 0000))
+			case "adoption-symlink":
+				require.NoError(t, os.Rename(transcript, transcript+".other"))
+				require.NoError(t, os.Symlink(transcript+".other", transcript))
+			case "adoption-ancestor-symlink":
+				dir := filepath.Dir(transcript)
+				require.NoError(t, os.Rename(dir, dir+".other"))
+				require.NoError(t, os.Symlink(dir+".other", dir))
+			case "adoption-stale":
+				require.NoError(t, os.Chtimes(transcript, started.Add(-time.Second), started.Add(-time.Second)))
+			case "adoption-oversized", "adoption-malformed", "adoption-workspace", "adoption-custom":
+				raw, err := os.ReadFile(transcript)
+				require.NoError(t, err)
+				switch mode {
+				case "adoption-oversized":
+					raw = []byte(strings.Repeat(" ", captureBodyLimit+1))
+				case "adoption-malformed":
+					raw = append(raw, '{')
+				case "adoption-workspace":
+					raw = []byte(strings.Replace(string(raw), ws, "/foreign/mission", 1))
+				case "adoption-custom":
+					raw = append(raw, []byte("{\"type\":\"custom-title\",\"sessionId\":\"ses_factory\",\"customTitle\":\"Private fixture title\"}\n")...)
+				}
+				require.NoError(t, os.WriteFile(transcript, raw, 0600))
+				finished = time.Now().UTC()
+			}
 			repo := t.TempDir()
 			for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource, claudeSelectorsSource, claudeInputSource, claudeTitleSource} {
 				raw, err := readRepoFile(repoRoot(t), source)
@@ -106,7 +144,10 @@ func TestAgentEvidenceClaudeTitlePublication(t *testing.T) {
 			if mode == "missing-source" {
 				require.NoError(t, os.Remove(filepath.Join(repo, claudeTitleSource)))
 			}
-			err = finishClaudeIsolation(repo, root, isolation, capture, result, started, finished)
+			err = missionErr
+			if err == nil {
+				err = finishClaudeIsolation(repo, root, isolation, capture, result, started, finished)
+			}
 			sink := filepath.Join(repo, evidencePath, "observations/lr05-isolation.json")
 			if mode != "success" && mode != "stream" && mode != "late" && mode != "none-title-disabled" {
 				require.Error(t, err)
@@ -143,6 +184,9 @@ func TestAgentEvidenceClaudeTitlePublication(t *testing.T) {
 			assert.Equal(t, "ses_factory", saved.Title.Session)
 			assert.Equal(t, "glm-5.3", saved.Title.Model)
 			assert.Equal(t, []string{saved.Inference[titleIndex].RequestID}, saved.Title.RequestIDs)
+			assert.True(t, saved.Title.Adopted)
+			assert.Equal(t, "ai-title", saved.Title.AdoptionSource)
+			require.Nil(t, capture.claudeTitles)
 			assert.Equal(t, []string{saved.Inference[mainIndex].RequestID}, saved.Limits.RequestIDs)
 			assert.Equal(t, []string{saved.Inference[mainIndex].RequestID}, saved.Memory.RequestIDs)
 			for _, record := range saved.Inference {

@@ -100,6 +100,7 @@ type inferenceCapture struct {
 	records                         []capturedInference
 	claudeMemory                    string // private source-formatted path/nonce, never serialized
 	claudeMemoryChecked             bool
+	claudeTitles                    map[string]string // private generated title comparison, never serialized
 	openCodeTitles                  map[string]string // private response text, never serialized
 	openCodeCompactions             map[string]string // private summary comparison, never serialized
 	failed                          bool
@@ -495,11 +496,18 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		return false
 	}
 	if claudeTitle {
-		if !validClaudeTitleResponse(buffer.Bytes(), stream, c.key) {
+		title, err := claudeTitleResponse(buffer.Bytes(), stream, c.key)
+		if err != nil {
 			c.fail()
 			finish("title_schema")
 			return false
 		}
+		c.mu.Lock()
+		if c.claudeTitles == nil {
+			c.claudeTitles = make(map[string]string)
+		}
+		c.claudeTitles[record.RequestID] = title
+		c.mu.Unlock()
 		record.ClaudeSessionTitle = true
 	}
 	if c.backend == "opencode" && r.URL.Path == "/v1/chat/completions" && isOpenCodeTitleRequest(body) {
@@ -665,6 +673,7 @@ func (c *inferenceCapture) Close() error {
 		c.mu.Lock()
 		c.key = ""
 		c.claudeMemory = ""
+		c.claudeTitles = nil
 		c.openCodeTitles = nil
 		c.openCodeCompactions = nil
 		c.mu.Unlock()

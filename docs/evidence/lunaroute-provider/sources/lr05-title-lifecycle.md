@@ -1,7 +1,8 @@
 # LR-05 — First-user session-title request correlation (partial)
 
 Reviewed 2026-11-12. This is source/offline collector provenance, not an
-installed-helper observation, title-adoption proof or verified contract.
+installed-helper observation or verified contract. The offline collector now
+also joins persisted AI-title adoption, without claiming an operator run.
 
 ## Sources
 
@@ -58,9 +59,53 @@ wire controls; exclusion from main proofs does not bypass explicit constraints.
 The title source must be readable before cleanup/publication. Missing,
 duplicate, substituted, malformed, unsafe or lost feeds write no observation.
 
-This establishes collection/request correlation only. It does not prove the
-installed process adopted/persisted the generated title, every small-fast use,
-summary/compaction/default-subagent behavior, full isolation/control enforcement
-or memory preservation. Genuine operator observations, full Claude agent/contract
-entry point and LR-05 readiness remain pending. No supported fact or register
-status follows from fixtures or skips.
+## Persisted AI-title adoption (offline collector)
+
+Additional inspected 2.1.322 byte ranges, accessed 2026-11-12, from the same
+local distribution and reference URL above:
+
+| Producer | Offset | Length | SHA-256 |
+|---|---:|---:|---|
+| SDK custom-name-only event schema | 263358450 | 1600 | `72180d6048061c7b9bacfed68e7c025fd7599a206f0eabdd84ec3994a017afac` |
+| AI-title adoption and subscription | 301427087 | 3250 | `66def09bfb19eabc8812c9e7f922156c8dd131a3af18f38a3c279acf7cd49567` |
+| AI-title transcript writer | 271387331 | 2550 | `e62a5323b43a81f61f94217b95fef1a2afa8d539ea930b424511170bc7a6a705` |
+| Custom versus AI-title getters | 271397839 | 500 | `328e0684bade90734efb0e2bbdaa9ec4ac9a241739ae297e62c06929700020d4` |
+| Local transcript paths | 265969708 | 1900 | `153e81576d623dbce41096365cd9d6830a4334b9b48c55ab31e81b7d01f2180e` |
+| Short project key | 261819200 | 1200 | `d4ca06ef11fca0c4bb49c345b38e075fd09e99337ea34ac4f8b482d9ba2f079c` |
+| Title sanitizer | 263719480 | 430 | `26e1c8a254811f25624c7a091bf865e65c86b2808b758b1f66e4b2c99ed63a9f` |
+
+`Gt` adopts the sanitized title into the AI-title state. With a session
+transcript, `zXe` appends exactly `{type:"ai-title", aiTitle, sessionId}`;
+`wy` and `mse` distinguish custom names from AI titles. **The SDK
+`session_title_changed` event explicitly reports custom names, not AI-generated
+titles.** It is not an adoption producer, despite the shared change subscription.
+A custom rename or that SDK event cannot satisfy this collector.
+
+The existing cleanup-before-publication finalizer reads the actual private
+launch's local transcript at
+`HOME/.claude/projects/<project-key>/<accepted-session>.jsonl`. The ordinary
+short ASCII project key replaces every non-alphanumeric cwd character with `-`.
+Long/hashed, relocated and storage-backed paths are deliberately refused, not
+searched or guessed. The root/session/workspace come from the already accepted
+actual emitted launch and startup, not an ambient home or caller source ref.
+Noncanonical roots, symlink ancestors/files, stale/unreadable/oversized inputs
+and malformed/duplicate JSON refuse safely. The bounded transcript must include
+a current root conversation record with that session/cwd, exactly one matching
+`ai-title` row and no custom rename. Title-before-conversation persistence order
+is allowed because the writer is asynchronous. Missing adoption still refuses.
+
+The proxy retains the actual generated JSON/SSE title privately, indexed by its
+actual request id. The finalizer requires exact safe agreement with the
+persisted AI title as well as the existing current request/response, session,
+version, controls, lifecycle and command-created workspace proofs. Only
+`adopted:true` and `adoption_source:"ai-title"` are added to the safe title proof;
+raw title, transcript, prompt and filesystem paths never serialize. Capture
+cleanup clears the private comparison map before publication. A transformed or
+renamed title refuses rather than approximating sanitation/uniqueness rules.
+
+This establishes offline collection/routing/adoption joins, not an installed
+process observation, every small-fast use, summary/compaction/default-subagent
+behavior, full isolation/control enforcement or memory preservation. Genuine
+operator observations, full Claude agent/contract entry point and LR-05 readiness
+remain pending. No supported fact or register status follows from fixtures or
+skips.

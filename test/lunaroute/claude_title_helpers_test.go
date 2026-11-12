@@ -76,8 +76,13 @@ func isClaudeTitleRequest(raw []byte) bool {
 // identity. Reconstruct text only in memory to require the source's JSON title
 // result; neither that result nor the mission is ever an observation field.
 func validClaudeTitleResponse(raw []byte, stream bool, key string) bool {
+	_, err := claudeTitleResponse(raw, stream, key)
+	return err == nil
+}
+
+func claudeTitleResponse(raw []byte, stream bool, key string) (string, error) {
 	if len(raw) == 0 || len(raw) > captureBodyLimit {
-		return false
+		return "", errAgentEvidence
 	}
 	var text strings.Builder
 	consume := func(raw []byte) bool {
@@ -122,7 +127,7 @@ func validClaudeTitleResponse(raw []byte, stream bool, key string) bool {
 	}
 	if !stream {
 		if !consume(raw) {
-			return false
+			return "", errAgentEvidence
 		}
 	} else {
 		scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -140,31 +145,36 @@ func validClaudeTitleResponse(raw []byte, stream bool, key string) bool {
 			line := scanner.Text()
 			if line == "" {
 				if !flush() {
-					return false
+					return "", errAgentEvidence
 				}
 			} else if strings.HasPrefix(line, "data:") {
 				data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 			}
 		}
 		if scanner.Err() != nil || !flush() {
-			return false
+			return "", errAgentEvidence
 		}
 	}
 	var title map[string]json.RawMessage
 	payload := []byte(text.String())
 	if !uniqueJSONFields(json.NewDecoder(bytes.NewReader(payload))) || json.Unmarshal(payload, &title) != nil || len(title) != 1 {
-		return false
+		return "", errAgentEvidence
 	}
 	var value string
-	return json.Unmarshal(title["title"], &value) == nil && safeCaptureText(strings.TrimSpace(value), key)
+	if json.Unmarshal(title["title"], &value) != nil || !safeClaudeAdoptedTitle(strings.TrimSpace(value), key) {
+		return "", errAgentEvidence
+	}
+	return strings.TrimSpace(value), nil
 }
 
 type claudeTitleProof struct {
-	Source     string   `json:"source"`
-	Version    string   `json:"version"`
-	Session    string   `json:"session"`
-	Model      string   `json:"model"`
-	RequestIDs []string `json:"request_ids"`
+	Source         string   `json:"source"`
+	Version        string   `json:"version"`
+	Session        string   `json:"session"`
+	Model          string   `json:"model"`
+	RequestIDs     []string `json:"request_ids"`
+	Adopted        bool     `json:"adopted"`
+	AdoptionSource string   `json:"adoption_source"`
 }
 
 func correlateClaudeTitle(c *inferenceCapture, s *claudeIsolation, model string, started, finished time.Time) (claudeTitleProof, error) {
@@ -183,7 +193,14 @@ func correlateClaudeTitle(c *inferenceCapture, s *claudeIsolation, model string,
 		copy := record
 		title = &copy
 	}
-	if title == nil {
+	adoption, adoptionErr := readClaudeTitleAdoption(s, started, finished)
+	c.mu.Lock()
+	responseTitle := ""
+	if title != nil {
+		responseTitle = c.claudeTitles[title.RequestID]
+	}
+	c.mu.Unlock()
+	if title == nil || adoptionErr != nil || adoption.session != s.session || !safeClaudeAdoptedTitle(adoption.title, c.key) || responseTitle == "" || responseTitle != adoption.title {
 		return fail()
 	}
 	// Separate auxiliary controls from main proofs without bypassing the
@@ -199,5 +216,5 @@ func correlateClaudeTitle(c *inferenceCapture, s *claudeIsolation, model string,
 	if c.CorrelateOperation(capturedOperation{RunID: c.runID, Backend: "claude-code", ID: "title-" + s.session, Session: s.session, Category: "title", Trigger: "first-user-title", Source: claudeTitleSource, Version: s.selectors.Version, StartedAt: title.StartedAt, FinishedAt: title.FinishedAt, RequestIDs: ids}) != nil || validateCapturedInference(c.Records(), model, []string{"main", "subagent", "title"}) != nil {
 		return fail()
 	}
-	return claudeTitleProof{Source: claudeTitleSource, Version: s.selectors.Version, Session: s.session, Model: model, RequestIDs: ids}, nil
+	return claudeTitleProof{Source: claudeTitleSource, Version: s.selectors.Version, Session: s.session, Model: model, RequestIDs: ids, Adopted: true, AdoptionSource: "ai-title"}, nil
 }

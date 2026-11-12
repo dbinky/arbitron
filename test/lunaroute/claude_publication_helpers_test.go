@@ -27,7 +27,7 @@ func finishClaudeIsolation(repo, experiment string, isolation *claudeIsolation, 
 	}
 	observation.SessionTitle = &title
 	observation.Inference = capture.Records()
-	observation.Scope = "main isolation/controls/memory, synchronous subagent and first-user title request routing only; no title adoption, other helper or complete contract verification"
+	observation.Scope = "main isolation/controls/memory, synchronous subagent and first-user title routing/adoption only; no other helper or complete contract verification"
 	for _, source := range []string{observation.Source, observation.Limits.Source, observation.ProjectMemory.Source, observation.Effort.Source, observation.Thinking.Source, observation.Subagent.Source, claudeSubagentRoutingSource, observation.Selectors.Source, title.Source, claudeInputSource} {
 		raw, err := readRepoFile(repo, source)
 		if err != nil || source == claudeInputSource && validateClaudeIsolationInputSource(raw, observation.Limits) != nil {

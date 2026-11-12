@@ -418,8 +418,16 @@ whose versioned producer uses the small-fast selector. The proxy matches the
 exact source system block and mission frame and validates terminal JSON/SSE
 plus nonempty safe JSON title text privately. Publication joins exactly one
 actual auxiliary exchange to the same accepted session/version/model and emits
-only its request ids/source under `session_title`. It preserves explicit
-exact-effort/`none` checks on title traffic; main controls remain separate.
+its request ids/source under `session_title`. Before cleanup, the same finalizer
+also reads the actual emitted launch's private local transcript and requires
+exact agreement between its unique `ai-title` row and the captured generated
+title. The transcript must identify the accepted session/workspace; absent,
+stale, unreadable, malformed, oversized or symlinked inputs refuse. A custom
+rename or SDK `session_title_changed` event is not AI-title adoption. Only
+`adopted:true`/`adoption_source:"ai-title"` survive; private response comparison
+text is cleared on capture cleanup. Long/hashed/relocated transcript paths are
+not guessed. It preserves explicit exact-effort/`none` checks on title traffic;
+main controls remain separate.
 Missing/duplicate/foreign/stale/unsafe title evidence writes nothing despite
 successful main/subagent inference and command-created files. Title arrival
 before or after main traffic is covered. No title/prompt text is persisted.

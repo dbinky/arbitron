@@ -92,6 +92,9 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			if mode == "claude-route-title-model" {
 				model = "glm-5.3-flash"
 			}
+			if mode == "claude-route-title-adoption-response-drift" {
+				title = "Another private title"
+			}
 			if mode == "claude-route-title-empty" {
 				title = " "
 			}
@@ -520,6 +523,25 @@ if [ "$path" = messages ]; then
  }
  case '@MODE@' in startup-absent|startup-late) ;; *) emit_startup ;; esac
  if [ '@MODE@' = startup-duplicate ]; then emit_startup; fi
+ case '@MODE@' in claude-route-title-*)
+  if [ '@MODE@' != claude-route-title-adoption-missing ]; then
+   adopted_title='Private fixture title'; adopted_session=ses_factory; adoption_count=1
+   if [ '@MODE@' = claude-route-title-adoption-drift ]; then adopted_title='Different private title'; fi
+   if [ '@MODE@' = claude-route-title-adoption-session ]; then adopted_session=ses_other; fi
+   if [ '@MODE@' = claude-route-title-adoption-unsafe ]; then adopted_title='@KEY@'; fi
+   if [ '@MODE@' = claude-route-title-adoption-duplicate ]; then adoption_count=2; fi
+   project_key=$(printf %s "$PWD" | /usr/bin/tr -c 'a-zA-Z0-9' '-')
+   transcript_dir="$HOME/.claude/projects/$project_key"
+   mkdir -p "$transcript_dir"
+   transcript="$transcript_dir/ses_factory.jsonl"
+   printf '{"type":"user","sessionId":"ses_factory","cwd":"%s","message":{"role":"user","content":"@PROMPT@"}}\n' "$PWD" > "$transcript"
+   while [ "$adoption_count" -gt 0 ]; do
+    printf '{"type":"ai-title","sessionId":"%s","aiTitle":"%s"}\n' "$adopted_session" "$adopted_title" >> "$transcript"
+    adoption_count=$((adoption_count-1))
+   done
+   chmod 600 "$transcript"
+  fi
+ ;; esac
  if [ '@MODE@' != subagent-absent ] && [ '@MODE@' != no-tool ]; then
   requested_model='"model":"haiku",'
   case '@MODE@' in
