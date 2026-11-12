@@ -9,21 +9,13 @@
 
 ## Open
 
-- **[ESCALATION] Area 1 / single:1/review2 — reconcile the contract with the prior approver's waiver.**
-  To approve the box as written, `adapter/mcp/tools_connection.go:connectionUpdateHandler` must distinguish an omitted
-  key from an explicit empty key (G12), and `domain/provider/lunaroute_connection.go:PrepareLunaRouteCreate/Update`
-  must reject explicit `lr_` keys on foreign-provider writes (G13), with real MCP/SQLite refusal/no-row-change tests.
-  The prior approver calls both non-blocking, but the assigned check 1 and never-foreign-provider promise still require
-  those behaviours. An operator must resolve that scope conflict before approval based on the waiver; no scope or box
-  is changed here. This pass addresses only the blocking G14 fixture regression; do not rediscover G12/G13 next pass.
-  G14 additionally needs a completed `cmd/arbitron` package run; the focused regression tests now pass.
+- [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
+  exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
+- **[ESCALATION] Area 1 scope ruling (approver, 142dcc5): G12/G13 do not gate review2 — box ticked.** Review-2 checks
+  1–5 are all met at the domain/repo sink. G12 (MCP `""` means keep, shipped for every provider) needs an operator ruling;
+  G13 (operator explicitly pairs an `lr_` key with a foreign provider) is not among checks 1–5 → rule-5 sibling. Both stay
+  open as their own gaps below; do not reopen Area 1 review2 for them.
 
-- [ ] **G14 (Area 1, blocking single:1/review2): full `cmd/arbitron` verification remains incomplete.**
-  `cmd/arbitron/lunaroute_profile_scope_wiring_test.go:TestLunaRouteProfileScopeWiring` now supplies a synthetic Azure
-  destination key; the previously failing test and focused connection tests pass. Other `connSvc.Update`/`connStore.Update`
-  callers were grepped; this was the only nil-key switch-away fixture found.
-  `go test -timeout 30m ./cmd/arbitron -count=1` was terminated (exit 143) while still running unrelated layout tests
-  when this pass reached assessment. No whole-package success claim: a completed package run is still required.
 - **[ESCALATION] G12 (Area 1): should MCP `api_key: ""` on a same-provider lunaroute update be refused or mean "keep"?**
   Approver ruling: not a review2 blocker — `connectionUpdateHandler` maps "" to omission for every provider (shipped
   behaviour) and no invalid key is persisted; an operator must decide whether to narrow that. G13 (explicit `lr_` key on
@@ -96,6 +88,14 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 1 / single:1/review2 — APPROVED by approver at 142dcc5.** `go build ./...` ok; `go test -count=1` ok for
+  `domain/provider`, `adapter/sqlite`, `adapter/mcp`, and the full `cmd/arbitron` package (exit 0). Check 1:
+  `TestConnectionRepo_LunaRouteCreateRejectsForeignKeyAndEndpoint`, `..._LunaRouteUpdateRules`, `TestValidLunaRouteKey`,
+  `TestConnectionLunaRoutePersistenceErrorsDoNotDiscloseKeys`. Check 2: `..._LunaRouteMetadataUpdateIsGuardedAgainstConcurrentSwitch`.
+  Check 3 (G1): `PrepareLunaRouteUpdate` → `ErrLunaRouteDestinationKeyRequired`; `..._SwitchAwayFromLunaRouteRequiresNewKey`
+  (omitted/empty/seal/SQL/cancel/deadline), `..._ConcurrentSwitchDoesNotLeakKeyToForeignProvider`. Check 4:
+  `TestNormalizeLunaRouteBaseURL_RejectsOtherDestinations`. Check 5: `"lr_ab cd"` case; `lrWriteFailure` exec error.
 
 - **Area 1 / single:1/review2 — fixture correction and convergence escalation.**
   Arrival regression reproduced: `go test -timeout 30m ./cmd/arbitron -run '^TestLunaRouteProfileScopeWiring$' -count=1` exited 1 with `ErrLunaRouteDestinationKeyRequired`; this predates this pass's change, despite the green branch-point baseline.
