@@ -338,8 +338,9 @@ Run `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(SourceBoundPublicati
 The synthetic source fixtures prove plumbing only, not new limits, installed
 control behavior or release readiness.
 The same experiment now seeds a private per-run `CLAUDE.md` nonce, protects
-its bytes/modes and requires its exact source-formatted frame in the **first**
-actual Messages user-text request. It publishes only safe `project_memory`
+its bytes/modes and requires its exact source-formatted frame in the **first
+main** Messages user-text request. A source-identified title exchange may arrive
+before it but cannot consume its memory-check slot. It publishes only safe `project_memory`
 source/request-id/loaded fields alongside the existing session and workspace
 proofs; later file reads, assistant echoes, missing/drifting memory or a missing
 capture feed cannot substitute. Capture cleanup discards private comparison
@@ -411,6 +412,21 @@ completed inference/files. The source must be readable and cleanup must succeed
 before publication. See [selector sources and scope](sources/lr05-selectors.md)
 and `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(SelectorSelection|SourceBoundPublication|IsolationSameLaunchInputs)$' -count=1`.
 This proves emitted intent only, never effective helper selection.
+
+The same operator finalizer now requires the fresh first-user title request,
+whose versioned producer uses the small-fast selector. The proxy matches the
+exact source system block and mission frame and validates terminal JSON/SSE
+plus nonempty safe JSON title text privately. Publication joins exactly one
+actual auxiliary exchange to the same accepted session/version/model and emits
+only its request ids/source under `session_title`. It preserves explicit
+exact-effort/`none` checks on title traffic; main controls remain separate.
+Missing/duplicate/foreign/stale/unsafe title evidence writes nothing despite
+successful main/subagent inference and command-created files. Title arrival
+before or after main traffic is covered. No title/prompt text is persisted.
+See [title sources and scope](sources/lr05-title-lifecycle.md) and
+`go test ./test/lunaroute -run TestAgentEvidenceClaudeTitle -count=1`.
+These are offline collection proofs, not an installed title-adoption or
+all-small-fast/helper verification; genuine operator collection stays pending.
 
 This is **not** the full Claude agent/contract entry point: keychain isolation,
 effective selectors, complete thinking/effort and limit enforcement, installed

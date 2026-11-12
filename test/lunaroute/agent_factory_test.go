@@ -42,14 +42,16 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 	require.NoError(t, err)
 	compactionTemplate, err := os.ReadFile(filepath.Join(repoRoot(t), evidencePath, "sources/lr06-compaction-template.txt"))
 	require.NoError(t, err)
+	claudeControls := mode == "claude-route-controls" || strings.HasPrefix(mode, "claude-route-title-")
 	var fixtureStarted time.Time
 	var firstRequest sync.Once
 	c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
 		firstRequest.Do(func() { fixtureStarted = time.Now().UTC() })
 		var body struct {
-			Model        string `json:"model"`
-			Stream       bool   `json:"stream"`
-			MaxTokens    int    `json:"max_tokens"`
+			Model        string          `json:"model"`
+			Stream       bool            `json:"stream"`
+			MaxTokens    int             `json:"max_tokens"`
+			System       json.RawMessage `json:"system"`
 			OutputConfig struct {
 				Effort string `json:"effort"`
 			} `json:"output_config"`
@@ -68,6 +70,58 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			w.WriteHeader(400)
 			return
 		}
+		if backend == "claude-code" && len(body.System) != 0 {
+			var system []struct{ Type, Text string }
+			wantThinking := ""
+			if mode == "claude-route-title-none-title-disabled" {
+				wantThinking = `{"type":"disabled"}`
+			}
+			wantSystem, wantPrompt := claudeTitleSystem, claudeTitleUserPrompt()
+			if mode == "claude-route-title-system" {
+				wantSystem = "substituted source"
+			}
+			if mode == "claude-route-title-prompt" {
+				wantPrompt = "unrelated mission"
+			}
+			if json.Unmarshal(body.System, &system) != nil || len(system) != 1 || system[0].Type != "text" || system[0].Text != wantSystem || body.MaxTokens != claudeTitleFixtureBudget || string(body.Thinking) != wantThinking || body.Stream != (mode == "claude-route-title-stream") || len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content != wantPrompt {
+				t.Error("title fixture did not receive exact source, history and settings")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			model, title := "glm-5.3", "Private fixture title"
+			if mode == "claude-route-title-model" {
+				model = "glm-5.3-flash"
+			}
+			if mode == "claude-route-title-empty" {
+				title = " "
+			}
+			if mode == "claude-route-title-secret" {
+				title = captureFixtureKey
+			}
+			text, err := json.Marshal(map[string]string{"title": title})
+			if err != nil {
+				t.Error("cannot encode title fixture")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if mode == "claude-route-title-malformed" {
+				_, err = io.WriteString(w, `{"type":"message","model":"glm-5.3","stop_reason":"end_turn","content":[`)
+			} else if body.Stream {
+				w.Header().Set("Content-Type", "text/event-stream")
+				block, encodeErr := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "text_delta", "text": string(text)}})
+				if encodeErr != nil {
+					t.Error("cannot encode title stream")
+					return
+				}
+				_, err = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"model\":\"glm-5.3\"}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: "+string(block)+"\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+			} else {
+				err = json.NewEncoder(w).Encode(map[string]any{"type": "message", "model": model, "stop_reason": "end_turn", "content": []map[string]string{{"type": "text", "text": string(text)}}})
+			}
+			if err != nil {
+				t.Error("cannot write private title response")
+			}
+			return
+		}
 		if backend == "claude-code" {
 			wantEffort := expectedEffort
 			switch mode {
@@ -76,7 +130,7 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			case "effort-drift":
 				wantEffort = "medium"
 			}
-			if mode == "claude-route-controls" && r.Header.Get("X-Claude-Code-Agent-Id") != "" && selected == provider.EffortDefault {
+			if claudeControls && r.Header.Get("X-Claude-Code-Agent-Id") != "" && selected == provider.EffortDefault {
 				wantEffort = "high"
 			}
 			if body.OutputConfig.Effort != wantEffort {
@@ -93,7 +147,7 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			case "thinking-enabled":
 				wantThinking = `{"type":"enabled","budget_tokens":1024}`
 			}
-			if mode == "claude-route-controls" {
+			if claudeControls {
 				if selected == provider.EffortNone {
 					wantThinking = `{"type":"disabled"}`
 				} else if r.Header.Get("X-Claude-Code-Agent-Id") != "" {
@@ -383,10 +437,26 @@ case '@MODE@' in effort-*)
   request_body='{"output_config":{"effort":"'"$effort"'"},'"${request_body#?}"
  fi
  ;; esac
-if [ '@MODE@' = claude-route-controls ]; then
+case '@MODE@' in claude-route-controls|claude-route-title-*)
  request_body='{@CLAUDE_ROUTE_MAIN_CONTROLS@'"${request_body#?}"
-fi
+ ;; esac
+send_claude_title() {
+ case '@MODE@' in claude-route-title-*)
+ if [ '@MODE@' != claude-route-title-missing ]; then
+  title_session=ses_factory; title_class=auxiliary; title_count=1
+  if [ '@MODE@' = claude-route-title-session ]; then title_session=ses_other; fi
+  if [ '@MODE@' = claude-route-title-class ]; then title_class=main; fi
+  if [ '@MODE@' = claude-route-title-duplicate ]; then title_count=2; fi
+  while [ "$title_count" -gt 0 ]; do
+   /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Claude-Code-Session-Id: $title_session" -H "X-Claude-Code-Request-Class: $title_class" -d @CLAUDE_TITLE_BODY@ "https://gw.lunaroute.com/v1/$path" >/dev/null
+   title_count=$((title_count-1))
+  done
+ fi
+ ;; esac
+}
+if [ '@MODE@' != claude-route-title-late ]; then send_claude_title; fi
 /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -H "$class_header" -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
+if [ '@MODE@' = claude-route-title-late ]; then send_claude_title; fi
 case '@MODE@' in claude-route-*)
  if [ '@MODE@' != claude-route-missing ]; then
   helper_session=ses_factory; helper_agent=agent_one; helper_parent=; helper_class=subagent; helper_type=general-purpose
@@ -508,8 +578,22 @@ fi
 	case "limits-context-secret":
 		contextField = `"contextWindow":"` + captureFixtureKey + `"`
 	}
+	claudeTitleBody := claudeTitleFixtureRequest(t, mode == "claude-route-title-stream")
+	if mode == "claude-route-title-none-title-disabled" {
+		claudeTitleBody = append([]byte(`{"thinking":{"type":"disabled"},`), claudeTitleBody[1:]...)
+	}
+	if mode == "claude-route-title-system" {
+		encoded, err := json.Marshal(claudeTitleSystem)
+		require.NoError(t, err)
+		claudeTitleBody = []byte(strings.Replace(string(claudeTitleBody), string(encoded), `"substituted source"`, 1))
+	}
+	if mode == "claude-route-title-prompt" {
+		encoded, err := json.Marshal(claudeTitleUserPrompt())
+		require.NoError(t, err)
+		claudeTitleBody = []byte(strings.Replace(string(claudeTitleBody), string(encoded), `"unrelated mission"`, 1))
+	}
 	mainControls, helperControls := "", ""
-	if mode == "claude-route-controls" {
+	if claudeControls {
 		if expectedEffort != "" {
 			mainControls = `"output_config":{"effort":"` + expectedEffort + `"},`
 			helperControls = mainControls
@@ -523,7 +607,7 @@ fi
 			helperControls += `"thinking":{"type":"enabled","budget_tokens":1024},`
 		}
 	}
-	script := strings.NewReplacer("@CLAUDE_ROUTE_MAIN_CONTROLS@", mainControls, "@CLAUDE_ROUTE_HELPER_CONTROLS@", helperControls, "@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_THINKING_ENV@", expectedThinkingEnv, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	script := strings.NewReplacer("@CLAUDE_TITLE_BODY@", "'"+strings.ReplaceAll(string(claudeTitleBody), "'", "'\"'\"'")+"'", "@CLAUDE_ROUTE_MAIN_CONTROLS@", mainControls, "@CLAUDE_ROUTE_HELPER_CONTROLS@", helperControls, "@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_THINKING_ENV@", expectedThinkingEnv, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

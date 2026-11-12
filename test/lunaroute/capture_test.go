@@ -56,6 +56,7 @@ type capturedInference struct {
 	RequestedModel      string                 `json:"requested_model"`
 	MaxTokens           int                    `json:"max_tokens,omitempty"`
 	ClaudeProjectMemory bool                   `json:"claude_project_memory,omitempty"`
+	ClaudeSessionTitle  bool                   `json:"claude_session_title,omitempty"`
 	ClaudeEffort        *claudeRequestEffort   `json:"claude_effort,omitempty"`
 	ClaudeThinking      *claudeRequestThinking `json:"claude_thinking,omitempty"`
 	ReportedModels      []string               `json:"reported_models"`
@@ -97,7 +98,8 @@ type inferenceCapture struct {
 	drained                         *sync.Cond
 	active                          int
 	records                         []capturedInference
-	claudeMemory                    string            // private source-formatted path/nonce, never serialized
+	claudeMemory                    string // private source-formatted path/nonce, never serialized
+	claudeMemoryChecked             bool
 	openCodeTitles                  map[string]string // private response text, never serialized
 	openCodeCompactions             map[string]string // private summary comparison, never serialized
 	failed                          bool
@@ -421,6 +423,7 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		return reject("request_schema")
 	}
 	record.RequestedModel = payload.Model
+	claudeTitle := c.backend == "claude-code" && r.URL.Path == "/v1/messages" && isClaudeTitleRequest(body)
 	if r.URL.Path == "/v1/messages" {
 		var budget struct {
 			MaxTokens int `json:"max_tokens"`
@@ -440,7 +443,8 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 			}
 		}
 		c.mu.Lock()
-		if c.backend == "claude-code" && id == 1 {
+		if c.backend == "claude-code" && !claudeTitle && !c.claudeMemoryChecked {
+			c.claudeMemoryChecked = true
 			record.ClaudeProjectMemory = claudeMemoryInRequest(body, c.claudeMemory)
 		}
 		c.mu.Unlock()
@@ -489,6 +493,14 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		c.fail()
 		finish("response_schema")
 		return false
+	}
+	if claudeTitle {
+		if !validClaudeTitleResponse(buffer.Bytes(), stream, c.key) {
+			c.fail()
+			finish("title_schema")
+			return false
+		}
+		record.ClaudeSessionTitle = true
 	}
 	if c.backend == "opencode" && r.URL.Path == "/v1/chat/completions" && isOpenCodeTitleRequest(body) {
 		title, err := openCodeTitleResponse(buffer.Bytes(), stream)

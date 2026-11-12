@@ -201,6 +201,7 @@ type claudeIsolationObservation struct {
 	Subagent         claudeSubagentProof         `json:"subagent_lifecycle"`
 	Selectors        claudeSelectorProof         `json:"configured_selectors"`
 	SubagentControls *claudeSubagentControlProof `json:"subagent_controls,omitempty"`
+	SessionTitle     *claudeTitleProof           `json:"session_title,omitempty"`
 	Inference        []capturedInference         `json:"inference"`
 }
 
@@ -212,6 +213,14 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if validateClaudeSelectors(s.selectors, s.session, result.Model) != nil || validateCapturedInference(records, result.Model, []string{"main"}) != nil {
 		return fail()
 	}
+	// A source-identified auxiliary exchange is checked by the title join,
+	// not against main context/output/effort/thinking controls.
+	var missionRecords []capturedInference
+	for _, record := range records {
+		if !record.ClaudeSessionTitle {
+			missionRecords = append(missionRecords, record)
+		}
+	}
 	subagent := s.subagent
 	if subagent.Source != claudeSubagentSource || subagent.Version != claudeStartupVersion || subagent.Session != s.session || subagent.HarnessReportedModel != result.Model || subagent.RequestedModel != "haiku" || !safeAgentField(subagent.TaskID, "") || !safeAgentField(subagent.RunID, "") || !safeAgentField(subagent.ToolUseID, "") {
 		return fail()
@@ -222,8 +231,8 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	}
 	limits.RequestIDs = nil
 	memory := claudeProjectMemoryProof{Source: claudeMemorySource}
-	for _, record := range records {
-		if record.RequestID == "request-1" && record.ClaudeProjectMemory {
+	for _, record := range missionRecords {
+		if record.ClaudeProjectMemory {
 			memory.Loaded = true
 			memory.RequestIDs = append(memory.RequestIDs, record.RequestID)
 		}
@@ -232,14 +241,14 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 		}
 		limits.RequestIDs = append(limits.RequestIDs, record.RequestID)
 	}
-	if !memory.Loaded {
+	if !memory.Loaded || len(memory.RequestIDs) != 1 {
 		return fail()
 	}
-	effort, err := joinClaudeRequestEffort(s.effort, s.session, result.Model, records)
+	effort, err := joinClaudeRequestEffort(s.effort, s.session, result.Model, missionRecords)
 	if err != nil {
 		return fail()
 	}
-	thinking, err := joinClaudeRequestThinking(effort, records)
+	thinking, err := joinClaudeRequestThinking(effort, missionRecords)
 	if err != nil {
 		return fail()
 	}

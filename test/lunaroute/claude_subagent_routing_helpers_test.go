@@ -90,6 +90,9 @@ func collectClaudeSubagentRoutingEvidence(s *claudeIsolation, capture *inference
 		if record.SessionID != s.session || record.Category != "main" || record.Operation != nil || record.ClaudeParentAgentID != "" {
 			return fail()
 		}
+		if record.ClaudeSessionTitle {
+			continue // Validated and attributed separately before private publication.
+		}
 		switch record.ClaudeRequestClass {
 		case "main":
 			if record.ClaudeAgentID != "" || record.ClaudeAgentType != "" {
@@ -114,7 +117,7 @@ func collectClaudeSubagentRoutingEvidence(s *claudeIsolation, capture *inference
 			return fail()
 		}
 	}
-	if len(mainRecords) == 0 || len(op.RequestIDs) == 0 || capture.CorrelateOperation(op) != nil {
+	if len(mainRecords) == 0 || len(observation.ProjectMemory.RequestIDs) != 1 || observation.ProjectMemory.RequestIDs[0] != mainRecords[0].RequestID || len(op.RequestIDs) == 0 || capture.CorrelateOperation(op) != nil {
 		return fail()
 	}
 	observation.Inference = capture.Records()

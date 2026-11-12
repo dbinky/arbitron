@@ -20,7 +20,7 @@ const claudePublicationSnapshot = `{"models":[{"id":"glm-5.3","context_window":2
 func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 	for _, mode := range []string{"success", "missing-source", "unreadable-source", "source-context-drift", "source-output-drift", "source-model-missing", "source-malformed", "empty-capture", "missing-limits", "missing-lifecycle", "missing-tool", "missing-file", "unsafe-record", "cleanup-failure", "destination-in-experiment", "home-outside-experiment", "missing-requested-model-feed", "claude-route-input-missing", "claude-route-input-drift", "claude-route-input-unsafe", "missing-selectors", "selector-model-drift", "selector-session-drift", "selector-version-drift", "selector-extra", "selector-unsafe", "missing-selector-source"} {
 		t.Run(mode, func(t *testing.T) {
-			fixtureMode := "claude-route-controls"
+			fixtureMode := "claude-route-title-success"
 			if strings.HasPrefix(mode, "claude-route-input-") {
 				fixtureMode = mode
 			}
@@ -45,7 +45,11 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 				require.NoError(t, missionErr)
 			}
 			finished := time.Now().UTC()
-			require.Len(t, capture.Records(), 2)
+			expectedRequests := 3
+			if strings.HasPrefix(mode, "claude-route-input-") {
+				expectedRequests = 2
+			}
+			require.Len(t, capture.Records(), expectedRequests)
 			proof, err := os.ReadFile(filepath.Join(ws, agentProofFile))
 			require.NoError(t, err)
 			require.Equal(t, agentProofText, string(proof))
@@ -55,7 +59,7 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			if mode == "destination-in-experiment" {
 				repo = root
 			}
-			for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource, claudeInputSource, claudeSelectorsSource} {
+			for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource, claudeInputSource, claudeSelectorsSource, claudeTitleSource} {
 				raw, err := readRepoFile(repoRoot(t), source)
 				require.NoError(t, err)
 				if source == claudeInputSource {
@@ -153,17 +157,20 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			assert.Equal(t, 32768, saved.Limits.RequestedOutputTokens)
 			assert.Equal(t, "ses_factory", saved.Session)
 			assert.Equal(t, claudeStartupVersion, saved.Version)
-			require.Len(t, saved.Inference, 2)
-			assert.Equal(t, "main", saved.Inference[0].Category)
-			assert.Equal(t, "subagent", saved.Inference[1].Category)
-			mainIDs := []string{saved.Inference[0].RequestID}
+			require.Len(t, saved.Inference, 3)
+			assert.Equal(t, "title", saved.Inference[0].Category)
+			assert.Equal(t, "main", saved.Inference[1].Category)
+			assert.Equal(t, "subagent", saved.Inference[2].Category)
+			require.NotNil(t, saved.SessionTitle)
+			assert.Equal(t, []string{saved.Inference[0].RequestID}, saved.SessionTitle.RequestIDs)
+			mainIDs := []string{saved.Inference[1].RequestID}
 			assert.Equal(t, mainIDs, saved.Limits.RequestIDs)
 			assert.Equal(t, mainIDs, saved.Effort.RequestIDs)
 			assert.Equal(t, mainIDs, saved.Thinking.RequestIDs)
 			require.NotNil(t, saved.SubagentControls)
 			require.Len(t, saved.SubagentControls.Requests, 1)
 			request := saved.SubagentControls.Requests[0]
-			assert.Equal(t, saved.Inference[1].RequestID, request.RequestID)
+			assert.Equal(t, saved.Inference[2].RequestID, request.RequestID)
 			assert.Equal(t, 32768, request.MaxTokens)
 			assert.Equal(t, "high", request.Effort)
 			assert.Equal(t, claudeRequestThinking{Type: "enabled", BudgetTokens: 1024}, request.Thinking)
@@ -173,7 +180,11 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			for _, record := range saved.Inference {
 				assert.Equal(t, "glm-5.3", record.RequestedModel)
 				assert.Equal(t, []string{"glm-5.3"}, record.ReportedModels)
-				assert.Equal(t, 32768, record.MaxTokens)
+				if record.Category == "title" {
+					assert.Equal(t, 1024, record.MaxTokens)
+				} else {
+					assert.Equal(t, 32768, record.MaxTokens)
+				}
 				assert.True(t, record.Completed && record.AuthMatchesSelected)
 			}
 			for _, private := range []string{root, bin, captureFixtureKey, agentMissionPrompt, claudeForeignCredential} {
