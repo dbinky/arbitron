@@ -161,6 +161,19 @@
       "finished_at": "2026-11-12T09:07:53Z",
       "instance_id": "c028678b-87ae-4d17-9902-13478f15b2e4",
       "workflow": "implement"
+    },
+    {
+      "stage": "implement",
+      "status": "blocked",
+      "outputs": {
+        "status": "blocked",
+        "blocked_reason": "P1-T11 blocked: retained tests conflict with R7 scope; P3-T3 blocked: release gate requires the missing, descoped MCP matrix; neither has an unblocked step, so 2 tasks remain.",
+        "baseline_path": ".arbitron/pipeline/lunaroute-provider.baseline.json"
+      },
+      "commit": "2e7abd797a2ca55a39e03e777fdb5aaaeed3229b",
+      "finished_at": "2026-11-12T20:16:09Z",
+      "instance_id": "8fc37529-0d53-420c-a282-5c1dbcdd770f",
+      "workflow": "implement"
     }
   ]
 }
