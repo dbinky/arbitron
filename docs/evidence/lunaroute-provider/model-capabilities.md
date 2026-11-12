@@ -36,6 +36,8 @@ Field mapping:
   completed Arbitron backend task. P2-T8/P3-T5/P4-T1 own scoped completion facts;
   static metadata alone leaves task/backend support unknown. The independent
   P2-T8 completed-chat observation below authorizes only glm-5.3 chat.
+  R7's independent operator tool-task record authorizes glm-5.3 agent work
+  on codex and pi only; it does not authorize another model or backend.
 
 ## glm-5.3
 
@@ -54,7 +56,10 @@ Source: snapshot `models[id=glm-5.3]`, Models API above, 2026-11-11.
 | request_settings.temperature | unknown |
 | request_settings.output_schema | supported |
 | tasks.chat | supported; observations/lr04-discovery-chat.json |
-| tasks.agent / backends | unknown; no completed agent observation |
+| tasks.agent | supported; observations/operator-manual-agent-tasks-2026-11-12.md |
+| backends.codex | supported; observations/operator-manual-agent-tasks-2026-11-12.md |
+| backends.pi | supported; observations/operator-manual-agent-tasks-2026-11-12.md |
+| backends.claude-code / backends.opencode | unknown; disabled by R7 |
 
 ## glm-5.3-flash
 
@@ -94,7 +99,7 @@ Source: snapshot `models[id=deepseek-4.1-flash]`, Models API above, 2026-11-11.
 
 ## Scoped chat completion (P2-T8)
 
-The operator's [2026-11-11 discovery/chat observation](observations/lr04-discovery-chat.json)
+The operator's [2026-11-12 discovery/chat observation](observations/lr04-discovery-chat.json)
 records a completed `glm-5.3` chat with matching reported model, terminal content,
 selected Bearer auth and correlated `/v1/chat/completions` inference. Only that
 model's `tasks.chat` is populated as supported, citing the observation directly.
@@ -102,11 +107,28 @@ This proves no new static limit, effort mapping, agent task or backend support.
 MCP discovery consumes the fact from the deployed default loader. Other models'
 chat support stays unknown until their own completed observations are applied.
 
+## Scoped agent completion (R7)
+
+The operator's [2026-11-12 manual tool-task record](observations/operator-manual-agent-tasks-2026-11-12.md)
+records completed file writes on `glm-5.3` with codex-cli 0.167.2 (`apply_patch`,
+`turn.completed`) and pi 1.5.2 (`write`, non-aborted `agent_settled`). R7 accepts
+these representative tasks without forced-helper capture. Only `glm-5.3` gets
+`tasks.agent`, `backends.codex` and `backends.pi` support, citing that record.
+The separate [codex controls](observations/lr07-codex-config-controls.json) and
+[pi controls](observations/lr08-pi-model-controls.json) observations establish
+resolved configuration, not task completion. Codex's fallback metadata warning
+is a known non-fatal degradation. No maximum, effort or other-model support
+is inferred from these tasks; Claude Code/OpenCode remain disabled.
+
 ## LR-02 application and readiness
 
 R2 clears the missing-static-facts escalation. The embedded capability table
-now contains these reviewed facts and is consumed by the production loader,
-MCP discovery and request preflight. LR-02 remains **decided** pending the
-separately owned completion/application checks; no backend is marked ready or
-verified from this static population. Unknown future facts must still not be
-replaced with defaults, nor reasoning inferred from effort levels.
+contains these reviewed facts plus the scoped completion facts above. The real
+composition root loads it for MCP discovery, request preflight and pi's emitted
+model definition. Distinctive override-file root tests separately prove the
+feed, refusals and persisted completion sinks. LR-02 is **verified** for R7's
+released scope after reviewing those runtime applications with the committed
+operator evidence, not from a local mock or skipped rerun. Unknown future
+facts must still not be replaced with defaults, nor reasoning inferred from
+effort levels. The retained legacy full-MCP-matrix gate is tracked separately
+in P3-T3/P1-T11; this source review does not claim it passed.

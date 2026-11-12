@@ -6,8 +6,9 @@ approval**. `register.yaml` contains exactly LR-01 through LR-08. The operator's
 R2's recorded metadata now populates the embedded static capability table; the
 missing-metadata escalation is cleared. R3 authorizes exactly `glm-5.3`,
 `glm-5.3-flash` and `deepseek-4.1-flash`, never Claude-shaped aliases. Register
-verification additionally requires the owning runtime/completion evidence;
-release readiness remains pending.
+verification additionally requires the owning runtime/completion evidence.
+The R7 application review now verifies the six released contracts; the retained
+legacy full-MCP-matrix assertion still prevents the release command from passing.
 
 ## Released scope — R7 (2026-11-12)
 
@@ -15,15 +16,21 @@ This release supports **chat, codex and pi only**. LR-05/LR-06 are `deferred`
 with their decision references retained. Claude Code/OpenCode saves, node
 backend overrides and Factory launches refuse locally; their adapter emitters
 and adapter unit tests remain for follow-up work. The P3-T5 live entry points
-and their exclusive offline harness have been removed. The historical P3-T5
-and forced-helper sections below describe deferred work, not runnable release
-requirements. The full MCP matrix is also deferred, not a prerequisite.
+and offline harness are retained under the prior tamper-repair constraint;
+their success-through-disabled-backend tests are not green. The historical
+P3-T5 and forced-helper sections below describe deferred work, not release
+requirements. R7 also defers the full MCP matrix, but its legacy test assertion
+is still present (see Release enforcement).
 
 The operator's genuine 2026-11-12 controls observations and
 `observations/operator-manual-agent-tasks-2026-11-12.md` are referenced by
 LR-07/LR-08. They record completed codex/pi file-write tool tasks. Codex's
-fallback model-metadata warning is non-fatal. These references alone do not
-change a status: final verification also needs reviewed runtime `applied_to`.
+fallback model-metadata warning is non-fatal. The application review records
+the actual codex/pi launch/definition functions and Factory in `applied_to`;
+root tests separately prove model, credential, config, workspace and persisted
+completion sinks. LR-01–LR-04, LR-07 and LR-08 are now verified manually against
+these committed producers and runtime applications. Only `glm-5.3` has observed
+codex/pi task/backend support in the deployed table; other models remain unknown.
 
 ## Collection and population
 
@@ -65,8 +72,9 @@ change a status: final verification also needs reviewed runtime `applied_to`.
   and the decision's on-failure rule applied. Only `verified` passes release.
 
 LR-02: R2 clears the source blocker; `model-capabilities.md` records the exact
-snapshot-to-runtime mapping and nonempty source anchors. Task/backend completion
-population remains with P2-T8/P3-T5/P4-T1. Required facts that a future override
+snapshot-to-runtime mapping and nonempty source anchors. P2-T8's chat and R7's
+operator codex/pi tasks now populate only their observed combinations. Required
+facts that a future override
 omits must still fail closed, without a reasoning default or placeholder limit.
 LR-03: R3's three canonical ids are executable; `deepseek-4.1-flash-1017` is a
 weights name, not a served id, and `claude-*-lr*` aliases are revoked.
@@ -751,7 +759,13 @@ ARBITRON_LUNAROUTE_RELEASE_GATE=1 go test ./test/lunaroute -run '^TestReleaseGat
 ```
 
 Pending or escalated released items fail, even when only this test is selected.
-The gate no longer requires a full MCP matrix or Claude Code/OpenCode artifacts.
+The register status validator excludes the deferred Claude Code/OpenCode
+contracts. However, the retained `TestReleaseGate` still asserts that
+`observations/mcp-release-acceptance.json` exists in release mode. That artifact
+is absent and R7 descopes its producer: the command above currently fails this
+legacy assertion even though all six released register items validate. P3-T3
+R7 Step 5 tracks this conflict with the prior tamper-repair constraint; do not
+fabricate a matrix or treat the register review as a passing release command.
 The reviewed R7 manual Markdown note is accepted as operator evidence after a
 full secret scan; generated observations remain strict schema-checked JSON.
 Before release the operator also reruns the direct gateway regression; missing

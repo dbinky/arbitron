@@ -164,10 +164,18 @@ func TestLunaRouteDiscoveryWiringEmbeddedDefaults(t *testing.T) {
 			chat = provider.FactView{Support: "supported", Evidence: "docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json"}
 		}
 		assert.Equal(t, chat, m.Tasks["chat"], "only the observed completed chat is supported")
-		assert.Equal(t, provider.FactView{Support: "unknown"}, m.Tasks["agent"])
+		agent := provider.FactView{Support: "unknown"}
+		if m.ID == "glm-5.3" {
+			agent = provider.FactView{Support: "supported", Evidence: "docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md"}
+		}
+		assert.Equal(t, agent, m.Tasks["agent"], "only R7's observed tool tasks authorize agent support")
 
 		for _, backend := range provider.LunaRouteBackends {
-			assert.Equal(t, provider.FactView{Support: "unknown"}, m.Backends[backend])
+			want := provider.FactView{Support: "unknown"}
+			if backend == "codex" || backend == "pi" {
+				want = agent
+			}
+			assert.Equal(t, want, m.Backends[backend], "completion support and evidence must reach MCP JSON")
 		}
 	}
 	require.Len(t, gw.Requests(), 1)

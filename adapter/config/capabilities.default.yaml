@@ -38,6 +38,10 @@ lunaroute_models:
   glm-5.3:
     tasks:
       chat: {support: supported, evidence: "docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json"}
+      agent: {support: supported, evidence: "docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md"}
+    backends:
+      codex: {support: supported, evidence: "docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md"}
+      pi: {support: supported, evidence: "docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md"}
     context_tokens: {tokens: 524288, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
     output_tokens: {tokens: 131072, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}
     reasoning: {support: supported, evidence: "docs/evidence/lunaroute-provider/model-capabilities.md#glm-5.3"}

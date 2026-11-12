@@ -80,9 +80,17 @@ func TestProductionCapabilitySnapshot(t *testing.T) {
 			chat = provider.SupportFact{Support: provider.SupportSupported, Evidence: evidencePath + "/observations/lr04-discovery-chat.json"}
 		}
 		assert.Equal(t, chat, m.Task(provider.ProfileKindChat), "only independently observed completion authorizes a task")
-		assert.Equal(t, provider.SupportUnknown, m.Task(provider.ProfileKindAgent).Support, "metadata alone is not a completed agent task")
+		agent := provider.SupportFact{Support: provider.SupportUnknown}
+		if source.ID == "glm-5.3" {
+			agent = provider.SupportFact{Support: provider.SupportSupported, Evidence: manualTaskEvidence}
+		}
+		assert.Equal(t, agent, m.Task(provider.ProfileKindAgent), "R7 tool tasks are independent of static metadata")
 		for _, backend := range provider.LunaRouteBackends {
-			assert.Equal(t, provider.SupportUnknown, m.Backend(backend).Support)
+			want := provider.SupportFact{Support: provider.SupportUnknown}
+			if backend == "codex" || backend == "pi" {
+				want = agent
+			}
+			assert.Equal(t, want, m.Backend(backend))
 		}
 	}
 	assert.ElementsMatch(t, releaseCandidates, ids)
@@ -154,7 +162,7 @@ func TestProductionSnapshotRegisterApplication(t *testing.T) {
 	r := loadRegister(t)
 	require.Empty(t, validateRegister(r))
 	it := r.Items["LR-02"]
-	assert.Equal(t, "decided", it.Status, "static application must not claim completed backend verification")
+	assert.Equal(t, "verified", it.Status, "R7 completion evidence plus static/runtime application verifies the released scope")
 	assert.Empty(t, it.Escalation, "R2 lifts the missing-metadata escalation")
 	assert.Contains(t, it.Evidence, evidencePath+"/sources/lr02-live-models-2026-11-11.json")
 	for _, ref := range []string{
@@ -164,7 +172,8 @@ func TestProductionSnapshotRegisterApplication(t *testing.T) {
 	} {
 		assert.Contains(t, it.AppliedTo, ref)
 	}
-	assert.NotEmpty(t, releaseProblems(repoRoot(t), r), "unfinished backend/matrix evidence still closes the release gate")
+	assert.Contains(t, it.Evidence, manualTaskEvidence)
+	assert.Empty(t, releaseProblems(repoRoot(t), r), "R7 released contracts have genuine completion evidence")
 }
 
 func TestProductionGatewayObservation(t *testing.T) {
