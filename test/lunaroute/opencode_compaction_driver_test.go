@@ -17,7 +17,7 @@ import (
 	"strconv"
 )
 
-const forcingSnapshot = `{"models":[{"id":"glm-5.3","context_window":202752,"max_input_tokens":202752,"max_output_tokens":32768}]}`
+const forcingSnapshot = `{"models":[{"id":"glm-5.3","context_window":202752,"max_input_tokens":202752,"max_output_tokens":32768,"capabilities":{"tools":true}}]}`
 
 func TestAgentEvidenceOpenCodeCompactionProductionInputs(t *testing.T) {
 	snapshot, err := readRepoFile(repoRoot(t), evidencePath+"/sources/lr02-live-models-2026-11-11.json")

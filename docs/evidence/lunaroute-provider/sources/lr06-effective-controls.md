@@ -39,8 +39,9 @@ main/small model, enabled provider, npm package, canonical `/v1` destination,
 registered model name, tool-call flag and both limits. Duplicate/malformed,
 oversized or drifting output, process failure and cancellation refuse before
 the mission starts. Raw debug output stays in bounded memory. The returned
-projection contains only canonical model and token limits; it carries no raw
-config, auth value or claim of successful helper traffic.
+projection contains only canonical model, the actual resolved `tool_call` boolean
+and token limits; it carries no raw config, auth value or claim of successful
+helper traffic.
 
 ## Reproduction and scope
 
@@ -67,7 +68,7 @@ are fixtures, not installed-backend completion evidence.
 
 `TestLiveOpencodeCompaction` now constructs an `openCodeControlJournal` in the
 actual experiment Factory. `openCodeControlsRunner` retains only the validated
-model/context/output projection and query interval for its warm-up and
+model/tool-call/context/output projection and query interval for its warm-up and
 same-session continuation. Executable and cwd remain private join keys. Before
 cleanup, `collectOpenCodeSupportingEvidence` requires two ordered checks in that
 workspace from the same executable, the exact resumed session, matching model
@@ -83,3 +84,25 @@ subagent and first automatic-compaction joins/forcing now exist separately.
 Claude's controls/helpers, full prescribed contract/agent entry points and
 genuine operator observations remain incomplete. No supported capability,
 contract/register verification or release readiness follows from these checks.
+
+## Source-bound tool metadata publication
+
+Reviewed 2026-11-12. R2's recorded
+[`lr02-live-models-2026-11-11.json`](lr02-live-models-2026-11-11.json)
+provides each canonical model's independent `capabilities.tools` fact. The
+completed-agent finalizer now requires that selected record's explicit boolean
+`true` to agree with the actual emitted/resolved `tool_call` proof. Missing,
+null, false, nonboolean or duplicate source fields cannot authorize publication;
+a different model's true fact cannot supply the selected model's missing fact.
+The supporting collector also refuses a lost tool-call projection, even when
+both warm-up/continuation controls otherwise agree and inference/files completed.
+Both final artifacts retain the same-run resolved boolean, not a value inserted
+by the publisher. This does not infer installed tool support or a supported
+capability from schema checks or protocol fixtures.
+
+`TestAgentEvidenceOpenCodeToolMetadataSource`,
+`TestAgentEvidenceOpenCodeCompletedAgentPublication` and
+`TestAgentEvidenceOpenCodeControlsToSupportingObservation` cover source rejection
+and the real Factory/subprocess/CONNECT/TLS/workspace-to-private-JSON sinks.
+The existing operator entry points consume these collectors/finalizer; no new
+runtime option, observation, support fact or register status is introduced.

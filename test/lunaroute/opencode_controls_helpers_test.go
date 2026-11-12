@@ -22,6 +22,7 @@ const (
 // controls only; Bearer auth and helper traffic still require captured requests.
 type openCodeControlProof struct {
 	Model         string `json:"model"`
+	ToolCall      bool   `json:"tool_call"`
 	ContextTokens int    `json:"context_tokens"`
 	OutputTokens  int    `json:"output_tokens"`
 }
@@ -76,7 +77,7 @@ func openCodeControlValues(config openCodeControlConfig, keyForm string) (openCo
 	if !ok || !registered || p.NPM != "@ai-sdk/openai-compatible" || p.Options.BaseURL != hostedRoot+"/v1" || p.Options.APIKey != keyForm || m.Name != model || !m.ToolCall || m.Limit.Context <= 0 || m.Limit.Output <= 0 {
 		return openCodeControlProof{}, errAgentEvidence
 	}
-	return openCodeControlProof{Model: model, ContextTokens: m.Limit.Context, OutputTokens: m.Limit.Output}, nil
+	return openCodeControlProof{Model: model, ToolCall: m.ToolCall, ContextTokens: m.Limit.Context, OutputTokens: m.Limit.Output}, nil
 }
 
 func validateOpenCodeEffectiveControls(emitted, effective []byte) (openCodeControlProof, error) {

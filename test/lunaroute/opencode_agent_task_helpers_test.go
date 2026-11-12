@@ -99,15 +99,18 @@ func finishOpenCodeAgentTask(repo, experiment, ws string, capture *inferenceCapt
 // The cited snapshot must actually agree with the emitted/effective model
 // definition, not merely exist at the expected path.
 func validateOpenCodeAgentInputSource(raw []byte, controls openCodeControlProof) error {
-	if _, err := decodeOpenCodeControls(raw); err != nil {
+	if _, err := decodeOpenCodeControls(raw); err != nil || !controls.ToolCall {
 		return errAgentEvidence
 	}
 	var source struct {
 		Models []struct {
-			ID      string `json:"id"`
-			Context int    `json:"context_window"`
-			Input   int    `json:"max_input_tokens"`
-			Output  int    `json:"max_output_tokens"`
+			ID           string `json:"id"`
+			Context      int    `json:"context_window"`
+			Input        int    `json:"max_input_tokens"`
+			Output       int    `json:"max_output_tokens"`
+			Capabilities struct {
+				Tools *bool `json:"tools"`
+			} `json:"capabilities"`
 		} `json:"models"`
 	}
 	if json.Unmarshal(raw, &source) != nil {
@@ -117,7 +120,7 @@ func validateOpenCodeAgentInputSource(raw []byte, controls openCodeControlProof)
 	for _, model := range source.Models {
 		if model.ID == controls.Model {
 			matches++
-			if model.Context != controls.ContextTokens || model.Output != controls.OutputTokens || model.Input <= 0 || model.Input > model.Context {
+			if model.Context != controls.ContextTokens || model.Output != controls.OutputTokens || model.Input <= 0 || model.Input > model.Context || model.Capabilities.Tools == nil || *model.Capabilities.Tools != controls.ToolCall {
 				return errAgentEvidence
 			}
 		}

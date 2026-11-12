@@ -184,7 +184,7 @@ func TestAgentEvidenceOpenCodeInstalledDebugSchema(t *testing.T) {
 	assert.Equal(t, "allow", inherited.Permission["write"])
 	proof, err := queryOpenCodeEffectiveControls(ctx, claudecli.NewExecRunner(), spec)
 	require.NoError(t, err, "installed effective-control schema/precedence changed; no inference was attempted")
-	assert.Equal(t, openCodeControlProof{Model: "glm-5.3", ContextTokens: 202752, OutputTokens: 32768}, proof)
+	assert.Equal(t, openCodeControlProof{Model: "glm-5.3", ToolCall: true, ContextTokens: 202752, OutputTokens: 32768}, proof)
 	for path, body := range seeds {
 		after, err := os.ReadFile(path)
 		require.NoError(t, err)

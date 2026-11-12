@@ -44,7 +44,7 @@ func TestAgentEvidenceOpenCodeAgentEntryPrerequisites(t *testing.T) {
 // Protocol executables exercise the same finalization used by the operator
 // entry point. They do not establish installed-backend support or readiness.
 func TestAgentEvidenceOpenCodeCompletedAgentPublication(t *testing.T) {
-	for _, mode := range []string{"success", "empty-capture", "missing-controls", "missing-isolation", "missing-tool", "missing-source", "unreadable-source", "source-limit-drift", "source-model-missing", "source-malformed", "foreign-source", "unsafe-model-source", "missing-file", "cleanup-failure"} {
+	for _, mode := range []string{"success", "empty-capture", "missing-controls", "missing-isolation", "missing-tool", "missing-source", "unreadable-source", "source-limit-drift", "source-model-missing", "source-malformed", "source-tools-missing", "source-tools-null", "source-tools-false", "source-tools-string", "source-tools-duplicate", "controls-tools-missing", "foreign-source", "unsafe-model-source", "missing-file", "cleanup-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			root, bin, capture := agentFactoryFixture(t, "opencode", "correlation-force-success")
 			home := filepath.Join(root, "home")
@@ -95,6 +95,22 @@ func TestAgentEvidenceOpenCodeCompletedAgentPublication(t *testing.T) {
 					data = "{"
 				}
 				require.NoError(t, os.WriteFile(filepath.Join(repo, evidencePath, "sources/lr02-live-models-2026-11-11.json"), []byte(data), 0600))
+			case "source-tools-missing", "source-tools-null", "source-tools-false", "source-tools-string", "source-tools-duplicate":
+				tools := map[string]string{
+					"source-tools-missing":   `{}`,
+					"source-tools-null":      `{"tools":null}`,
+					"source-tools-false":     `{"tools":false}`,
+					"source-tools-string":    `{"tools":"true"}`,
+					"source-tools-duplicate": `{"tools":false,"tools":true}`,
+				}
+				data := strings.Replace(forcingSnapshot, `"capabilities":{"tools":true}`, `"capabilities":`+tools[mode], 1)
+				require.NotEqual(t, forcingSnapshot, data, "negative source fixture must actually remove or contradict the required fact")
+				require.NoError(t, os.WriteFile(filepath.Join(repo, evidencePath, "sources/lr02-live-models-2026-11-11.json"), []byte(data), 0600))
+			case "controls-tools-missing":
+				// Simulate losing only this validated control on its way to the sink.
+				for i := range journal.entries {
+					journal.entries[i].Controls.ToolCall = false
+				}
 			case "cleanup-failure":
 				require.NoError(t, os.Chmod(root, 0500))
 				t.Cleanup(func() { require.NoError(t, os.Chmod(root, 0700)) })
@@ -145,7 +161,17 @@ func TestAgentEvidenceOpenCodeCompletedAgentPublication(t *testing.T) {
 			assert.Equal(t, agent.SessionID, support.SessionID)
 			assert.Equal(t, agent.Inference, support.Inference)
 			assert.Equal(t, []string{"main", "subagent", "title", "compaction"}, agent.RequiredCategories)
-			assert.Len(t, support.Controls, 2)
+			require.Len(t, support.Controls, 2)
+			var persisted struct {
+				Controls []struct {
+					Values map[string]any `json:"controls"`
+				} `json:"effective_controls"`
+			}
+			require.NoError(t, json.Unmarshal(supportRaw, &persisted))
+			require.Len(t, persisted.Controls, 2)
+			for _, check := range persisted.Controls {
+				assert.Equal(t, true, check.Values["tool_call"], "actual resolved tool support must reach the final artifact")
+			}
 			assert.True(t, support.Isolation.ConfigUnchanged && support.Isolation.AuthUnchanged)
 			for _, record := range agent.Inference {
 				assert.Equal(t, "glm-5.3", record.RequestedModel)

@@ -15,7 +15,7 @@ import (
 // This is a protocol executable, not installed-backend contract evidence. Both
 // warm-up and continuation must feed the actual same-env debug proofs to disk.
 func TestAgentEvidenceOpenCodeControlsToSupportingObservation(t *testing.T) {
-	for _, mode := range []string{"success", "absent", "missing-resume", "wrong-session", "foreign-workspace", "limit-drift", "stale", "extra-launch", "no-compaction", "missing-file"} {
+	for _, mode := range []string{"success", "absent", "missing-resume", "wrong-session", "foreign-workspace", "limit-drift", "missing-tools", "stale", "extra-launch", "no-compaction", "missing-file"} {
 		t.Run(mode, func(t *testing.T) {
 			started := time.Now().UTC()
 			root, bin, capture := agentFactoryFixture(t, "opencode", "correlation-force-success")
@@ -44,6 +44,10 @@ func TestAgentEvidenceOpenCodeControlsToSupportingObservation(t *testing.T) {
 				journal.entries[1].dir = t.TempDir()
 			case "limit-drift":
 				journal.entries[1].Controls.ContextTokens++
+			case "missing-tools":
+				for i := range journal.entries {
+					journal.entries[i].Controls.ToolCall = false
+				}
 			case "stale":
 				journal.entries[0].StartedAt = started.Add(-time.Second)
 			case "extra-launch":
@@ -77,6 +81,9 @@ func TestAgentEvidenceOpenCodeControlsToSupportingObservation(t *testing.T) {
 			assert.True(t, saved.FileOK && saved.CommandOK)
 			assert.True(t, saved.Isolation.ConfigUnchanged && saved.Isolation.AuthUnchanged && saved.Isolation.PrivateHome)
 			require.Len(t, saved.Controls, 2)
+			for _, check := range saved.Controls {
+				assert.True(t, check.Controls.ToolCall, "supporting sink requires the actual resolved tool-call fact")
+			}
 			assert.Empty(t, saved.Controls[0].SessionID)
 			assert.Equal(t, saved.SessionID, saved.Controls[1].SessionID)
 			assert.Equal(t, 202752, saved.Controls[0].Controls.ContextTokens)

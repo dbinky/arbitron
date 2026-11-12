@@ -99,7 +99,7 @@ func collectOpenCodeSupportingEvidence(ws string, capture *inferenceCapture, jou
 		return fail()
 	}
 	checks := journal.checks()
-	if len(checks) != 2 || checks[0].SessionID != "" || checks[1].SessionID != result.SessionID || checks[0].Controls != checks[1].Controls || checks[0].Controls.Model != result.Model || checks[0].Controls.ContextTokens <= 0 || checks[0].Controls.OutputTokens <= 0 {
+	if len(checks) != 2 || checks[0].SessionID != "" || checks[1].SessionID != result.SessionID || checks[0].Controls != checks[1].Controls || checks[0].Controls.Model != result.Model || !checks[0].Controls.ToolCall || checks[0].Controls.ContextTokens <= 0 || checks[0].Controls.OutputTokens <= 0 {
 		return fail()
 	}
 	workspace, err := filepath.EvalSymlinks(ws)

@@ -468,8 +468,8 @@ The narrow compaction experiment uses the same composition.
 
 Only after exact workspace/command/tool/model proof, all four correlated request
 categories, both effective-control checks, unchanged private config/auth and
-readable exact helper source references and snapshot limits matching the actual
-effective model definition does finalization close/remove the
+readable exact helper source references and snapshot limits/tool support matching
+the actual effective model definition does finalization close/remove the
 proxy/CA and private experiment tree. Successful cleanup precedes writing
 `observations/lr06-opencode-compaction.json` and
 `observations/lr06-opencode-agent.json`; the latter references the former's
@@ -483,7 +483,13 @@ through protocol executables, real TLS exchanges and command-created files. It
 rejects empty capture, missing controls/isolation/tool/file/source, unreadable or
 misassigned source evidence, unsafe model provenance and cleanup failure with no
 published pair. Malformed or model/limit-mismatched source snapshots also cannot
-publish despite completed traffic/files. These fixtures prove plumbing, not installed binary contracts.
+publish despite completed traffic/files. The selected R2 record must explicitly
+state `capabilities.tools: true`, agreeing with both same-run resolved
+`tool_call` projections persisted in the supporting artifact. Missing, null,
+false, nonboolean or duplicate source facts and lost runtime projections refuse
+publication; another model's fact cannot substitute. The narrow supporting
+publisher also rejects a lost tool-call projection. These fixtures prove
+plumbing, not installed binary contracts.
 The operator run and subsequent source/support/register review remain pending;
 this code never changes capability facts or register status automatically.
 
