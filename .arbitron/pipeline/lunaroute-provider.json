@@ -187,6 +187,23 @@
       "finished_at": "2026-11-12T20:36:13Z",
       "instance_id": "195fc5b1-a349-4ebe-9032-14fe104df5ab",
       "workflow": "implement"
+    },
+    {
+      "stage": "harden",
+      "status": "done",
+      "outputs": {
+        "result": "scored",
+        "skip_reason": "",
+        "score": 85.68,
+        "gate_passed": true,
+        "survivors_path": ".arbitron/pipeline/lunaroute-provider.survivors.json",
+        "focus_seed_path": "",
+        "harden_report_path": ".arbitron/pipeline/lunaroute-provider.harden.json"
+      },
+      "commit": "9bd42aa86ce28665c4a8c5ceff97dd08f64d56b7",
+      "finished_at": "2026-11-12T22:06:08Z",
+      "instance_id": "63f92cf0-d0ac-49bf-9014-e95414e572fb",
+      "workflow": "harden"
     }
   ]
 }
