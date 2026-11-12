@@ -216,3 +216,35 @@ func TestConnectionRepo_LunaRoutePersistenceErrors(t *testing.T) {
 		})
 	}
 }
+
+// Every accepted base-URL spelling must persist as the hosted root, observed
+// through a fresh Get (the stored row), for both Create and Update.
+func TestConnectionRepo_LunaRouteAcceptedSpellingsPersistHostedRoot(t *testing.T) {
+	spellings := []string{
+		"", "  ", "https://gw.lunaroute.com", "https://gw.lunaroute.com/", "https://gw.lunaroute.com/v1",
+		"https://gw.lunaroute.com/v1/", "https://GW.LunaRoute.com/v1/", "HTTPS://gw.lunaroute.com", " https://gw.lunaroute.com ",
+	}
+	for _, base := range spellings {
+		t.Run("create/"+base, func(t *testing.T) {
+			repo, _ := newConnRepo(t)
+			ctx := context.Background()
+			c := lrConnection(base)
+			c.Provider = "  LunaRoute "
+			require.NoError(t, repo.Create(ctx, c, "lr_live_one"))
+			got, err := repo.Get(ctx, "lr")
+			require.NoError(t, err)
+			assert.Equal(t, "lunaroute", got.Provider)
+			assert.Equal(t, provider.LunaRouteHostedRoot, got.BaseURL)
+		})
+		t.Run("update/"+base, func(t *testing.T) {
+			repo, _ := newConnRepo(t)
+			ctx := context.Background()
+			require.NoError(t, repo.Create(ctx, lrConnection(""), "lr_live_one"))
+			require.NoError(t, repo.Update(ctx, lrConnection(base), nil))
+			got, err := repo.Get(ctx, "lr")
+			require.NoError(t, err)
+			assert.Equal(t, "lunaroute", got.Provider)
+			assert.Equal(t, provider.LunaRouteHostedRoot, got.BaseURL)
+		})
+	}
+}
