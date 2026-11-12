@@ -69,6 +69,36 @@ Assertions read the final exclusive private JSON sink. Missing feeds/files,
 foreign identities, model substitution and stale capture write no observation.
 These fixtures are tooling proof, not installed-binary evidence.
 
+## Attributed request controls
+
+The same operator publication path now records `subagent_controls` only after
+that lifecycle/header/response join succeeds. Its exact task/run/tool/session,
+selected model/effort and reviewed version come from the same accepted launch.
+Each request id, `max_tokens`, effort and thinking type/budget comes from the
+actual bounded Messages capture, never from selectors or a copied main request.
+The existing all-request validator still requires output-budget equality with
+the same loaded/emitted limit, exact explicit effort and an actual disabled
+thinking field for `none`. Default records observed presence/absence only.
+
+The projection cites this note and the already versioned
+[output-budget](lr05-limits.md), [effort](lr05-effort.md) and
+[thinking](lr05-thinking.md) producers. This pass re-read their exact installed
+2.1.322 byte ranges (264416663/1100, 273738292/240, 273799950/2100,
+273806650/700) and the agent-context propagation range (279649532/1600);
+the SHA-256 values still match the tables in those notes and above. The common
+request producer can clamp/remove controls or accept extra-body overrides;
+observing each attributed request, not assuming inheritance, is essential.
+
+Only main-attributed ids remain in `main_limits`, `main_effort` and
+`main_thinking`. In particular the main reported context is **not** claimed as
+a resolved helper context window. Offline protocol tests deliberately give the
+helper different default effort/thinking fields, then inspect the final private
+JSON (including cleanup-before-publication). Missing/unsafe projections, lost
+routing and explicit-control drift refuse with no write, despite completed
+workspace and inference proofs. This is collector provenance only; installed
+helper behavior, internal reasoning state and gateway limit enforcement remain
+unverified. No support/status or genuine observation changes.
+
 The operator entry point still writes only the narrow `lr05-isolation.json`,
 after successful private experiment/proxy/CA cleanup. Remaining helper
 categories, full isolation/controls, installed memory behavior and the complete

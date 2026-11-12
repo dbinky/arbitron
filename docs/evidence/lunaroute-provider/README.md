@@ -384,6 +384,14 @@ are marked `subagent`; missing/foreign/unsafe/stale feeds write no artifact.
 Existing main-only lifecycle fixtures remain narrow controls; the new
 Factory/subprocess/CONNECT/TLS routing fixtures exercise both exchanges and the
 final private JSON sink. Neither fixture set proves installed-helper behavior.
+The same publication path separates `main_limits`, `main_effort` and
+`main_thinking` request ids from lifecycle-attributed `subagent_controls`.
+The helper projection records each actual request's output budget, effort and
+thinking type/budget, with exact task/run/tool/session/version and source refs.
+Default records observed controls (including absence), not inferred support;
+explicit effort and `none` retain the same-table/env/wire refusal checks.
+No helper context-window or enforced gateway maximum is inferred. Missing
+control/routing feeds refuse publication despite successful files/inference.
 See [lifecycle sources](sources/lr05-subagent-lifecycle.md),
 [request sources and join scope](sources/lr05-subagent-routing.md) and
 `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(Subagent|Routing)' -count=1`.

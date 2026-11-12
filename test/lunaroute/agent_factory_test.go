@@ -76,6 +76,9 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			case "effort-drift":
 				wantEffort = "medium"
 			}
+			if mode == "claude-route-controls" && r.Header.Get("X-Claude-Code-Agent-Id") != "" && selected == provider.EffortDefault {
+				wantEffort = "high"
+			}
 			if body.OutputConfig.Effort != wantEffort {
 				t.Error("Claude request did not feed the expected effort wire shape")
 				w.WriteHeader(http.StatusBadRequest)
@@ -89,6 +92,13 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 				wantThinking = `{"type":"adaptive"}`
 			case "thinking-enabled":
 				wantThinking = `{"type":"enabled","budget_tokens":1024}`
+			}
+			if mode == "claude-route-controls" {
+				if selected == provider.EffortNone {
+					wantThinking = `{"type":"disabled"}`
+				} else if r.Header.Get("X-Claude-Code-Agent-Id") != "" {
+					wantThinking = `{"type":"enabled","budget_tokens":1024}`
+				}
 			}
 			if string(body.Thinking) != wantThinking {
 				t.Error("Claude request did not feed expected thinking controls")
@@ -373,6 +383,9 @@ case '@MODE@' in effort-*)
   request_body='{"output_config":{"effort":"'"$effort"'"},'"${request_body#?}"
  fi
  ;; esac
+if [ '@MODE@' = claude-route-controls ]; then
+ request_body='{@CLAUDE_ROUTE_MAIN_CONTROLS@'"${request_body#?}"
+fi
 /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -H "$class_header" -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
 case '@MODE@' in claude-route-*)
  if [ '@MODE@' != claude-route-missing ]; then
@@ -384,7 +397,7 @@ case '@MODE@' in claude-route-*)
    claude-route-class) helper_class=auxiliary ;;
    claude-route-type) helper_type=Explore ;;
   esac
-  /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Claude-Code-Session-Id: $helper_session" -H "X-Claude-Code-Agent-Id: $helper_agent" -H "$helper_parent" -H "X-Claude-Code-Request-Class: $helper_class" -H "X-Claude-Code-Agent-Type: $helper_type" -d '{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"verify the files"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+  /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Claude-Code-Session-Id: $helper_session" -H "X-Claude-Code-Agent-Id: $helper_agent" -H "$helper_parent" -H "X-Claude-Code-Request-Class: $helper_class" -H "X-Claude-Code-Agent-Type: $helper_type" -d '{@CLAUDE_ROUTE_HELPER_CONTROLS@"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"verify the files"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
  fi
  ;; esac
 if [ '@MODE@' = memory-late ]; then
@@ -489,7 +502,22 @@ fi
 	case "limits-context-secret":
 		contextField = `"contextWindow":"` + captureFixtureKey + `"`
 	}
-	script := strings.NewReplacer("@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_THINKING_ENV@", expectedThinkingEnv, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	mainControls, helperControls := "", ""
+	if mode == "claude-route-controls" {
+		if expectedEffort != "" {
+			mainControls = `"output_config":{"effort":"` + expectedEffort + `"},`
+			helperControls = mainControls
+		} else if selected == provider.EffortDefault {
+			helperControls = `"output_config":{"effort":"high"},`
+		}
+		if selected == provider.EffortNone {
+			mainControls += `"thinking":{"type":"disabled"},`
+			helperControls += `"thinking":{"type":"disabled"},`
+		} else {
+			helperControls += `"thinking":{"type":"enabled","budget_tokens":1024},`
+		}
+	}
+	script := strings.NewReplacer("@CLAUDE_ROUTE_MAIN_CONTROLS@", mainControls, "@CLAUDE_ROUTE_HELPER_CONTROLS@", helperControls, "@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_THINKING_ENV@", expectedThinkingEnv, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

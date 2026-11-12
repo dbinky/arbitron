@@ -180,19 +180,20 @@ func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.Capabil
 }
 
 type claudeIsolationObservation struct {
-	Scope           string                   `json:"scope"`
-	Source          string                   `json:"source"`
-	InputSource     string                   `json:"input_source,omitempty"`
-	Version         string                   `json:"version"`
-	Session         string                   `json:"session"`
-	ConfigUnchanged bool                     `json:"config_unchanged"`
-	AuthUnchanged   bool                     `json:"auth_unchanged"`
-	Limits          claudeMainLimitProof     `json:"main_limits"`
-	Effort          claudeMainEffortProof    `json:"main_effort"`
-	Thinking        claudeMainThinkingProof  `json:"main_thinking"`
-	ProjectMemory   claudeProjectMemoryProof `json:"project_memory"`
-	Subagent        claudeSubagentProof      `json:"subagent_lifecycle"`
-	Inference       []capturedInference      `json:"inference"`
+	Scope            string                      `json:"scope"`
+	Source           string                      `json:"source"`
+	InputSource      string                      `json:"input_source,omitempty"`
+	Version          string                      `json:"version"`
+	Session          string                      `json:"session"`
+	ConfigUnchanged  bool                        `json:"config_unchanged"`
+	AuthUnchanged    bool                        `json:"auth_unchanged"`
+	Limits           claudeMainLimitProof        `json:"main_limits"`
+	Effort           claudeMainEffortProof       `json:"main_effort"`
+	Thinking         claudeMainThinkingProof     `json:"main_thinking"`
+	ProjectMemory    claudeProjectMemoryProof    `json:"project_memory"`
+	Subagent         claudeSubagentProof         `json:"subagent_lifecycle"`
+	SubagentControls *claudeSubagentControlProof `json:"subagent_controls,omitempty"`
+	Inference        []capturedInference         `json:"inference"`
 }
 
 func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInference, result *engine.AgentResult, started, finished time.Time) (claudeIsolationObservation, error) {

@@ -5,9 +5,32 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 const claudeSubagentRoutingSource = "docs/evidence/lunaroute-provider/sources/lr05-subagent-routing.md"
+
+// This is the observed subagent wire budget, not a resolved helper context
+// window or a claim that the gateway enforces a maximum. Selection comes from
+// the same emitted launch; values come only from attributed captured requests.
+type claudeSubagentControlProof struct {
+	Sources   []string                       `json:"sources"`
+	Version   string                         `json:"version"`
+	Session   string                         `json:"session"`
+	Model     string                         `json:"model"`
+	TaskID    string                         `json:"task_id"`
+	RunID     string                         `json:"run_id"`
+	ToolUseID string                         `json:"tool_use_id"`
+	Selected  provider.Effort                `json:"selected"`
+	Requests  []claudeSubagentRequestControl `json:"requests"`
+}
+
+type claudeSubagentRequestControl struct {
+	RequestID string                `json:"request_id"`
+	MaxTokens int                   `json:"max_tokens"`
+	Effort    string                `json:"effort"`
+	Thinking  claudeRequestThinking `json:"thinking"`
+}
 
 // Only the five source-defined routing identities are projected. In particular,
 // custom headers, metadata.user_id and prompt content are never serialized.
@@ -57,7 +80,12 @@ func collectClaudeSubagentRoutingEvidence(s *claudeIsolation, capture *inference
 	op := capturedOperation{RunID: capture.runID, Backend: "claude-code", ID: s.subagent.ToolUseID,
 		Session: s.session, Category: "subagent", Trigger: "synchronous-agent", Source: claudeSubagentRoutingSource, Version: s.subagent.Version,
 		StartedAt: finished, FinishedAt: started}
-	main := false
+	controls := &claudeSubagentControlProof{
+		Sources: []string{claudeLimitsSource, claudeEffortSource, claudeThinkingSource, claudeSubagentRoutingSource},
+		Version: s.subagent.Version, Session: s.session, Model: result.Model,
+		TaskID: s.subagent.TaskID, RunID: s.subagent.RunID, ToolUseID: s.subagent.ToolUseID, Selected: s.effort.Selected,
+	}
+	var mainRecords []capturedInference
 	for _, record := range records {
 		if record.SessionID != s.session || record.Category != "main" || record.Operation != nil || record.ClaudeParentAgentID != "" {
 			return fail()
@@ -67,11 +95,14 @@ func collectClaudeSubagentRoutingEvidence(s *claudeIsolation, capture *inference
 			if record.ClaudeAgentID != "" || record.ClaudeAgentType != "" {
 				return fail()
 			}
-			main = true
+			mainRecords = append(mainRecords, record)
 		case "subagent":
 			if record.ClaudeAgentID != s.subagent.TaskID || record.ClaudeAgentType != "general-purpose" {
 				return fail()
 			}
+			controls.Requests = append(controls.Requests, claudeSubagentRequestControl{
+				RequestID: record.RequestID, MaxTokens: record.MaxTokens, Effort: record.ClaudeEffort.Level, Thinking: *record.ClaudeThinking,
+			})
 			op.RequestIDs = append(op.RequestIDs, record.RequestID)
 			if record.StartedAt.Before(op.StartedAt) {
 				op.StartedAt = record.StartedAt
@@ -83,13 +114,28 @@ func collectClaudeSubagentRoutingEvidence(s *claudeIsolation, capture *inference
 			return fail()
 		}
 	}
-	if !main || len(op.RequestIDs) == 0 || capture.CorrelateOperation(op) != nil {
+	if len(mainRecords) == 0 || len(op.RequestIDs) == 0 || capture.CorrelateOperation(op) != nil {
 		return fail()
 	}
 	observation.Inference = capture.Records()
 	if validateCapturedInference(observation.Inference, result.Model, []string{"main", "subagent"}) != nil {
 		return fail()
 	}
-	observation.Scope = "main isolation/controls/memory and synchronous subagent lifecycle plus captured routing only; no other helper or complete contract verification"
+	// The base collector validates every exchange. Only after lifecycle/header
+	// attribution may the publisher split main proofs from subagent controls.
+	observation.Limits.RequestIDs = nil
+	for _, record := range mainRecords {
+		observation.Limits.RequestIDs = append(observation.Limits.RequestIDs, record.RequestID)
+	}
+	observation.Effort, err = joinClaudeRequestEffort(s.effort, s.session, result.Model, mainRecords)
+	if err != nil {
+		return fail()
+	}
+	observation.Thinking, err = joinClaudeRequestThinking(observation.Effort, mainRecords)
+	if err != nil {
+		return fail()
+	}
+	observation.SubagentControls = controls
+	observation.Scope = "main isolation/controls/memory and synchronous subagent lifecycle, captured routing and request controls only; no helper context-window, other helper or complete contract verification"
 	return observation, nil
 }

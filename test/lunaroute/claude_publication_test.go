@@ -20,7 +20,7 @@ const claudePublicationSnapshot = `{"models":[{"id":"glm-5.3","context_window":2
 func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 	for _, mode := range []string{"success", "missing-source", "unreadable-source", "source-context-drift", "source-output-drift", "source-model-missing", "source-malformed", "empty-capture", "missing-limits", "missing-lifecycle", "missing-tool", "missing-file", "unsafe-record", "cleanup-failure", "destination-in-experiment", "home-outside-experiment"} {
 		t.Run(mode, func(t *testing.T) {
-			root, bin, capture := agentFactoryFixture(t, "claude-code", "claude-route-success")
+			root, bin, capture := agentFactoryFixture(t, "claude-code", "claude-route-controls")
 			ws := filepath.Join(root, "mission")
 			require.NoError(t, os.Mkdir(ws, 0700))
 			home := filepath.Join(root, "home")
@@ -119,6 +119,20 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			require.Len(t, saved.Inference, 2)
 			assert.Equal(t, "main", saved.Inference[0].Category)
 			assert.Equal(t, "subagent", saved.Inference[1].Category)
+			mainIDs := []string{saved.Inference[0].RequestID}
+			assert.Equal(t, mainIDs, saved.Limits.RequestIDs)
+			assert.Equal(t, mainIDs, saved.Effort.RequestIDs)
+			assert.Equal(t, mainIDs, saved.Thinking.RequestIDs)
+			require.NotNil(t, saved.SubagentControls)
+			require.Len(t, saved.SubagentControls.Requests, 1)
+			request := saved.SubagentControls.Requests[0]
+			assert.Equal(t, saved.Inference[1].RequestID, request.RequestID)
+			assert.Equal(t, 32768, request.MaxTokens)
+			assert.Equal(t, "high", request.Effort)
+			assert.Equal(t, claudeRequestThinking{Type: "enabled", BudgetTokens: 1024}, request.Thinking)
+			assert.Equal(t, saved.Subagent.TaskID, saved.SubagentControls.TaskID)
+			assert.Equal(t, saved.Subagent.RunID, saved.SubagentControls.RunID)
+			assert.Equal(t, saved.Subagent.ToolUseID, saved.SubagentControls.ToolUseID)
 			for _, record := range saved.Inference {
 				assert.Equal(t, "glm-5.3", record.RequestedModel)
 				assert.Equal(t, []string{"glm-5.3"}, record.ReportedModels)
