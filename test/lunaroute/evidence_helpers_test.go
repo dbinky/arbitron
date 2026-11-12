@@ -107,7 +107,7 @@ func validateRegisterAt(root string, r register) []string {
 			bad("decision source unavailable")
 		}
 		switch it.Status {
-		case "decided":
+		case "decided", "deferred":
 		case "verified":
 			if len(it.Evidence) == 0 {
 				bad("verified requires evidence")
@@ -133,7 +133,12 @@ func validateRegisterAt(root string, r register) []string {
 				continue
 			}
 			if strings.HasPrefix(ref, evidencePath+"/observations/") {
-				if filepath.Ext(ref) != ".json" || validateObservationJSON(raw, "") != nil {
+				if ref == evidencePath+"/observations/operator-manual-agent-tasks-2026-11-12.md" {
+					// R7 supplies this reviewed operator record instead of a generated collector artifact.
+					if unsafeText(string(raw), "") {
+						bad("invalid or unsafe observation")
+					}
+				} else if filepath.Ext(ref) != ".json" || validateObservationJSON(raw, "") != nil {
 					bad("invalid or unsafe observation")
 				}
 			}
@@ -154,8 +159,8 @@ func validateRegisterAt(root string, r register) []string {
 }
 func releaseProblems(root string, r register) []string {
 	problems := validateRegisterAt(root, r)
-	for i := 1; i <= 8; i++ {
-		id := fmt.Sprintf("LR-%02d", i)
+	// R7 defers LR-05/LR-06, not evidence or application for released paths.
+	for _, id := range []string{"LR-01", "LR-02", "LR-03", "LR-04", "LR-07", "LR-08"} {
 		if r.Items[id].Status != "verified" {
 			problems = append(problems, id+": verification pending")
 		}

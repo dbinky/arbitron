@@ -110,7 +110,7 @@ func validateLunaRouteDocProfile(p docProfile, caps provider.LunaRouteCapabiliti
 		ContextWindow: provider.ContextWindow(p.ContextWindow), Effort: provider.Effort(p.Effort)})
 }
 
-const docExample = "```text\nconnection lr provider=lunaroute base_url=https://gw.lunaroute.com api_key=lr_…\nprofile chat kind=chat connection=lr model=glm-5.3-flash selection_mode=pinned\nprofile agent kind=agent backend=claude-code connection=lr model=glm-5.3 context_window=default effort=default\n```\n"
+const docExample = "```text\nconnection lr provider=lunaroute base_url=https://gw.lunaroute.com api_key=lr_…\nprofile chat kind=chat connection=lr model=glm-5.3-flash selection_mode=pinned\nprofile agent kind=agent backend=codex connection=lr model=glm-5.3 context_window=default effort=default\n```\n"
 
 // Distinctive limits are fixtures, not product facts. Deployed defaults are
 // checked separately by the production-evidence/release gate tests.
@@ -129,7 +129,7 @@ func TestParseLunaRouteDocExamples(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []docProfile{
 		{Alias: "chat", Kind: "chat", ConnectionRef: "lr", Model: "glm-5.3-flash", SelectionMode: "pinned"},
-		{Alias: "agent", Kind: "agent", Backend: "claude-code", ConnectionRef: "lr", Model: "glm-5.3", ContextWindow: "default", Effort: "default"},
+		{Alias: "agent", Kind: "agent", Backend: "codex", ConnectionRef: "lr", Model: "glm-5.3", ContextWindow: "default", Effort: "default"},
 	}, got)
 	for _, p := range got {
 		require.NoError(t, validateLunaRouteDocProfile(p, docFixtureCaps()))
@@ -183,7 +183,9 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 		{"following", func(p *docProfile) { p.SelectionMode = "following" }, provider.ErrInvalidSelection},
 		{"bad mode", func(p *docProfile) { p.SelectionMode = "typo" }, provider.ErrInvalidSelection},
 		{"native context", func(p *docProfile) { p.ContextWindow = "200k" }, provider.ErrLunaRouteAxisUnsupported},
-		{"unsupported effort", func(p *docProfile) { p.Backend = "opencode"; p.Effort = "low" }, provider.ErrLunaRouteAxisUnsupported},
+		{"unsupported effort", func(p *docProfile) { p.Backend = "opencode"; p.Effort = "low" }, provider.ErrLunaRouteBackendUnsupported},
+		{"deferred opencode", func(p *docProfile) { p.Backend = "opencode" }, provider.ErrLunaRouteBackendUnsupported},
+		{"deferred claude-code", func(p *docProfile) { p.Backend = "claude-code" }, provider.ErrLunaRouteBackendUnsupported},
 		{"chat backend", func(p *docProfile) { p.Kind = "chat" }, provider.ErrInvalidSelection},
 		{"unknown kind", func(p *docProfile) { p.Kind = "typo" }, provider.ErrLunaRouteIncompatible},
 	} {
@@ -221,8 +223,8 @@ func TestLunaRouteDocRouteRefusals(t *testing.T) {
 	for _, backend := range []string{"claude-code", "opencode"} {
 		p := profiles[1]
 		p.Backend = backend
-		require.NoError(t, validateLunaRouteDocProfile(p, docFixtureCaps()))
-		require.ErrorIs(t, validateLunaRouteDocProfile(p, provider.NewCapabilityRules(nil)), provider.ErrLunaRouteLimitsUnknown)
+		require.ErrorIs(t, validateLunaRouteDocProfile(p, docFixtureCaps()), provider.ErrLunaRouteBackendUnsupported)
+		require.ErrorIs(t, validateLunaRouteDocProfile(p, provider.NewCapabilityRules(nil)), provider.ErrLunaRouteBackendUnsupported)
 	}
 }
 
@@ -241,7 +243,12 @@ func TestLunaRouteDocBackendMetadata(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			p := docProfile{Kind: "agent", Backend: backend, Model: "glm-5.3", ConnectionRef: "lr"}
 			caps := docCompleteFixtureCaps()
-			require.NoError(t, validateLunaRouteDocProfile(p, caps))
+			deferred := backend == "claude-code" || backend == "opencode"
+			if deferred {
+				require.ErrorIs(t, validateLunaRouteDocProfile(p, caps), provider.ErrLunaRouteBackendUnsupported)
+			} else {
+				require.NoError(t, validateLunaRouteDocProfile(p, caps))
+			}
 			for _, missing := range []string{"context", "output", "reasoning"} {
 				m, ok := caps.LunaRouteModel(p.Model)
 				require.True(t, ok)
@@ -254,7 +261,9 @@ func TestLunaRouteDocBackendMetadata(t *testing.T) {
 					m.Reasoning = provider.SupportFact{}
 				}
 				err := validateLunaRouteDocProfile(p, caps.WithLunaRouteModels(map[string]provider.LunaRouteModel{p.Model: m}))
-				if backend == "codex" || missing == "reasoning" && backend != "pi" {
+				if deferred {
+					require.ErrorIs(t, err, provider.ErrLunaRouteBackendUnsupported, "disabled regardless of %s metadata", missing)
+				} else if backend == "codex" || missing == "reasoning" && backend != "pi" {
 					require.NoError(t, err, "%s does not require %s metadata", backend, missing)
 				} else {
 					require.ErrorIs(t, err, provider.ErrLunaRouteLimitsUnknown, missing)
@@ -293,15 +302,18 @@ func TestLunaRouteGuideExamplesAreValid(t *testing.T) {
 		}
 	}
 	assert.True(t, kinds["chat"] && kinds["agent"])
-	for _, backend := range []string{"claude-code", "opencode", "codex", "pi"} {
+	for _, backend := range []string{"codex", "pi"} {
 		assert.True(t, backends[backend], "missing validated example for %s", backend)
+	}
+	for _, backend := range []string{"claude-code", "opencode"} {
+		assert.False(t, backends[backend], "deferred backend has no executable example")
 	}
 	assert.Equal(t, 1, strings.Count(doc, "## codex and pi"))
 	assert.NotContains(t, doc, "not yet enabled")
-	assert.NotContains(t, doc, "not yet supported")
+	assert.Contains(t, doc, "claude-code and opencode are not yet supported")
 	for _, text := range []string{
-		"claude-code, opencode and pi need known context and output limits",
-		"Enabled agent backends are `claude-code`, `opencode`, `codex` and `pi`",
+		"pi needs known context and output limits",
+		"Enabled agent backends are `codex` and `pi`",
 		"private CODEX_HOME", "backend-health login verdict", "does not gate",
 		"PI_CODING_AGENT_DIR", "models.json", "$LUNAROUTE_API_KEY", "authHeader:true",
 		"known reasoning metadata", "independent evidence-backed reasoning fact",
@@ -309,7 +321,7 @@ func TestLunaRouteGuideExamplesAreValid(t *testing.T) {
 		"only `low|medium|high|xhigh`", "`none` through `max` when recorded",
 		"LR-07", "LR-08", "not release-ready", "`verified`",
 		"claude-*-lr* aliases are refused and never classified as Anthropic",
-		"Live backend/helper verification and whole-release readiness remain pending",
+		"Whole-release readiness", "remains pending final evidence and production-application review", "R7 restricts this release to chat, codex and pi",
 		"sources/lr02-live-models-2026-11-11.json",
 	} {
 		assert.Contains(t, doc, text)

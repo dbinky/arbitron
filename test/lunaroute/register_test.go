@@ -42,6 +42,75 @@ func TestRegisterSchema(t *testing.T) {
 	assert.Empty(t, validateRegister(loadRegister(t)))
 }
 
+func TestRegisterDeferredScope(t *testing.T) {
+	root, r := fixtureRegister(t)
+	for id, it := range r.Items {
+		it.Status = "verified"
+		it.Evidence = []string{evidencePath + "/source.md"}
+		it.AppliedTo = []string{"domain/runtime.go:HostedRoot"}
+		r.Items[id] = it
+	}
+	for _, id := range []string{"LR-05", "LR-06"} {
+		it := r.Items[id]
+		it.Status, it.Evidence, it.AppliedTo = "deferred", nil, nil
+		r.Items[id] = it
+	}
+	require.Empty(t, validateRegisterAt(root, r))
+	require.Empty(t, releaseProblems(root, r), "R7 excludes only the deferred backends")
+	for _, id := range []string{"LR-01", "LR-02", "LR-03", "LR-04", "LR-07", "LR-08"} {
+		it := r.Items[id]
+		it.Status = "deferred"
+		r.Items[id] = it
+		require.NotEmpty(t, releaseProblems(root, r), id+" remains a release requirement")
+		it.Status = "verified"
+		r.Items[id] = it
+	}
+	for _, decision := range []string{"", "https://example.org/decision", "missing.md LR-05"} {
+		it := r.Items["LR-05"]
+		it.Decision = decision
+		r.Items["LR-05"] = it
+		require.NotEmpty(t, validateRegisterAt(root, r), "deferred still needs a readable local decision")
+	}
+}
+
+func TestRegisterR7OperatorEvidence(t *testing.T) {
+	r := loadRegister(t)
+	for _, id := range []string{"LR-05", "LR-06"} {
+		assert.Equal(t, "deferred", r.Items[id].Status)
+		assert.Contains(t, r.Items[id].Title, "R7")
+	}
+	for id, control := range map[string]string{"LR-07": "lr07-codex-config-controls.json", "LR-08": "lr08-pi-model-controls.json"} {
+		assert.Contains(t, r.Items[id].Evidence, evidencePath+"/observations/"+control)
+		assert.Contains(t, r.Items[id].Evidence, evidencePath+"/observations/operator-manual-agent-tasks-2026-11-12.md")
+		if len(r.Items[id].AppliedTo) == 0 {
+			assert.NotEqual(t, "verified", r.Items[id].Status, "observations without application do not verify a contract")
+		}
+	}
+	require.Empty(t, validateRegister(r))
+}
+
+func TestRegisterManualOperatorNoteBoundary(t *testing.T) {
+	root, r := fixtureRegister(t)
+	it := r.Items["LR-07"]
+	ref := evidencePath + "/observations/operator-manual-agent-tasks-2026-11-12.md"
+	it.Evidence = []string{ref}
+	r.Items["LR-07"] = it
+	path := filepath.Join(root, ref)
+	require.NoError(t, os.WriteFile(path, []byte("# Operator manual tasks\nCodex and pi completed a file write.\n"), 0600))
+	require.Empty(t, validateRegisterAt(root, r))
+	for _, body := range []string{"", "# Operator\nlr_private-secret", `# Operator\n\u006c\u0072_private-secret`, "# Operator\nBearer foreign-secret"} {
+		require.NoError(t, os.WriteFile(path, []byte(body), 0600))
+		problems := validateRegisterAt(root, r)
+		require.NotEmpty(t, problems)
+		assert.NotContains(t, strings.Join(problems, " "), "private-secret")
+	}
+	other := evidencePath + "/observations/unreviewed.md"
+	require.NoError(t, os.WriteFile(filepath.Join(root, other), []byte("# Unreviewed"), 0600))
+	it.Evidence = []string{other}
+	r.Items["LR-07"] = it
+	require.NotEmpty(t, validateRegisterAt(root, r), "only the R7 operator note is Markdown observation evidence")
+}
+
 func TestVerifiedEvidenceReferences(t *testing.T) {
 	root, r := fixtureRegister(t)
 	it := r.Items["LR-01"]
