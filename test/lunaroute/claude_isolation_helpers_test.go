@@ -32,6 +32,7 @@ type claudeIsolation struct {
 	memory        string // private source-formatted path/nonce, never serialized
 	limits        claudeMainLimitProof
 	effort        claudeMainEffortProof
+	subagent      claudeSubagentProof
 }
 
 func seedClaudeIsolation(home, project string) (*claudeIsolation, error) {
@@ -134,7 +135,7 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 	fail := func() (<-chan string, func() error, error) {
 		return nil, nil, provider.LocalLunaRouteError("config isolation", errAgentEvidence)
 	}
-	if r.isolation == nil || r.isolation.session != "" || r.isolation.validateLaunch(spec) != nil || r.capture.expectClaudeMemory(r.isolation) != nil {
+	if r.isolation == nil || r.isolation.session != "" || r.isolation.validateLaunch(spec) != nil || collectClaudeSubagentSelection(spec) != nil || r.capture.expectClaudeMemory(r.isolation) != nil {
 		return fail()
 	}
 	effort, err := collectClaudeEffortSelection(spec, r.rules, r.effort)
@@ -152,6 +153,11 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 	if err != nil {
 		return fail()
 	}
+	subagent, err := collectClaudeSubagentLifecycle(lines, limits.Session, limits.Model)
+	if err != nil {
+		return fail()
+	}
+	r.isolation.subagent = subagent
 	r.isolation.limits = limits
 	effort.Session = limits.Session
 	r.isolation.effort = effort
@@ -184,6 +190,7 @@ type claudeIsolationObservation struct {
 	Effort          claudeMainEffortProof    `json:"main_effort"`
 	Thinking        claudeMainThinkingProof  `json:"main_thinking"`
 	ProjectMemory   claudeProjectMemoryProof `json:"project_memory"`
+	Subagent        claudeSubagentProof      `json:"subagent_lifecycle"`
 	Inference       []capturedInference      `json:"inference"`
 }
 
@@ -193,6 +200,10 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 		return fail()
 	}
 	if validateCapturedInference(records, result.Model, []string{"main"}) != nil {
+		return fail()
+	}
+	subagent := s.subagent
+	if subagent.Source != claudeSubagentSource || subagent.Version != claudeStartupVersion || subagent.Session != s.session || subagent.HarnessReportedModel != result.Model || !safeAgentField(subagent.TaskID, "") || !safeAgentField(subagent.RunID, "") || !safeAgentField(subagent.ToolUseID, "") {
 		return fail()
 	}
 	limits := s.limits
@@ -236,6 +247,6 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if !tool || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
 		return fail()
 	}
-	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget, request thinking/effort and first-request project memory only; no helper or complete contract verification", Source: claudeIsolationSource,
-		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Effort: effort, Thinking: thinking, ProjectMemory: memory, Inference: records}, nil
+	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget, request thinking/effort, first-request project memory and synchronous subagent harness lifecycle only; no helper routing or complete contract verification", Source: claudeIsolationSource,
+		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Effort: effort, Thinking: thinking, ProjectMemory: memory, Subagent: subagent, Inference: records}, nil
 }

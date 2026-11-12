@@ -90,11 +90,16 @@ func liveBinding(key, model, backend string) provider.ResolvedBinding {
 	tools := []string{"Read", "Write", "Bash"}
 	if backend == "opencode" {
 		tools = append(tools, "Task")
+	} else if backend == "claude-code" {
+		tools = append(tools, "Agent")
 	}
 	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "lunaroute", BaseURL: hostedRoot, ConnectionRef: "live-agent", Model: model, Backend: backend, BackendExplicit: true, Pinned: true, AllowedTools: tools, RevealKey: func(context.Context) (string, error) { return key, nil }})
 }
 
 func agentMissionPromptFor(backend string) string {
+	if backend == "claude-code" {
+		return agentMissionPrompt + " Also use the Agent tool with subagent_type=general-purpose and run_in_background=false to read and verify both files. Your next action depends on its result; wait for successful completion. Do not use remote isolation or resume an old agent."
+	}
 	if backend == "opencode" {
 		return agentMissionPrompt + " Also use the task tool to invoke a synchronous general subagent to read and verify both files. Wait for its successful completion; do not run it in the background."
 	}

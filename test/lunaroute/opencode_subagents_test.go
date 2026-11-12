@@ -283,7 +283,7 @@ func TestAgentEvidenceOpenCodeSubagentMissionInputs(t *testing.T) {
 	binding := liveBinding(captureFixtureKey, "glm-5.3", "opencode")
 	require.Contains(t, binding.AllowedTools, "Task")
 	require.Contains(t, agentMissionPromptFor("opencode"), "synchronous general subagent")
-	require.Equal(t, agentMissionPrompt, agentMissionPromptFor("claude-code"))
+	require.Equal(t, agentMissionPrompt+" Also use the Agent tool with subagent_type=general-purpose and run_in_background=false to read and verify both files. Your next action depends on its result; wait for successful completion. Do not use remote isolation or resume an old agent.", agentMissionPromptFor("claude-code"))
 }
 
 func TestAgentEvidenceOpenCodeSubagentFactorySink(t *testing.T) {

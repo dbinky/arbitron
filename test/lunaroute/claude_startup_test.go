@@ -176,8 +176,10 @@ func TestAgentEvidenceClaudeStartupFactorySink(t *testing.T) {
 				command, err := os.ReadFile(filepath.Join(ws, agentCommandFile))
 				require.NoError(t, err)
 				assert.Equal(t, "12", strings.TrimSpace(string(command)))
-				require.Len(t, result.Steps, 1)
-				assert.Equal(t, "tool_call", result.Steps[0].Kind)
+				require.Len(t, result.Steps, 3)
+				assert.Equal(t, "assistant", result.Steps[0].Kind)
+				assert.Equal(t, "tool_call", result.Steps[1].Kind)
+				assert.Equal(t, "tool_call", result.Steps[2].Kind)
 			}
 			assert.Zero(t, *calls, "local collector failures must not diagnose through outbound probes")
 			versionMarker, markerErr := os.ReadFile(filepath.Join(root, "version-marker"))

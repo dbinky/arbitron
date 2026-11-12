@@ -359,6 +359,18 @@ See [the source/predicate and scope note](sources/lr05-thinking.md) and
 `go test ./test/lunaroute -run TestAgentEvidenceClaudeThinking -count=1`.
 These fixtures establish collection/refusal, not installed thinking support;
 no new live flag, support fact or register status is introduced.
+The same isolated Factory now also consumes the actual JSONL synchronous
+subagent lifecycle: an Agent call, foreground local-agent registration and a
+matching structured completed result, with exact session/task/run/tool/model
+agreement. The Claude mission explicitly permits Agent and requests a
+synchronous general-purpose file verifier. Missing, reordered, background,
+failed, substituted or unsafe records refuse the final private
+`subagent_lifecycle` sink even when authenticated main inference and both files
+succeed. Only `harness_reported_model` is recorded; no request is relabelled as
+a helper. These protocol fixtures deliberately have only main traffic, so they
+cannot establish installed-helper routing. See [the source and remaining
+request-correlation boundary](sources/lr05-subagent-lifecycle.md) and
+`go test ./test/lunaroute -run TestAgentEvidenceClaudeSubagent -count=1`.
 This is **not** the full Claude agent/contract entry point: keychain isolation,
 effective selectors, complete thinking/effort and limit enforcement, installed
 memory and helper verification remain pending. A short request establishes no gateway maximum.

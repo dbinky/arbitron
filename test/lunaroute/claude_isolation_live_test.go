@@ -12,14 +12,14 @@ import (
 )
 
 // A narrow operator experiment, not TestLiveClaudeCodeAgentTask: no helper
-// or complete LR-05 verification is claimed. Project memory, main context and
+// routing or complete LR-05 verification is claimed. Project memory, main context and
 // actual request output budgets are collected without inferring gateway maxima.
 func TestLiveClaudeCodeIsolation(t *testing.T) {
 	key := liveKey(t)
 	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_CLAUDE_MODEL")
 	bin := liveBinary(t, "claude")
 	rules := liveRules(t)
-	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource} {
+	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource} {
 		if _, err := readRepoFile(repoRoot(t), source); err != nil {
 			t.Fatal("isolation/control source unavailable")
 		}

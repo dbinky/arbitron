@@ -256,7 +256,7 @@ done
 [ "${CLAUDE_CODE_EFFORT_LEVEL-}" = '@CLAUDE_EFFORT_LEVEL@' ] || exit 52
 [ "${MAX_THINKING_TOKENS-unset}" = '@CLAUDE_THINKING_ENV@' ] || exit 53
 case " $* " in *' --model glm-5.3 '*) ;; *) exit 49 ;; esac
-case " $* " in *' --allowedTools Read,Write,Bash '*) ;; *) exit 50 ;; esac
+case " $* " in *' --allowedTools Read,Write,Bash,Agent '*) ;; *) exit 50 ;; esac
 prev=; isolated=0
 for a in "$@"; do
  if [ "$prev" = --setting-sources ] && [ -z "$a" ]; then isolated=1; fi
@@ -406,6 +406,18 @@ if [ "$path" = messages ]; then
  }
  case '@MODE@' in startup-absent|startup-late) ;; *) emit_startup ;; esac
  if [ '@MODE@' = startup-duplicate ]; then emit_startup; fi
+ if [ '@MODE@' != subagent-absent ] && [ '@MODE@' != no-tool ]; then
+  echo '{"type":"assistant","session_id":"ses_factory","message":{"content":[{"type":"tool_use","id":"tool_agent","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"verify the files","run_in_background":false}}]}}'
+  background=false; helper_model=glm-5.3; helper_error=false; helper_session=ses_factory
+  case '@MODE@' in
+   subagent-background) background=true ;;
+   subagent-foreign-model) helper_model=glm-5.3-flash ;;
+   subagent-failed) helper_error=true ;;
+   subagent-foreign-session) helper_session=ses_other ;;
+  esac
+  printf '{"type":"system","subtype":"task_started","session_id":"%s","task_id":"agent_one","run_id":"run_one","tool_use_id":"tool_agent","task_type":"local_agent","subagent_type":"general-purpose","is_backgrounded":%s,"spawn_depth":1}\n' "$helper_session" "$background"
+  printf '{"type":"user","session_id":"ses_factory","message":{"content":[{"type":"tool_result","tool_use_id":"tool_agent","is_error":%s,"content":"private report"}]},"tool_use_result":{"status":"completed","agentId":"agent_one","agentType":"general-purpose","resolvedModel":"%s","totalDurationMs":10,"totalTokens":12,"totalToolUseCount":2}}\n' "$helper_error" "$helper_model"
+ fi
  if [ '@MODE@' != no-tool ]; then echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_one","content":"done"}]}}'; fi
  if [ '@MODE@' = startup-late ]; then emit_startup; fi
  echo '{"type":"result","is_error":false,"result":"done","session_id":"ses_factory","modelUsage":{"glm-5.3":{@CLAUDE_CONTEXT@}}}'
