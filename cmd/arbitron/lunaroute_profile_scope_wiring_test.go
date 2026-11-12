@@ -26,7 +26,8 @@ func TestLunaRouteProfileScopeWiring(t *testing.T) {
 	saved, _, err := ds.profileSvc.Create(ctx, p)
 	require.NoError(t, err)
 	// The selection stays unchanged, but connection policy is read afresh.
-	require.NoError(t, ds.connSvc.Update(ctx, provider.Connection{Name: "opaque", Provider: "azure-foundry", BaseURL: "https://d8-azure.example.com", Extras: map[string]string{"api-version": "2024-10-21"}}, nil))
+	azureKey := "azure-scope-key"
+	require.NoError(t, ds.connSvc.Update(ctx, provider.Connection{Name: "opaque", Provider: "azure-foundry", BaseURL: "https://d8-azure.example.com", Extras: map[string]string{"api-version": "2024-10-21"}}, &azureKey))
 	saved.Effort = provider.EffortMedium
 	saved, _, err = ds.profileSvc.Update(ctx, saved)
 	require.NoError(t, err)
