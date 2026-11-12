@@ -245,7 +245,7 @@ func checkLunaRouteProfile(caps LunaRouteCapabilities, p Profile, request Versio
 	if p.Kind == ProfileKindAgent {
 		if strings.TrimSpace(p.Backend) == "" {
 			return &LunaRouteRefusal{Reason: ErrLunaRouteBackendRequired, Model: p.Model,
-				Detail: "set backend to claude-code, opencode, codex or pi explicitly; deployment defaults never choose a LunaRoute backend"}
+				Detail: "set backend to codex or pi explicitly; deployment defaults never choose a LunaRoute backend"}
 		}
 		route.Backend = request.Backend
 	}

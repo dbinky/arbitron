@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -253,6 +254,13 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
 	lunaroute := domprovider.IsLunaRoute(b.Provider)
 	if lunaroute {
+		backend := strings.TrimSpace(b.Backend)
+		if slices.Contains(domprovider.LunaRouteBackends, backend) && !domprovider.LunaRouteBackendEnabled(backend) {
+			if !b.BackendExplicit {
+				return nil, &domprovider.LunaRouteRefusal{Reason: domprovider.ErrLunaRouteBackendRequired, Model: b.Model, Backend: backend, Detail: "set backend to codex or pi explicitly; deployment defaults never choose a LunaRoute backend"}
+			}
+			return nil, &domprovider.LunaRouteRefusal{Reason: domprovider.ErrLunaRouteBackendUnsupported, Model: b.Model, Backend: backend, Detail: fmt.Sprintf("LunaRoute on %s not yet supported in this release; select a supported explicit backend", backend)}
+		}
 		b = domprovider.GuardLunaRouteReveal(b)
 	}
 	inner, err := f.agentProviderFor(b)

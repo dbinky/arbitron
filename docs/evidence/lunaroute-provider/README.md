@@ -9,6 +9,22 @@ missing-metadata escalation is cleared. R3 authorizes exactly `glm-5.3`,
 verification additionally requires the owning runtime/completion evidence;
 release readiness remains pending.
 
+## Released scope — R7 (2026-11-12)
+
+This release supports **chat, codex and pi only**. LR-05/LR-06 are `deferred`
+with their decision references retained. Claude Code/OpenCode saves, node
+backend overrides and Factory launches refuse locally; their adapter emitters
+and adapter unit tests remain for follow-up work. The P3-T5 live entry points
+and their exclusive offline harness have been removed. The historical P3-T5
+and forced-helper sections below describe deferred work, not runnable release
+requirements. The full MCP matrix is also deferred, not a prerequisite.
+
+The operator's genuine 2026-11-12 controls observations and
+`observations/operator-manual-agent-tasks-2026-11-12.md` are referenced by
+LR-07/LR-08. They record completed codex/pi file-write tool tasks. Codex's
+fallback model-metadata warning is non-fatal. These references alone do not
+change a status: final verification also needs reviewed runtime `applied_to`.
+
 ## Collection and population
 
 1. Review the LunaRoute documentation, record source title, URL, access date and
@@ -28,10 +44,11 @@ release readiness remains pending.
    Static facts authorize no completed task/backend claim. The fixed-id table
    separately authorizes R3's three canonical ids.
 3. Run live experiments with explicitly selected, reviewed models. Capture
-   successful terminal content for all inference dialects, and actual
-   main/helper traffic for each binary. Later P2-T8/P3-T5/P4-T1 completion
-   observations alone may populate scoped task/backend support; a short run
-   never proves a maximum limit or reasoning boolean.
+   successful terminal content and completed tasks for the released paths.
+   R7 accepts the committed operator codex/pi tool-task record; forced-helper
+   collectors and Claude Code/OpenCode verification are follow-up work.
+   Completion observations may populate only scoped task/backend support;
+   a short run never proves a maximum limit or reasoning boolean.
 4. Review credential-free artifacts and runtime application together. Update
    register statuses manually after review, not from a mock, launch or skip.
    `applied_to` entries are repository `file:symbol` references. The validator
@@ -42,6 +59,7 @@ release readiness remains pending.
 ### Status rules and current blockers
 
 - `decided`: a fixed contract with a decision reference; verification pending.
+- `deferred`: a decision-referenced contract outside this release (LR-05/LR-06 per R7).
 - `verified`: nonempty existing evidence **and** nonempty runtime application.
 - `escalated`: contradiction/failed requirement, with actionable explanation
   and the decision's on-failure rule applied. Only `verified` passes release.
@@ -52,9 +70,9 @@ population remains with P2-T8/P3-T5/P4-T1. Required facts that a future override
 omits must still fail closed, without a reasoning default or placeholder limit.
 LR-03: R3's three canonical ids are executable; `deepseek-4.1-flash-1017` is a
 weights name, not a served id, and `claude-*-lr*` aliases are revoked.
-P1-T11's final runtime consistency gate still awaits the later backend/helper
-consumers and P4-T7's completed correlated MCP matrix. Offline GREEN and a
-locally skipped live rerun cannot mark those contracts ready.
+P1-T11's final runtime consistency review covers the released paths only.
+It does not await deferred helper collectors or the full MCP matrix. Offline
+GREEN and a locally skipped live rerun cannot mark released contracts ready.
 
 ## Framework and direct gateway regression
 
@@ -101,10 +119,11 @@ go test ./test/lunaroute -run Capture -count=1
 go test -race ./test/lunaroute -run Capture -count=1
 ```
 
-`startInferenceCapture(t, runID, backend, syntheticConnectionHandle, key)` starts
-an owner-private loopback CONNECT proxy for **only** `gw.lunaroute.com:443`.
-Its temporary CA signs only that host. The live upstream is fixed HTTPS with
-normal certificate verification, no ambient proxy and no redirect following.
+The retained `newInferenceCapture` fixture constructor starts an owner-private
+loopback CONNECT proxy for **only** `gw.lunaroute.com:443` using an injected test
+transport. Its temporary CA signs only that host. The unused live constructor
+was removed with the R7-descoped Claude Code/OpenCode collectors; retained
+fixture captures are not live evidence.
 Request headers/bodies, response bodies, records and exchange durations are
 bounded. TLS/read/schema/cap failures poison the whole observation; they cannot
 silently drop an unsuccessful exchange while retaining earlier successes.
@@ -722,32 +741,22 @@ live observation is claimed and no release gate is opened by these tests.
 
 ## Release enforcement
 
-Local missing live inputs explicitly skip with readiness pending. Release mode
-fails missing prerequisites. The eventual completed gate requires source facts,
-all eight verified LR contracts, real runtime application, and the P4-T7
-completed MCP matrix with correlated main/helper evidence:
+Local missing live inputs explicitly skip with readiness pending. The R7 gate
+validates the exact eight-item register schema, including deferred decisions,
+and requires **LR-01–LR-04, LR-07 and LR-08** to be verified with existing
+credential-free evidence and real runtime application:
 
 ```sh
 ARBITRON_LUNAROUTE_RELEASE_GATE=1 go test ./test/lunaroute -run '^TestReleaseGate$' -count=1
-ARBITRON_LUNAROUTE_RELEASE_GATE=1 go test ./cmd/arbitron -run '^TestLunaRouteReleaseAcceptance$' -count=1 -timeout 90m
 ```
 
-P4-T7 owns the second test and the first gate's full matrix-content extension;
-neither is implemented yet. Its independent node/workspace tooling is described
-below, not a completed release validator. Do not treat running a nonexistent
-test or placing an arbitrary file at the artifact path as acceptance. Current pending/escalated
-register entries already fail the first command. Before release also run the
-direct gateway regression in release mode; it must not skip.
-
-The matrix must include chat output, an actually executed reviewed proprietary
-alias with actual vendor evidence/drift, and successful tool tasks on all four
-backends (file + derived command artifact + tool trace). Pins/profile saves or
-process exits alone are not completions. Current MCP-run evidence must cover
-main and helper requests. Acceptance env vocabulary is shared:
-`ARBITRON_LUNAROUTE_E2E_CAPABILITIES`, `_E2E_CHAT_MODEL`, `_E2E_ALIAS_MODEL`,
-`_E2E_CLAUDE_MODEL`, `_E2E_CODEX_MODEL`, `_E2E_OPENCODE_MODEL`, `_E2E_PI_MODEL`,
-`_E2E_UNAVAILABLE_MODEL` (all with the `ARBITRON_LUNAROUTE` prefix), and
-`ARBITRON_LUNAROUTE_ACCEPTANCE=1` for local opt-in MCP runs.
+Pending or escalated released items fail, even when only this test is selected.
+The gate no longer requires a full MCP matrix or Claude Code/OpenCode artifacts.
+The reviewed R7 manual Markdown note is accepted as operator evidence after a
+full secret scan; generated observations remain strict schema-checked JSON.
+Before release the operator also reruns the direct gateway regression; missing
+inputs fail in release mode. No mock, launch, skip or arbitrary artifact can
+change a register status. The partial tooling below is deferred under R7.
 
 ### Partial MCP acceptance tooling (P4-T7)
 

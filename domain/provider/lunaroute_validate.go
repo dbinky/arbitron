@@ -27,13 +27,11 @@ type LunaRouteRoute struct {
 // retaining the existing selection and pin-preflight refusal classifications.
 var ErrLunaRouteModelSpelling = fmt.Errorf("%w: %w: use a reviewed fixed LunaRoute id", ErrInvalidSelection, ErrSpecificVersionUnavailable)
 
-// All four agent backends have LunaRoute execution paths. This map remains the
-// single enablement gate; live verification and release readiness are separate.
+// R7 (2026-11-12) releases LunaRoute agents only on codex and pi. The retained
+// claude-code/opencode emitters remain disabled at this shared production gate.
 var lunaRouteEnabledBackends = map[string]bool{
-	workflow.BackendClaudeCode: true,
-	workflow.BackendOpencode:   true,
-	workflow.BackendCodex:      true,
-	workflow.BackendPi:         true,
+	workflow.BackendCodex: true,
+	workflow.BackendPi:    true,
 }
 
 // LunaRouteBackendEnabled reports whether backend may carry LunaRoute routes.
@@ -91,7 +89,7 @@ func checkLunaRouteRoute(caps LunaRouteCapabilities, r LunaRouteRoute, requireEn
 	switch r.Kind {
 	case ProfileKindAgent:
 		if strings.TrimSpace(r.Backend) == "" {
-			return refuse(ErrLunaRouteBackendRequired, "set backend to claude-code, opencode, codex or pi explicitly; deployment defaults never choose a LunaRoute backend")
+			return refuse(ErrLunaRouteBackendRequired, "set backend to codex or pi explicitly; deployment defaults never choose a LunaRoute backend")
 		}
 		if !slices.Contains(LunaRouteBackends, r.Backend) || requireEnabled && !LunaRouteBackendEnabled(r.Backend) {
 			return refuse(ErrLunaRouteBackendUnsupported, fmt.Sprintf("LunaRoute on %s not yet supported in this release; select a supported explicit backend", r.Backend))
