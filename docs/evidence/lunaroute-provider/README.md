@@ -129,9 +129,12 @@ values, hashes, prompts, tool arguments/results, raw response bodies or stderr.
 chat completions and Responses (including `response.model`); an absent reported
 model stays absent. Messages streams require a start before content/deltas,
 no content or repeated finish after the stop reason, and a final message stop;
-pings do not count as content or completion. Reordered streams cannot publish
-a completed agent observation even when tool/workspace proofs exist. A successful
-capture is routing evidence only: the owning experiment must independently
+pings do not count as content or completion. Chat streams track each choice
+index independently: every observed choice must finish before `[DONE]`, with
+no later updates to a finished choice or repeated indexes in one chunk.
+Usage-only empty-choice trailers are accepted only after all choices finish.
+Reordered/incomplete streams cannot publish a completed agent/backend observation
+even when tool/workspace proofs exist. A successful capture is routing evidence only: the owning experiment must independently
 assert the finished tool task and workspace sink.
 
 Helper evidence additionally requires the backend experiment's actual forced

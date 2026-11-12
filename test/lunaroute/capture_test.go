@@ -835,6 +835,7 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 	var data []string
 	event := ""
 	terminal, finished, started := false, false, false
+	chatChoices := make(map[int]bool)
 	consume := func() bool {
 		if len(data) == 0 {
 			return true
@@ -871,17 +872,30 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 				}
 			}
 			var choices []struct {
+				Index        int     `json:"index"`
 				FinishReason *string `json:"finish_reason"`
 			}
 			if json.Unmarshal(object["choices"], &choices) != nil || choices == nil {
 				return false
 			}
+			if len(choices) == 0 {
+				return finished
+			}
+			seen := make(map[int]bool, len(choices))
 			for _, choice := range choices {
+				if choice.Index < 0 || seen[choice.Index] || chatChoices[choice.Index] {
+					return false
+				}
+				seen[choice.Index] = true
 				if choice.FinishReason != nil && !chatStopped(*choice.FinishReason) {
 					return false
 				}
+				chatChoices[choice.Index] = choice.FinishReason != nil
 			}
-			finished = finished || chatFinished(object)
+			finished = true
+			for _, stopped := range chatChoices {
+				finished = finished && stopped
+			}
 		case "/v1/messages":
 			switch typ {
 			case "message_start":

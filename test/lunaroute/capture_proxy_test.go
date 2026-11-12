@@ -228,6 +228,106 @@ func TestCaptureMessagesLifecycleToObservation(t *testing.T) {
 	}
 }
 
+// The helper fixture checks the publisher boundary only, not installed-helper
+// behavior. The main record must come from the actual authenticated TLS stream.
+func TestCaptureChatLifecycleToObservation(t *testing.T) {
+	chunk := func(choices string) string {
+		return `data: {"model":"glm-5.3","choices":` + choices + "}\n\n"
+	}
+	content := chunk(`[{"index":0,"delta":{"content":"private-response"},"finish_reason":null}]`)
+	finish := chunk(`[{"index":0,"delta":{},"finish_reason":"stop"}]`)
+	usage := `data: {"model":"glm-5.3","choices":[],"usage":{"completion_tokens":2}}` + "\n\n"
+	done := "data: [DONE]\n\n"
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"ordered", content + finish + done, true},
+		{"usage-trailer", content + finish + usage + done, true},
+		{"tool-terminal", chunk(`[{"index":0,"delta":{},"finish_reason":"tool_calls"}]`) + done, true},
+		{"interleaved-choices", chunk(`[{"index":0,"finish_reason":"stop"},{"index":1,"finish_reason":null}]`) + chunk(`[{"index":1,"finish_reason":"stop"}]`) + done, true},
+		{"sequential-choices", finish + chunk(`[{"index":1,"finish_reason":null}]`) + chunk(`[{"index":1,"finish_reason":"stop"}]`) + usage + done, true},
+		{"content-after-finish", content + finish + content + done, false},
+		{"duplicate-finish", finish + finish + done, false},
+		{"unfinished-choice", chunk(`[{"index":0,"finish_reason":"stop"}]`) + chunk(`[{"index":1,"finish_reason":null}]`) + done, false},
+		{"partial-terminal", chunk(`[{"index":0,"finish_reason":"stop"},{"index":1,"finish_reason":null}]`) + done, false},
+		{"duplicate-choice-index", chunk(`[{"index":0,"finish_reason":null},{"index":0,"finish_reason":"stop"}]`) + done, false},
+		{"negative-choice-index", chunk(`[{"index":-1,"finish_reason":"stop"}]`) + done, false},
+		{"usage-before-finish", content + usage + finish + done, false},
+		{"missing-terminal", content + done, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, ws, in := backendEvidenceFixture(t, "pi", false)
+			var calls atomic.Int32
+			c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var body struct {
+					Model     string
+					Stream    bool
+					MaxTokens int `json:"max_tokens"`
+					Messages  []struct{ Role, Content string }
+				}
+				if r.Method != "POST" || r.Host != captureHost || r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer "+captureFixtureKey || json.NewDecoder(r.Body).Decode(&body) != nil || body.Model != in.Model || !body.Stream || body.MaxTokens != discoveryChatTokens || len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content != "private-nonce" {
+					t.Error("missing selected credential-bearing request")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, tc.body)
+			}, captureLimits{})
+			c.backend = in.Backend
+			requestBody, err := json.Marshal(map[string]any{"model": in.Model, "stream": true, "max_tokens": discoveryChatTokens, "messages": []map[string]string{{"role": "user", "content": "private-nonce"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest("POST", hostedRoot+"/v1/chat/completions", strings.NewReader(string(requestBody)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+captureFixtureKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := captureClient(t, c, true).Do(req)
+			if err != nil {
+				t.Fatal("captured request failed")
+			}
+			_, readErr := io.Copy(io.Discard, resp.Body)
+			closeErr := resp.Body.Close()
+			if readErr != nil || closeErr != nil || resp.StatusCode != http.StatusOK || calls.Load() != 1 {
+				t.Fatal("fixture did not exercise a complete HTTP response")
+			}
+			in.Records = append(c.Records(), in.Records[1])
+			in.FinishedAt = time.Now().UTC()
+			err = publishBackendEvidence(root, ws, captureFixtureKey, "chat-stream.json", in)
+			path := filepath.Join(root, evidencePath, "observations/chat-stream.json")
+			if !tc.valid {
+				if err == nil {
+					t.Fatal("invalid chat lifecycle published as completed evidence")
+				}
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Fatal("rejected stream wrote an observation")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sink backendTaskObservation
+			if json.Unmarshal(raw, &sink) != nil || len(sink.Inference) != 2 || sink.Inference[0].Path != "/v1/chat/completions" || sink.Inference[0].RequestedModel != in.Model || !slices.Equal(sink.Inference[0].ReportedModels, []string{in.Model}) || !sink.Inference[0].AuthMatchesSelected || !sink.Inference[0].Completed || !sink.Completed || !sink.FileOK || !sink.CommandOK || !sink.HomesUnchanged || !sink.PrivateCleaned {
+				t.Fatal("persisted observation lost actual completion/model proof")
+			}
+			for _, secret := range []string{captureFixtureKey, "private-response", "private-nonce"} {
+				if strings.Contains(string(raw), secret) {
+					t.Fatal("raw gateway content persisted")
+				}
+			}
+		})
+	}
+}
+
 func TestCaptureRejectsWrongRouteOrAuth(t *testing.T) {
 	for _, tc := range []struct{ name, host, key, extra string }{{"host", "foreign.example", captureFixtureKey, ""}, {"key", "gw.lunaroute.com", "lr_wrong", ""}, {"extra", "gw.lunaroute.com", captureFixtureKey, "x-api-key"}, {"other-auth", "gw.lunaroute.com", captureFixtureKey, "LUNAROUTE-API-KEY"}} {
 		t.Run(tc.name, func(t *testing.T) {
