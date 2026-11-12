@@ -774,3 +774,45 @@ credentials and completed positive tasks are separate evidence. Retain no raw
 key/body/logs in artifacts. Review server logs successfully for leakage; an
 ignored read error is not a secrecy check. Final verification is `go test ./...`
 and `go vet ./...`. Neither instructions nor a local skip is readiness evidence.
+
+## Pi resolved-model controls (inference-free, partial LR-08)
+
+`TestLivePiModelControls` constructs an isolated installed-binary RPC experiment,
+not the still-incomplete `TestLivePiLunaRoute` completed-task experiment:
+
+```sh
+ARBITRON_LUNAROUTE_E2E_PI_MODEL=glm-5.3 \
+  go test ./test/lunaroute -run '^TestLivePiModelControls$' -count=1 -v
+```
+
+No real key is needed or consumed: the sole RPC command is `get_state`, with a
+synthetic env credential and offline mode. The existing optional
+`ARBITRON_LUNAROUTE_E2E_CAPABILITIES` file is loaded through production loading;
+its selected context/output/reasoning must match the committed R2 snapshot.
+There is no automatic model selection. Missing explicit selection skips locally
+with readiness pending and fails in release mode. The reviewed collector is
+source-bound to Pi 1.5.2 (not a production runtime gate); rerun source review and
+this experiment after upgrades.
+
+The actual same-executable/env/cwd version and RPC outputs must prove the
+selected canonical provider/model, hosted base URL, API, text-only input,
+independent reasoning and exact limits in an empty idle session. Private
+conflicting user/project settings and subscription auth are seeded; their
+bounded bytes/modes and the relocated definition must remain unchanged.
+Successful cleanup precedes `observations/lr08-pi-model-controls.json`, written
+privately/exclusively with only safe projections and source references.
+Failures write nothing. Delete/review any previous artifact explicitly before
+rerunning; never overwrite a prior observation silently.
+
+Ordinary `TestPiModelControlsInstalledSchema` checks all three canonical models
+against the installed binary using the actual default table and R2 source,
+without publishing repository artifacts. Subprocess rejection/final-sink tests
+are selected by `go test ./test/lunaroute -run '^TestPiModelControls' -count=1`.
+See [source provenance and precise scope](sources/lr08-model-controls.md).
+
+This proves resolved **RPC** configuration only. It does not prove Bearer auth,
+that subscription files were never read, full trust/isolation, the emitted
+JSON-mode mission's controls, enforced maxima, effort, compaction/helper
+routing or completed tool work. It is not a completed-backend/config-reference
+artifact for the release matrix. No supported fact or register status changes;
+P4-T1's full collectors/operator observations and release readiness stay pending.

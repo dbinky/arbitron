@@ -35,6 +35,15 @@ var errBackendEvidence = errors.New("backend evidence incomplete or unsafe; rele
 func TestLiveCodexHelp(t *testing.T) { runBackendHelpExperiment(t, "codex") }
 func TestLivePiHelp(t *testing.T)    { runBackendHelpExperiment(t, "pi") }
 
+// This inference-free experiment has a synthetic credential and cannot verify
+// Bearer auth, tool work, helper routing, or the complete LR-08 contract.
+func TestLivePiModelControls(t *testing.T) {
+	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_PI_MODEL")
+	if err := publishPiModelControlExperiment(context.Background(), repoRoot(t), liveBinary(t, "pi"), model, liveRules(t), t.TempDir(), "lr08-pi-model-controls.json"); err != nil {
+		t.Fatal(errBackendEvidence)
+	}
+}
+
 func runBackendHelpExperiment(t *testing.T, backend string) {
 	t.Helper()
 	bin := liveBinary(t, backend)
