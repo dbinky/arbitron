@@ -2,7 +2,6 @@ package lunaroute_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -30,6 +29,7 @@ type claudeIsolation struct {
 	home, project string
 	before        backendHomeSnapshot
 	session       string
+	limits        claudeMainLimitProof
 }
 
 func seedClaudeIsolation(home, project string) (*claudeIsolation, error) {
@@ -118,6 +118,7 @@ func (s *claudeIsolation) validateLaunch(spec claudecli.RunSpec) error {
 type claudeIsolationRunner struct {
 	next      claudecli.CommandRunner
 	isolation *claudeIsolation
+	rules     provider.CapabilityRules
 }
 
 func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -131,16 +132,15 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 	if err != nil {
 		return nil, nil, errAgentEvidence
 	}
-	if r.isolation.unchanged() != nil || validateClaudeStartup(spec, claudeStartupVersion, lines) != nil {
+	if r.isolation.unchanged() != nil {
 		return fail()
 	}
-	var terminal struct {
-		Session string `json:"session_id"`
-	}
-	if json.Unmarshal([]byte(lines[len(lines)-1]), &terminal) != nil || !safeAgentField(terminal.Session, "") {
+	limits, err := collectClaudeMainLimits(spec, r.rules, lines)
+	if err != nil {
 		return fail()
 	}
-	r.isolation.session = terminal.Session
+	r.isolation.limits = limits
+	r.isolation.session = limits.Session
 	out := make(chan string, len(lines))
 	for _, line := range lines {
 		out <- line
@@ -150,7 +150,7 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 }
 
 func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.CapabilityRules, client *http.Client, isolation *claudeIsolation) *providersadapter.Factory {
-	runner := claudeIsolationRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, isolation: isolation}
+	runner := claudeIsolationRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, isolation: isolation, rules: rules}
 	return providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeAgentConfig: claudecli.Config{BinaryPath: bin, WorkspaceRoot: ws, Runner: runner, Timeout: agentExperimentTimeout,
 			MaxResponseBytes: captureBodyLimit, AllowedTools: []string{"Read", "Write", "Bash"}, CapabilityRules: rules},
@@ -159,13 +159,14 @@ func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.Capabil
 }
 
 type claudeIsolationObservation struct {
-	Scope           string              `json:"scope"`
-	Source          string              `json:"source"`
-	Version         string              `json:"version"`
-	Session         string              `json:"session"`
-	ConfigUnchanged bool                `json:"config_unchanged"`
-	AuthUnchanged   bool                `json:"auth_unchanged"`
-	Inference       []capturedInference `json:"inference"`
+	Scope           string               `json:"scope"`
+	Source          string               `json:"source"`
+	Version         string               `json:"version"`
+	Session         string               `json:"session"`
+	ConfigUnchanged bool                 `json:"config_unchanged"`
+	AuthUnchanged   bool                 `json:"auth_unchanged"`
+	Limits          claudeMainLimitProof `json:"main_limits"`
+	Inference       []capturedInference  `json:"inference"`
 }
 
 func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInference, result *engine.AgentResult, started, finished time.Time) (claudeIsolationObservation, error) {
@@ -176,10 +177,16 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if validateCapturedInference(records, result.Model, []string{"main"}) != nil {
 		return fail()
 	}
+	limits := s.limits
+	if limits.Source != claudeLimitsSource || limits.Version != claudeStartupVersion || limits.Session != s.session || limits.Model != result.Model || limits.ContextTokens <= 0 || limits.RequestedOutputTokens <= 0 {
+		return fail()
+	}
+	limits.RequestIDs = nil
 	for _, record := range records {
-		if record.Backend != "claude-code" || record.Path != "/v1/messages" || record.StartedAt.Before(started) || record.FinishedAt.After(finished) {
+		if record.Backend != "claude-code" || record.Path != "/v1/messages" || record.StartedAt.Before(started) || record.FinishedAt.After(finished) || record.MaxTokens != limits.RequestedOutputTokens {
 			return fail()
 		}
+		limits.RequestIDs = append(limits.RequestIDs, record.RequestID)
 	}
 	tool := false
 	for _, step := range result.Steps {
@@ -195,6 +202,6 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if !tool || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
 		return fail()
 	}
-	return claudeIsolationObservation{Scope: "main config/auth isolation only; no helper, effective-limit, memory or complete contract verification", Source: claudeIsolationSource,
-		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Inference: records}, nil
+	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context and requested output budget only; no helper, memory or complete contract verification", Source: claudeIsolationSource,
+		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Inference: records}, nil
 }

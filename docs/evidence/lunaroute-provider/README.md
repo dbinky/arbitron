@@ -320,9 +320,18 @@ cleanup. Run with the existing key and explicit `_E2E_CLAUDE_MODEL` inputs:
 Missing input skips locally with readiness pending and fails in release mode.
 See [the partial source/scope note](sources/lr05-isolation.md) and
 `TestAgentEvidenceClaudeIsolation` for real Factory/TLS/private-JSON refusal
-fixtures. This is **not** the full Claude agent/contract entry point: keychain
-isolation, effective selectors/limits/effort, memory and helper verification
-remain pending. No operator observation or support/status change is inferred.
+fixtures. The same experiment also joins the final usage's **resolved context
+window** to the loaded table and actual emitted env, and the real captured
+Messages **`max_tokens`** to its output fact. Its private `main_limits` projection
+names the exact current request ids/session/version. Missing/drifting feeds
+refuse publication despite successful files/inference. Usage `maxOutputTokens`
+is a catalog default, not the env-adjusted request budget; it is not used as
+output-control proof. See [the inspected producer note](sources/lr05-limits.md)
+and `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(MainLimitValidation|LimitsFactorySink)$' -count=1`.
+This is **not** the full Claude agent/contract entry point: keychain isolation,
+effective selectors/effort, complete limit enforcement, memory and helper
+verification remain pending. A short request establishes no gateway maximum.
+No operator observation or support/status change is inferred.
 
 The Factory's experiment runner now queries OpenCode `debug config --pure`
 with the actual adapter-emitted executable/env/cwd before launching each mission.

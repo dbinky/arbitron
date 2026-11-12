@@ -54,6 +54,7 @@ type capturedInference struct {
 	Host                string             `json:"host"`
 	Path                string             `json:"path"`
 	RequestedModel      string             `json:"requested_model"`
+	MaxTokens           int                `json:"max_tokens,omitempty"`
 	ReportedModels      []string           `json:"reported_models"`
 	AuthMatchesSelected bool               `json:"auth_matches_selected"`
 	AuthHeaderNames     []string           `json:"auth_header_names"`
@@ -408,6 +409,15 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		return reject("request_schema")
 	}
 	record.RequestedModel = payload.Model
+	if r.URL.Path == "/v1/messages" {
+		var budget struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		if json.Unmarshal(body, &budget) != nil {
+			return reject("request_schema")
+		}
+		record.MaxTokens = budget.MaxTokens
+	}
 	ctx, cancel := context.WithTimeout(c.ctx, c.limits.Timeout)
 	defer cancel()
 	upstream, err := http.NewRequestWithContext(ctx, "POST", hostedRoot+r.URL.Path, bytes.NewReader(body))

@@ -35,9 +35,10 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
 		firstRequest.Do(func() { fixtureStarted = time.Now().UTC() })
 		var body struct {
-			Model    string `json:"model"`
-			Stream   bool   `json:"stream"`
-			Messages []struct {
+			Model     string `json:"model"`
+			Stream    bool   `json:"stream"`
+			MaxTokens int    `json:"max_tokens"`
+			Messages  []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
@@ -50,6 +51,20 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 			t.Error("Factory mission did not feed authenticated model/prompt to inference")
 			w.WriteHeader(400)
 			return
+		}
+		if backend == "claude-code" {
+			wantBudget := 32768
+			if mode == "limits-output-absent" {
+				wantBudget = 0
+			}
+			if mode == "limits-output-drift" {
+				wantBudget = 32767
+			}
+			if body.MaxTokens != wantBudget {
+				t.Error("Claude request did not feed the emitted output budget")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if backend == "opencode" && len(body.Messages) == 3 {
@@ -243,7 +258,7 @@ case '@MODE@' in
 esac
 session_header=
 case '@MODE@' in correlation-*) session_header='X-Opencode-Session-Id: ses_factory' ;; esac
-/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d '{"model":"glm-5.3","messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d '{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
 case '@MODE@' in correlation-*)
  parent=ses_factory
  if [ '@MODE@' = correlation-parent ]; then parent=ses_other; fi
@@ -292,7 +307,7 @@ if [ "$path" = messages ]; then
  if [ '@MODE@' = startup-duplicate ]; then emit_startup; fi
  if [ '@MODE@' != no-tool ]; then echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_one","content":"done"}]}}'; fi
  if [ '@MODE@' = startup-late ]; then emit_startup; fi
- echo '{"type":"result","is_error":false,"result":"done","session_id":"ses_factory","modelUsage":{"glm-5.3":{}}}'
+ echo '{"type":"result","is_error":false,"result":"done","session_id":"ses_factory","modelUsage":{"glm-5.3":{@CLAUDE_CONTEXT@}}}'
 else
  if [ '@MODE@' != no-tool ]; then echo '{"type":"tool_use","sessionID":"ses_factory","part":{"sessionID":"ses_factory","messageID":"msg_answer","type":"tool","tool":"bash","state":{"status":"completed"}}}'; fi
  echo '{"type":"text","sessionID":"ses_factory","part":{"id":"prt_text","messageID":"msg_answer","sessionID":"ses_factory","type":"text","text":"done"}}'
@@ -314,7 +329,23 @@ fi
 	}
 	compactionBody, err := json.Marshal(map[string]any{"model": "glm-5.3", "stream": mode == "correlation-compaction-stream", "messages": []map[string]string{{"role": "system", "content": string(compactionSystem)}, {"role": "user", "content": openCodeCompactionPrefix + "[User]: " + compactionPrompt + "\n</conversation>\n\n" + openCodeCompactionInstruction + "\n\n" + string(compactionTemplate)}}})
 	require.NoError(t, err)
-	script := strings.NewReplacer("@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	budget, contextField := "", `"contextWindow":202752,"maxOutputTokens":8192`
+	if backend == "claude-code" {
+		budget = `"max_tokens":32768,`
+	}
+	switch mode {
+	case "limits-output-absent":
+		budget = ""
+	case "limits-output-drift":
+		budget = `"max_tokens":32767,`
+	case "limits-context-absent":
+		contextField = `"maxOutputTokens":8192`
+	case "limits-context-drift":
+		contextField = `"contextWindow":202753,"maxOutputTokens":8192`
+	case "limits-context-secret":
+		contextField = `"contextWindow":"` + captureFixtureKey + `"`
+	}
+	script := strings.NewReplacer("@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)
