@@ -9,13 +9,16 @@
 
 ## Open
 
-- **[ESCALATION] Area 1 / single:1/review2 — the remaining approval prerequisites are G12 and G13.**
-  `adapter/mcp/tools_connection.go:connectionUpdateHandler` must distinguish an explicit empty key from omission and refuse it.
-  `domain/provider/lunaroute_connection.go:PrepareLunaRouteCreate` / `PrepareLunaRouteUpdate` must reject an explicitly
-  supplied `lr_` credential for a foreign provider, including resubmitting the existing key on switch-away.
-  The box requires real MCP → SQLite tests proving both refusals leave metadata, revision and ciphertext unchanged.
-  No external fixture or dependency is missing; permitting either behavior instead requires an explicit operator decision
-  narrowing Area 1's promise. G1's omitted-key/concurrent-switch defect is fixed this pass; stop after this one fix.
+- [ ] **G14 (Area 1, blocking single:1/review2): f0690de regressed `cmd/arbitron`.**
+  `cmd/arbitron/lunaroute_profile_scope_wiring_test.go:TestLunaRouteProfileScopeWiring` (line 29) switches `opaque`
+  lunaroute → azure-foundry with a nil key and now fails with `ErrLunaRouteDestinationKeyRequired`; green at f0690de~1.
+  The G1 rule is intended — update the test to pass a destination key, then run the WHOLE package
+  `go test ./cmd/arbitron -count=1` (the pass ran only a `-run` filter and missed it). Grep other callers of
+  `connSvc.Update`/`connStore.Update` that switch away from lunaroute with nil.
+- **[ESCALATION] G12 (Area 1): should MCP `api_key: ""` on a same-provider lunaroute update be refused or mean "keep"?**
+  Approver ruling: not a review2 blocker — `connectionUpdateHandler` maps "" to omission for every provider (shipped
+  behaviour) and no invalid key is persisted; an operator must decide whether to narrow that. G13 (explicit `lr_` key on
+  a foreign provider) is a sibling defect under rule 5 — fix it as its own gap, but it does not gate this box.
 
 - [ ] **G2 (Area 2, high): inverting `BackendExplicit` in the dynamic resolver turns no test red.**
   The mutation run kept `harden:adapter/provider/dynamic.go`: negating `strings.TrimSpace(p.Backend) != ""` at
@@ -84,6 +87,12 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 1 / single:1/review2 — withheld by approver against f0690de.** Full `go test ./cmd/arbitron -count=1` FAILs
+  `TestLunaRouteProfileScopeWiring` (G14); it passes at f0690de~1. `domain/provider`, `adapter/sqlite`, `adapter/mcp` ok;
+  `go build ./...` ok. Otherwise checks 2–4 look covered (`TestConnectionRepo_SwitchAwayFromLunaRouteRequiresNewKey`,
+  `..._LunaRouteConcurrentSwitchDoesNotLeakKeyToForeignProvider`, endpoint `%2F` case). Next approver: re-run the full
+  package, then judge checks 1–5; G12/G13 are not grounds to withhold.
 
 - **Area 1 / single:1/review2 — failure-lens refinement (no approval).**
   Baseline: the initial focused provider/sqlite/mcp/cmd tests passed before edits; no pre-existing area failure observed.
