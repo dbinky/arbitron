@@ -97,9 +97,7 @@ func collectClaudeEffortSelection(spec claudecli.RunSpec, rules provider.Capabil
 			return fail()
 		}
 	}
-	if _, exists := env["MAX_THINKING_TOKENS"]; exists {
-		// EffortNone requires a separate effective-thinking proof, not mere
-		// absence of output_config.effort on a model without effort support.
+	if _, exists := env["MAX_THINKING_TOKENS"]; exists && selected != provider.EffortNone {
 		return fail()
 	}
 	if selected == provider.EffortDefault {
@@ -109,7 +107,14 @@ func collectClaudeEffortSelection(spec claudecli.RunSpec, rules provider.Capabil
 	} else {
 		facts, ok := rules.LunaRouteModel(model)
 		effort := facts.Effort("claude-code")
-		if !claudeGradedEffort(string(selected)) || !ok || !effort.Known || !slices.Contains(effort.Levels, selected) || env["CLAUDE_CODE_EFFORT_LEVEL"] != string(selected) {
+		if !ok || !effort.Known || !slices.Contains(effort.Levels, selected) {
+			return fail()
+		}
+		if selected == provider.EffortNone {
+			if _, exists := env["CLAUDE_CODE_EFFORT_LEVEL"]; exists || env["MAX_THINKING_TOKENS"] != "0" {
+				return fail()
+			}
+		} else if !claudeGradedEffort(string(selected)) || env["CLAUDE_CODE_EFFORT_LEVEL"] != string(selected) {
 			return fail()
 		}
 	}
@@ -118,7 +123,7 @@ func collectClaudeEffortSelection(spec claudecli.RunSpec, rules provider.Capabil
 
 func joinClaudeRequestEffort(proof claudeMainEffortProof, session, model string, records []capturedInference) (claudeMainEffortProof, error) {
 	fail := func() (claudeMainEffortProof, error) { return claudeMainEffortProof{}, errAgentEvidence }
-	if proof.Source != claudeEffortSource || proof.Version != claudeStartupVersion || proof.Session != session || proof.Model != model || len(records) == 0 || proof.Selected != provider.EffortDefault && !claudeGradedEffort(string(proof.Selected)) {
+	if proof.Source != claudeEffortSource || proof.Version != claudeStartupVersion || proof.Session != session || proof.Model != model || len(records) == 0 || proof.Selected != provider.EffortDefault && proof.Selected != provider.EffortNone && !claudeGradedEffort(string(proof.Selected)) {
 		return fail()
 	}
 	proof.RequestIDs, proof.ObservedLevels = nil, nil
@@ -127,7 +132,7 @@ func joinClaudeRequestEffort(proof claudeMainEffortProof, session, model string,
 			return fail()
 		}
 		level := record.ClaudeEffort.Level
-		if level != "" && !claudeGradedEffort(level) || proof.Selected != provider.EffortDefault && level != string(proof.Selected) {
+		if level != "" && !claudeGradedEffort(level) || claudeGradedEffort(string(proof.Selected)) && level != string(proof.Selected) {
 			return fail()
 		}
 		proof.RequestIDs = append(proof.RequestIDs, record.RequestID)

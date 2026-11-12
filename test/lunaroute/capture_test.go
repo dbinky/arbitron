@@ -45,28 +45,29 @@ var errCaptureInvalid = errors.New("inference capture incomplete or invalid")
 // Operation is supplied by the backend-specific lifecycle parser, never inferred
 // from a user label, argv, configured model or a successful process exit.
 type capturedInference struct {
-	RunID               string               `json:"run_id"`
-	Backend             string               `json:"backend"`
-	Connection          string               `json:"connection"`
-	Category            string               `json:"category"`
-	RequestID           string               `json:"request_id"`
-	Method              string               `json:"method"`
-	Host                string               `json:"host"`
-	Path                string               `json:"path"`
-	RequestedModel      string               `json:"requested_model"`
-	MaxTokens           int                  `json:"max_tokens,omitempty"`
-	ClaudeProjectMemory bool                 `json:"claude_project_memory,omitempty"`
-	ClaudeEffort        *claudeRequestEffort `json:"claude_effort,omitempty"`
-	ReportedModels      []string             `json:"reported_models"`
-	AuthMatchesSelected bool                 `json:"auth_matches_selected"`
-	AuthHeaderNames     []string             `json:"auth_header_names"`
-	Completed           bool                 `json:"completed"`
-	StartedAt           time.Time            `json:"started_at"`
-	FinishedAt          time.Time            `json:"finished_at"`
-	Failure             string               `json:"failure,omitempty"`
-	Operation           *capturedOperation   `json:"operation,omitempty"`
-	SessionID           string               `json:"session_id,omitempty"`
-	ParentSessionID     string               `json:"parent_session_id,omitempty"`
+	RunID               string                 `json:"run_id"`
+	Backend             string                 `json:"backend"`
+	Connection          string                 `json:"connection"`
+	Category            string                 `json:"category"`
+	RequestID           string                 `json:"request_id"`
+	Method              string                 `json:"method"`
+	Host                string                 `json:"host"`
+	Path                string                 `json:"path"`
+	RequestedModel      string                 `json:"requested_model"`
+	MaxTokens           int                    `json:"max_tokens,omitempty"`
+	ClaudeProjectMemory bool                   `json:"claude_project_memory,omitempty"`
+	ClaudeEffort        *claudeRequestEffort   `json:"claude_effort,omitempty"`
+	ClaudeThinking      *claudeRequestThinking `json:"claude_thinking,omitempty"`
+	ReportedModels      []string               `json:"reported_models"`
+	AuthMatchesSelected bool                   `json:"auth_matches_selected"`
+	AuthHeaderNames     []string               `json:"auth_header_names"`
+	Completed           bool                   `json:"completed"`
+	StartedAt           time.Time              `json:"started_at"`
+	FinishedAt          time.Time              `json:"finished_at"`
+	Failure             string                 `json:"failure,omitempty"`
+	Operation           *capturedOperation     `json:"operation,omitempty"`
+	SessionID           string                 `json:"session_id,omitempty"`
+	ParentSessionID     string                 `json:"parent_session_id,omitempty"`
 }
 
 type capturedOperation struct {
@@ -425,6 +426,10 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 			if err != nil {
 				return reject("request_schema")
 			}
+			record.ClaudeThinking, err = parseClaudeRequestThinking(body)
+			if err != nil {
+				return reject("request_schema")
+			}
 		}
 		c.mu.Lock()
 		if c.backend == "claude-code" && id == 1 {
@@ -545,6 +550,10 @@ func (c *inferenceCapture) Records() []capturedInference {
 func cloneCaptureRecord(r capturedInference) capturedInference {
 	r.ReportedModels = slices.Clone(r.ReportedModels)
 	r.AuthHeaderNames = slices.Clone(r.AuthHeaderNames)
+	if r.ClaudeThinking != nil {
+		thinking := *r.ClaudeThinking
+		r.ClaudeThinking = &thinking
+	}
 	if r.Operation != nil {
 		op := *r.Operation
 		op.RequestIDs = slices.Clone(op.RequestIDs)

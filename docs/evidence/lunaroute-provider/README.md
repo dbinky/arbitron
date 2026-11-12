@@ -345,10 +345,20 @@ graded level refuses the final private `main_effort` sink despite completed
 inference/files. Default records only the observed value/absence, never an
 inferred exact effort. Current production Claude effort facts stay unknown;
 explicit levels are tested with distinctive offline facts, not invented live
-support. Per-message overrides and `none` require separate effective-control
-proof and are refused by this narrow experiment. See [the versioned source and
+support. Per-message overrides remain refused. See [the versioned source and
 scope](sources/lr05-effort.md) and
 `go test ./test/lunaroute -run TestAgentEvidenceClaudeEffort -count=1`.
+The same experiment now also records actual Messages thinking type/budget in
+`main_thinking`, with exact source/version/session/model/request ids. Explicit
+`none` requires known same-table/emitted-zero-budget agreement **and** an actual
+`thinking.type: disabled` field on every request. Absent/adaptive/enabled fields
+or a lost capture feed cannot publish it despite completed files/inference.
+Default/graded selections record observed controls only. The installed source
+conditionally omits the disabled field; omission cannot prove reasoning off.
+See [the source/predicate and scope note](sources/lr05-thinking.md) and
+`go test ./test/lunaroute -run TestAgentEvidenceClaudeThinking -count=1`.
+These fixtures establish collection/refusal, not installed thinking support;
+no new live flag, support fact or register status is introduced.
 This is **not** the full Claude agent/contract entry point: keychain isolation,
 effective selectors, complete thinking/effort and limit enforcement, installed
 memory and helper verification remain pending. A short request establishes no gateway maximum.

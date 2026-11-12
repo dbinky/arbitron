@@ -43,8 +43,8 @@ into `liveClaudeIsolationFactoryWithClient`. Its guard consumes the real
 adapter-emitted launch, the same capability rules and existing accepted
 startup/version/final-session feed. Explicit graded effort requires a known
 backend effort fact containing that exact level and an exact matching env
-value; command-line effort/thinking overrides and thinking-budget env are
-refused. This experiment does not change the emitted launch.
+value; command-line effort/thinking overrides and unselected thinking-budget
+env are refused. This experiment does not change the emitted launch.
 
 The real CONNECT/TLS proxy parses only the bounded actual Messages effort
 field, retaining a nonnil safe projection even when that field is absent.
@@ -63,9 +63,11 @@ backend support. Current production Claude effort facts remain unknown; the
 live isolation entry point uses default, not a newly invented effort fact.
 Offline explicit-level fixtures load a distinctive test-only table and drive
 all five levels through the real Factory/runner/TLS/workspace/private-JSON sink.
-They prove collection, not installed support. `none` needs an independent
-source-backed effective-thinking proof; absence of an effort parameter cannot
-prove thinking disabled. This narrow experiment refuses that selection.
+They prove collection, not installed support. `none` now requires the separate
+[source-backed thinking collector](lr05-thinking.md), exact known table/env
+agreement and an actual disabled thinking field in every request; absence of
+an effort parameter cannot prove thinking disabled. No installed support is
+inferred from these fixtures.
 
 No new flag/env vocabulary, production adapter behavior, capability fact,
 register status or live artifact is introduced. Complete thinking/effort

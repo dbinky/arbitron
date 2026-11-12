@@ -26,9 +26,12 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 
 func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected provider.Effort) (string, string, *inferenceCapture) {
 	t.Helper()
-	expectedEffort := string(selected)
-	if selected == provider.EffortDefault {
+	expectedEffort, expectedThinkingEnv := string(selected), "unset"
+	if selected == provider.EffortDefault || selected == provider.EffortNone {
 		expectedEffort = ""
+	}
+	if selected == provider.EffortNone {
+		expectedThinkingEnv = "0"
 	}
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -50,6 +53,7 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			OutputConfig struct {
 				Effort string `json:"effort"`
 			} `json:"output_config"`
+			Thinking json.RawMessage `json:"thinking"`
 			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
@@ -74,6 +78,20 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			}
 			if body.OutputConfig.Effort != wantEffort {
 				t.Error("Claude request did not feed the expected effort wire shape")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			wantThinking := ""
+			switch mode {
+			case "thinking-disabled", "thinking-missing-feed", "thinking-unsafe-record":
+				wantThinking = `{"type":"disabled"}`
+			case "thinking-adaptive":
+				wantThinking = `{"type":"adaptive"}`
+			case "thinking-enabled":
+				wantThinking = `{"type":"enabled","budget_tokens":1024}`
+			}
+			if string(body.Thinking) != wantThinking {
+				t.Error("Claude request did not feed expected thinking controls")
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -236,6 +254,7 @@ done
 [ "$CLAUDE_CODE_MAX_CONTEXT_TOKENS" = 202752 ] || exit 47
 [ "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" = 32768 ] || exit 48
 [ "${CLAUDE_CODE_EFFORT_LEVEL-}" = '@CLAUDE_EFFORT_LEVEL@' ] || exit 52
+[ "${MAX_THINKING_TOKENS-unset}" = '@CLAUDE_THINKING_ENV@' ] || exit 53
 case " $* " in *' --model glm-5.3 '*) ;; *) exit 49 ;; esac
 case " $* " in *' --allowedTools Read,Write,Bash '*) ;; *) exit 50 ;; esac
 prev=; isolated=0
@@ -323,6 +342,11 @@ make_memory_body() {
 if [ "$path" = messages ] && [ -f CLAUDE.md ]; then
  case '@MODE@' in memory-absent|memory-late) ;; *) request_body=$(make_memory_body) ;; esac
 fi
+case '@MODE@' in
+ thinking-disabled|thinking-missing-feed|thinking-unsafe-record) request_body='{"thinking":{"type":"disabled"},'"${request_body#?}" ;;
+ thinking-adaptive) request_body='{"thinking":{"type":"adaptive"},'"${request_body#?}" ;;
+ thinking-enabled) request_body='{"thinking":{"type":"enabled","budget_tokens":1024},'"${request_body#?}" ;;
+esac
 case '@MODE@' in effort-*)
  [ -n "${CLAUDE_CODE_EFFORT_LEVEL-}" ] || exit 52
  effort=$CLAUDE_CODE_EFFORT_LEVEL
@@ -422,7 +446,7 @@ fi
 	case "limits-context-secret":
 		contextField = `"contextWindow":"` + captureFixtureKey + `"`
 	}
-	script := strings.NewReplacer("@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	script := strings.NewReplacer("@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_THINKING_ENV@", expectedThinkingEnv, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

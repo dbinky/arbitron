@@ -182,6 +182,7 @@ type claudeIsolationObservation struct {
 	AuthUnchanged   bool                     `json:"auth_unchanged"`
 	Limits          claudeMainLimitProof     `json:"main_limits"`
 	Effort          claudeMainEffortProof    `json:"main_effort"`
+	Thinking        claudeMainThinkingProof  `json:"main_thinking"`
 	ProjectMemory   claudeProjectMemoryProof `json:"project_memory"`
 	Inference       []capturedInference      `json:"inference"`
 }
@@ -217,6 +218,10 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if err != nil {
 		return fail()
 	}
+	thinking, err := joinClaudeRequestThinking(effort, records)
+	if err != nil {
+		return fail()
+	}
 	tool := false
 	for _, step := range result.Steps {
 		tool = tool || step.Kind == "tool_call"
@@ -231,6 +236,6 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if !tool || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
 		return fail()
 	}
-	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget, graded effort and first-request project memory only; no helper or complete contract verification", Source: claudeIsolationSource,
-		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Effort: effort, ProjectMemory: memory, Inference: records}, nil
+	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget, request thinking/effort and first-request project memory only; no helper or complete contract verification", Source: claudeIsolationSource,
+		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Effort: effort, Thinking: thinking, ProjectMemory: memory, Inference: records}, nil
 }
