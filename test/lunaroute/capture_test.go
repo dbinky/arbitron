@@ -836,6 +836,8 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 	event := ""
 	terminal, finished, started := false, false, false
 	chatChoices := make(map[int]bool)
+	messageBlocks := make(map[int]bool) // true while open; closed indexes cannot be reused
+	openMessageBlocks := 0
 	consume := func() bool {
 		if len(data) == 0 {
 			return true
@@ -906,7 +908,7 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 				started = true
 			case "message_delta":
 				nested, ok := decode(object["delta"])
-				if !ok || !started || finished {
+				if !ok || !started || finished || openMessageBlocks != 0 {
 					return false
 				}
 				finished = messageStopped(text(nested, "stop_reason"))
@@ -916,8 +918,30 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 				}
 				terminal = true
 			case "content_block_start", "content_block_delta", "content_block_stop":
-				if !started || finished {
+				var index *int
+				if !started || finished || json.Unmarshal(object["index"], &index) != nil || index == nil || *index < 0 {
 					return false
+				}
+				open, seen := messageBlocks[*index]
+				switch typ {
+				case "content_block_start":
+					block, ok := decode(object["content_block"])
+					if seen || !ok || text(block, "type") == "" {
+						return false
+					}
+					messageBlocks[*index] = true
+					openMessageBlocks++
+				case "content_block_delta":
+					delta, ok := decode(object["delta"])
+					if !open || !ok || text(delta, "type") == "" {
+						return false
+					}
+				case "content_block_stop":
+					if !open {
+						return false
+					}
+					messageBlocks[*index] = false
+					openMessageBlocks--
 				}
 			case "ping":
 			default:

@@ -128,8 +128,12 @@ values, hashes, prompts, tool arguments/results, raw response bodies or stderr.
 `extractCapturedResponse` is the shared bounded JSON/SSE extractor for Messages,
 chat completions and Responses (including `response.model`); an absent reported
 model stays absent. Messages streams require a start before content/deltas,
-no content or repeated finish after the stop reason, and a final message stop;
-pings do not count as content or completion. Chat streams track each choice
+no content or repeated finish after the stop reason, and a final message stop.
+Each content block needs a unique nonnegative integer index, an object/type at
+start and delta, and an ordered start → delta(s) → stop lifecycle. Deltas/stops
+for unopened or closed blocks, reused indexes and finishing with an open block
+refuse publication. Sequential/interleaved text, tool and thinking blocks remain
+valid; pings do not count as content or completion. Chat streams track each choice
 index independently: every observed choice must finish before `[DONE]`, with
 no later updates to a finished choice or repeated indexes in one chunk.
 Usage-only empty-choice trailers are accepted only after all choices finish.
