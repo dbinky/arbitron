@@ -21,12 +21,6 @@
   behaviour) and no invalid key is persisted; an operator must decide whether to narrow that. G13 (explicit `lr_` key on
   a foreign provider) is a sibling defect under rule 5 — fix it as its own gap, but it does not gate this box.
 
-- [ ] **G2 (Area 2, high): inverting `BackendExplicit` in the dynamic resolver turns no test red.**
-  The mutation run kept `harden:adapter/provider/dynamic.go`: negating `strings.TrimSpace(p.Backend) != ""` at
-  `adapter/provider/dynamic.go:89` and `:124` survived. No test drives a real `DynamicProfileResolver.Resolve` binding to
-  the launch gate.
-  Add root tests: an explicit-pi profile reaches the adapter, and a backend-less profile is refused, both via the real
-  resolver rather than a hand-built `ResolvedBinding`.
 - [ ] **G3 (Area 6): classifier boundaries are untested.**
   The `harden:domain/provider/lunaroute_classify.go` survivors sit at lines 118, 137, 141, 189, 217, 225, 229, 232, 234 and
   236. They cover:
@@ -136,6 +130,7 @@
 
 ## Closed
 
+- **G2 (Area 2) closed:** `adapter/provider/dynamic_backend_explicit_test.go` (`TestDynamicProfileResolver_BackendExplicitProvenance`, `..._BackendProvenanceReachesLaunchGate`) drives the real `DynamicProfileResolver` on both arms into `CheckLunaRouteLaunch`; negating `dynamic.go:89` or `:124` now fails them (verified by hand-mutation).
 - **G1 (Area 1) closed:** `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` requires a replacement on switch-away; `adapter/sqlite/connection_repo.go:Update` guards every retained-key write; red/green repo and real-root MCP tests prove refusal and concurrent-switch safety.
 - **G9 (Area 1) closed:** embedded-space coverage added to key-shape/create/update tests; temporary whitespace and generated-query guard mutations both fail, with `TestConnectionRepo_LunaRoutePersistenceErrors` exercising meta-read and conditional-SQL errors.
 
