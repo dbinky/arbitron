@@ -29,6 +29,7 @@ type claudeIsolation struct {
 	home, project string
 	before        backendHomeSnapshot
 	session       string
+	memory        string // private source-formatted path/nonce, never serialized
 	limits        claudeMainLimitProof
 }
 
@@ -41,7 +42,12 @@ func seedClaudeIsolation(home, project string) (*claudeIsolation, error) {
 	if homeErr != nil || projectErr != nil {
 		return nil, errAgentEvidence
 	}
+	memory, err := newClaudeMemoryText()
+	if err != nil {
+		return nil, errAgentEvidence
+	}
 	seeds := map[string]string{
+		filepath.Join(project, "CLAUDE.md"):                   memory,
 		filepath.Join(home, ".claude/settings.json"):          `{"model":"foreign/user","env":{"ANTHROPIC_BASE_URL":"https://foreign.example","ANTHROPIC_AUTH_TOKEN":"` + claudeForeignCredential + `","ANTHROPIC_MODEL":"foreign/user"}}`,
 		filepath.Join(home, ".claude/.credentials.json"):      `{"claudeAiOauth":{"accessToken":"` + claudeForeignCredential + `","refreshToken":"` + claudeForeignCredential + `","expiresAt":1,"scopes":["user:inference"],"subscriptionType":"pro"}}`,
 		filepath.Join(project, ".claude/settings.json"):       `{"model":"foreign/project","env":{"ANTHROPIC_API_KEY":"` + claudeForeignCredential + `","ANTHROPIC_MODEL":"foreign/project"}}`,
@@ -61,7 +67,7 @@ func seedClaudeIsolation(home, project string) (*claudeIsolation, error) {
 			return nil, errAgentEvidence
 		}
 	}
-	isolation := &claudeIsolation{home: home, project: project}
+	isolation := &claudeIsolation{home: home, project: project, memory: "Contents of " + filepath.Join(project, "CLAUDE.md") + " (project instructions, checked into the codebase):\n\n" + strings.TrimSpace(memory)}
 	before, err := isolation.snapshot()
 	if err != nil {
 		return nil, errAgentEvidence
@@ -75,7 +81,7 @@ func (s *claudeIsolation) snapshot() (backendHomeSnapshot, error) {
 		return nil, errAgentEvidence
 	}
 	return snapshotIsolationPaths(s.home, []isolationPath{
-		{s.home, ".claude/settings.json"}, {s.home, ".claude/.credentials.json"}, {s.project, ".claude"},
+		{s.home, ".claude/settings.json"}, {s.home, ".claude/.credentials.json"}, {s.project, ".claude"}, {s.project, "CLAUDE.md"},
 	})
 }
 func (s *claudeIsolation) unchanged() error {
@@ -119,13 +125,14 @@ type claudeIsolationRunner struct {
 	next      claudecli.CommandRunner
 	isolation *claudeIsolation
 	rules     provider.CapabilityRules
+	capture   *inferenceCapture
 }
 
 func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
 	fail := func() (<-chan string, func() error, error) {
 		return nil, nil, provider.LocalLunaRouteError("config isolation", errAgentEvidence)
 	}
-	if r.isolation == nil || r.isolation.session != "" || r.isolation.validateLaunch(spec) != nil {
+	if r.isolation == nil || r.isolation.session != "" || r.isolation.validateLaunch(spec) != nil || r.capture.expectClaudeMemory(r.isolation) != nil {
 		return fail()
 	}
 	lines, err := runCapturedLines(ctx, r.next, spec)
@@ -149,8 +156,8 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 	return out, func() error { return nil }, nil
 }
 
-func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.CapabilityRules, client *http.Client, isolation *claudeIsolation) *providersadapter.Factory {
-	runner := claudeIsolationRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, isolation: isolation, rules: rules}
+func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.CapabilityRules, client *http.Client, isolation *claudeIsolation, capture *inferenceCapture) *providersadapter.Factory {
+	runner := claudeIsolationRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, isolation: isolation, rules: rules, capture: capture}
 	return providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeAgentConfig: claudecli.Config{BinaryPath: bin, WorkspaceRoot: ws, Runner: runner, Timeout: agentExperimentTimeout,
 			MaxResponseBytes: captureBodyLimit, AllowedTools: []string{"Read", "Write", "Bash"}, CapabilityRules: rules},
@@ -159,14 +166,15 @@ func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.Capabil
 }
 
 type claudeIsolationObservation struct {
-	Scope           string               `json:"scope"`
-	Source          string               `json:"source"`
-	Version         string               `json:"version"`
-	Session         string               `json:"session"`
-	ConfigUnchanged bool                 `json:"config_unchanged"`
-	AuthUnchanged   bool                 `json:"auth_unchanged"`
-	Limits          claudeMainLimitProof `json:"main_limits"`
-	Inference       []capturedInference  `json:"inference"`
+	Scope           string                   `json:"scope"`
+	Source          string                   `json:"source"`
+	Version         string                   `json:"version"`
+	Session         string                   `json:"session"`
+	ConfigUnchanged bool                     `json:"config_unchanged"`
+	AuthUnchanged   bool                     `json:"auth_unchanged"`
+	Limits          claudeMainLimitProof     `json:"main_limits"`
+	ProjectMemory   claudeProjectMemoryProof `json:"project_memory"`
+	Inference       []capturedInference      `json:"inference"`
 }
 
 func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInference, result *engine.AgentResult, started, finished time.Time) (claudeIsolationObservation, error) {
@@ -182,11 +190,19 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 		return fail()
 	}
 	limits.RequestIDs = nil
+	memory := claudeProjectMemoryProof{Source: claudeMemorySource}
 	for _, record := range records {
+		if record.RequestID == "request-1" && record.ClaudeProjectMemory {
+			memory.Loaded = true
+			memory.RequestIDs = append(memory.RequestIDs, record.RequestID)
+		}
 		if record.Backend != "claude-code" || record.Path != "/v1/messages" || record.StartedAt.Before(started) || record.FinishedAt.After(finished) || record.MaxTokens != limits.RequestedOutputTokens {
 			return fail()
 		}
 		limits.RequestIDs = append(limits.RequestIDs, record.RequestID)
+	}
+	if !memory.Loaded {
+		return fail()
 	}
 	tool := false
 	for _, step := range result.Steps {
@@ -202,6 +218,6 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if !tool || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
 		return fail()
 	}
-	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context and requested output budget only; no helper, memory or complete contract verification", Source: claudeIsolationSource,
-		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Inference: records}, nil
+	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget and first-request project memory only; no helper or complete contract verification", Source: claudeIsolationSource,
+		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, ProjectMemory: memory, Inference: records}, nil
 }

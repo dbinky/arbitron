@@ -135,6 +135,35 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 			}
 			return
 		}
+		if backend == "claude-code" {
+			memory, err := os.ReadFile(filepath.Join(root, "mission/CLAUDE.md"))
+			if err == nil {
+				if len(body.Messages) == 2 {
+					want := "Contents of " + filepath.Join(root, "mission/CLAUDE.md") + " (project instructions, checked into the codebase):\n\n" + strings.TrimSpace(string(memory))
+					role := "user"
+					if mode == "memory-drift" {
+						want += "-substituted"
+					}
+					if mode == "memory-assistant" {
+						role = "assistant"
+					}
+					if body.Messages[0].Role != role || body.Messages[0].Content != want {
+						t.Error("Claude fixture did not feed exact private memory input")
+						w.WriteHeader(400)
+						return
+					}
+					body.Messages = body.Messages[1:]
+				} else if mode != "memory-absent" && mode != "memory-late" {
+					t.Error("Claude fixture omitted seeded project memory")
+					w.WriteHeader(400)
+					return
+				}
+			} else if !os.IsNotExist(err) {
+				t.Error("cannot read private memory fixture")
+				w.WriteHeader(500)
+				return
+			}
+		}
 		if len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content != agentMissionPromptFor(backend) {
 			t.Error("Factory mission did not feed exact user prompt")
 			w.WriteHeader(400)
@@ -258,7 +287,22 @@ case '@MODE@' in
 esac
 session_header=
 case '@MODE@' in correlation-*) session_header='X-Opencode-Session-Id: ses_factory' ;; esac
-/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d '{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"@PROMPT@"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+request_body='{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"@PROMPT@"}]}'
+make_memory_body() {
+ memory=$(cat CLAUDE.md)
+ role=user
+ if [ '@MODE@' = memory-drift ]; then memory="$memory-substituted"; fi
+ if [ '@MODE@' = memory-assistant ]; then role=assistant; fi
+ printf '{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"%s","content":"Contents of %s/CLAUDE.md (project instructions, checked into the codebase):\\n\\n%s"},{"role":"user","content":"@PROMPT@"}]}' "$role" "$PWD" "$memory"
+}
+if [ "$path" = messages ] && [ -f CLAUDE.md ]; then
+ case '@MODE@' in memory-absent|memory-late) ;; *) request_body=$(make_memory_body) ;; esac
+fi
+/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
+if [ '@MODE@' = memory-late ]; then
+ request_body=$(make_memory_body)
+ /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
+fi
 case '@MODE@' in correlation-*)
  parent=ses_factory
  if [ '@MODE@' = correlation-parent ]; then parent=ses_other; fi

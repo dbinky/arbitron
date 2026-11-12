@@ -328,9 +328,19 @@ refuse publication despite successful files/inference. Usage `maxOutputTokens`
 is a catalog default, not the env-adjusted request budget; it is not used as
 output-control proof. See [the inspected producer note](sources/lr05-limits.md)
 and `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(MainLimitValidation|LimitsFactorySink)$' -count=1`.
+The same experiment now seeds a private per-run `CLAUDE.md` nonce, protects
+its bytes/modes and requires its exact source-formatted frame in the **first**
+actual Messages user-text request. It publishes only safe `project_memory`
+source/request-id/loaded fields alongside the existing session and workspace
+proofs; later file reads, assistant echoes, missing/drifting memory or a missing
+capture feed cannot substitute. Capture cleanup discards private comparison
+material. See [the memory producer and unresolved settings-source concern](sources/lr05-memory.md)
+and `go test ./test/lunaroute -run TestAgentEvidenceClaudeMemory -count=1`.
+Source review does not establish that the installed binary preserves memory
+under empty settings sources; the operator experiment must fail if it does not.
 This is **not** the full Claude agent/contract entry point: keychain isolation,
-effective selectors/effort, complete limit enforcement, memory and helper
-verification remain pending. A short request establishes no gateway maximum.
+effective selectors/effort, complete limit enforcement, installed memory and
+helper verification remain pending. A short request establishes no gateway maximum.
 No operator observation or support/status change is inferred.
 
 The Factory's experiment runner now queries OpenCode `debug config --pure`

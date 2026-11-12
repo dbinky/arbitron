@@ -64,7 +64,9 @@ their ancestor modes; the project `.claude` tree is protected in full. Runtime
 session/log files in the private home are distinct and removed at cleanup.
 The follow-up [main-limit collector](lr05-limits.md) additionally joins reported
 context and actual Messages output budgets to the source facts in this same
-experiment. This slice still does not prove `CLAUDE.md` loading, effective
+experiment. The [first-request memory collector](lr05-memory.md) now additionally consumes
+protected project instruction bytes and actual Messages user text in this same
+experiment. Neither offline slice proves installed `CLAUDE.md` loading, effective
 selectors/effort, complete limit enforcement, forced helpers, managed settings
 behavior, keychain isolation, absence of every possible external write, or the
 absent-subscription case. Those remain part of

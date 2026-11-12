@@ -55,6 +55,7 @@ type capturedInference struct {
 	Path                string             `json:"path"`
 	RequestedModel      string             `json:"requested_model"`
 	MaxTokens           int                `json:"max_tokens,omitempty"`
+	ClaudeProjectMemory bool               `json:"claude_project_memory,omitempty"`
 	ReportedModels      []string           `json:"reported_models"`
 	AuthMatchesSelected bool               `json:"auth_matches_selected"`
 	AuthHeaderNames     []string           `json:"auth_header_names"`
@@ -90,6 +91,7 @@ type inferenceCapture struct {
 	drained                         *sync.Cond
 	active                          int
 	records                         []capturedInference
+	claudeMemory                    string            // private source-formatted path/nonce, never serialized
 	openCodeTitles                  map[string]string // private response text, never serialized
 	openCodeCompactions             map[string]string // private summary comparison, never serialized
 	failed                          bool
@@ -417,6 +419,11 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 			return reject("request_schema")
 		}
 		record.MaxTokens = budget.MaxTokens
+		c.mu.Lock()
+		if c.backend == "claude-code" && id == 1 {
+			record.ClaudeProjectMemory = claudeMemoryInRequest(body, c.claudeMemory)
+		}
+		c.mu.Unlock()
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, c.limits.Timeout)
 	defer cancel()
@@ -621,6 +628,7 @@ func (c *inferenceCapture) Close() error {
 		c.wg.Wait()
 		c.mu.Lock()
 		c.key = ""
+		c.claudeMemory = ""
 		c.openCodeTitles = nil
 		c.openCodeCompactions = nil
 		c.mu.Unlock()

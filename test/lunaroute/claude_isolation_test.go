@@ -45,7 +45,7 @@ func TestAgentEvidenceClaudeIsolationFactorySink(t *testing.T) {
 				bin = wrapper
 			}
 			client, calls := agentFactoryProbeClient(t)
-			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation)
+			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, capture)
 			started := time.Now().UTC()
 			result, err := executePreparedAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "claude-code"), ws)
 			if mutation != "" {
@@ -110,7 +110,7 @@ func TestAgentEvidenceClaudeIsolationFactorySink(t *testing.T) {
 }
 
 func TestAgentEvidenceClaudeIsolationLaunchBoundary(t *testing.T) {
-	for _, mode := range []string{"foreign-home", "relocated-config", "changed-before-launch", "missing-snapshot"} {
+	for _, mode := range []string{"foreign-home", "relocated-config", "changed-before-launch", "missing-snapshot", "missing-memory-source", "missing-memory-capture", "late-memory-registration", "wrong-memory-backend"} {
 		t.Run(mode, func(t *testing.T) {
 			root, bin, capture := agentFactoryFixture(t, "claude-code", "success")
 			ws := filepath.Join(root, "mission")
@@ -129,9 +129,19 @@ func TestAgentEvidenceClaudeIsolationLaunchBoundary(t *testing.T) {
 				require.NoError(t, os.Remove(filepath.Join(isolation.home, ".claude/.credentials.json")))
 			case "missing-snapshot":
 				isolation.before = nil
+			case "missing-memory-source":
+				isolation.memory = ""
+			case "late-memory-registration":
+				capture.requestCount = 1
+			case "wrong-memory-backend":
+				capture.backend = "codex"
 			}
 			client, calls := agentFactoryProbeClient(t)
-			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation)
+			memoryCapture := capture
+			if mode == "missing-memory-capture" {
+				memoryCapture = nil
+			}
+			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, memoryCapture)
 			result, err := executePreparedAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "claude-code"), ws)
 			require.Error(t, err)
 			assert.Nil(t, result)
@@ -209,7 +219,7 @@ func TestAgentEvidenceClaudeIsolationSameLaunchInputs(t *testing.T) {
 		require.Error(t, isolation.validateLaunch(changed))
 	}
 	called := false
-	runner := claudeIsolationRunner{isolation: isolation, next: controlsRunnerFunc(func(_ context.Context, actual claudecli.RunSpec) (<-chan string, func() error, error) {
+	runner := claudeIsolationRunner{isolation: isolation, capture: &inferenceCapture{backend: "claude-code"}, next: controlsRunnerFunc(func(_ context.Context, actual claudecli.RunSpec) (<-chan string, func() error, error) {
 		called = true
 		assert.Equal(t, spec.Dir, actual.Dir)
 		assert.Equal(t, spec.Bin, actual.Bin)

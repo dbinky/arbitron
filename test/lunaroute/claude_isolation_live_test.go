@@ -11,15 +11,15 @@ import (
 	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 )
 
-// A narrow operator experiment, not TestLiveClaudeCodeAgentTask: no helper,
-// memory-loading or complete LR-05 verification is claimed. Main context and
+// A narrow operator experiment, not TestLiveClaudeCodeAgentTask: no helper
+// or complete LR-05 verification is claimed. Project memory, main context and
 // actual request output budgets are collected without inferring gateway maxima.
 func TestLiveClaudeCodeIsolation(t *testing.T) {
 	key := liveKey(t)
 	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_CLAUDE_MODEL")
 	bin := liveBinary(t, "claude")
 	rules := liveRules(t)
-	for _, source := range []string{claudeIsolationSource, claudeLimitsSource} {
+	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource} {
 		if _, err := readRepoFile(repoRoot(t), source); err != nil {
 			t.Fatal("isolation/control source unavailable")
 		}
@@ -63,7 +63,7 @@ func TestLiveClaudeCodeIsolation(t *testing.T) {
 	}
 	capture := startInferenceCapture(t, "claude-isolation-"+time.Now().UTC().Format("20060102T150405.000000000Z"), "claude-code", binding.ConnectionRef, key)
 	wrapper := capture.WrapBinary(t, bin)
-	factory := liveClaudeIsolationFactoryWithClient(root, wrapper, rules, client, isolation)
+	factory := liveClaudeIsolationFactoryWithClient(root, wrapper, rules, client, isolation, capture)
 	started := time.Now().UTC()
 	result, err := executePreparedAgentMission(ctx, factory, binding, ws)
 	if err != nil {
