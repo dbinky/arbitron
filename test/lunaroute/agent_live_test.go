@@ -146,7 +146,16 @@ func newLiveAgentFactory(ws, claudeBin string, rules provider.CapabilityRules, c
 // controls. This helper accepts completion only from their actual workspace and
 // tool trace; capture/config/helper verification remains a separate requirement.
 func executeAgentMission(ctx context.Context, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, error) {
-	if factory == nil || requireEmptyAgentWorkspace(ws) != nil {
+	if requireEmptyAgentWorkspace(ws) != nil {
+		return nil, errAgentEvidence
+	}
+	return executePreparedAgentMission(ctx, factory, binding, ws)
+}
+
+// The isolated Claude experiment seeds only its known settings/auth inputs in a
+// previously empty workspace. All completion/file/tool checks remain shared.
+func executePreparedAgentMission(ctx context.Context, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, error) {
+	if factory == nil {
 		return nil, errAgentEvidence
 	}
 	ctx, cancel := context.WithTimeout(ctx, agentExperimentTimeout)

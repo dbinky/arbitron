@@ -74,11 +74,17 @@ func (s *openCodeIsolation) snapshot() (backendHomeSnapshot, error) {
 	if s == nil {
 		return nil, errAgentEvidence
 	}
+	return snapshotIsolationPaths(s.home, []isolationPath{
+		{s.home, ".config/opencode"}, {s.home, ".local/share/opencode/auth.json"}, {s.project, "opencode.json"},
+	})
+}
+
+type isolationPath struct{ root, name string }
+
+func snapshotIsolationPaths(home string, targets []isolationPath) (backendHomeSnapshot, error) {
 	out := backendHomeSnapshot{}
 	total := 0
-	for _, target := range []struct{ root, name string }{
-		{s.home, ".config/opencode"}, {s.home, ".local/share/opencode/auth.json"}, {s.project, "opencode.json"},
-	} {
+	for _, target := range targets {
 		// WalkDir does not follow links itself, but its ancestors must not be
 		// replaced by links either. Check each component before opening files.
 		path := target.root
@@ -87,6 +93,9 @@ func (s *openCodeIsolation) snapshot() (backendHomeSnapshot, error) {
 			info, err := os.Lstat(path)
 			if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() && info.Mode().Perm()&0500 != 0500 {
 				return nil, errAgentEvidence
+			}
+			if info.IsDir() {
+				out[path] = backendHomeEntry{Mode: info.Mode()}
 			}
 		}
 		err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
@@ -125,7 +134,7 @@ func (s *openCodeIsolation) snapshot() (backendHomeSnapshot, error) {
 			return nil, errAgentEvidence
 		}
 	}
-	info, err := os.Lstat(s.home)
+	info, err := os.Lstat(home)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
 		return nil, errAgentEvidence
 	}

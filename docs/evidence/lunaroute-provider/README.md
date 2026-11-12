@@ -307,6 +307,23 @@ user/project files. Claude's remaining control/isolation and forced-helper
 collectors and complete live entry point are still required. No main-only
 agent/contract observation or supported/verified fact is published.
 
+A separate, narrow `TestLiveClaudeCodeIsolation` experiment now seeds private
+conflicting user/project/local settings and plaintext auth inputs. Its real
+Factory guard binds bounded byte/mode snapshots to the actual emitted HOME/cwd,
+refuses relocation or alternate credential env before even the version query,
+and refuses changed protected inputs after the process. The final collector
+requires the same successful session, actual current Messages/Bearer/model
+capture, tool trace and command-created workspace proofs. It writes only
+`observations/lr05-isolation.json`, after successful proxy/CA/private-workspace
+cleanup. Run with the existing key and explicit `_E2E_CLAUDE_MODEL` inputs:
+`go test ./test/lunaroute -run '^TestLiveClaudeCodeIsolation$' -count=1 -v`.
+Missing input skips locally with readiness pending and fails in release mode.
+See [the partial source/scope note](sources/lr05-isolation.md) and
+`TestAgentEvidenceClaudeIsolation` for real Factory/TLS/private-JSON refusal
+fixtures. This is **not** the full Claude agent/contract entry point: keychain
+isolation, effective selectors/limits/effort, memory and helper verification
+remain pending. No operator observation or support/status change is inferred.
+
 The Factory's experiment runner now queries OpenCode `debug config --pure`
 with the actual adapter-emitted executable/env/cwd before launching each mission.
 It validates the resolved main/helper selection, provider, destination, registered
