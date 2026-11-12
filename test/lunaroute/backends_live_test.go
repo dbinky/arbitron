@@ -32,6 +32,19 @@ const (
 
 var errBackendEvidence = errors.New("backend evidence incomplete or unsafe; release acceptance remains pending")
 
+func TestLiveCodexHelp(t *testing.T) { runBackendHelpExperiment(t, "codex") }
+func TestLivePiHelp(t *testing.T)    { runBackendHelpExperiment(t, "pi") }
+
+func runBackendHelpExperiment(t *testing.T, backend string) {
+	t.Helper()
+	bin := liveBinary(t, backend)
+	proof, err := collectBackendHelp(context.Background(), backend, bin, t.TempDir())
+	if err != nil {
+		t.Fatal(errBackendEvidence)
+	}
+	t.Logf("%s %s: required CLI options advertised; inference, isolation controls and release acceptance remain unverified", proof.Backend, proof.Version)
+}
+
 // The raw output is private in-memory input to a lifecycle parser, never an
 // observation or a diagnostic. The shared runner bounds both streams and kills
 // the process group on cancellation. No caller inherits os.Environ implicitly.

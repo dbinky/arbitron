@@ -518,11 +518,28 @@ Version-only inventory on 2026-11-11 UTC returned codex-cli `0.167.0` and pi
 `1.5.1` under a temporary HOME and credential-free environment. No direct live
 experiment ran: private key and explicit codex/pi model selections remain
 operator-only inputs. R2's required pi facts and the production adapters are now
-implemented; missing access does not block offline code under R6. The planned
-`TestLiveCodexHelp`, `TestLiveCodexLunaRoute`,
-`TestLivePiHelp` and `TestLivePiLunaRoute` experiments are not implemented as
-placeholder skips; selecting those names currently runs no tests and is **not**
-acceptance. P4-T1 still owns the real conflicting-config/auth/isolation runs,
+implemented; missing access does not block offline code under R6.
+
+The independent help entry points now run real, credential-free queries:
+
+```sh
+go test ./test/lunaroute -run '^TestLive(Codex|Pi)Help$' -count=1 -v
+go test ./test/lunaroute -run '^TestBackendHelp' -count=1
+```
+
+`TestLiveCodexHelp` and `TestLivePiHelp` use the same resolved executable,
+private HOME/config/workspace and bounded runner for version and help queries.
+They require exact options in the actual Options section, discard raw output,
+and remove private directories before returning a safe projection. They need
+no live key or model and are not placeholder inference skips. Missing binaries
+skip locally with readiness pending and fail in release mode. On 2026-11-12 UTC,
+the installed queries passed on codex-cli `0.167.1` and Pi `1.5.2`; see
+[sources/lr07-lr08-cli-help.md](sources/lr07-lr08-cli-help.md) for exact scope.
+Help proves advertised CLI spellings only, **not** runtime contracts or readiness.
+
+`TestLiveCodexLunaRoute` and `TestLivePiLunaRoute` remain unimplemented;
+selecting only those names runs no tests and is **not** acceptance.
+P4-T1 still owns the real conflicting-config/auth/isolation runs,
 backend-specific forced lifecycle collectors, credential-free contract/run
 artifacts and scoped support-fact publication when prerequisites exist. A
 binary upgrade requires rerunning those experiments, not only these fixtures.
