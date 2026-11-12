@@ -59,8 +59,16 @@ Task/run/tool/session identities, general-purpose type, top-level depth and
 selected model must agree. Background/remote/resumed/replayed/nested calls,
 missing/duplicate/reordered frames, failed/withheld/asynchronous results,
 foreign model histories, unsafe ids, malformed/duplicate/oversized JSON and
-contradictory task updates/notifications refuse collection. Missing optional
-reported models are never filled from the selected binding.
+contradictory task updates/notifications refuse collection. Completion is sticky
+for the accepted task/run: a `running` update after a completed patch,
+notification or structured tool result refuses, even if another successful result
+follows it. Same-run completed confirmations and status-free metadata updates
+remain valid. Factory/subprocess/CONNECT/TLS fixtures require zero publication
+on such regressions despite completed main/helper/title exchanges and both
+command-created files; the positive control reaches the cleanup-before-write
+private JSON sink. This is bounded collector validation, not an installed
+lifecycle observation. Missing optional reported models are never filled from
+the selected binding.
 
 The final isolation publisher additionally requires current authenticated main
 inference, actual main controls/memory and command-created workspace/tool

@@ -558,7 +558,21 @@ if [ "$path" = messages ]; then
    subagent-foreign-session) helper_session=ses_other ;;
   esac
   printf '{"type":"system","subtype":"task_started","session_id":"%s","task_id":"agent_one","run_id":"run_one","tool_use_id":"tool_agent","task_type":"local_agent","subagent_type":"general-purpose","is_backgrounded":%s,"spawn_depth":1}\n' "$helper_session" "$background"
+  emit_task_status() {
+   printf '{"type":"system","subtype":"task_updated","session_id":"ses_factory","task_id":"agent_one","run_id":"run_one","patch":{"status":"%s"}}\n' "$1"
+  }
+  case '@MODE@' in
+   claude-route-title-task-completed|claude-route-title-task-running-after-update) emit_task_status completed ;;
+   claude-route-title-task-running-after-notification) echo '{"type":"system","subtype":"task_notification","session_id":"ses_factory","task_id":"agent_one","run_id":"run_one","tool_use_id":"tool_agent","status":"completed"}' ;;
+  esac
+  case '@MODE@' in
+   claude-route-title-task-running-after-update|claude-route-title-task-running-after-notification) emit_task_status running ;;
+  esac
   printf '{"type":"user","session_id":"ses_factory","message":{"content":[{"type":"tool_result","tool_use_id":"tool_agent","is_error":%s,"content":"private report"}]},"tool_use_result":{"status":"completed","agentId":"agent_one","agentType":"general-purpose","resolvedModel":"%s","totalDurationMs":10,"totalTokens":12,"totalToolUseCount":2}}\n' "$helper_error" "$helper_model"
+  case '@MODE@' in
+   claude-route-title-task-completed) emit_task_status completed ;;
+   claude-route-title-task-running-after-result) emit_task_status running ;;
+  esac
  fi
  if [ '@MODE@' != no-tool ]; then echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_one","content":"done"}]}}'; fi
  if [ '@MODE@' = startup-late ]; then emit_startup; fi

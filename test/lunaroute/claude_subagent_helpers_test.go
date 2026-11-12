@@ -75,6 +75,7 @@ func collectClaudeSubagentLifecycle(lines []string, session, model string) (clau
 		completed
 	)
 	state, total := awaitingCall, 0
+	taskCompleted := false
 	for _, line := range lines {
 		total += len(line) + 1
 		if total > captureBodyLimit {
@@ -106,8 +107,15 @@ func collectClaudeSubagentLifecycle(lines []string, session, model string) (clau
 				if (event.Patch.Background != nil && *event.Patch.Background) || (event.Patch.Status != "" && event.Patch.Status != "running" && event.Patch.Status != "completed") {
 					return fail()
 				}
-			} else if event.ToolUseID != proof.ToolUseID || event.Status != "completed" {
-				return fail()
+				if event.Patch.Status == "running" && (taskCompleted || state == completed) {
+					return fail()
+				}
+				taskCompleted = taskCompleted || event.Patch.Status == "completed"
+			} else {
+				if event.ToolUseID != proof.ToolUseID || event.Status != "completed" {
+					return fail()
+				}
+				taskCompleted = true
 			}
 			continue
 		}
