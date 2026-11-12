@@ -924,22 +924,40 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 				return false
 			}
 		case "/v1/responses":
-			if typ == "response.failed" || typ == "response.incomplete" || typ == "error" {
+			if !strings.HasPrefix(typ, "response.") || typ == "response.failed" || typ == "response.incomplete" {
 				return false
 			}
-			if nestedRaw, ok := object["response"]; ok {
-				nested, ok := decode(nestedRaw)
-				if !ok {
+			if typ == "response.created" {
+				if started {
 					return false
 				}
-				if model := text(nested, "model"); model != "" && !add(model) {
+				started = true
+			} else if !started {
+				return false
+			}
+			switch typ {
+			case "response.created", "response.in_progress", "response.completed":
+				nested, ok := decode(object["response"])
+				if !ok || !add(text(nested, "model")) {
 					return false
 				}
+				status := "in_progress"
 				if typ == "response.completed" {
-					if text(nested, "status") != "completed" || text(nested, "model") == "" {
+					status = "completed"
+					terminal = true
+				}
+				if text(nested, "status") != status {
+					return false
+				}
+			default:
+				if nestedRaw, present := object["response"]; present {
+					nested, ok := decode(nestedRaw)
+					if !ok {
 						return false
 					}
-					terminal = true
+					if model := text(nested, "model"); model != "" && !add(model) {
+						return false
+					}
 				}
 			}
 		}

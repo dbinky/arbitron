@@ -133,6 +133,10 @@ pings do not count as content or completion. Chat streams track each choice
 index independently: every observed choice must finish before `[DONE]`, with
 no later updates to a finished choice or repeated indexes in one chunk.
 Usage-only empty-choice trailers are accepted only after all choices finish.
+Responses streams require one `response.created` before progress/content and
+one final `response.completed`. Lifecycle envelopes must carry a model and the
+matching `in_progress`/`completed` status; foreign-dialect events, failed/incomplete
+responses and post-terminal events cannot establish completion.
 Reordered/incomplete streams cannot publish a completed agent/backend observation
 even when tool/workspace proofs exist. A successful capture is routing evidence only: the owning experiment must independently
 assert the finished tool task and workspace sink.
