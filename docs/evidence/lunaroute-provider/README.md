@@ -317,16 +317,51 @@ routing, and no completed-agent artifact is published.
 R2 supplies required static facts; P3 emitters/enablement and root sinks exist.
 OpenCode subagent, first-conversation title and first automatic-compaction
 correlation/version provenance and the source-backed automatic-compaction
-threshold/continuation driver now exist offline. The supporting-call experiment
-has a real `TestLiveOpencodeCompaction` operator entry point. Remaining work
-includes complete applicable helper/control collection and Claude
-same-emitted-env effective-control collection. P3-T5 still owns those producers
-and the real live entry points; a main-only mission cannot publish a completed
-agent observation. Operator live runs additionally need a private key and
-explicit canonical models (R6); absence of those inputs does not block offline
-implementation. No placeholder live test, completed agent artifact, supported
-capability or verified register label is shipped. P4-T7 will consume current real
-MCP-run captures.
+threshold/continuation driver now exist offline. Both the supporting-call
+experiment (`TestLiveOpencodeCompaction`) and completed OpenCode agent experiment
+(`TestLiveOpencodeAgentTask`) have real operator entry points. Remaining work
+includes Claude forced-helper and same-emitted-env effective-control collection
+and its full live entry point. A main-only mission cannot publish a completed
+agent observation. Operator runs additionally need a private key and explicit
+canonical models (R6); absence of those inputs does not block offline
+implementation. No completed live artifact, supported capability or verified
+register label is inferred from fixtures or skips. P4-T7 will consume current
+real MCP-run captures.
+
+### Completed OpenCode agent experiment (P3-T5)
+
+```sh
+go test ./test/lunaroute -run '^TestLiveOpencodeAgentTask$' -count=1 -v
+```
+
+Supply `ARBITRON_LUNAROUTE_E2E_KEY`, an explicit reviewed
+`ARBITRON_LUNAROUTE_E2E_OPENCODE_MODEL`, installed OpenCode 1.19.5 and optionally
+`ARBITRON_LUNAROUTE_E2E_CAPABILITIES`. The experiment freshly lists the selected
+model (no fallback), then constructs the production Factory with the real
+runner, capability feeds, private conflicting config/auth snapshots, same-env
+control journal and source-backed subagent/title/automatic-compaction drivers.
+The narrow compaction experiment uses the same composition.
+
+Only after exact workspace/command/tool/model proof, all four correlated request
+categories, both effective-control checks, unchanged private config/auth and
+readable exact helper source references and snapshot limits matching the actual
+effective model definition does finalization close/remove the
+proxy/CA and private experiment tree. Successful cleanup precedes writing
+`observations/lr06-opencode-compaction.json` and
+`observations/lr06-opencode-agent.json`; the latter references the former's
+same-run/session/version controls and actual inference records. Prompts, summaries,
+raw configuration, paths and credentials are not serialized. The writer is
+exclusive: archive prior observations for review before collecting a new pair,
+including a prior narrow-compaction artifact. A publication error is not success.
+
+`TestAgentEvidenceOpenCodeCompletedAgentPublication` drives these final sinks
+through protocol executables, real TLS exchanges and command-created files. It
+rejects empty capture, missing controls/isolation/tool/file/source, unreadable or
+misassigned source evidence, unsafe model provenance and cleanup failure with no
+published pair. Malformed or model/limit-mismatched source snapshots also cannot
+publish despite completed traffic/files. These fixtures prove plumbing, not installed binary contracts.
+The operator run and subsequent source/support/register review remain pending;
+this code never changes capability facts or register status automatically.
 
 ## Codex / Pi independent evidence tooling (P4-T1)
 

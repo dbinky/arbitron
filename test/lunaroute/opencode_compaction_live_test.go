@@ -14,6 +14,15 @@ import (
 // A supporting-call experiment, not the full LR-06 contract/support milestone.
 // The operator runs this against the installed binary and real hosted gateway.
 func TestLiveOpencodeCompaction(t *testing.T) {
+	runLiveOpenCodeExperiment(t, false)
+}
+
+func TestLiveOpencodeAgentTask(t *testing.T) {
+	runLiveOpenCodeExperiment(t, true)
+}
+
+func runLiveOpenCodeExperiment(t *testing.T, completedAgent bool) {
+	t.Helper()
 	key := liveKey(t)
 	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_OPENCODE_MODEL")
 	bin := liveBinary(t, "opencode")
@@ -67,6 +76,12 @@ func TestLiveOpencodeCompaction(t *testing.T) {
 	journal := &openCodeControlJournal{isolation: isolation}
 	factory := liveObservedCompactingFactoryWithClient(root, "", rules, client, capture, source, journal)
 	result, workdir := runLiveMission(t, factory, binding, root)
+	if completedAgent {
+		if finishOpenCodeAgentTask(repoRoot(t), root, workdir, capture, journal, result, started, time.Now().UTC()) != nil {
+			t.Fatal("completed OpenCode agent evidence or cleanup failed; readiness remains pending")
+		}
+		return
+	}
 	observation, err := collectOpenCodeSupportingEvidence(workdir, capture, journal, result, started, time.Now().UTC())
 	if err != nil {
 		t.Fatal("current-run controls/workspace/supporting inference incomplete")
@@ -77,5 +92,5 @@ func TestLiveOpencodeCompaction(t *testing.T) {
 	if os.RemoveAll(root) != nil {
 		t.Fatal("experiment cleanup failed; no observation written")
 	}
-	writeObservation(t, key, "lr06-opencode-compaction.json", observation)
+	writeObservation(t, key, openCodeSupportingName, observation)
 }
