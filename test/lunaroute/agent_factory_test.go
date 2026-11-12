@@ -451,7 +451,13 @@ if [ "$path" = messages ]; then
  case '@MODE@' in startup-absent|startup-late) ;; *) emit_startup ;; esac
  if [ '@MODE@' = startup-duplicate ]; then emit_startup; fi
  if [ '@MODE@' != subagent-absent ] && [ '@MODE@' != no-tool ]; then
-  echo '{"type":"assistant","session_id":"ses_factory","message":{"content":[{"type":"tool_use","id":"tool_agent","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"verify the files","run_in_background":false}}]}}'
+  requested_model='"model":"haiku",'
+  case '@MODE@' in
+   claude-route-input-missing) requested_model= ;;
+   claude-route-input-drift) requested_model='"model":"sonnet",' ;;
+   claude-route-input-unsafe) requested_model='"model":"@KEY@",' ;;
+  esac
+  printf '{"type":"assistant","session_id":"ses_factory","message":{"content":[{"type":"tool_use","id":"tool_agent","name":"Agent","input":{%s"subagent_type":"general-purpose","prompt":"verify the files","run_in_background":false}}]}}\n' "$requested_model"
   background=false; helper_model=glm-5.3; helper_error=false; helper_session=ses_factory
   case '@MODE@' in
    subagent-background) background=true ;;

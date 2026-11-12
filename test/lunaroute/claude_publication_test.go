@@ -18,9 +18,13 @@ import (
 const claudePublicationSnapshot = `{"models":[{"id":"glm-5.3","context_window":202752,"max_output_tokens":32768}]}`
 
 func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
-	for _, mode := range []string{"success", "missing-source", "unreadable-source", "source-context-drift", "source-output-drift", "source-model-missing", "source-malformed", "empty-capture", "missing-limits", "missing-lifecycle", "missing-tool", "missing-file", "unsafe-record", "cleanup-failure", "destination-in-experiment", "home-outside-experiment"} {
+	for _, mode := range []string{"success", "missing-source", "unreadable-source", "source-context-drift", "source-output-drift", "source-model-missing", "source-malformed", "empty-capture", "missing-limits", "missing-lifecycle", "missing-tool", "missing-file", "unsafe-record", "cleanup-failure", "destination-in-experiment", "home-outside-experiment", "missing-requested-model-feed", "claude-route-input-missing", "claude-route-input-drift", "claude-route-input-unsafe"} {
 		t.Run(mode, func(t *testing.T) {
-			root, bin, capture := agentFactoryFixture(t, "claude-code", "claude-route-controls")
+			fixtureMode := "claude-route-controls"
+			if strings.HasPrefix(mode, "claude-route-input-") {
+				fixtureMode = mode
+			}
+			root, bin, capture := agentFactoryFixture(t, "claude-code", fixtureMode)
 			ws := filepath.Join(root, "mission")
 			require.NoError(t, os.Mkdir(ws, 0700))
 			home := filepath.Join(root, "home")
@@ -36,7 +40,10 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, capture, "")
 			started := time.Now().UTC()
 			result, err := executePreparedAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "claude-code"), ws)
-			require.NoError(t, err)
+			missionErr := err
+			if !strings.HasPrefix(mode, "claude-route-input-") {
+				require.NoError(t, missionErr)
+			}
 			finished := time.Now().UTC()
 			require.Len(t, capture.Records(), 2)
 			proof, err := os.ReadFile(filepath.Join(ws, agentProofFile))
@@ -81,6 +88,8 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 				isolation.limits = claudeMainLimitProof{}
 			case "missing-lifecycle":
 				isolation.subagent = claudeSubagentProof{}
+			case "missing-requested-model-feed":
+				isolation.subagent.RequestedModel = ""
 			case "missing-tool":
 				result.Steps = nil
 			case "missing-file":
@@ -93,7 +102,10 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 				require.NoError(t, os.Chmod(root, 0500))
 				t.Cleanup(func() { require.NoError(t, os.Chmod(root, 0700)) })
 			}
-			err = finishClaudeIsolation(repo, root, isolation, capture, result, started, finished)
+			err = missionErr
+			if err == nil {
+				err = finishClaudeIsolation(repo, root, isolation, capture, result, started, finished)
+			}
 			sink := filepath.Join(repo, evidencePath, "observations/lr05-isolation.json")
 			if mode != "success" {
 				require.Error(t, err)
@@ -111,6 +123,8 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			require.NoError(t, err)
 			var saved claudeIsolationObservation
 			require.NoError(t, json.Unmarshal(raw, &saved))
+			assert.Equal(t, "haiku", saved.Subagent.RequestedModel)
+			assert.Equal(t, "glm-5.3", saved.Subagent.HarnessReportedModel)
 			assert.Equal(t, claudeInputSource, saved.InputSource)
 			assert.Equal(t, 202752, saved.Limits.ContextTokens)
 			assert.Equal(t, 32768, saved.Limits.RequestedOutputTokens)

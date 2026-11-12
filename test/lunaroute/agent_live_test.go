@@ -98,7 +98,7 @@ func liveBinding(key, model, backend string) provider.ResolvedBinding {
 
 func agentMissionPromptFor(backend string) string {
 	if backend == "claude-code" {
-		return agentMissionPrompt + " Also use the Agent tool with subagent_type=general-purpose and run_in_background=false to read and verify both files. Your next action depends on its result; wait for successful completion. Do not use remote isolation or resume an old agent."
+		return agentMissionPrompt + " Also use the Agent tool with subagent_type=general-purpose, model=haiku and run_in_background=false to read and verify both files. Your next action depends on its result; wait for successful completion. Do not use remote isolation or resume an old agent."
 	}
 	if backend == "opencode" {
 		return agentMissionPrompt + " Also use the task tool to invoke a synchronous general subagent to read and verify both files. Wait for its successful completion; do not run it in the background."

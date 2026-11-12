@@ -20,6 +20,10 @@ installed-helper observation, gateway-routing proof or verified LR-05.
 | `task_started` / `task_updated` schemas | 263353582 | 2050 | `b83b5008c149ff4ed9f2cacd18e305873f6906dbd81c096ae1e8295e95260acf` |
 | Registered-task start producer | 269229935 | 2050 | `8f4c0894b6f739389dc0f20ac2c6bc7a1a433ac19ab18fae6cf2c0216a06a480` |
 | Agent background/isolation input | 279832722 | 1700 | `d32e11bec23b0c547d2d625cdce769e097467e56ef32448bbc4258dcb95146ab` |
+| Explicit Agent model input and precedence | 279831400 | 1700 | `671777c5db4e061b25847b2ef362bd3e5f6f049e5d58f5611c1a82d09966fdcc` |
+| Forced-model schema removal | 279834744 | 1700 | `47e0a4a061186b19ebb46774cce96f84389e4852df8e6635b4280e0fc5a9be0f` |
+| `Wt` / `Y$` Haiku alias resolution | 264405992 | 1300 | `69efc89e79a6ed95c1a3a3301a5c0a47c623d6a302a69a6f52be0f97d28cba9f` |
+| `DH` Haiku default env resolution | 264379850 | 1500 | `6dc83f2df205affc4bd3a97f414ca7a1885964081f0aacca323c5eb8c1340a92` |
 | Completed versus async output schemas | 279835446 | 1700 | `1cc86534c64359a7517e68a7b6222da7e8c32b4d4de13e26948393e7b86fd2da` |
 | Completed Agent output fields | 279686900 | 1800 | `6e04c3772b7355094521341a2cc72861055c5d9fdebaca250a74e9c0b3e47487` |
 | Agent report/model/totals producer | 279693548 | 1700 | `96650d3047e8d7d3d1eab1a9b5c714408e29686550bbb5e93ad0d50d83ab3823` |
@@ -74,7 +78,37 @@ The follow-up [routing collector](lr05-subagent-routing.md) now adds distinct
 Factory/CONNECT/TLS fixtures and constructs the same-launch header/task join in
 the operator isolation entry point. That narrow publisher requires actual helper
 traffic; the main-only lifecycle fixtures above remain separate refusal controls.
-Installed subagent observations are still pending. Other Claude
+Installed subagent observations are still pending.
+
+## Explicit Haiku model-path forcing and collection
+
+The source ranges above were inspected on 2026-11-12. Agent's optional `model`
+input takes precedence over its definition and configured default subagent model
+(except fork/coordinator/forced-model cases). `Wt` / `Y$` resolve `haiku` through
+`DH`, which reads `ANTHROPIC_DEFAULT_HAIKU_MODEL`. A forced-model setting can
+remove the input from the schema; this collector does not invent a replacement
+or accept an omitted input as proof of the requested path.
+
+The existing Claude experiment mission now explicitly requests `model=haiku`
+on its synchronous general-purpose file verifier. The actual emitted launch
+must contain exactly the selected canonical model in both the subagent and
+Haiku selectors. The real JSONL collector requires the Agent call's exact
+`model:"haiku"` and records it as `subagent_lifecycle.requested_model`, separate
+from `harness_reported_model`. Missing, null, malformed, duplicate, substituted
+or unsafe input refuses collection. The existing finalizer additionally rejects
+a lost requested-model feed, even with completed inference/files, and still
+requires the exact lifecycle/header/terminal-response join before publication.
+Only that actual joined exchange can establish the executed canonical model;
+`haiku` is a harness selector, not a new LunaRoute id or an Anthropic-family fact.
+
+Factory/subprocess/CONNECT/TLS fixtures feed distinct main/helper traffic and
+command-created files into the private JSON sink, including cleanup before
+writing. They prove this forcing/collection seam only. They do **not** prove
+installed alias precedence, independent configured-default subagent or small-fast routing, other helper
+categories or complete LR-05 verification; those need genuine operator
+observations. No capability/support fact or register status changes.
+
+Other Claude
 helper categories, full controls/isolation, installed memory behavior and the
 complete Claude agent entry point remain pending under P3-T5. No backend
 support, register status or genuine live observation is changed by this work.

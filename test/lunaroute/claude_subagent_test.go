@@ -19,6 +19,7 @@ func TestAgentEvidenceClaudeSubagentMissionInput(t *testing.T) {
 	prompt := agentMissionPromptFor("claude-code")
 	assert.Contains(t, prompt, "general-purpose")
 	assert.Contains(t, prompt, "run_in_background=false")
+	assert.Contains(t, prompt, "model=haiku")
 	assert.Contains(t, prompt, "read and verify both files")
 }
 
@@ -28,6 +29,7 @@ func TestAgentEvidenceClaudeSubagentSelection(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			actual := spec
 			actual.Env = append([]string(nil), spec.Env...)
+			actual.Env = append(actual.Env, "ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.3")
 			if mode != "missing" {
 				value := "glm-5.3"
 				if mode == "drift" {
@@ -50,7 +52,7 @@ func TestAgentEvidenceClaudeSubagentSelection(t *testing.T) {
 
 func claudeSubagentLines() []string {
 	return []string{
-		`{"type":"assistant","session_id":"ses_factory","message":{"content":[{"type":"tool_use","id":"tool_agent","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"verify the files","run_in_background":false}}]}}`,
+		`{"type":"assistant","session_id":"ses_factory","message":{"content":[{"type":"tool_use","id":"tool_agent","name":"Agent","input":{"model":"haiku","subagent_type":"general-purpose","prompt":"verify the files","run_in_background":false}}]}}`,
 		`{"type":"system","subtype":"task_started","session_id":"ses_factory","task_id":"agent_one","run_id":"run_one","tool_use_id":"tool_agent","task_type":"local_agent","subagent_type":"general-purpose","is_backgrounded":false,"spawn_depth":1}`,
 		`{"type":"user","session_id":"ses_factory","message":{"content":[{"type":"tool_result","tool_use_id":"tool_agent","content":"private report"}]},"tool_use_result":{"status":"completed","agentId":"agent_one","agentType":"general-purpose","resolvedModel":"glm-5.3","totalDurationMs":10,"totalTokens":12,"totalToolUseCount":2}}`,
 	}
@@ -133,6 +135,7 @@ func TestAgentEvidenceClaudeSubagentLifecycle(t *testing.T) {
 			assert.Equal(t, "agent_one", proof.TaskID)
 			assert.Equal(t, "run_one", proof.RunID)
 			assert.Equal(t, "tool_agent", proof.ToolUseID)
+			assert.Equal(t, "haiku", proof.RequestedModel)
 			assert.Equal(t, "glm-5.3", proof.HarnessReportedModel)
 		})
 	}
@@ -190,6 +193,7 @@ func TestAgentEvidenceClaudeSubagentFactorySink(t *testing.T) {
 			assert.Equal(t, "ses_factory", saved.Subagent.Session)
 			assert.Equal(t, claudeStartupVersion, saved.Subagent.Version)
 			assert.Equal(t, claudeSubagentSource, saved.Subagent.Source)
+			assert.Equal(t, "haiku", saved.Subagent.RequestedModel)
 			assert.Equal(t, "glm-5.3", saved.Subagent.HarnessReportedModel)
 			assert.Equal(t, "main", saved.Inference[0].Category, "lifecycle intent is not helper gateway evidence")
 			for _, secret := range []string{root, bin, captureFixtureKey, agentMissionPrompt, "private report", claudeForeignCredential} {

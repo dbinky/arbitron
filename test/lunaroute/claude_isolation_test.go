@@ -211,7 +211,7 @@ func TestAgentEvidenceClaudeIsolationSameLaunchInputs(t *testing.T) {
 	root := t.TempDir()
 	isolation, err := seedClaudeIsolation(filepath.Join(root, "home"), spec.Dir)
 	require.NoError(t, err)
-	spec.Env = append(spec.Env, "HOME="+isolation.home, "CLAUDE_CODE_SUBAGENT_MODEL=glm-5.3")
+	spec.Env = append(spec.Env, "HOME="+isolation.home, "CLAUDE_CODE_SUBAGENT_MODEL=glm-5.3", "ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.3")
 	require.NoError(t, isolation.validateLaunch(spec))
 	for _, name := range []string{"HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
 		changed := spec

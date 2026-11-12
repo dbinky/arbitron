@@ -205,7 +205,7 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 		return fail()
 	}
 	subagent := s.subagent
-	if subagent.Source != claudeSubagentSource || subagent.Version != claudeStartupVersion || subagent.Session != s.session || subagent.HarnessReportedModel != result.Model || !safeAgentField(subagent.TaskID, "") || !safeAgentField(subagent.RunID, "") || !safeAgentField(subagent.ToolUseID, "") {
+	if subagent.Source != claudeSubagentSource || subagent.Version != claudeStartupVersion || subagent.Session != s.session || subagent.HarnessReportedModel != result.Model || subagent.RequestedModel != "haiku" || !safeAgentField(subagent.TaskID, "") || !safeAgentField(subagent.RunID, "") || !safeAgentField(subagent.ToolUseID, "") {
 		return fail()
 	}
 	limits := s.limits

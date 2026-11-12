@@ -19,6 +19,7 @@ type claudeSubagentProof struct {
 	TaskID               string `json:"task_id"`
 	RunID                string `json:"run_id"`
 	ToolUseID            string `json:"tool_use_id"`
+	RequestedModel       string `json:"requested_model"`
 	HarnessReportedModel string `json:"harness_reported_model"`
 }
 
@@ -122,6 +123,7 @@ func collectClaudeSubagentLifecycle(lines []string, session, model string) (clau
 			IsError   bool   `json:"is_error"`
 			Input     struct {
 				SubagentType string `json:"subagent_type"`
+				Model        string `json:"model"`
 				Background   *bool  `json:"run_in_background"`
 				Isolation    string `json:"isolation"`
 				Resume       string `json:"resume"`
@@ -139,10 +141,10 @@ func collectClaudeSubagentLifecycle(lines []string, session, model string) (clau
 		matched := false
 		for _, block := range blocks {
 			if block.Type == "tool_use" && block.Name == "Agent" {
-				if state != awaitingCall || event.Type != "assistant" || !current || !safeAgentField(block.ID, "") || block.Input.SubagentType != "general-purpose" || block.Input.Background == nil || *block.Input.Background || block.Input.Isolation != "" || block.Input.Resume != "" {
+				if state != awaitingCall || event.Type != "assistant" || !current || !safeAgentField(block.ID, "") || block.Input.SubagentType != "general-purpose" || block.Input.Model != "haiku" || block.Input.Background == nil || *block.Input.Background || block.Input.Isolation != "" || block.Input.Resume != "" {
 					return fail()
 				}
-				proof.ToolUseID, state = block.ID, awaitingRegistration
+				proof.ToolUseID, proof.RequestedModel, state = block.ID, block.Input.Model, awaitingRegistration
 			}
 			if block.Type == "tool_result" && block.ToolUseID == proof.ToolUseID && proof.ToolUseID != "" {
 				output := event.Output
@@ -172,14 +174,16 @@ func collectClaudeSubagentSelection(spec claudecli.RunSpec) error {
 	if err != nil {
 		return errAgentEvidence
 	}
-	selector := 0
-	for _, entry := range spec.Env {
-		if entry == "CLAUDE_CODE_SUBAGENT_MODEL="+model {
-			selector++
+	for _, selector := range []string{"CLAUDE_CODE_SUBAGENT_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
+		matches := 0
+		for _, entry := range spec.Env {
+			if entry == selector+"="+model {
+				matches++
+			}
 		}
-	}
-	if selector != 1 {
-		return errAgentEvidence
+		if matches != 1 {
+			return errAgentEvidence
+		}
 	}
 	return nil
 }

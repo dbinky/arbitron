@@ -372,7 +372,14 @@ The same isolated Factory now also consumes the actual JSONL synchronous
 subagent lifecycle: an Agent call, foreground local-agent registration and a
 matching structured completed result, with exact session/task/run/tool/model
 agreement. The Claude mission explicitly permits Agent and requests a
-synchronous general-purpose file verifier. Missing, reordered, background,
+synchronous general-purpose file verifier with explicit `model=haiku`. Its
+actual Agent input must retain that selector and the emitted Haiku/subagent
+selectors must equal the selected canonical id. `requested_model` records the
+observed Agent input separately from the harness-reported and actual gateway
+models. Missing input or a lost feed refuses publication; neither a default
+subagent nor a fixed-id override proves this requested Haiku path. This is
+source-backed forcing/collection, not installed selector verification or a
+small-fast/other-helper claim. Missing, reordered, background,
 failed, substituted or unsafe records refuse the final private
 `subagent_lifecycle` sink even when authenticated main inference and both files
 succeed. The lifecycle keeps its model labelled `harness_reported_model`.
