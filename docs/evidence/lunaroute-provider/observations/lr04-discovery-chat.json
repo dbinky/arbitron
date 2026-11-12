@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-11-11T15:59:45Z",
+  "recorded_at": "2026-11-12T15:55:57Z",
   "root": "https://gw.lunaroute.com",
   "listing_model_ids": [
     "clef-flash",
@@ -27,8 +27,8 @@
     "response_model": "glm-5.3",
     "completed": true,
     "tokens_in": 18,
-    "tokens_out": 171,
-    "latency_ms": 1988,
+    "tokens_out": 55,
+    "latency_ms": 693,
     "scope": "one completed chat task only; proves no static limits or agent backend"
   },
   "error_bodies": [
@@ -48,29 +48,11 @@
         "error.code": "INVALID_API_KEY"
       },
       "classified_as": "credentials_rejected"
-    },
-    {
-      "content_type": "application/json",
-      "model": "claude-sonnet-5-lr1",
-      "auth_header_names": [
-        "Authorization"
-      ],
-      "auth_matches_selected": true,
-      "case": "unavailable model",
-      "path": "/v1/chat/completions",
-      "status": 404,
-      "body_shape": {
-        "error": "object"
-      },
-      "codes": {
-        "error.code": "INFERENCE_MODEL_NOT_FOUND"
-      },
-      "classified_as": "cause_unknown"
     }
   ],
   "inference": [
     {
-      "run_id": "discovery-20261111T155945.155654000Z",
+      "run_id": "discovery-20261112T155557.203614000Z",
       "backend": "chat",
       "connection": "selected-connection",
       "category": "main",
@@ -87,9 +69,9 @@
         "Authorization"
       ],
       "completed": true,
-      "started_at": "2026-11-11T15:59:45.337182Z",
-      "finished_at": "2026-11-11T15:59:47.325322Z"
+      "started_at": "2026-11-12T15:55:57.375877Z",
+      "finished_at": "2026-11-12T15:55:58.068777Z"
     }
   ],
-  "unavailable_case": "reviewed id absent from fresh listing; actual non-success inference observed"
+  "unavailable_case": "not supplied; deterministic root fixtures cover unavailable models"
 }

@@ -398,3 +398,32 @@ Agents never receive a LunaRoute key, so no agent can run a live experiment. The
 1. Every task builds and tests its code offline: emitters, overlays, launch checks, parsers, enablement wiring and docs. Use the documented contract plus R1–R4. **A missing live observation is not a reason to skip building code.** This reverses the "evidence before emitters" ordering in P3-T1, P3-T2, P3-T5, P4-T1, P4-T2 and P4-T4.
 2. Release-readiness flags and register statuses stay gated. A backend is not **marked ready or verified** until its live observation exists. The code to enable it should exist and be tested offline, behind the readiness gate.
 3. A plan step that consists solely of running a live test is left unchecked, with the note `> OPERATOR-LIVE-PASS: pending operator run`. That is expected and is **not** a blocker for implementing anything else. The operator runs the live tests after implementation and commits the observations.
+
+## Operator rulings — 2026-11-12
+
+### R7 — Release scope: chat, codex and pi only
+
+**Ruling.** This release supports LunaRoute for **chat (`llm_call`), `codex` and `pi`**. The `claude-code` and `opencode` backends are **not released** for LunaRoute. A profile, node override or launch that pairs a LunaRoute connection with either one is refused by the existing enablement gate (`domain/provider/lunaroute_validate.go:lunaRouteEnabledBackends`), using its existing typed unsupported-backend refusal. No new option, flag or fallback is added.
+
+**Evidence for what is released** (operator live pass 2, 2026-11-12):
+
+- Chat: `TestLiveGatewayContract` and `TestLiveDiscoveryAndChat` passed (`observations/lr01-gateway-20261112T155459.110547000Z.json`, `observations/lr04-discovery-chat.json`).
+- codex: `TestLiveCodexHelp` and `TestLiveCodexConfigControls` passed (`observations/lr07-codex-config-controls.json`). A manual operator tool task with the LR-07 launch shape completed a file write (`observations/operator-manual-agent-tasks-2026-11-12.md`).
+- pi: `TestLivePiHelp` and `TestLivePiModelControls` passed (`observations/lr08-pi-model-controls.json`). A manual operator tool task with the LR-08 launch shape completed a file write (same file).
+
+**What is kept and what is removed:**
+
+- The claude-code and opencode LunaRoute emitters (P3-T1/P3-T2) **stay in the tree**, with their adapter-level unit tests. They are only disabled at the gate. Re-enabling one is a one-line gate change plus a live operator pass.
+- Tests that assert claude-code/opencode LunaRoute launches **succeed through the production gate or Factory** (P3-T3 root sinks, P3-T5's offline evidence harness, guide examples) switch to asserting the refusal or are removed. Do not keep them green through a test-only bypass of the production gate.
+- LR-05 and LR-06 become `deferred` and leave the release gate. The gate covers LR-01–LR-04, LR-07 and LR-08.
+- The guide (`docs/setup/lunaroute.md`) and the MCP tool text list chat, codex and pi only. Remove the claude-code/opencode example profiles and state that both are not yet supported.
+
+**Descoped from this release** (move to follow-up work and do not block on them):
+
+- the claude-code/opencode live evidence harness (P3-T5);
+- forced-helper / effective-control collectors (P2-T9 Step 3, P4-T1 Steps 2–3);
+- the full live MCP acceptance matrix (P4-T7) and the manual MCP acceptance milestone (P2-T8).
+
+Operator observations of codex/pi tool tasks satisfy P4-T1's "representative tool tasks" for this release. Codex warns "Model metadata for `glm-5.3` not found" (fallback metadata). This is a known, non-fatal degradation and does not block the release.
+
+**Why:** the operator does not use opencode, and only chat, codex and pi are needed now. Both automated agent-evidence suites (Claude Code isolation and OpenCode agent task) failed in the test harness, not in the product. Further investment in that roughly 17k-line harness is not justified for backends nobody will run.

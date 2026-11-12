@@ -1,0 +1,17 @@
+{
+  "source": "docs/evidence/lunaroute-provider/sources/lr07-config-controls.md",
+  "scope": "app_server_resolved_config_only",
+  "version": "codex-cli 0.167.2",
+  "model": "glm-5.3",
+  "review_model": "glm-5.3",
+  "provider": "lunaroute",
+  "base_url": "https://gw.lunaroute.com/v1",
+  "wire_api": "responses",
+  "env_key": "LUNAROUTE_API_KEY",
+  "input_cases": [
+    "conflicting",
+    "absent"
+  ],
+  "protected_inputs_unchanged": true,
+  "private_cleaned": true
+}
