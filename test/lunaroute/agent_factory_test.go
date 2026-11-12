@@ -561,6 +561,19 @@ if [ "$path" = messages ]; then
   emit_task_status() {
    printf '{"type":"system","subtype":"task_updated","session_id":"ses_factory","task_id":"agent_one","run_id":"run_one","patch":{"status":"%s"}}\n' "$1"
   }
+  case '@MODE@' in claude-route-title-patch-*)
+   patch='"patch":{},'
+   case '@MODE@' in
+    claude-route-title-patch-running) patch='"patch":{"status":"running"},' ;;
+    claude-route-title-patch-foreground) patch='"patch":{"is_backgrounded":false},' ;;
+    claude-route-title-patch-missing) patch= ;;
+    claude-route-title-patch-null) patch='"patch":null,' ;;
+    claude-route-title-patch-null-status) patch='"patch":{"status":null},' ;;
+    claude-route-title-patch-empty-status) patch='"patch":{"status":""},' ;;
+    claude-route-title-patch-null-background) patch='"patch":{"is_backgrounded":null},' ;;
+   esac
+   printf '{%s"type":"system","subtype":"task_updated","session_id":"ses_factory","task_id":"agent_one","run_id":"run_one"}\n' "$patch"
+  ;; esac
   case '@MODE@' in
    claude-route-title-task-completed|claude-route-title-task-running-after-update) emit_task_status completed ;;
    claude-route-title-task-running-after-notification) echo '{"type":"system","subtype":"task_notification","session_id":"ses_factory","task_id":"agent_one","run_id":"run_one","tool_use_id":"tool_agent","status":"completed"}' ;;

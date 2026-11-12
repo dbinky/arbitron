@@ -63,7 +63,12 @@ contradictory task updates/notifications refuse collection. Completion is sticky
 for the accepted task/run: a `running` update after a completed patch,
 notification or structured tool result refuses, even if another successful result
 follows it. Same-run completed confirmations and status-free metadata updates
-remain valid. Factory/subprocess/CONNECT/TLS fixtures require zero publication
+remain valid. The source-defined `task_updated.patch` must be an object:
+missing/null/nonobject patches cannot become empty updates through Go's JSON
+zero values. When present, `status` must be an accepted nonempty state and
+`is_backgrounded` must be a nonnull boolean; null is not absence or foreground.
+An empty object and metadata-only patch still leave the accepted state intact.
+Factory/subprocess/CONNECT/TLS fixtures require zero publication
 on such regressions despite completed main/helper/title exchanges and both
 command-created files; the positive control reaches the cleanup-before-write
 private JSON sink. This is bounded collector validation, not an installed

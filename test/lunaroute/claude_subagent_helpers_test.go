@@ -24,26 +24,23 @@ type claudeSubagentProof struct {
 }
 
 type claudeSubagentEvent struct {
-	Type         string `json:"type"`
-	Subtype      string `json:"subtype"`
-	Session      string `json:"session_id"`
-	TaskID       string `json:"task_id"`
-	RunID        string `json:"run_id"`
-	ToolUseID    string `json:"tool_use_id"`
-	TaskType     string `json:"task_type"`
-	SubagentType string `json:"subagent_type"`
-	Background   *bool  `json:"is_backgrounded"`
-	Depth        int    `json:"spawn_depth"`
-	ParentTask   string `json:"parent_task_id"`
-	ParentTool   string `json:"parent_tool_use_id"`
-	Historical   bool   `json:"historical"`
-	Replay       bool   `json:"isReplay"`
-	Status       string `json:"status"`
-	Patch        struct {
-		Status     string `json:"status"`
-		Background *bool  `json:"is_backgrounded"`
-	} `json:"patch"`
-	Message struct {
+	Type         string          `json:"type"`
+	Subtype      string          `json:"subtype"`
+	Session      string          `json:"session_id"`
+	TaskID       string          `json:"task_id"`
+	RunID        string          `json:"run_id"`
+	ToolUseID    string          `json:"tool_use_id"`
+	TaskType     string          `json:"task_type"`
+	SubagentType string          `json:"subagent_type"`
+	Background   *bool           `json:"is_backgrounded"`
+	Depth        int             `json:"spawn_depth"`
+	ParentTask   string          `json:"parent_task_id"`
+	ParentTool   string          `json:"parent_tool_use_id"`
+	Historical   bool            `json:"historical"`
+	Replay       bool            `json:"isReplay"`
+	Status       string          `json:"status"`
+	Patch        json.RawMessage `json:"patch"`
+	Message      struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	Output *struct {
@@ -104,13 +101,26 @@ func collectClaudeSubagentLifecycle(lines []string, session, model string) (clau
 				return fail()
 			}
 			if event.Subtype == "task_updated" {
-				if (event.Patch.Background != nil && *event.Patch.Background) || (event.Patch.Status != "" && event.Patch.Status != "running" && event.Patch.Status != "completed") {
+				var patch map[string]json.RawMessage
+				if json.Unmarshal(event.Patch, &patch) != nil || patch == nil {
 					return fail()
 				}
-				if event.Patch.Status == "running" && (taskCompleted || state == completed) {
+				var status string
+				if raw, present := patch["status"]; present {
+					if json.Unmarshal(raw, &status) != nil || (status != "running" && status != "completed") {
+						return fail()
+					}
+				}
+				if raw, present := patch["is_backgrounded"]; present {
+					var background *bool
+					if json.Unmarshal(raw, &background) != nil || background == nil || *background {
+						return fail()
+					}
+				}
+				if status == "running" && (taskCompleted || state == completed) {
 					return fail()
 				}
-				taskCompleted = taskCompleted || event.Patch.Status == "completed"
+				taskCompleted = taskCompleted || status == "completed"
 			} else {
 				if event.ToolUseID != proof.ToolUseID || event.Status != "completed" {
 					return fail()
