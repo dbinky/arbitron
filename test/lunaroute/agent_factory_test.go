@@ -177,6 +177,21 @@ func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected 
 			}
 			return
 		}
+		if backend == "claude-code" && r.Header.Get("X-Claude-Code-Agent-Id") != "" {
+			if len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content != "verify the files" || body.Stream {
+				t.Error("subagent request omitted its actual task prompt/settings")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			model := "glm-5.3"
+			if mode == "claude-route-response-model" {
+				model = "glm-5.3-flash"
+			}
+			if _, err := io.WriteString(w, `{"type":"message","model":"`+model+`","stop_reason":"end_turn"}`); err != nil {
+				t.Error("cannot write private subagent response")
+			}
+			return
+		}
 		if backend == "claude-code" {
 			memory, err := os.ReadFile(filepath.Join(root, "mission/CLAUDE.md"))
 			if err == nil {
@@ -329,8 +344,11 @@ case '@MODE@' in
  exit) echo 'upstream @KEY@' >&2; exit 1 ;;
  cancel) exec sleep 30 ;;
 esac
-session_header=
-case '@MODE@' in correlation-*) session_header='X-Opencode-Session-Id: ses_factory' ;; esac
+session_header=; class_header=
+case '@MODE@' in
+ correlation-*) session_header='X-Opencode-Session-Id: ses_factory' ;;
+ claude-route-*) session_header='X-Claude-Code-Session-Id: ses_factory'; class_header='X-Claude-Code-Request-Class: main' ;;
+esac
 request_body='{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"@PROMPT@"}]}'
 make_memory_body() {
  memory=$(cat CLAUDE.md)
@@ -355,7 +373,20 @@ case '@MODE@' in effort-*)
   request_body='{"output_config":{"effort":"'"$effort"'"},'"${request_body#?}"
  fi
  ;; esac
-/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
+/usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -H "$class_header" -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
+case '@MODE@' in claude-route-*)
+ if [ '@MODE@' != claude-route-missing ]; then
+  helper_session=ses_factory; helper_agent=agent_one; helper_parent=; helper_class=subagent; helper_type=general-purpose
+  case '@MODE@' in
+   claude-route-session) helper_session=ses_other ;;
+   claude-route-agent) helper_agent=agent_other ;;
+   claude-route-parent) helper_parent='X-Claude-Code-Parent-Agent-Id: agent_parent' ;;
+   claude-route-class) helper_class=auxiliary ;;
+   claude-route-type) helper_type=Explore ;;
+  esac
+  /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "X-Claude-Code-Session-Id: $helper_session" -H "X-Claude-Code-Agent-Id: $helper_agent" -H "$helper_parent" -H "X-Claude-Code-Request-Class: $helper_class" -H "X-Claude-Code-Agent-Type: $helper_type" -d '{"model":"glm-5.3",@CLAUDE_BUDGET@"messages":[{"role":"user","content":"verify the files"}]}' "https://gw.lunaroute.com/v1/$path" >/dev/null
+ fi
+ ;; esac
 if [ '@MODE@' = memory-late ]; then
  request_body=$(make_memory_body)
  /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null

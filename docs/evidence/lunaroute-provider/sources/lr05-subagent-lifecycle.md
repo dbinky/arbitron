@@ -70,8 +70,11 @@ Offline Factory/subprocess/CONNECT/TLS fixtures deliberately produce a
 synthetic lifecycle and **only main gateway traffic**. They prove lifecycle
 collection and sink refusal, not installed subagent behavior or helper
 routing. Records stay classified `main`; no operation/category is invented.
-Actual subagent gateway requests still need a source-backed current-run join
-before any completed-agent/contract artifact can be accepted. Other Claude
+The follow-up [routing collector](lr05-subagent-routing.md) now adds distinct
+Factory/CONNECT/TLS fixtures and constructs the same-launch header/task join in
+the operator isolation entry point. That narrow publisher requires actual helper
+traffic; the main-only lifecycle fixtures above remain separate refusal controls.
+Installed subagent observations are still pending. Other Claude
 helper categories, full controls/isolation, installed memory behavior and the
 complete Claude agent entry point remain pending under P3-T5. No backend
 support, register status or genuine live observation is changed by this work.

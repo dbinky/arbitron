@@ -68,6 +68,10 @@ type capturedInference struct {
 	Operation           *capturedOperation     `json:"operation,omitempty"`
 	SessionID           string                 `json:"session_id,omitempty"`
 	ParentSessionID     string                 `json:"parent_session_id,omitempty"`
+	ClaudeAgentID       string                 `json:"claude_agent_id,omitempty"`
+	ClaudeParentAgentID string                 `json:"claude_parent_agent_id,omitempty"`
+	ClaudeRequestClass  string                 `json:"claude_request_class,omitempty"`
+	ClaudeAgentType     string                 `json:"claude_agent_type,omitempty"`
 }
 
 type capturedOperation struct {
@@ -399,6 +403,10 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 				*field.dest = values[0]
 			}
 		}
+	}
+	if c.backend == "claude-code" && projectClaudeRoutingHeaders(r.Header, &record, c.key) != nil {
+		r.Body.Close()
+		return reject("session_schema")
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(c.limits.BodyBytes)+1))
 	closeErr := r.Body.Close()

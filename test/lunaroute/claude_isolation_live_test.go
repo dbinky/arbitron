@@ -11,15 +11,15 @@ import (
 	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 )
 
-// A narrow operator experiment, not TestLiveClaudeCodeAgentTask: no helper
-// routing or complete LR-05 verification is claimed. Project memory, main context and
-// actual request output budgets are collected without inferring gateway maxima.
+// A narrow operator experiment, not TestLiveClaudeCodeAgentTask: synchronous
+// subagent routing is joined to its same-launch lifecycle, but other helpers
+// and complete LR-05 verification remain pending. No gateway maxima are inferred.
 func TestLiveClaudeCodeIsolation(t *testing.T) {
 	key := liveKey(t)
 	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_CLAUDE_MODEL")
 	bin := liveBinary(t, "claude")
 	rules := liveRules(t)
-	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource} {
+	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource} {
 		if _, err := readRepoFile(repoRoot(t), source); err != nil {
 			t.Fatal("isolation/control source unavailable")
 		}
@@ -69,7 +69,7 @@ func TestLiveClaudeCodeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal("isolated Claude mission failed; release acceptance remains pending")
 	}
-	observation, err := collectClaudeIsolationEvidence(isolation, capture.Records(), result, started, time.Now().UTC())
+	observation, err := collectClaudeSubagentRoutingEvidence(isolation, capture, result, started, time.Now().UTC())
 	if err != nil {
 		t.Fatal("current-run config/auth/workspace/inference proof incomplete")
 	}

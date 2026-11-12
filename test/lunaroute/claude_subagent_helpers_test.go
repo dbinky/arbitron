@@ -11,7 +11,7 @@ import (
 const claudeSubagentSource = "docs/evidence/lunaroute-provider/sources/lr05-subagent-lifecycle.md"
 
 // This is a harness-reported lifecycle, not gateway response-model evidence.
-// Request attribution is a separate, still-required collector.
+// The separate routing collector joins it to actual current-run exchanges.
 type claudeSubagentProof struct {
 	Source               string `json:"source"`
 	Version              string `json:"version"`

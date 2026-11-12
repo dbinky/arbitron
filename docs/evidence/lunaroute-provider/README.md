@@ -366,11 +366,18 @@ agreement. The Claude mission explicitly permits Agent and requests a
 synchronous general-purpose file verifier. Missing, reordered, background,
 failed, substituted or unsafe records refuse the final private
 `subagent_lifecycle` sink even when authenticated main inference and both files
-succeed. Only `harness_reported_model` is recorded; no request is relabelled as
-a helper. These protocol fixtures deliberately have only main traffic, so they
-cannot establish installed-helper routing. See [the source and remaining
-request-correlation boundary](sources/lr05-subagent-lifecycle.md) and
-`go test ./test/lunaroute -run TestAgentEvidenceClaudeSubagent -count=1`.
+succeed. The lifecycle keeps its model labelled `harness_reported_model`.
+The operator isolation entry point additionally joins actual current-run routing
+headers to that lifecycle before publication: root-session main traffic and
+separate general-purpose requests with the exact task id, selected response
+model and authenticated Messages path are required. Only joined request ids
+are marked `subagent`; missing/foreign/unsafe/stale feeds write no artifact.
+Existing main-only lifecycle fixtures remain narrow controls; the new
+Factory/subprocess/CONNECT/TLS routing fixtures exercise both exchanges and the
+final private JSON sink. Neither fixture set proves installed-helper behavior.
+See [lifecycle sources](sources/lr05-subagent-lifecycle.md),
+[request sources and join scope](sources/lr05-subagent-routing.md) and
+`go test ./test/lunaroute -run 'TestAgentEvidenceClaude(Subagent|Routing)' -count=1`.
 This is **not** the full Claude agent/contract entry point: keychain isolation,
 effective selectors, complete thinking/effort and limit enforcement, installed
 memory and helper verification remain pending. A short request establishes no gateway maximum.
