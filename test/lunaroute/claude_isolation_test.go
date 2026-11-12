@@ -211,7 +211,12 @@ func TestAgentEvidenceClaudeIsolationSameLaunchInputs(t *testing.T) {
 	root := t.TempDir()
 	isolation, err := seedClaudeIsolation(filepath.Join(root, "home"), spec.Dir)
 	require.NoError(t, err)
-	spec.Env = append(spec.Env, "HOME="+isolation.home, "CLAUDE_CODE_SUBAGENT_MODEL=glm-5.3", "ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.3")
+	spec.Env = append(spec.Env, "HOME="+isolation.home)
+	for _, selector := range expectedClaudeSelectors {
+		if selector != "ANTHROPIC_MODEL" {
+			spec.Env = append(spec.Env, selector+"=glm-5.3")
+		}
+	}
 	require.NoError(t, isolation.validateLaunch(spec))
 	for _, name := range []string{"HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
 		changed := spec
@@ -229,4 +234,20 @@ func TestAgentEvidenceClaudeIsolationSameLaunchInputs(t *testing.T) {
 	_, _, err = runner.Run(context.Background(), spec)
 	require.Error(t, err)
 	assert.True(t, called)
+	for _, selector := range expectedClaudeSelectors {
+		t.Run("missing-"+selector, func(t *testing.T) {
+			changed := spec
+			changed.Env = nil
+			for _, entry := range spec.Env {
+				if !strings.HasPrefix(entry, selector+"=") {
+					changed.Env = append(changed.Env, entry)
+				}
+			}
+			called = false
+			_, _, err := runner.Run(context.Background(), changed)
+			require.Error(t, err)
+			assert.False(t, called, "missing actual selector must refuse before any subprocess")
+			assert.Empty(t, isolation.selectors.Values, "refused launch must not retain intent proof")
+		})
+	}
 }

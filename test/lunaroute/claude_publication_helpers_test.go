@@ -21,7 +21,7 @@ func finishClaudeIsolation(repo, experiment string, isolation *claudeIsolation, 
 	if err != nil {
 		return errAgentEvidence
 	}
-	for _, source := range []string{observation.Source, observation.Limits.Source, observation.ProjectMemory.Source, observation.Effort.Source, observation.Thinking.Source, observation.Subagent.Source, claudeSubagentRoutingSource, claudeInputSource} {
+	for _, source := range []string{observation.Source, observation.Limits.Source, observation.ProjectMemory.Source, observation.Effort.Source, observation.Thinking.Source, observation.Subagent.Source, claudeSubagentRoutingSource, observation.Selectors.Source, claudeInputSource} {
 		raw, err := readRepoFile(repo, source)
 		if err != nil || source == claudeInputSource && validateClaudeIsolationInputSource(raw, observation.Limits) != nil {
 			return errAgentEvidence

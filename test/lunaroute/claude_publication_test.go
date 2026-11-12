@@ -18,7 +18,7 @@ import (
 const claudePublicationSnapshot = `{"models":[{"id":"glm-5.3","context_window":202752,"max_output_tokens":32768}]}`
 
 func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
-	for _, mode := range []string{"success", "missing-source", "unreadable-source", "source-context-drift", "source-output-drift", "source-model-missing", "source-malformed", "empty-capture", "missing-limits", "missing-lifecycle", "missing-tool", "missing-file", "unsafe-record", "cleanup-failure", "destination-in-experiment", "home-outside-experiment", "missing-requested-model-feed", "claude-route-input-missing", "claude-route-input-drift", "claude-route-input-unsafe"} {
+	for _, mode := range []string{"success", "missing-source", "unreadable-source", "source-context-drift", "source-output-drift", "source-model-missing", "source-malformed", "empty-capture", "missing-limits", "missing-lifecycle", "missing-tool", "missing-file", "unsafe-record", "cleanup-failure", "destination-in-experiment", "home-outside-experiment", "missing-requested-model-feed", "claude-route-input-missing", "claude-route-input-drift", "claude-route-input-unsafe", "missing-selectors", "selector-model-drift", "selector-session-drift", "selector-version-drift", "selector-extra", "selector-unsafe", "missing-selector-source"} {
 		t.Run(mode, func(t *testing.T) {
 			fixtureMode := "claude-route-controls"
 			if strings.HasPrefix(mode, "claude-route-input-") {
@@ -55,7 +55,7 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			if mode == "destination-in-experiment" {
 				repo = root
 			}
-			for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource, claudeInputSource} {
+			for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource, claudeInputSource, claudeSelectorsSource} {
 				raw, err := readRepoFile(repoRoot(t), source)
 				require.NoError(t, err)
 				if source == claudeInputSource {
@@ -84,6 +84,20 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 				capture.mu.Lock()
 				capture.records = nil
 				capture.mu.Unlock()
+			case "missing-selectors":
+				isolation.selectors = claudeSelectorProof{}
+			case "selector-model-drift":
+				isolation.selectors.Values["ANTHROPIC_SMALL_FAST_MODEL"] = "glm-5.3-flash"
+			case "selector-session-drift":
+				isolation.selectors.Session = "ses_other"
+			case "selector-version-drift":
+				isolation.selectors.Version = "2.1.0"
+			case "selector-extra":
+				isolation.selectors.Values["UNTRUSTED_FIELD"] = "glm-5.3"
+			case "selector-unsafe":
+				isolation.selectors.Values["ANTHROPIC_DEFAULT_OPUS_MODEL"] = captureFixtureKey
+			case "missing-selector-source":
+				require.NoError(t, os.Remove(filepath.Join(repo, claudeSelectorsSource)))
 			case "missing-limits":
 				isolation.limits = claudeMainLimitProof{}
 			case "missing-lifecycle":
@@ -123,6 +137,15 @@ func TestAgentEvidenceClaudeSourceBoundPublication(t *testing.T) {
 			require.NoError(t, err)
 			var saved claudeIsolationObservation
 			require.NoError(t, json.Unmarshal(raw, &saved))
+			assert.Equal(t, "configured_intent", saved.Selectors.Kind)
+			assert.Equal(t, claudeSelectorsSource, saved.Selectors.Source)
+			assert.Equal(t, saved.Session, saved.Selectors.Session)
+			assert.Equal(t, saved.Version, saved.Selectors.Version)
+			assert.Equal(t, "glm-5.3", saved.Selectors.Model)
+			require.Len(t, saved.Selectors.Values, len(expectedClaudeSelectors))
+			for _, selector := range expectedClaudeSelectors {
+				assert.Equal(t, "glm-5.3", saved.Selectors.Values[selector])
+			}
 			assert.Equal(t, "haiku", saved.Subagent.RequestedModel)
 			assert.Equal(t, "glm-5.3", saved.Subagent.HarnessReportedModel)
 			assert.Equal(t, claudeInputSource, saved.InputSource)

@@ -402,6 +402,16 @@ control/routing feeds refuse publication despite successful files/inference.
 See [lifecycle sources](sources/lr05-subagent-lifecycle.md),
 [request sources and join scope](sources/lr05-subagent-routing.md) and
 `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(Subagent|Routing)' -count=1`.
+The same experiment now retains all six actual emitted selector values in
+`configured_selectors`, explicitly labelled `kind: configured_intent`. Every
+selector must appear exactly once and equal the selected canonical id before
+any subprocess; accepted startup/version/session identities bind the final
+projection. Missing/drifting launch or publication feeds refuse even with
+completed inference/files. The source must be readable and cleanup must succeed
+before publication. See [selector sources and scope](sources/lr05-selectors.md)
+and `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(SelectorSelection|SourceBoundPublication|IsolationSameLaunchInputs)$' -count=1`.
+This proves emitted intent only, never effective helper selection.
+
 This is **not** the full Claude agent/contract entry point: keychain isolation,
 effective selectors, complete thinking/effort and limit enforcement, installed
 memory and helper verification remain pending. A short request establishes no gateway maximum.
