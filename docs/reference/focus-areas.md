@@ -13,7 +13,7 @@ Budget: **2 × 8 + 6 = 22** minimum passes ≤ **500 × 0.35 = 175**; no deferra
 
 | # | Focus Area | Risk | Review 1 Status | Review 2 Status |
 |---|---|---|---|---|
-| 1 | A LunaRoute connection is written only with its own lr_ key and the hosted endpoint, and its key is never paired with a foreign provider | high | [ ] | [ ] |
+| 1 | A LunaRoute connection is written only with its own lr_ key and the hosted endpoint, and its key is never paired with a foreign provider | high | [x] | [ ] |
 | 2 | A LunaRoute agent call validates its effective route before launch and diagnoses opaque failures once, without retrying | high | [ ] | [ ] |
 | 3 | A LunaRoute profile saves only as a pinned, explicitly backed (codex or pi), table-compatible selection, and other providers keep the shipped behaviour | high | [ ] | [ ] |
 | 4 | A LunaRoute codex agent runs keyed against the Responses endpoint in a private, always-removed CODEX_HOME and never touches the operator's codex login | high | [ ] | [ ] |

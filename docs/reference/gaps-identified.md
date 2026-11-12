@@ -74,6 +74,19 @@
   phrases in tests (unknown is not a guarantee; codex or pi only; pinned only), or record each mutant as equivalent with a
   reason.
 
+## Review evidence
+
+- **Area 1 / single:1/review1 — approved independently against refinement 3f59d42.**
+  Check 1: `cmd/arbitron/main.go:initDomain` builds SQLite/AES-GCM → ConnectionService → `domainStack.mcpDeps`; `adapter/sqlite/connection_repo.go:Create` prepares before Seal, and `ConnectionRepo.Update` prepares after metadata read; `cmd/arbitron/lunaroute_connection_wiring_test.go:TestLunaRouteConnectionWriteWiring` reaches stored rows and revealed keys through real MCP.
+  Check 2: `adapter/sqlite/connection_repo.go:Update` is the sole production `PrepareLunaRouteUpdate` caller and passes `stored.Provider`; `adapter/sqlite/connection_repo_lunaroute_test.go:TestConnectionRepo_SwitchToLunaRouteRequiresNewKey` verifies the foreign-provider source and refusal/success sinks.
+  Check 3: `adapter/sqlite/connection_repo_lunaroute_test.go:TestConnectionRepo_LunaRouteAcceptedSpellingsPersistHostedRoot` passes all nine spelling classes for Create and Update, asserting canonical provider/root through fresh Get reads.
+  Check 4: `adapter/mcp/tools_connection.go:connErrorResult` maps all three write sentinels to actionable guidance; `adapter/mcp/tools_connection_lunaroute_test.go:TestConnErrorResult_LunaRouteSentinels` proves wrapped errors cannot echo submitted secrets.
+  Check 5: repository-wide production Go/SQL searches found no connection-table writers outside `adapter/sqlite/connection_repo.go:Create` and `ConnectionRepo.Update` calling generated queries; `cmd/arbitron/connection.go:newConnectionCmd` exposes validation only, and seeds add no connection writer.
+  Folded items: `domain/provider/canonical.go:Canonicalize` trims/lowercases without a LunaRoute alias; `adapter/mcp/tools_connection.go:RegisterConnectionTools` documents the provider/root/lr_ key; `metaOf`, `connectionGetHandler` and `connectionListHandler` emit stored metadata without a key field. A temporary test overlay exercised both reads through the real root successfully.
+  Happy/success/failure/error/edge coverage uses real SQLite/AES-GCM in `adapter/sqlite/connection_repo_lunaroute_test.go:TestConnectionRepo_LunaRouteCreateNormalizesAndSeals`, `TestConnectionRepo_LunaRouteUpdateRules`, `TestConnectionRepo_LunaRouteCreateRejectsForeignKeyAndEndpoint`, `TestConnectionRepo_LunaRoutePersistenceErrors` and the spelling table; fault fakes assert their key/SQL arguments.
+  Verification: `go test -timeout 30m ./...` exited 0 (52 packages passed); uncached focused tests in sqlite/mcp/provider/cmd also exited 0. A temporary production overlay replacing `stored.Provider` with empty made `TestConnectionRepo_LunaRouteUpdateRules` fail (exit 1), proving that input is load-bearing; repository source stayed intact.
+  Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
+
 ## Closed
 
 (none yet)
