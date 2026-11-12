@@ -44,6 +44,15 @@ func TestLivePiModelControls(t *testing.T) {
 	}
 }
 
+// This independent app-server query has no credential and launches no turn.
+// Its proof cannot verify the exec mission, auth, helpers or the LR-07 contract.
+func TestLiveCodexConfigControls(t *testing.T) {
+	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_CODEX_MODEL")
+	if err := publishCodexConfigControls(context.Background(), repoRoot(t), liveBinary(t, "codex"), model, t.TempDir(), "lr07-codex-config-controls.json"); err != nil {
+		t.Fatal(errBackendEvidence)
+	}
+}
+
 func runBackendHelpExperiment(t *testing.T, backend string) {
 	t.Helper()
 	bin := liveBinary(t, backend)

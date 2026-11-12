@@ -826,3 +826,32 @@ JSON-mode mission's controls, enforced maxima, effort, compaction/helper
 routing or completed tool work. It is not a completed-backend/config-reference
 artifact for the release matrix. No supported fact or register status changes;
 P4-T1's full collectors/operator observations and release readiness stay pending.
+
+## Codex resolved configuration (inference-free, partial LR-07)
+
+`TestLiveCodexConfigControls` constructs the independent installed app-server
+experiment, not the still-incomplete `TestLiveCodexLunaRoute` tool experiment:
+
+```sh
+ARBITRON_LUNAROUTE_E2E_CODEX_MODEL=glm-5.3 \
+  go test ./test/lunaroute -run '^TestLiveCodexConfigControls$' -count=1 -v
+```
+
+No credential is supplied and no inference is requested. Initialize and
+`config/read` consume the same executable/env/cwd, explicit reviewed model and
+session overrides. Both conflicting and absent private user/project input cases
+must return exact selected main/review/provider/destination/wire/env-key values
+and sessionFlags origins. Protected inputs must stay unchanged; the separate
+CODEX_HOME auth/config files must stay absent. Successful private cleanup precedes
+exclusive `observations/lr07-codex-config-controls.json` publication. Missing,
+malformed, duplicate, drifting, oversized or cancelled inputs write nothing.
+Missing selection/binary skips locally with readiness pending and fails release
+prerequisites. Review/remove a prior artifact explicitly before rerunning.
+
+`TestCodexConfigControlsInstalledSchema` checks the actual installed schema
+without publishing a repository artifact. Final-sink/refusal tests run with
+`go test ./test/lunaroute -run '^TestCodexConfigControls' -count=1`.
+See [versioned producers and precise scope](sources/lr07-config-controls.md).
+This proves app-server configuration only, not exec-mode controls, files never
+being read, Bearer auth, helpers, enforced limits or tool completion. No supported
+fact, verified status or release readiness is inferred.
