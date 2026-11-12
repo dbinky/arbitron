@@ -836,7 +836,11 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 	event := ""
 	terminal, finished, started := false, false, false
 	chatChoices := make(map[int]bool)
-	messageBlocks := make(map[int]bool) // true while open; closed indexes cannot be reused
+	type messageBlock struct {
+		kind string
+		open bool
+	}
+	messageBlocks := make(map[int]messageBlock) // closed indexes cannot be reused
 	openMessageBlocks := 0
 	consume := func() bool {
 		if len(data) == 0 {
@@ -922,25 +926,46 @@ func extractCapturedResponse(path string, body []byte, stream bool) ([]string, e
 				if !started || finished || json.Unmarshal(object["index"], &index) != nil || index == nil || *index < 0 {
 					return false
 				}
-				open, seen := messageBlocks[*index]
+				state, seen := messageBlocks[*index]
 				switch typ {
 				case "content_block_start":
 					block, ok := decode(object["content_block"])
 					if seen || !ok || text(block, "type") == "" {
 						return false
 					}
-					messageBlocks[*index] = true
+					messageBlocks[*index] = messageBlock{kind: text(block, "type"), open: true}
 					openMessageBlocks++
 				case "content_block_delta":
 					delta, ok := decode(object["delta"])
-					if !open || !ok || text(delta, "type") == "" {
+					if !state.open || !ok || text(delta, "type") == "" {
 						return false
+					}
+					field, compatible := "", true
+					switch text(delta, "type") {
+					case "text_delta":
+						field, compatible = "text", state.kind == "text"
+					case "input_json_delta":
+						field, compatible = "partial_json", state.kind == "tool_use" || state.kind == "server_tool_use"
+					case "thinking_delta":
+						field, compatible = "thinking", state.kind == "thinking"
+					case "signature_delta":
+						field, compatible = "signature", state.kind == "thinking"
+					}
+					if !compatible {
+						return false
+					}
+					if field != "" {
+						var value *string
+						if json.Unmarshal(delta[field], &value) != nil || value == nil {
+							return false
+						}
 					}
 				case "content_block_stop":
-					if !open {
+					if !state.open {
 						return false
 					}
-					messageBlocks[*index] = false
+					state.open = false
+					messageBlocks[*index] = state
 					openMessageBlocks--
 				}
 			case "ping":

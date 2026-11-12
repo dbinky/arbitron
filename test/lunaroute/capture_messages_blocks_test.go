@@ -30,6 +30,11 @@ func TestCaptureMessagesBlocksToObservation(t *testing.T) {
 		return block("delta", index, `,"delta":{"type":"text_delta","text":"private-response"}`)
 	}
 	stopBlock := func(index string) string { return block("stop", index, "") }
+	toolBlock := block("start", "0", `,"content_block":{"type":"tool_use","id":"tool-one","name":"Read","input":{}}`)
+	thinkingBlock := block("start", "0", `,"content_block":{"type":"thinking","thinking":""}`)
+	delta := func(typ, fields string) string {
+		return block("delta", "0", `,"delta":{"type":"`+typ+`"`+fields+`}`)
+	}
 	start := event("message_start", `,"message":{"model":"glm-5.3"}`)
 	finish := event("message_delta", `,"delta":{"stop_reason":"end_turn"}`)
 	stop := event("message_stop", "")
@@ -48,6 +53,31 @@ func TestCaptureMessagesBlocksToObservation(t *testing.T) {
 			block("start", "1", `,"content_block":{"type":"thinking","thinking":""}`) +
 			block("delta", "1", `,"delta":{"type":"thinking_delta","thinking":"private-thought"}`) +
 			block("delta", "1", `,"delta":{"type":"signature_delta","signature":"private-signature"}`) + stopBlock("1"), true},
+		{"empty-text-delta", startBlock("0") + delta("text_delta", `,"text":""`) + stopBlock("0"), true},
+		{"fragmented-tool-json", toolBlock + delta("input_json_delta", `,"partial_json":"{\"path\":"`) + delta("input_json_delta", `,"partial_json":"\"private-path\"}"`) + stopBlock("0"), true},
+		{"server-tool-json", strings.Replace(toolBlock, `"tool_use"`, `"server_tool_use"`, 1) + delta("input_json_delta", `,"partial_json":"{}"`) + stopBlock("0"), true},
+		{"interleaved-block-kinds", toolBlock + startBlock("1") + delta("input_json_delta", `,"partial_json":""`) + deltaBlock("1") + stopBlock("0") + stopBlock("1"), true},
+		{"delta-for-wrong-block-kind", toolBlock + startBlock("1") + deltaBlock("0") + stopBlock("0") + stopBlock("1"), false},
+		{"text-delta-on-tool", toolBlock + deltaBlock("0") + stopBlock("0"), false},
+		{"text-delta-on-thinking", thinkingBlock + deltaBlock("0") + stopBlock("0"), false},
+		{"tool-delta-on-text", startBlock("0") + delta("input_json_delta", `,"partial_json":"{}"`) + stopBlock("0"), false},
+		{"tool-delta-on-thinking", thinkingBlock + delta("input_json_delta", `,"partial_json":"{}"`) + stopBlock("0"), false},
+		{"thinking-delta-on-text", startBlock("0") + delta("thinking_delta", `,"thinking":"private-thought"`) + stopBlock("0"), false},
+		{"thinking-delta-on-tool", toolBlock + delta("thinking_delta", `,"thinking":"private-thought"`) + stopBlock("0"), false},
+		{"signature-delta-on-text", startBlock("0") + delta("signature_delta", `,"signature":"private-signature"`) + stopBlock("0"), false},
+		{"signature-delta-on-tool", toolBlock + delta("signature_delta", `,"signature":"private-signature"`) + stopBlock("0"), false},
+		{"missing-text", startBlock("0") + delta("text_delta", "") + stopBlock("0"), false},
+		{"null-text", startBlock("0") + delta("text_delta", `,"text":null`) + stopBlock("0"), false},
+		{"nonstring-text", startBlock("0") + delta("text_delta", `,"text":{}`) + stopBlock("0"), false},
+		{"missing-partial-json", toolBlock + delta("input_json_delta", "") + stopBlock("0"), false},
+		{"null-partial-json", toolBlock + delta("input_json_delta", `,"partial_json":null`) + stopBlock("0"), false},
+		{"nonstring-partial-json", toolBlock + delta("input_json_delta", `,"partial_json":{}`) + stopBlock("0"), false},
+		{"missing-thinking", thinkingBlock + delta("thinking_delta", "") + stopBlock("0"), false},
+		{"null-thinking", thinkingBlock + delta("thinking_delta", `,"thinking":null`) + stopBlock("0"), false},
+		{"nonstring-thinking", thinkingBlock + delta("thinking_delta", `,"thinking":[]`) + stopBlock("0"), false},
+		{"missing-signature", thinkingBlock + delta("signature_delta", "") + stopBlock("0"), false},
+		{"null-signature", thinkingBlock + delta("signature_delta", `,"signature":null`) + stopBlock("0"), false},
+		{"nonstring-signature", thinkingBlock + delta("signature_delta", `,"signature":false`) + stopBlock("0"), false},
 		{"delta-without-start", deltaBlock("0"), false},
 		{"stop-without-start", stopBlock("0"), false},
 		{"duplicate-start", startBlock("0") + text, false},
@@ -140,7 +170,7 @@ func TestCaptureMessagesBlocksToObservation(t *testing.T) {
 			if json.Unmarshal(raw, &sink) != nil || len(sink.Inference) != 2 || sink.Inference[0].RequestedModel != in.Model || !slices.Equal(sink.Inference[0].ReportedModels, []string{in.Model}) || !sink.Inference[0].AuthMatchesSelected || !sink.Inference[0].Completed || !sink.Completed || !sink.FileOK || !sink.CommandOK {
 				t.Fatal("persisted observation lost actual completion/model/workspace proof")
 			}
-			for _, secret := range []string{captureFixtureKey, "private-response", "private-nonce", "private-thought", "private-signature"} {
+			for _, secret := range []string{captureFixtureKey, "private-response", "private-nonce", "private-thought", "private-signature", "private-path"} {
 				if strings.Contains(string(raw), secret) {
 					t.Fatal("raw gateway content persisted")
 				}

@@ -132,8 +132,12 @@ no content or repeated finish after the stop reason, and a final message stop.
 Each content block needs a unique nonnegative integer index, an object/type at
 start and delta, and an ordered start → delta(s) → stop lifecycle. Deltas/stops
 for unopened or closed blocks, reused indexes and finishing with an open block
-refuse publication. Sequential/interleaved text, tool and thinking blocks remain
-valid; pings do not count as content or completion. Chat streams track each choice
+refuse publication. Known text, tool-JSON, thinking and signature deltas must
+match the indexed block's type and carry their required string field; missing,
+null or non-string payloads refuse publication. Empty text/fragments and partial
+JSON fragments remain valid (a fragment need not be complete JSON).
+Sequential/interleaved text, tool and thinking blocks remain valid; pings do not
+count as content or completion. Chat streams track each choice
 index independently: every observed choice must finish before `[DONE]`, with
 no later updates to a finished choice or repeated indexes in one chunk.
 Usage-only empty-choice trailers are accepted only after all choices finish.
