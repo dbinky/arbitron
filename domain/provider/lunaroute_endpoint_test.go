@@ -39,6 +39,7 @@ func TestNormalizeLunaRouteBaseURL_RejectsOtherDestinations(t *testing.T) {
 		"https://gw.lunaroute.com/v2",
 		"https://gw.lunaroute.com/v1/chat/completions",
 		"https://gw.lunaroute.com/v%31",
+		"https://gw.lunaroute.com/%2F",
 		"https://gw.lunaroute.com?x=1",
 		"https://gw.lunaroute.com?",
 		"https://gw.lunaroute.com/#frag",

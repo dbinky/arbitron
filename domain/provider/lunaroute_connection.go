@@ -51,11 +51,15 @@ func PrepareLunaRouteCreate(c Connection, apiKey string) (Connection, error) {
 	return normalizeLunaRouteConnection(c)
 }
 
-// PrepareLunaRouteUpdate validates a LunaRoute update. apiKey nil means "keep
-// the stored key", which is only allowed when the stored provider is already
-// lunaroute; storedProvider is the provider read from storage before the write.
+// PrepareLunaRouteUpdate validates a LunaRoute update. Keeping the stored key
+// is allowed only when staying with the same side of the LunaRoute boundary;
+// switching to or away from LunaRoute requires a new, non-empty key.
+// storedProvider is the provider read from storage before the write.
 func PrepareLunaRouteUpdate(c Connection, apiKey *string, storedProvider string) (Connection, error) {
 	if !IsLunaRoute(c.Provider) {
+		if IsLunaRoute(storedProvider) && (apiKey == nil || *apiKey == "") {
+			return Connection{}, ErrLunaRouteDestinationKeyRequired
+		}
 		return c, nil
 	}
 	if apiKey == nil {

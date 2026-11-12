@@ -172,6 +172,47 @@ func TestLunaRouteMCPResultDecoder(t *testing.T) {
 	}
 }
 
+func TestLunaRouteConnectionSwitchAwayRequiresReplacement(t *testing.T) {
+	ds, _ := lunaRouteMCP(t)
+	var logs bytes.Buffer
+	ds.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	call := lunaRouteToolCaller(t, ds)
+	ctx := context.Background()
+	isErr, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "base_url": "", "api_key": "lr_original"})
+	require.False(t, isErr, text)
+	before, err := ds.connStore.Get(ctx, "lr")
+	require.NoError(t, err)
+	for _, key := range []any{nil, ""} {
+		args := map[string]any{"name": "lr", "provider": "openrouter", "base_url": "https://openrouter.ai/api/v1"}
+		if key != nil {
+			args["api_key"] = key
+		}
+		isErr, text = call("connection_update", args)
+		require.True(t, isErr, "must refuse retaining a LunaRoute key on switch away: %s", text)
+		assert.Contains(t, text, "api_key")
+		assert.Contains(t, text, "destination provider")
+		assert.NotContains(t, text, "lr_original")
+		got, err := ds.connStore.Get(ctx, "lr")
+		require.NoError(t, err)
+		assert.Equal(t, before, got)
+		storedKey, err := ds.connStore.Reveal(ctx, "lr")
+		require.NoError(t, err)
+		assert.Equal(t, "lr_original", storedKey)
+	}
+	isErr, text = call("connection_update", map[string]any{"name": "lr", "provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "api_key": "sk-or-v1-replacement"})
+	require.False(t, isErr, text)
+	got, err := ds.connStore.Get(ctx, "lr")
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", got.Provider)
+	storedKey, err := ds.connStore.Reveal(ctx, "lr")
+	require.NoError(t, err)
+	assert.Equal(t, "sk-or-v1-replacement", storedKey)
+	for _, secret := range []string{"lr_original", "sk-or-v1-replacement"} {
+		assert.NotContains(t, text, secret)
+		assert.NotContains(t, logs.String(), secret)
+	}
+}
+
 // Test the actual require assertion in a child process: malformed content must
 // fail the test, not turn into an apparently successful empty tool response.
 func TestLunaRouteMCPResultDecoderRejectsMissingText(t *testing.T) {

@@ -8,8 +8,9 @@ import (
 
 // Connection-write sentinels. None carries submitted key material.
 var (
-	ErrLunaRouteKeyPrefix   = errors.New(`provider: LunaRoute keys start with "lr_" followed by the key; keys from other providers are rejected, never forwarded through LunaRoute`)
-	ErrLunaRouteKeyRequired = errors.New("provider: a LunaRoute connection needs its own lr_ key; supply api_key when creating it or switching an existing connection to lunaroute")
+	ErrLunaRouteKeyPrefix              = errors.New(`provider: LunaRoute keys start with "lr_" followed by the key; keys from other providers are rejected, never forwarded through LunaRoute`)
+	ErrLunaRouteKeyRequired            = errors.New("provider: a LunaRoute connection needs its own lr_ key; supply api_key when creating it or switching an existing connection to lunaroute")
+	ErrLunaRouteDestinationKeyRequired = errors.New("provider: switching away from LunaRoute requires a new api_key for the destination provider")
 )
 
 // ErrLunaRouteStoredCredential fails a launch with an invalid stored key.

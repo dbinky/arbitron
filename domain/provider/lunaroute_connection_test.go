@@ -20,7 +20,7 @@ func TestValidLunaRouteKey(t *testing.T) {
 	for _, k := range []string{"lr_a", "lr_live_abcDEF123", "lr_-_.~"} {
 		assert.True(t, provider.ValidLunaRouteKey(k), k)
 	}
-	for _, k := range []string{"", "lr_", "LR_abc", "sk-abc", "sk-or-v1-abc", " lr_abc", "lr_abc ", "lr_abc\n", "lr_ab\nc", "lr_ab\tc", "xlr_abc", "lr_ab\u00a0c", "lr_ab\u0085c", "lr_ab\x00c", "lr_ab\x7fc"} {
+	for _, k := range []string{"", "lr_", "LR_abc", "sk-abc", "sk-or-v1-abc", " lr_abc", "lr_abc ", "lr_ab cd", "lr_abc\n", "lr_ab\nc", "lr_ab\tc", "xlr_abc", "lr_ab\u00a0c", "lr_ab\u0085c", "lr_ab\x00c", "lr_ab\x7fc"} {
 		assert.False(t, provider.ValidLunaRouteKey(k), "%q", k)
 	}
 }
@@ -119,7 +119,7 @@ func TestPrepareLunaRouteUpdate(t *testing.T) {
 	}
 }
 
-// Edge: this rule does not validate or normalize other providers at all.
+// Edge: writes unrelated to LunaRoute keep their existing behavior.
 func TestPrepareLunaRoute_NonLunaRoutePassesThroughUnchanged(t *testing.T) {
 	for _, c := range []provider.Connection{
 		{ConfigRevision: 9, Name: "or", Provider: " OpenRouter ", BaseURL: "not even a URL", Extras: map[string]string{"a": "b"}},
@@ -131,10 +131,25 @@ func TestPrepareLunaRoute_NonLunaRoutePassesThroughUnchanged(t *testing.T) {
 			assert.Equal(t, c, got)
 		}
 		for _, key := range []*string{nil, ptr(""), ptr("sk-foreign")} {
-			got, err := provider.PrepareLunaRouteUpdate(c, key, "lunaroute")
+			got, err := provider.PrepareLunaRouteUpdate(c, key, "openrouter")
 			require.NoError(t, err)
 			assert.Equal(t, c, got)
 		}
+	}
+}
+
+func TestPrepareLunaRouteUpdate_SwitchAwayRequiresReplacement(t *testing.T) {
+	c := provider.Connection{Name: "lr", Provider: " OpenRouter ", BaseURL: "https://openrouter.ai/api/v1"}
+	for _, stored := range []string{"lunaroute", " LunaRoute "} {
+		for _, key := range []*string{nil, ptr("")} {
+			got, err := provider.PrepareLunaRouteUpdate(c, key, stored)
+			require.ErrorIs(t, err, provider.ErrLunaRouteDestinationKeyRequired)
+			assert.Equal(t, provider.Connection{}, got)
+			assert.Contains(t, err.Error(), "destination provider")
+		}
+		got, err := provider.PrepareLunaRouteUpdate(c, ptr("sk-or-v1-replacement"), stored)
+		require.NoError(t, err)
+		assert.Equal(t, c, got)
 	}
 }
 

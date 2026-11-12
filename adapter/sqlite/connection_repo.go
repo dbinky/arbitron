@@ -145,36 +145,21 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 	}
 
 	if apiKey == nil {
-		if provider.IsLunaRoute(c.Provider) {
-			// Retain the key only if the provider we validated is still stored;
-			// a concurrent switch must not pair LunaRoute with a foreign key.
-			rows, err := r.queries.UpdateConnectionMetadataIfProvider(ctx, generated.UpdateConnectionMetadataIfProviderParams{
-				Provider:   c.Provider,
-				BaseURL:    c.BaseURL,
-				Extras:     extrasJSON,
-				Name:       c.Name,
-				Provider_2: stored.Provider,
-			})
-			if err != nil {
-				return fmt.Errorf("updating connection %q: %w", c.Name, err)
-			}
-			if rows == 0 {
-				return r.missingOrChanged(ctx, c.Name)
-			}
-			return nil
-		}
-		// nil key: leave the sealed key columns untouched.
-		rows, err := r.queries.UpdateConnectionMetadata(ctx, generated.UpdateConnectionMetadataParams{
-			Provider: c.Provider,
-			BaseURL:  c.BaseURL,
-			Extras:   extrasJSON,
-			Name:     c.Name,
+		// Every retained-key write depends on the provider read above. Guard
+		// foreign-provider edits too: a concurrent switch TO LunaRoute may have
+		// replaced the key since that read, and must not leak it on this write.
+		rows, err := r.queries.UpdateConnectionMetadataIfProvider(ctx, generated.UpdateConnectionMetadataIfProviderParams{
+			Provider:   c.Provider,
+			BaseURL:    c.BaseURL,
+			Extras:     extrasJSON,
+			Name:       c.Name,
+			Provider_2: stored.Provider,
 		})
 		if err != nil {
 			return fmt.Errorf("updating connection %q: %w", c.Name, err)
 		}
 		if rows == 0 {
-			return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
+			return r.missingOrChanged(ctx, c.Name)
 		}
 		return nil
 	}

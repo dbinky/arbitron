@@ -9,14 +9,14 @@
 
 ## Open
 
-- [ ] **G1 (Area 1, high): switching a connection *away* from lunaroute keeps the sealed `lr_` key.**
-  `adapter/mcp/tools_connection.go:connectionUpdateHandler` requires `provider` and treats `api_key` as optional.
-  `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` returns early when the new provider is not lunaroute, so
-  `adapter/sqlite/connection_repo.go:Update` takes the `UpdateConnectionMetadata` path and keeps the `lr_` ciphertext. The
-  next call sends the LunaRoute credential to the new provider's host, which breaks the spec's "credentials remain
-  protected from disclosure".
-  Fix: when the stored provider is lunaroute and the new one is not, require a new key, mirroring
-  `ErrLunaRouteKeyRequired` and using the conditional-update guard. Add the failing repo and MCP tests first.
+- **[ESCALATION] Area 1 / single:1/review2 — the remaining approval prerequisites are G12 and G13.**
+  `adapter/mcp/tools_connection.go:connectionUpdateHandler` must distinguish an explicit empty key from omission and refuse it.
+  `domain/provider/lunaroute_connection.go:PrepareLunaRouteCreate` / `PrepareLunaRouteUpdate` must reject an explicitly
+  supplied `lr_` credential for a foreign provider, including resubmitting the existing key on switch-away.
+  The box requires real MCP → SQLite tests proving both refusals leave metadata, revision and ciphertext unchanged.
+  No external fixture or dependency is missing; permitting either behavior instead requires an explicit operator decision
+  narrowing Area 1's promise. G1's omitted-key/concurrent-switch defect is fixed this pass; stop after this one fix.
+
 - [ ] **G2 (Area 2, high): inverting `BackendExplicit` in the dynamic resolver turns no test red.**
   The mutation run kept `harden:adapter/provider/dynamic.go`: negating `strings.TrimSpace(p.Backend) != ""` at
   `adapter/provider/dynamic.go:89` and `:124` survived. No test drives a real `DynamicProfileResolver.Resolve` binding to
@@ -60,10 +60,6 @@
   `harden:domain/modelidentity/version.go` (line 192, the lunaroute case).
   Add cases where a vendor prefix contradicts the id, where a bedrock qualifier contradicts the prefix, and where an alias
   hint conflicts. Add an id that only the non-lunaroute grammar accepts.
-- [ ] **G9 (Area 1): key-shape and meta-read errors are untested.**
-  `harden:domain/provider/lunaroute_connection.go` survives at line 18 (the whitespace/control scan in `ValidLunaRouteKey`).
-  `harden:adapter/sqlite/generated/connections.sql.go` survives at line 204 (a negated error check on a generated query).
-  Add an `lr_ab cd` key case, and decide whether the generated-query error path is reachable and tested.
 - [ ] **G10 (Areas 4, 5): executed-identity safety checks are untested.**
   The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
   `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
@@ -74,7 +70,29 @@
   phrases in tests (unknown is not a guarantee; codex or pi only; pinned only), or record each mutant as equivalent with a
   reason.
 
+- [ ] **G12 (Area 1): MCP accepts an explicit empty key on an existing LunaRoute connection.**
+  `adapter/mcp/tools_connection.go:connectionUpdateHandler` turns `api_key: ""` into nil; the repo preserves the old key
+  and increments `ConfigRevision`, violating failure-lens check 1's empty-key refusal/no-row-change requirement.
+  Reproduced through `cmd/arbitron/lunaroute_connection_wiring_test.go:lunaRouteMCP` in a temporary test overlay:
+  create lunaroute with `lr_original`, update same provider with `api_key: ""` → success and revision 1 → 2.
+  The temporary `TestArea1EmptyKeyRefused` failed (exit 1); no failing test or overlay remains in the worktree.
+- [ ] **G13 (Area 1, high): explicitly supplied LunaRoute keys can still be paired with a foreign provider.**
+  `domain/provider/lunaroute_connection.go:PrepareLunaRouteCreate` / `PrepareLunaRouteUpdate` pass through foreign-provider
+  keys unchecked. G1 now requires a nonempty replacement, but resubmitting `lr_original` on switch-away is accepted.
+  Real-root temporary `TestArea1ForeignProviderRejectsLunaRouteKey` failed (exit 1) for both openrouter create with
+  `lr_mispaired` and lunaroute → openrouter update with `lr_original`; persisted provider became openrouter.
+  Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
+
 ## Review evidence
+
+- **Area 1 / single:1/review2 — failure-lens refinement (no approval).**
+  Baseline: the initial focused provider/sqlite/mcp/cmd tests passed before edits; no pre-existing area failure observed.
+  Check 1: key-shape/storage-error coverage passes, but real-root empty-key reproduction violates no-row-change (G12).
+  Checks 2–3: `adapter/sqlite/connection_repo_lunaroute_test.go:TestConnectionRepo_LunaRouteConcurrentSwitchDoesNotLeakKeyToForeignProvider` catches a missing foreign-provider CAS; `TestConnectionRepo_SwitchAwayFromLunaRouteRequiresNewKey` covers nil/empty, success, seal/SQL failure, cancellation and deadline without partial writes. Both defect tests were red before the fix; G13 remains for explicit lr_ resubmission.
+  Checks 4–5: `domain/provider/lunaroute_endpoint_test.go:TestNormalizeLunaRouteBaseURL_RejectsOtherDestinations` includes `%2F`; removing the whitespace scan makes `TestValidLunaRouteKey` fail for `lr_ab cd`; inverting the generated conditional-query error guard makes `TestConnectionRepo_LunaRoutePersistenceErrors/conditional_SQL` fail (both temporary mutations exit 1).
+  Folded items: canonicalization and stored-root/secret-free response tests pass; new sentinel is consumed by production `adapter/mcp/tools_connection.go:connErrorResult`, whose wrapped-secret test passes. `rg -n 'PrepareLunaRouteUpdate|ErrLunaRouteDestinationKeyRequired' . --glob '*.go' --glob '!**/*_test.go'` confirms real stored.Provider input and error consumer.
+  Verification (exit 0 in all four packages): `go test -timeout 30m ./domain/provider ./adapter/sqlite ./adapter/mcp ./cmd/arbitron -run '^Test(ValidLunaRouteKey|PrepareLunaRoute.*|NormalizeLunaRouteBaseURL.*|IsLunaRoute|Canonicalize.*|ConnectionRepo_.*|ConnectionLunaRoute.*|Connection(Create|Update|Get|List|Delete)_.*|ConnErrorResult_.*|LunaRouteConnection.*)$' -count=1`.
+  Recommend: no approval for single:1/review2 — G12 accepts an explicit empty key and writes a revision; G13 accepts lr_ keys on foreign providers, both reproduced through real MCP/SQLite.
 
 - **Area 1 / single:1/review1 — approved independently against refinement 3f59d42.**
   Check 1: `cmd/arbitron/main.go:initDomain` builds SQLite/AES-GCM → ConnectionService → `domainStack.mcpDeps`; `adapter/sqlite/connection_repo.go:Create` prepares before Seal, and `ConnectionRepo.Update` prepares after metadata read; `cmd/arbitron/lunaroute_connection_wiring_test.go:TestLunaRouteConnectionWriteWiring` reaches stored rows and revealed keys through real MCP.
@@ -89,7 +107,8 @@
 
 ## Closed
 
-(none yet)
+- **G1 (Area 1) closed:** `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` requires a replacement on switch-away; `adapter/sqlite/connection_repo.go:Update` guards every retained-key write; red/green repo and real-root MCP tests prove refusal and concurrent-switch safety.
+- **G9 (Area 1) closed:** embedded-space coverage added to key-shape/create/update tests; temporary whitespace and generated-query guard mutations both fail, with `TestConnectionRepo_LunaRoutePersistenceErrors` exercising meta-read and conditional-SQL errors.
 
 ## Won't Fix
 

@@ -40,7 +40,7 @@ func TestConnectionRepo_LunaRouteCreateNormalizesAndSeals(t *testing.T) {
 func TestConnectionRepo_LunaRouteCreateRejectsForeignKeyAndEndpoint(t *testing.T) {
 	repo, _ := newConnRepo(t)
 	ctx := context.Background()
-	for _, k := range []string{"sk-abc", "sk-or-v1-abc", "lr_", "lr_\u2003", "lr_one\n", "lr_one\u0085"} {
+	for _, k := range []string{"sk-abc", "sk-or-v1-abc", "lr_", "lr_ab cd", "lr_\u2003", "lr_one\n", "lr_one\u0085"} {
 		err := repo.Create(ctx, lrConnection(""), k)
 		require.ErrorIs(t, err, provider.ErrLunaRouteKeyPrefix, k)
 		assert.Equal(t, provider.ErrLunaRouteKeyPrefix.Error(), err.Error(), "only the static guidance, never the submitted key")
@@ -64,7 +64,7 @@ func TestConnectionRepo_LunaRouteUpdateRules(t *testing.T) {
 	key, err := repo.Reveal(ctx, "lr")
 	require.NoError(t, err)
 	assert.Equal(t, "lr_live_one", key)
-	for _, bad := range []string{"sk-or-v1-x", "lr_", "lr_\u2003", "lr_one\n"} {
+	for _, bad := range []string{"sk-or-v1-x", "lr_", "lr_ab cd", "lr_\u2003", "lr_one\n"} {
 		require.ErrorIs(t, repo.Update(ctx, lrConnection(""), &bad), provider.ErrLunaRouteKeyPrefix)
 	}
 	require.ErrorIs(t, repo.Update(ctx, lrConnection("https://gw.lunaroute.com:"), nil), provider.ErrLunaRouteEndpoint)
@@ -129,6 +129,100 @@ func TestConnectionRepo_NonLunaRouteUpdateUnchanged(t *testing.T) {
 	got, err := repo.Get(ctx, "az")
 	require.NoError(t, err)
 	assert.Equal(t, c.BaseURL, got.BaseURL)
+}
+
+func TestConnectionRepo_SwitchAwayFromLunaRouteRequiresNewKey(t *testing.T) {
+	for _, stage := range []string{"omitted", "empty", "replacement", "seal failure", "SQL failure", "cancelled", "deadline"} {
+		t.Run(stage, func(t *testing.T) {
+			repo, db := newConnRepo(t)
+			ctx := context.Background()
+			require.NoError(t, repo.Create(ctx, lrConnection(""), "lr_original"))
+			reader := NewConnectionRepo(db.DB, repo.crypto)
+			before, err := reader.Get(ctx, "lr")
+			require.NoError(t, err)
+			c := provider.Connection{Name: "lr", Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}
+			secret := "sk-or-v1-replacement"
+			key := &secret
+			writeCtx := ctx
+			switch stage {
+			case "omitted":
+				key = nil
+			case "empty":
+				empty := ""
+				key = &empty
+			case "seal failure":
+				repo.crypto = lrSealFailure{Crypto: repo.crypto, t: t, key: secret, err: errors.New("safe seal failure")}
+			case "SQL failure":
+				_, err := db.DB.Exec(`CREATE TRIGGER fail_switch BEFORE UPDATE ON connections BEGIN SELECT RAISE(ABORT, 'safe SQL failure'); END`)
+				require.NoError(t, err)
+			case "cancelled":
+				var cancel context.CancelFunc
+				writeCtx, cancel = context.WithCancel(ctx)
+				defer cancel()
+				repo.afterMetaRead = cancel
+			case "deadline":
+				var cancel context.CancelFunc
+				writeCtx, cancel = context.WithTimeout(ctx, -1)
+				defer cancel()
+			}
+			err = repo.Update(writeCtx, c, key)
+			if stage == "replacement" {
+				require.NoError(t, err)
+				got, err := reader.Get(ctx, "lr")
+				require.NoError(t, err)
+				assert.Equal(t, "openrouter", got.Provider)
+				assert.Equal(t, c.BaseURL, got.BaseURL)
+				revealed, err := reader.Reveal(ctx, "lr")
+				require.NoError(t, err)
+				assert.Equal(t, secret, revealed)
+				return
+			}
+			require.Error(t, err)
+			if stage == "cancelled" {
+				assert.ErrorIs(t, err, context.Canceled)
+			}
+			if stage == "deadline" {
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
+			}
+			assert.NotContains(t, err.Error(), secret)
+			assert.NotContains(t, err.Error(), "lr_original")
+			got, err := reader.Get(ctx, "lr")
+			require.NoError(t, err)
+			assert.Equal(t, before, got, "refusal/failure must not partially change metadata or revision")
+			revealed, err := reader.Reveal(ctx, "lr")
+			require.NoError(t, err)
+			assert.Equal(t, "lr_original", revealed)
+		})
+	}
+}
+
+// A stale foreign-provider metadata edit must not keep a LunaRoute key that a
+// second repository installs after the first edit's read.
+func TestConnectionRepo_LunaRouteConcurrentSwitchDoesNotLeakKeyToForeignProvider(t *testing.T) {
+	for _, destination := range []string{"openrouter", "openai"} {
+		t.Run(destination, func(t *testing.T) {
+			repo, db := newConnRepo(t)
+			ctx := context.Background()
+			require.NoError(t, repo.Create(ctx, provider.Connection{Name: "lr", Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}, "sk-or-v1-original"))
+			other := NewConnectionRepo(db.DB, repo.crypto)
+			var switched provider.Connection
+			repo.afterMetaRead = func() {
+				key := "lr_concurrent"
+				require.NoError(t, other.Update(ctx, lrConnection(""), &key))
+				var err error
+				switched, err = other.Get(ctx, "lr")
+				require.NoError(t, err)
+			}
+			err := repo.Update(ctx, provider.Connection{Name: "lr", Provider: destination, BaseURL: "https://foreign.example/v1"}, nil)
+			require.ErrorIs(t, err, provider.ErrConnectionChangedConcurrently)
+			got, err := other.Get(ctx, "lr")
+			require.NoError(t, err)
+			assert.Equal(t, switched, got)
+			key, err := other.Reveal(ctx, "lr")
+			require.NoError(t, err)
+			assert.Equal(t, "lr_concurrent", key)
+		})
+	}
 }
 
 // Only writes are faulted; reads still use the real database so atomicity can

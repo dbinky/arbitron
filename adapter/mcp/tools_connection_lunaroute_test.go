@@ -140,10 +140,11 @@ func TestConnectionLunaRoutePersistenceErrorsDoNotDiscloseKeys(t *testing.T) {
 
 func TestConnErrorResult_LunaRouteSentinels(t *testing.T) {
 	cases := map[error]string{
-		provider.ErrLunaRouteKeyPrefix:            `start with "lr_"`,
-		provider.ErrLunaRouteKeyRequired:          "lr_ api_key",
-		provider.ErrLunaRouteEndpoint:             "https://gw.lunaroute.com",
-		provider.ErrConnectionChangedConcurrently: "retry",
+		provider.ErrLunaRouteKeyPrefix:              `start with "lr_"`,
+		provider.ErrLunaRouteKeyRequired:            "lr_ api_key",
+		provider.ErrLunaRouteDestinationKeyRequired: "destination provider",
+		provider.ErrLunaRouteEndpoint:               "https://gw.lunaroute.com",
+		provider.ErrConnectionChangedConcurrently:   "retry",
 	}
 	for sentinel, want := range cases {
 		t.Run(sentinel.Error(), func(t *testing.T) {

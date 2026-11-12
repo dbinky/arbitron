@@ -50,7 +50,7 @@ func RegisterConnectionTools(srv *Server) {
 
 	srv.AddTool(
 		gomcp.NewTool("connection_update",
-			gomcp.WithDescription("Update a connection's metadata. Omit api_key to preserve the stored key; supply it to re-seal a new one."),
+			gomcp.WithDescription("Update a connection's metadata. Omit api_key to preserve the stored key; supply it to re-seal a new one. Switching to or away from lunaroute requires a new key for the destination provider."),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Connection name")),
 			gomcp.WithString("provider", gomcp.Required(), gomcp.Description("Provider id")),
 			gomcp.WithString("base_url", gomcp.Required(), gomcp.Description("Endpoint base URL")),
@@ -117,6 +117,8 @@ func connErrorResult(action, name string, err error) *gomcp.CallToolResult {
 		return gomcp.NewToolResultError(fmt.Sprintf(`connection %q: LunaRoute keys start with "lr_"; keys from other providers are rejected, never forwarded through LunaRoute`, name))
 	case errors.Is(err, provider.ErrLunaRouteKeyRequired):
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: supply a LunaRoute lr_ api_key (required on create and when switching an existing connection to lunaroute)", name))
+	case errors.Is(err, provider.ErrLunaRouteDestinationKeyRequired):
+		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: switching away from LunaRoute requires a new api_key for the destination provider", name))
 	case errors.Is(err, provider.ErrLunaRouteEndpoint):
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: LunaRoute connections must use the hosted endpoint https://gw.lunaroute.com; leave base_url empty or set it to that root", name))
 	case errors.Is(err, provider.ErrConnectionChangedConcurrently):
