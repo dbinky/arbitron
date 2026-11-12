@@ -81,9 +81,23 @@ func TestProductionDiscoveryChatObservation(t *testing.T) {
 			chat = provider.SupportFact{Support: provider.SupportSupported, Evidence: ev}
 		}
 		assert.Equal(t, chat, m.Task(provider.ProfileKindChat), "completion authorizes only this observed model/task")
-		assert.Equal(t, provider.SupportUnknown, m.Task(provider.ProfileKindAgent).Support)
+		// R7: operator tool tasks (2026-11-12) verified only the observed model on
+		// the released agent backends, codex and pi. Nothing else is inferred.
+		manual := evidencePath + "/observations/operator-manual-agent-tasks-2026-11-12.md"
+		agent := provider.SupportFact{Support: provider.SupportUnknown}
+		if id == obs.Chat.Model {
+			agent = provider.SupportFact{Support: provider.SupportSupported, Evidence: manual}
+		}
+		assert.Equal(t, agent, m.Task(provider.ProfileKindAgent), "agent support only from an observed completed tool task")
 		for _, backend := range provider.LunaRouteBackends {
-			assert.Equal(t, provider.SupportUnknown, m.Backend(backend).Support)
+			want := provider.SupportFact{Support: provider.SupportUnknown}
+			if id == obs.Chat.Model && (backend == "codex" || backend == "pi") {
+				want = agent
+			}
+			assert.Equal(t, want.Support, m.Backend(backend).Support, "%s on %s", id, backend)
+			if want.Support == provider.SupportSupported {
+				assert.Equal(t, manual, m.Backend(backend).Evidence)
+			}
 		}
 	}
 	r := loadRegister(t)
@@ -96,5 +110,6 @@ func TestProductionDiscoveryChatObservation(t *testing.T) {
 	for _, ref := range []string{"domain/provider/lunaroute_classify.go:ClassifyLunaRoute", "adapter/probe/lunaroute.go:Probe", "adapter/provider/factory.go:ChatProviderFor"} {
 		assert.Contains(t, it.AppliedTo, ref)
 	}
-	assert.NotEmpty(t, releaseProblems(repoRoot(t), r), "verified LR-04 is not whole-release readiness")
+	// R7 (2026-11-12): with LR-05/LR-06 deferred, every released item is verified.
+	assert.Empty(t, releaseProblems(repoRoot(t), r), "released scope (chat/codex/pi) is ready")
 }

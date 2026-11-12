@@ -12,7 +12,7 @@ func TestLunaRouteProfileSaveWiring(t *testing.T) {
 	isErr, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "base_url": "", "api_key": "lr_live_one"})
 	require.False(t, isErr, text)
 	for _, tc := range []struct{ alias, backend, model, want string }{
-		{"lr-default", "", "glm-5.3", "set backend to claude-code, opencode, codex or pi explicitly"},
+		{"lr-default", "", "glm-5.3", "set backend to codex or pi explicitly"},
 		{"lr-numeric", "", "claude-sonnet-5-lr999", "reviewed fixed LunaRoute id"},
 		{"lr-revoked", "", "claude-sonnet-5-lr1", "reviewed fixed LunaRoute id"},
 		{"lr-opus", "", "claude-opus-lr29", "reviewed fixed LunaRoute id"},

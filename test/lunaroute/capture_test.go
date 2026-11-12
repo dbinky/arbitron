@@ -45,34 +45,24 @@ var errCaptureInvalid = errors.New("inference capture incomplete or invalid")
 // Operation is supplied by the backend-specific lifecycle parser, never inferred
 // from a user label, argv, configured model or a successful process exit.
 type capturedInference struct {
-	RunID               string                 `json:"run_id"`
-	Backend             string                 `json:"backend"`
-	Connection          string                 `json:"connection"`
-	Category            string                 `json:"category"`
-	RequestID           string                 `json:"request_id"`
-	Method              string                 `json:"method"`
-	Host                string                 `json:"host"`
-	Path                string                 `json:"path"`
-	RequestedModel      string                 `json:"requested_model"`
-	MaxTokens           int                    `json:"max_tokens,omitempty"`
-	ClaudeProjectMemory bool                   `json:"claude_project_memory,omitempty"`
-	ClaudeSessionTitle  bool                   `json:"claude_session_title,omitempty"`
-	ClaudeEffort        *claudeRequestEffort   `json:"claude_effort,omitempty"`
-	ClaudeThinking      *claudeRequestThinking `json:"claude_thinking,omitempty"`
-	ReportedModels      []string               `json:"reported_models"`
-	AuthMatchesSelected bool                   `json:"auth_matches_selected"`
-	AuthHeaderNames     []string               `json:"auth_header_names"`
-	Completed           bool                   `json:"completed"`
-	StartedAt           time.Time              `json:"started_at"`
-	FinishedAt          time.Time              `json:"finished_at"`
-	Failure             string                 `json:"failure,omitempty"`
-	Operation           *capturedOperation     `json:"operation,omitempty"`
-	SessionID           string                 `json:"session_id,omitempty"`
-	ParentSessionID     string                 `json:"parent_session_id,omitempty"`
-	ClaudeAgentID       string                 `json:"claude_agent_id,omitempty"`
-	ClaudeParentAgentID string                 `json:"claude_parent_agent_id,omitempty"`
-	ClaudeRequestClass  string                 `json:"claude_request_class,omitempty"`
-	ClaudeAgentType     string                 `json:"claude_agent_type,omitempty"`
+	RunID               string             `json:"run_id"`
+	Backend             string             `json:"backend"`
+	Connection          string             `json:"connection"`
+	Category            string             `json:"category"`
+	RequestID           string             `json:"request_id"`
+	Method              string             `json:"method"`
+	Host                string             `json:"host"`
+	Path                string             `json:"path"`
+	RequestedModel      string             `json:"requested_model"`
+	MaxTokens           int                `json:"max_tokens,omitempty"`
+	ReportedModels      []string           `json:"reported_models"`
+	AuthMatchesSelected bool               `json:"auth_matches_selected"`
+	AuthHeaderNames     []string           `json:"auth_header_names"`
+	Completed           bool               `json:"completed"`
+	StartedAt           time.Time          `json:"started_at"`
+	FinishedAt          time.Time          `json:"finished_at"`
+	Failure             string             `json:"failure,omitempty"`
+	Operation           *capturedOperation `json:"operation,omitempty"`
 }
 
 type capturedOperation struct {
@@ -98,11 +88,6 @@ type inferenceCapture struct {
 	drained                         *sync.Cond
 	active                          int
 	records                         []capturedInference
-	claudeMemory                    string // private source-formatted path/nonce, never serialized
-	claudeMemoryChecked             bool
-	claudeTitles                    map[string]string // private generated title comparison, never serialized
-	openCodeTitles                  map[string]string // private response text, never serialized
-	openCodeCompactions             map[string]string // private summary comparison, never serialized
 	failed                          bool
 	closed                          bool
 	nextID                          int
@@ -122,30 +107,7 @@ type inferenceCapture struct {
 	closeErr                        error
 }
 
-func startInferenceCapture(t *testing.T, runID, backend, connection, key string) *inferenceCapture {
-	t.Helper()
-	// No ambient proxy, custom trust roots, redirects or destination overrides.
-	transport := &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: captureTimeout}).DialContext,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
-		TLSHandshakeTimeout:   captureTimeout,
-		ResponseHeaderTimeout: captureTimeout,
-		ForceAttemptHTTP2:     true,
-	}
-	c, err := newInferenceCapture(runID, backend, connection, key, transport, captureLimits{})
-	if err != nil {
-		t.Fatal("cannot start private inference capture")
-	}
-	t.Cleanup(func() {
-		if err := c.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return c
-}
-
-// The injected upstream exists only for deterministic tooling fixtures. Live
-// callers use startInferenceCapture, which fixes destination, TLS and transport.
+// The injected upstream exists only for deterministic tooling fixtures.
 func newInferenceCapture(runID, backend, connection, key string, transport *http.Transport, limits captureLimits) (*inferenceCapture, error) {
 	if !provider.ValidLunaRouteKey(key) || !safeCaptureText(runID, key) || !safeCaptureText(backend, key) || !safeCaptureText(connection, key) || transport == nil {
 		return nil, errCaptureInvalid
@@ -392,25 +354,6 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		r.Body.Close()
 		return reject("request_refused")
 	}
-	if c.backend == "opencode" {
-		for _, field := range []struct {
-			name string
-			dest *string
-		}{{"X-Opencode-Session-Id", &record.SessionID}, {"X-Opencode-Parent-Session-Id", &record.ParentSessionID}} {
-			values := r.Header.Values(field.name)
-			if len(values) > 1 || len(values) == 1 && (!openCodeID(values[0], "ses_") || !safeCaptureText(values[0], c.key)) {
-				r.Body.Close()
-				return reject("session_schema")
-			}
-			if len(values) == 1 {
-				*field.dest = values[0]
-			}
-		}
-	}
-	if c.backend == "claude-code" && projectClaudeRoutingHeaders(r.Header, &record, c.key) != nil {
-		r.Body.Close()
-		return reject("session_schema")
-	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(c.limits.BodyBytes)+1))
 	closeErr := r.Body.Close()
 	if err != nil || closeErr != nil || len(body) > c.limits.BodyBytes || !uniqueJSONFields(json.NewDecoder(bytes.NewReader(body))) {
@@ -424,7 +367,6 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		return reject("request_schema")
 	}
 	record.RequestedModel = payload.Model
-	claudeTitle := c.backend == "claude-code" && r.URL.Path == "/v1/messages" && isClaudeTitleRequest(body)
 	if r.URL.Path == "/v1/messages" {
 		var budget struct {
 			MaxTokens int `json:"max_tokens"`
@@ -433,22 +375,6 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 			return reject("request_schema")
 		}
 		record.MaxTokens = budget.MaxTokens
-		if c.backend == "claude-code" {
-			record.ClaudeEffort, err = parseClaudeRequestEffort(body)
-			if err != nil {
-				return reject("request_schema")
-			}
-			record.ClaudeThinking, err = parseClaudeRequestThinking(body)
-			if err != nil {
-				return reject("request_schema")
-			}
-		}
-		c.mu.Lock()
-		if c.backend == "claude-code" && !claudeTitle && !c.claudeMemoryChecked {
-			c.claudeMemoryChecked = true
-			record.ClaudeProjectMemory = claudeMemoryInRequest(body, c.claudeMemory)
-		}
-		c.mu.Unlock()
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, c.limits.Timeout)
 	defer cancel()
@@ -495,49 +421,6 @@ func (c *inferenceCapture) forward(conn net.Conn, r *http.Request) bool {
 		finish("response_schema")
 		return false
 	}
-	if claudeTitle {
-		title, err := claudeTitleResponse(buffer.Bytes(), stream, c.key)
-		if err != nil {
-			c.fail()
-			finish("title_schema")
-			return false
-		}
-		c.mu.Lock()
-		if c.claudeTitles == nil {
-			c.claudeTitles = make(map[string]string)
-		}
-		c.claudeTitles[record.RequestID] = title
-		c.mu.Unlock()
-		record.ClaudeSessionTitle = true
-	}
-	if c.backend == "opencode" && r.URL.Path == "/v1/chat/completions" && isOpenCodeTitleRequest(body) {
-		title, err := openCodeTitleResponse(buffer.Bytes(), stream)
-		if err != nil {
-			c.fail()
-			finish("title_schema")
-			return false
-		}
-		c.mu.Lock()
-		if c.openCodeTitles == nil {
-			c.openCodeTitles = make(map[string]string)
-		}
-		c.openCodeTitles[record.RequestID] = title
-		c.mu.Unlock()
-	}
-	if c.backend == "opencode" && r.URL.Path == "/v1/chat/completions" && isOpenCodeCompactionRequest(body) {
-		text, err := openCodeTextResponse(buffer.Bytes(), stream)
-		if err != nil {
-			c.fail()
-			finish("compaction_schema")
-			return false
-		}
-		c.mu.Lock()
-		if c.openCodeCompactions == nil {
-			c.openCodeCompactions = make(map[string]string)
-		}
-		c.openCodeCompactions[record.RequestID] = text
-		c.mu.Unlock()
-	}
 	record.ReportedModels = models
 	record.Completed = true
 	finish("")
@@ -578,10 +461,6 @@ func (c *inferenceCapture) Records() []capturedInference {
 func cloneCaptureRecord(r capturedInference) capturedInference {
 	r.ReportedModels = slices.Clone(r.ReportedModels)
 	r.AuthHeaderNames = slices.Clone(r.AuthHeaderNames)
-	if r.ClaudeThinking != nil {
-		thinking := *r.ClaudeThinking
-		r.ClaudeThinking = &thinking
-	}
 	if r.Operation != nil {
 		op := *r.Operation
 		op.RequestIDs = slices.Clone(op.RequestIDs)
@@ -672,10 +551,6 @@ func (c *inferenceCapture) Close() error {
 		c.wg.Wait()
 		c.mu.Lock()
 		c.key = ""
-		c.claudeMemory = ""
-		c.claudeTitles = nil
-		c.openCodeTitles = nil
-		c.openCodeCompactions = nil
 		c.mu.Unlock()
 		if c.dir != "" && os.RemoveAll(c.dir) != nil {
 			c.closeErr = errors.New("cannot remove private capture files")

@@ -301,6 +301,6 @@ func TestReleaseGate(t *testing.T) {
 		return
 	}
 	require.Empty(t, pending, "release requires verified evidence and runtime application for every LR item")
-	// P4-T7 extends this gate with the correlated, completed MCP matrix validator.
-	require.FileExists(t, filepath.Join(evidenceDir(t), "observations/mcp-release-acceptance.json"), "completed MCP matrix required; labels alone cannot authorize release")
+	// Operator ruling R7 (2026-11-12) descopes the P4-T7 live MCP matrix from this
+	// release; readiness rests on the verified register items for chat, codex and pi.
 }

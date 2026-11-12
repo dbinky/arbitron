@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,9 +18,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
-	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/procenv"
-	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -35,7 +32,6 @@ const (
 	agentProofFile         = "lunaroute-proof.txt"
 	agentCommandFile       = "lunaroute-command.txt"
 	agentProofText         = "LUNAROUTE-OK"
-	agentMissionPrompt     = "Create lunaroute-proof.txt containing exactly LUNAROUTE-OK with no newline. Run wc -c < lunaroute-proof.txt > lunaroute-command.txt using the shell tool. Read both files to verify the results."
 )
 
 var errAgentEvidence = errors.New("agent task evidence incomplete or unsafe")
@@ -94,118 +90,6 @@ func liveBinding(key, model, backend string) provider.ResolvedBinding {
 		tools = append(tools, "Agent")
 	}
 	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "lunaroute", BaseURL: hostedRoot, ConnectionRef: "live-agent", Model: model, Backend: backend, BackendExplicit: true, Pinned: true, AllowedTools: tools, RevealKey: func(context.Context) (string, error) { return key, nil }})
-}
-
-func agentMissionPromptFor(backend string) string {
-	if backend == "claude-code" {
-		return agentMissionPrompt + " Also use the Agent tool with subagent_type=general-purpose, model=haiku and run_in_background=false to read and verify both files. Your next action depends on its result; wait for successful completion. Do not use remote isolation or resume an old agent."
-	}
-	if backend == "opencode" {
-		return agentMissionPrompt + " Also use the task tool to invoke a synchronous general subagent to read and verify both files. Wait for its successful completion; do not run it in the background."
-	}
-	return agentMissionPrompt
-}
-
-func liveFactory(ws, claudeBin string, rules provider.CapabilityRules) *providersadapter.Factory {
-	return liveFactoryWithClient(ws, claudeBin, rules, liveClient())
-}
-
-func liveFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client) *providersadapter.Factory {
-	return liveCapturedFactoryWithClient(ws, claudeBin, rules, client, nil)
-}
-
-func liveCapturedFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture) *providersadapter.Factory {
-	return newLiveAgentFactory(ws, claudeBin, rules, client, capture, nil, false, nil)
-}
-
-func liveCompactingFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte) *providersadapter.Factory {
-	return liveObservedCompactingFactoryWithClient(ws, claudeBin, rules, client, capture, snapshot, nil)
-}
-
-func liveObservedCompactingFactoryWithClient(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte, journal *openCodeControlJournal) *providersadapter.Factory {
-	return newLiveAgentFactory(ws, claudeBin, rules, client, capture, snapshot, true, journal)
-}
-
-func newLiveAgentFactory(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte, forceCompaction bool, journal *openCodeControlJournal) *providersadapter.Factory {
-	started := time.Now().UTC()
-	var next claudecli.CommandRunner = openCodeControlsRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, journal: journal}
-	if forceCompaction {
-		next = openCodeCompactionRunner{next: next, snapshot: snapshot, started: started}
-	}
-	runner := openCodeSubagentsRunner{next: next, startedAt: started, capture: capture}
-	return providersadapter.NewFactory(providersadapter.Deps{
-		ClaudeAgentConfig: claudecli.Config{
-			BinaryPath: claudeBin, WorkspaceRoot: ws, Runner: runner,
-			Timeout: agentExperimentTimeout, MaxResponseBytes: captureBodyLimit,
-			AllowedTools: []string{"Read", "Write", "Bash"}, CapabilityRules: rules,
-		},
-		Runner: runner, OpencodeTimeout: agentExperimentTimeout,
-		MaxResponseBytes: captureBodyLimit, CapabilityRules: rules,
-		Probes: adaptprobe.NewProbeFactory(adaptprobe.Deps{
-			HTTPClient: client, Timeout: agentExperimentTimeout, MaxResponseBytes: captureBodyLimit,
-		}),
-	})
-}
-
-// The production Factory and adapters own selection, credentials and emitted
-// controls. This helper accepts completion only from their actual workspace and
-// tool trace; capture/config/helper verification remains a separate requirement.
-func executeAgentMission(ctx context.Context, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, error) {
-	if requireEmptyAgentWorkspace(ws) != nil {
-		return nil, errAgentEvidence
-	}
-	return executePreparedAgentMission(ctx, factory, binding, ws)
-}
-
-// The isolated Claude experiment seeds only its known settings/auth inputs in a
-// previously empty workspace. All completion/file/tool checks remain shared.
-func executePreparedAgentMission(ctx context.Context, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, error) {
-	if factory == nil {
-		return nil, errAgentEvidence
-	}
-	ctx, cancel := context.WithTimeout(ctx, agentExperimentTimeout)
-	defer cancel()
-	started := time.Now().UTC()
-	agent, err := factory.AgentProviderFor(binding)
-	if err != nil {
-		return nil, errAgentEvidence
-	}
-	result, err := agent.RunAgent(ctx, engine.AgentMission{
-		Model: binding.Model, Prompt: agentMissionPromptFor(binding.Backend), WorkDir: ws,
-		ToolScope: binding.AllowedTools, Timeout: agentExperimentTimeout,
-	})
-	finished := time.Now().UTC()
-	if err != nil || ctx.Err() != nil || result == nil || result.Model != binding.Model || result.SessionID == "" || len(result.ModelEvidence) == 0 {
-		return nil, errAgentEvidence
-	}
-	toolCall := false
-	for _, step := range result.Steps {
-		toolCall = toolCall || step.Kind == "tool_call"
-	}
-	proof, proofErr := workspaceProof(ws, agentProofFile, agentProofLimit, started, finished)
-	command, commandErr := workspaceProof(ws, agentCommandFile, agentProofLimit, started, finished)
-	if !toolCall || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
-		return nil, errAgentEvidence
-	}
-	return result, nil
-}
-
-func runLiveMission(t *testing.T, factory *providersadapter.Factory, binding provider.ResolvedBinding, ws string) (*engine.AgentResult, string) {
-	t.Helper()
-	workdir, err := os.MkdirTemp(ws, "lunaroute-mission-")
-	if err != nil {
-		t.Fatal("cannot create isolated mission workspace")
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(workdir); err != nil {
-			t.Error("cannot remove isolated mission workspace")
-		}
-	})
-	result, err := executeAgentMission(context.Background(), factory, binding, workdir)
-	if err != nil {
-		t.Fatal(errAgentEvidence)
-	}
-	return result, workdir
 }
 
 // Raw lines remain in memory for the owning binary's lifecycle parser. Neither
