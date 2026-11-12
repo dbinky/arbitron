@@ -24,7 +24,7 @@ func TestLunaRouteInteractiveAgentRefusedAtRoot(t *testing.T) {
 	})
 	ctx := adminCtxForLocalUser(t, ds)
 	require.NoError(t, ds.connSvc.Create(ctx, provider.Connection{Name: "lr", Provider: "lunaroute"}, "lr_live_int"))
-	_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-int", Kind: provider.ProfileKindAgent, Backend: "codex", ConnectionRef: "lr", Model: "glm-5.3"})
+	_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: "lr-int", Kind: provider.ProfileKindAgent, Backend: "claude-code", ConnectionRef: "lr", Model: "glm-5.3"})
 	assert.ErrorIs(t, err, providersadapter.ErrUnsupportedAgentBackend)
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "LunaRoute agent profiles have no interactive streaming path")

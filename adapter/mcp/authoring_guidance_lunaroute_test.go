@@ -31,11 +31,10 @@ func TestAuthoringGuidance_ModelDiscoveryAndExplicitSelection(t *testing.T) {
 		`"unknown" is not a guarantee`,
 		"not thereby compatible",
 		"explicitly",
-		"codex or pi",
-		"claude-code and opencode are not yet supported",
+		"claude-code, codex, opencode or pi",
 		"pinned-only",
 		"actual vendor",
-		"Claude-shaped aliases are refused, never classified as Anthropic",
+		"reviewed Claude aliases retain their evidenced Anthropic vendor",
 		`"unresolved"`,
 	} {
 		assert.Contains(t, guidance, s)

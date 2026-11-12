@@ -90,7 +90,7 @@ func TestCheckLunaRouteRoute_BackendGate(t *testing.T) {
 	DisableLunaRouteBackendsForTest(t, "codex", "opencode")
 	caps := fakeLRCaps{"glm-5.3": fullGLM()}
 	r := requireRefusal(t, CheckLunaRouteRoute(caps, agentRoute("glm-5.3", "")), ErrLunaRouteBackendRequired)
-	assert.Contains(t, r.Error(), "codex or pi")
+	assert.Contains(t, r.Error(), "claude-code, opencode, codex or pi")
 	r = requireRefusal(t, CheckLunaRouteRoute(caps, agentRoute("glm-5.3", "codex")), ErrLunaRouteBackendUnsupported)
 	assert.Contains(t, r.Error(), "LunaRoute on codex not yet supported")
 	requireRefusal(t, CheckLunaRouteRoute(caps, agentRoute("glm-5.3", "opencode")), ErrLunaRouteBackendUnsupported)
