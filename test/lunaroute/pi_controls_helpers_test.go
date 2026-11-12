@@ -26,20 +26,21 @@ const (
 // This is resolved RPC configuration, not gateway execution/authentication or
 // evidence that the JSON mission, helpers, or enforced maxima work.
 type piModelControlProof struct {
-	Source                   string `json:"source"`
-	MetadataSource           string `json:"metadata_source"`
-	Scope                    string `json:"scope"`
-	Version                  string `json:"version"`
-	Model                    string `json:"model"`
-	Provider                 string `json:"provider"`
-	API                      string `json:"api"`
-	BaseURL                  string `json:"base_url"`
-	SessionID                string `json:"session_id"`
-	ContextTokens            int    `json:"context_tokens"`
-	OutputTokens             int    `json:"output_tokens"`
-	Reasoning                bool   `json:"reasoning"`
-	ProtectedInputsUnchanged bool   `json:"protected_inputs_unchanged"`
-	PrivateCleaned           bool   `json:"private_cleaned"`
+	Source                   string            `json:"source"`
+	MetadataSource           string            `json:"metadata_source"`
+	Scope                    string            `json:"scope"`
+	Version                  string            `json:"version"`
+	Model                    string            `json:"model"`
+	Provider                 string            `json:"provider"`
+	API                      string            `json:"api"`
+	BaseURL                  string            `json:"base_url"`
+	SessionID                string            `json:"session_id"`
+	ContextTokens            int               `json:"context_tokens"`
+	OutputTokens             int               `json:"output_tokens"`
+	Reasoning                bool              `json:"reasoning"`
+	ProtectedInputsUnchanged bool              `json:"protected_inputs_unchanged"`
+	PrivateCleaned           bool              `json:"private_cleaned"`
+	AuthCaseSessions         map[string]string `json:"auth_case_sessions,omitempty"`
 }
 
 func piControlFacts(model string, rules provider.CapabilityRules) (provider.LunaRouteModel, error) {
@@ -140,6 +141,19 @@ func matchPiControlSource(models []piControlSourceModel, facts provider.LunaRout
 }
 
 func collectPiModelControls(ctx context.Context, bin, model string, rules provider.CapabilityRules, snapshot []byte, parent string) (piModelControlProof, error) {
+	conflicting, err := collectPiModelControlCase(ctx, bin, model, rules, snapshot, parent, true)
+	if err != nil {
+		return piModelControlProof{}, errBackendEvidence
+	}
+	absent, err := collectPiModelControlCase(ctx, bin, model, rules, snapshot, parent, false)
+	if err != nil || absent.SessionID == conflicting.SessionID {
+		return piModelControlProof{}, errBackendEvidence
+	}
+	conflicting.AuthCaseSessions = map[string]string{"conflicting": conflicting.SessionID, "absent": absent.SessionID}
+	return conflicting, nil
+}
+
+func collectPiModelControlCase(ctx context.Context, bin, model string, rules provider.CapabilityRules, snapshot []byte, parent string, conflicting bool) (piModelControlProof, error) {
 	if !filepath.IsAbs(bin) || os.Getenv("PATH") == "" || validatePiControlSource(snapshot, model, rules) != nil {
 		return piModelControlProof{}, errBackendEvidence
 	}
@@ -167,7 +181,10 @@ func collectPiModelControls(ctx context.Context, bin, model string, rules provid
 		}
 		for name, body := range seeds {
 			path := filepath.Join(root, name)
-			if os.MkdirAll(filepath.Dir(path), 0700) != nil || os.WriteFile(path, []byte(body), 0600) != nil {
+			if os.MkdirAll(filepath.Dir(path), 0700) != nil {
+				return piModelControlProof{}, errBackendEvidence
+			}
+			if conflicting && os.WriteFile(path, []byte(body), 0600) != nil {
 				return piModelControlProof{}, errBackendEvidence
 			}
 		}
@@ -188,7 +205,8 @@ func collectPiModelControls(ctx context.Context, bin, model string, rules provid
 		}
 		targets := []isolationPath{{home, ".pi"}, {ws, ".pi"}, {agent, "models.json"}}
 		before, err := snapshotIsolationPaths(home, targets)
-		if err != nil {
+		_, authErr := os.Lstat(filepath.Join(agent, "auth.json"))
+		if err != nil || !os.IsNotExist(authErr) {
 			return piModelControlProof{}, errBackendEvidence
 		}
 		query := func(args []string, stdin string, cap int64) ([]byte, error) {

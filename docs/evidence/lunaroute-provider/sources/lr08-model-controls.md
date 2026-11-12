@@ -26,6 +26,7 @@ never credential hashes):
 | `dist/core/provider-composer.js` | `98facdd61bdb741804f8f303c5b2661db7f40b64a8ec0ef4767df0d71ec03608` |
 | `dist/modes/rpc/rpc-mode.js` | `505297dba2df1de3003c0399b3312fd581359a4e27a5e9262b274b6cb5cb4ef3` |
 | `dist/main.js` | `29d5564f1a397eeb8a9c771b8e42c4fb88420e676bddbd096854a3ad84f4d49e` |
+| `dist/core/auth-storage.js` | `85c773c95be71695a27f5ed2f9f5bfaedc6c2ab3fe1fa7fcdf09707a3a73ce48` |
 | `docs/configuration.md` | `fc48d1ce7d885c5253222415fb7a4b46d75f80e6431eb924174657ff775099eb` |
 | `docs/models-configuration.md` | `1761b36835cf37fbeb7adc9ebb1cb88d190145f69a6d507ad5d4349f17f908a6` |
 | `docs/rpc.md` | `54e29df00e080c962df4fbb516dc441a9ce6805287bea61d45f3c99f92078446` |
@@ -60,11 +61,16 @@ output and independent reasoning must exactly agree with that snapshot. A
 missing fact, revoked alias, unknown reasoning or duplicate source record
 refuses; effort-list membership never supplies reasoning.
 
-A fresh owner-only experiment contains separate HOME, XDG directories,
-workspace, temporary directory and relocated agent directory. Private user
-settings/auth and project settings select foreign models. The relocated agent
-contains a 0600 LR-08 `models.json`, including the env key reference and
-`authHeader:true`. A synthetic credential is supplied in the child environment
+Two independent owner-only experiments each contain separate HOME, XDG
+directories, workspace, temporary directory and relocated agent directory. The
+first seeds private user settings/auth and project settings selecting foreign
+models; the second leaves those files absent. Both must resolve the exact same
+source-backed model fields in distinct actual sessions. The relocated agent
+initially contains only a 0600 LR-08 `models.json`, including the env key reference
+and `authHeader:true`, with no auth file. Installed
+`FileAuthStorageBackend.ensureFileExists` (`dist/core/auth-storage.js:40–43`)
+initializes an empty private `auth.json` when accessed; absence here describes
+initial inputs, not a claim that Pi never accesses or initializes its own store. A synthetic credential is supplied in the child environment
 only. No operator key, ambient provider credential, runtime-injection env,
 proxy or shared auth/config is inherited. `PI_OFFLINE=1` suppresses background
 catalog/update/package traffic; there is no inference request.
@@ -79,8 +85,10 @@ refuses. Raw state, diagnostics, paths, config and credentials stay private.
 
 Bounded byte/mode snapshots of the private user/project trees and relocated
 model definition must remain identical. Successful private-directory cleanup
-precedes the exclusive credential-safe JSON writer. The artifact retains actual
-resolved fields, session/version, source references and scope
+of both experiments precedes the exclusive credential-safe JSON writer. A
+failure in either case (including missing/drifting second-case output or changed
+previously absent user auth) writes no artifact. The artifact retains actual
+resolved fields, session/version, both `auth_case_sessions`, source references and scope
 `rpc_resolved_model_only`. It is not accepted by the completed-backend
 publisher as an inference/completion observation.
 

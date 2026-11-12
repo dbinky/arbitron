@@ -78,7 +78,7 @@ func TestPiModelControlsStateProjection(t *testing.T) {
 }
 
 func TestPiModelControlsExperimentToPrivateSink(t *testing.T) {
-	for _, mode := range []string{"success", "missing", "drift", "exit", "overflow", "cancel", "changed-home", "changed-project"} {
+	for _, mode := range []string{"success", "missing", "drift", "exit", "overflow", "cancel", "changed-home", "changed-project", "absent-drift", "absent-missing", "absent-exit", "absent-created-auth"} {
 		t.Run(mode, func(t *testing.T) {
 			root, parent := t.TempDir(), t.TempDir()
 			for _, entry := range []struct{ path, body string }{{piControlsSource, "Reviewed RPC controls source"}, {piControlsSnapshot, piControlSnapshotFixture}} {
@@ -126,6 +126,7 @@ func TestPiModelControlsExperimentToPrivateSink(t *testing.T) {
 				assert.Equal(t, "rpc_resolved_model_only", fields["scope"])
 				assert.Equal(t, true, fields["protected_inputs_unchanged"])
 				assert.Equal(t, true, fields["private_cleaned"])
+				assert.Equal(t, map[string]any{"conflicting": "controls-conflicting", "absent": "controls-absent"}, fields["auth_case_sessions"])
 				assert.Equal(t, piControlsSource, fields["source"])
 				assert.Equal(t, piControlsSnapshot, fields["metadata_source"])
 				for _, secret := range []string{"lr_", "Bearer", "ambient-forbidden", "foreign-model", parent, "models.json"} {
@@ -133,7 +134,12 @@ func TestPiModelControlsExperimentToPrivateSink(t *testing.T) {
 				}
 				queries, err := os.ReadFile(marker)
 				require.NoError(t, err)
-				assert.Equal(t, "version\nstate\n", string(queries))
+				assert.Equal(t, "conflicting:version\nconflicting:state\nabsent:version\nabsent:state\n", string(queries))
+				roots, err := os.ReadFile(marker + "-roots")
+				require.NoError(t, err)
+				paths := strings.Split(strings.TrimSpace(string(roots)), "\n")
+				require.Len(t, paths, 2)
+				assert.NotEqual(t, paths[0], paths[1], "auth cases must use independent private homes")
 				info, err := os.Stat(filepath.Join(root, evidencePath, "observations/pi-controls.json"))
 				require.NoError(t, err)
 				assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
@@ -143,6 +149,11 @@ func TestPiModelControlsExperimentToPrivateSink(t *testing.T) {
 				assert.NotContains(t, err.Error(), "private-secret")
 				_, err := os.Stat(marker)
 				require.NoError(t, err, "must reach real process")
+				if strings.HasPrefix(mode, "absent-") {
+					queries, err := os.ReadFile(marker)
+					require.NoError(t, err)
+					assert.Equal(t, "conflicting:version\nconflicting:state\nabsent:version\nabsent:state\n", string(queries), "must exercise the second auth case before refusing publication")
+				}
 			}
 			entries, err := os.ReadDir(parent)
 			require.NoError(t, err)
@@ -186,6 +197,10 @@ func TestPiModelControlsInstalledSchema(t *testing.T) {
 			assert.Equal(t, facts.ContextTokens.Tokens, proof.ContextTokens)
 			assert.Equal(t, facts.OutputTokens.Tokens, proof.OutputTokens)
 			assert.True(t, proof.Reasoning)
+			require.Len(t, proof.AuthCaseSessions, 2)
+			assert.NotEmpty(t, proof.AuthCaseSessions["absent"])
+			assert.NotEmpty(t, proof.AuthCaseSessions["conflicting"])
+			assert.NotEqual(t, proof.AuthCaseSessions["absent"], proof.AuthCaseSessions["conflicting"])
 			entries, err := os.ReadDir(parent)
 			require.NoError(t, err)
 			assert.Empty(t, entries)
@@ -255,6 +270,23 @@ func TestPiModelControlsProcessFixture(t *testing.T) {
 			os.Exit(6)
 		}
 	}
+	authCase := "absent"
+	for i, entry := range []struct{ path, body string }{
+		{filepath.Join(os.Getenv("HOME"), ".pi/agent/settings.json"), `{"defaultProvider":"openai","defaultModel":"foreign-model"}`},
+		{filepath.Join(os.Getenv("HOME"), ".pi/agent/auth.json"), `{"openai":{"type":"api_key","key":"conflicting-subscription-secret"}}`},
+		{filepath.Join(cwd, ".pi/settings.json"), `{"defaultProvider":"openai","defaultModel":"foreign-project-model"}`},
+	} {
+		raw, err := os.ReadFile(entry.path)
+		if i == 0 && err == nil {
+			authCase = "conflicting"
+		}
+		if (authCase == "absent" && !os.IsNotExist(err)) || (authCase == "conflicting" && (err != nil || string(raw) != entry.body)) {
+			os.Exit(21)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "auth.json")); !os.IsNotExist(err) {
+		os.Exit(22)
+	}
 	path := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "models.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -293,8 +325,17 @@ func TestPiModelControlsProcessFixture(t *testing.T) {
 	if err != nil {
 		os.Exit(13)
 	}
-	if _, err = fmt.Fprintln(f, label); err != nil || f.Close() != nil {
+	if _, err = fmt.Fprintln(f, authCase+":"+label); err != nil || f.Close() != nil {
 		os.Exit(14)
+	}
+	if label == "version" {
+		f, err := os.OpenFile(marker+"-roots", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(23)
+		}
+		if _, err = fmt.Fprintln(f, os.Getenv("HOME")); err != nil || f.Close() != nil {
+			os.Exit(24)
+		}
 	}
 	if mode == "cancel" {
 		time.Sleep(10 * time.Second)
@@ -307,6 +348,19 @@ func TestPiModelControlsProcessFixture(t *testing.T) {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil || string(input) != "{\"id\":\"model-controls\",\"type\":\"get_state\"}\n" {
 		os.Exit(16)
+	}
+	if authCase == "absent" {
+		switch mode {
+		case "absent-exit":
+			fmt.Fprintln(os.Stderr, "lr_private-secret Bearer private-secret")
+			os.Exit(25)
+		case "absent-missing":
+			os.Exit(0)
+		case "absent-created-auth":
+			if os.WriteFile(filepath.Join(os.Getenv("HOME"), ".pi/agent/auth.json"), []byte(`{"openai":{"type":"api_key","key":"private-secret"}}`), 0600) != nil {
+				os.Exit(26)
+			}
+		}
 	}
 	switch mode {
 	case "exit":
@@ -330,10 +384,10 @@ func TestPiModelControlsProcessFixture(t *testing.T) {
 	model["provider"] = "lunaroute"
 	model["api"] = p.API
 	model["baseUrl"] = p.BaseURL
-	if mode == "drift" {
+	if mode == "drift" || (mode == "absent-drift" && authCase == "absent") {
 		model["maxTokens"] = 16384
 	}
-	if json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "response", "id": "model-controls", "command": "get_state", "success": true, "data": map[string]any{"model": model, "sessionId": "controls-session", "isStreaming": false, "isCompacting": false, "messageCount": 0, "pendingMessageCount": 0}}) != nil {
+	if json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "response", "id": "model-controls", "command": "get_state", "success": true, "data": map[string]any{"model": model, "sessionId": "controls-" + authCase, "isStreaming": false, "isCompacting": false, "messageCount": 0, "pendingMessageCount": 0}}) != nil {
 		os.Exit(20)
 	}
 	os.Exit(0)

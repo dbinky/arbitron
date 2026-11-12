@@ -796,10 +796,13 @@ this experiment after upgrades.
 
 The actual same-executable/env/cwd version and RPC outputs must prove the
 selected canonical provider/model, hosted base URL, API, text-only input,
-independent reasoning and exact limits in an empty idle session. Private
-conflicting user/project settings and subscription auth are seeded; their
-bounded bytes/modes and the relocated definition must remain unchanged.
-Successful cleanup precedes `observations/lr08-pi-model-controls.json`, written
+independent reasoning and exact limits in an empty idle session. Two independent
+private experiments must pass: conflicting user/project settings and subscription
+auth, then absent user/project settings/auth. Each begins with no relocated auth
+file; Pi may initialize its private empty credential store. Protected user/project
+trees and the relocated definition must remain unchanged. Both actual session ids
+are recorded under `auth_case_sessions`; either case failing prevents publication.
+Successful cleanup of both experiments precedes `observations/lr08-pi-model-controls.json`, written
 privately/exclusively with only safe projections and source references.
 Failures write nothing. Delete/review any previous artifact explicitly before
 rerunning; never overwrite a prior observation silently.
