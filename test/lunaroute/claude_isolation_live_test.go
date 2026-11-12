@@ -19,7 +19,7 @@ func TestLiveClaudeCodeIsolation(t *testing.T) {
 	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_CLAUDE_MODEL")
 	bin := liveBinary(t, "claude")
 	rules := liveRules(t)
-	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource} {
+	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource, claudeThinkingSource, claudeSubagentSource, claudeSubagentRoutingSource, claudeInputSource} {
 		if _, err := readRepoFile(repoRoot(t), source); err != nil {
 			t.Fatal("isolation/control source unavailable")
 		}
@@ -69,12 +69,7 @@ func TestLiveClaudeCodeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal("isolated Claude mission failed; release acceptance remains pending")
 	}
-	observation, err := collectClaudeSubagentRoutingEvidence(isolation, capture, result, started, time.Now().UTC())
-	if err != nil {
-		t.Fatal("current-run config/auth/workspace/inference proof incomplete")
+	if finishClaudeIsolation(repoRoot(t), root, isolation, capture, result, started, time.Now().UTC()) != nil {
+		t.Fatal("source/current-run proof or private cleanup incomplete; no observation written")
 	}
-	if capture.Close() != nil || os.RemoveAll(root) != nil {
-		t.Fatal("experiment cleanup failed; no observation written")
-	}
-	writeObservation(t, key, "lr05-isolation.json", observation)
 }

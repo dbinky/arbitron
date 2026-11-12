@@ -182,6 +182,7 @@ func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.Capabil
 type claudeIsolationObservation struct {
 	Scope           string                   `json:"scope"`
 	Source          string                   `json:"source"`
+	InputSource     string                   `json:"input_source,omitempty"`
 	Version         string                   `json:"version"`
 	Session         string                   `json:"session"`
 	ConfigUnchanged bool                     `json:"config_unchanged"`

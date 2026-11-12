@@ -328,6 +328,15 @@ refuse publication despite successful files/inference. Usage `maxOutputTokens`
 is a catalog default, not the env-adjusted request budget; it is not used as
 output-control proof. See [the inspected producer note](sources/lr05-limits.md)
 and `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(MainLimitValidation|LimitsFactorySink)$' -count=1`.
+Before publication, the operator entry point now also reads the cited R2
+snapshot and requires exactly one selected-model record whose context/output
+limits agree with those actual table/env/usage/request proofs. The final
+`input_source` names that snapshot; missing, malformed, duplicate or drifting
+facts and unreadable source references cannot publish. Safe projection and
+successful private HOME/workspace/proxy/CA cleanup precede the exclusive write.
+Run `go test ./test/lunaroute -run 'TestAgentEvidenceClaude(SourceBoundPublication|InputSourceValidation)$' -count=1`.
+The synthetic source fixtures prove plumbing only, not new limits, installed
+control behavior or release readiness.
 The same experiment now seeds a private per-run `CLAUDE.md` nonce, protects
 its bytes/modes and requires its exact source-formatted frame in the **first**
 actual Messages user-text request. It publishes only safe `project_memory`
