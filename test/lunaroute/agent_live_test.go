@@ -123,7 +123,7 @@ func liveObservedCompactingFactoryWithClient(ws, claudeBin string, rules provide
 
 func newLiveAgentFactory(ws, claudeBin string, rules provider.CapabilityRules, client *http.Client, capture *inferenceCapture, snapshot []byte, forceCompaction bool, journal *openCodeControlJournal) *providersadapter.Factory {
 	started := time.Now().UTC()
-	var next claudecli.CommandRunner = openCodeControlsRunner{next: claudecli.NewExecRunner(), journal: journal}
+	var next claudecli.CommandRunner = openCodeControlsRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, journal: journal}
 	if forceCompaction {
 		next = openCodeCompactionRunner{next: next, snapshot: snapshot, started: started}
 	}

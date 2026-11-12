@@ -293,6 +293,20 @@ fixtures inject a bounded offline HTTP client into the same probe composition;
 no diagnostic request leaves the fixture. They are
 not installed-binary contract or helper evidence.
 
+The Factory's experiment runner also validates Claude's **main startup** from
+its actual bounded JSONL stream. A `--version` query uses the same emitted
+executable/env/cwd; exactly one ordered `system/init` must identify that reviewed
+version, selected canonical model, actual workspace and the final successful
+result's session. Missing/drifting startup refuses mission acceptance even when
+the subprocess completed authenticated inference and created both files.
+See [the 2.1.322 schema/producer source note](sources/lr05-startup.md).
+`go test ./test/lunaroute -run TestAgentEvidenceClaudeStartup -count=1` checks
+this slice. It proves startup identity and emitted launch agreement, **not**
+effective limits, helper selectors, settings precedence, memory or unchanged
+user/project files. Claude's remaining control/isolation and forced-helper
+collectors and complete live entry point are still required. No main-only
+agent/contract observation or supported/verified fact is published.
+
 The Factory's experiment runner now queries OpenCode `debug config --pure`
 with the actual adapter-emitted executable/env/cwd before launching each mission.
 It validates the resolved main/helper selection, provider, destination, registered

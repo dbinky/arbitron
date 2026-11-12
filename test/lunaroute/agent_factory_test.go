@@ -140,7 +140,18 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	common := `#!/bin/sh
 set -eu
 if [ "${1-}" = --version ]; then
- if [ '@MODE@' = correlation-version ]; then echo '1.19.6'; else echo '1.19.5'; fi
+ if [ '@BACKEND@' = claude-code ]; then
+  case "$PWD" in '@ROOT@'|'@ROOT@'/*) ;; *) exit 40 ;; esac
+  [ "$(cat)" = '' ] || exit 42
+  [ "$ANTHROPIC_BASE_URL" = https://gw.lunaroute.com ] || exit 43
+  [ "$ANTHROPIC_AUTH_TOKEN" = '@KEY@' ] || exit 44
+  [ "$ANTHROPIC_MODEL" = glm-5.3 ] || exit 46
+  printf queried > '@ROOT@/version-marker'
+  if [ '@MODE@' = startup-version-query ]; then echo 'version @KEY@' >&2; exit 1; fi
+  echo '2.1.322 (Claude Code)'
+ else
+  if [ '@MODE@' = correlation-version ]; then echo '1.19.6'; else echo '1.19.5'; fi
+ fi
  exit 0
 fi
 case "$PWD" in '@ROOT@'|'@ROOT@'/*) ;; *) exit 40 ;; esac
@@ -266,7 +277,21 @@ if [ '@MODE@' = wrong-file ]; then printf WRONG > lunaroute-proof.txt; fi
 if [ '@MODE@' != missing-command ] && [ -f lunaroute-proof.txt ]; then wc -c < lunaroute-proof.txt > lunaroute-command.txt; fi
 if [ '@MODE@' = wrong-command ]; then printf 0 > lunaroute-command.txt; fi
 if [ "$path" = messages ]; then
+ emit_startup() {
+  model=glm-5.3; version=2.1.322; cwd=$PWD; session=ses_factory
+  case '@MODE@' in
+   startup-model) model=glm-5.3-flash ;;
+   startup-version) version=2.1.321 ;;
+   startup-cwd) cwd=/unrelated ;;
+   startup-session) session=ses_other ;;
+   startup-malformed) echo '{'; return ;;
+  esac
+  printf '{"type":"system","subtype":"init","model":"%s","claude_code_version":"%s","cwd":"%s","session_id":"%s"}\n' "$model" "$version" "$cwd" "$session"
+ }
+ case '@MODE@' in startup-absent|startup-late) ;; *) emit_startup ;; esac
+ if [ '@MODE@' = startup-duplicate ]; then emit_startup; fi
  if [ '@MODE@' != no-tool ]; then echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_one","content":"done"}]}}'; fi
+ if [ '@MODE@' = startup-late ]; then emit_startup; fi
  echo '{"type":"result","is_error":false,"result":"done","session_id":"ses_factory","modelUsage":{"glm-5.3":{}}}'
 else
  if [ '@MODE@' != no-tool ]; then echo '{"type":"tool_use","sessionID":"ses_factory","part":{"sessionID":"ses_factory","messageID":"msg_answer","type":"tool","tool":"bash","state":{"status":"completed"}}}'; fi
@@ -289,7 +314,7 @@ fi
 	}
 	compactionBody, err := json.Marshal(map[string]any{"model": "glm-5.3", "stream": mode == "correlation-compaction-stream", "messages": []map[string]string{{"role": "system", "content": string(compactionSystem)}, {"role": "user", "content": openCodeCompactionPrefix + "[User]: " + compactionPrompt + "\n</conversation>\n\n" + openCodeCompactionInstruction + "\n\n" + string(compactionTemplate)}}})
 	require.NoError(t, err)
-	script := strings.NewReplacer("@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	script := strings.NewReplacer("@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)
