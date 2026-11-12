@@ -23,7 +23,7 @@
   the launch gate.
   Add root tests: an explicit-pi profile reaches the adapter, and a backend-less profile is refused, both via the real
   resolver rather than a hand-built `ResolvedBinding`.
-- [ ] **G3 (Area 7): classifier boundaries are untested.**
+- [ ] **G3 (Area 6): classifier boundaries are untested.**
   The `harden:domain/provider/lunaroute_classify.go` survivors sit at lines 118, 137, 141, 189, 217, 225, 229, 232, 234 and
   236. They cover:
   - the redaction pair sizing;
@@ -33,17 +33,17 @@
   - verified-code-before-status precedence.
 
   Add a table test per boundary that fails under each mutant.
-- [ ] **G4 (Area 7): StreamChat may not classify SSE error frames.**
+- [ ] **G4 (Area 6): StreamChat may not classify SSE error frames.**
   The `harden:adapter/openrouter/provider.go` survivors are at lines 239–240: negating
   `p.classify != nil && len(frame.Choices) == 0 && frame.Usage == nil` survives, and so does the scanner buffer at line 209.
   A structured LunaRoute error frame mid-stream may produce empty content instead of a classified failure. Prove it is
   caught, or fix it.
-- [ ] **G5 (Area 9): diagnosis branches are not discriminated.**
+- [ ] **G5 (Area 2): diagnosis branches are not discriminated.**
   The `harden:adapter/provider/lunaroute_agent.go` survivors are at lines 83 and 85, and the
   `harden:domain/provider/lunaroute_diagnosis.go` survivors at lines 17 and 23. Classified-probe-error, local-probe-error
   and nil-original paths are not told apart by any assertion. Add tests on `Checked`, `Observation`, the error text and
   `errors.Is` for each branch.
-- [ ] **G6 (Area 8): a 3xx listing status may count as success.**
+- [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
 - [ ] **G7 (Area 3): loader and save boundaries are untested.**
@@ -55,7 +55,7 @@
 
   Add tests for: empty `tasks`, `backends` and `efforts` maps; mixed routes on two backends; `MaxOutputTokens` equal to the
   limit; and sorted ids.
-- [ ] **G8 (Area 4): vendor-prefix consistency is under-tested.**
+- [ ] **G8 (Area 3): vendor-prefix consistency is under-tested.**
   The survivors are `harden:domain/modelidentity/family.go` (negations at lines 89, 98 and 110) and
   `harden:domain/modelidentity/version.go` (line 192, the lunaroute case).
   Add cases where a vendor prefix contradicts the id, where a bedrock qualifier contradicts the prefix, and where an alias
@@ -64,11 +64,11 @@
   `harden:domain/provider/lunaroute_connection.go` survives at line 18 (the whitespace/control scan in `ValidLunaRouteKey`).
   `harden:adapter/sqlite/generated/connections.sql.go` survives at line 204 (a negated error check on a generated query).
   Add an `lr_ab cd` key case, and decide whether the generated-query error path is reachable and tested.
-- [ ] **G10 (Areas 5, 6): executed-identity safety checks are untested.**
+- [ ] **G10 (Areas 4, 5): executed-identity safety checks are untested.**
   The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
   `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
   `lr_` text or more than 256 bytes must be rejected as evidence. Add a case per clause.
-- [ ] **G11 (Areas 3, 8): text survivors need a decision.**
+- [ ] **G11 (Areas 3, 7): text survivors need a decision.**
   The survivors `harden:adapter/mcp/tools_connection_models.go`, `harden:adapter/mcp/lunaroute_backend_hint.go` and
   `harden:domain/provider/model_discovery.go` are string-concatenation mutants in LLM-facing text. Pin the load-bearing
   phrases in tests (unknown is not a guarantee; codex or pi only; pinned only), or record each mutant as equivalent with a

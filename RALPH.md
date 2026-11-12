@@ -62,7 +62,7 @@ never evidence of readiness.
 
 ## Tracking files
 
-- `docs/reference/focus-areas.md`: 10 single-system behaviours, each approved twice (wiring lens, then failure lens).
+- `docs/reference/focus-areas.md`: 8 single-system behaviours, each approved twice (wiring lens, then failure lens).
 - `docs/reference/paired-reviews.md`: 6 integration seams, one approval each covering both directions, plus the `## No seam`
   audit.
 - `docs/reference/gaps-identified.md`: the open gaps, `## Closed` and `## Won't Fix`.
@@ -92,11 +92,11 @@ script records otherwise.
 
 | Item | Value |
 |---|---|
-| Single-system areas | 10 |
+| Single-system areas | 8 |
 | Paired seams | 6 |
-| Implied minimum passes (2 × singles + paired) | 2 × 10 + 6 = **26** |
+| Implied minimum passes (2 × singles + paired) | 2 × 8 + 6 = **22** |
 | Budget (500 × 0.35) | **175** |
-| Fits | yes (26 ≤ 175; about 6.7× headroom for gap closing and re-review) |
+| Fits | yes (22 ≤ 175; about 8.0× headroom for gap closing and re-review) |
 
 ## Definition of done
 
@@ -124,6 +124,26 @@ covers it.
   hop instead of the sink (the HTTP request, the subprocess argv/env, the persisted row or node conversation)?
 - Does the area have happy, success, failure, error and edge coverage? Would at least one test **fail** if its production
   input were nil or empty?
+
+## Plan critique
+
+areas 10 → 8, seams 6 → 6, implied passes 26 → 22, budget 175
+
+- Merge: former Areas 2 + 9 → Area 2; same-files clause: factory, `lunaRouteAgent.RunAgent` and executor are one actual-call path. Preflight and diagnosis lenses are retained.
+- Merge: former Areas 3 + 4 → Area 3; no-independent-entry/sink clause: identity helpers feed save, discovery and execution. Caller-specific checks move into Areas 2 and 4–7.
+- Seam test: No changes needed to seam count; no strikes, additions or reverse rows. Tightened chat TRACE to save/reload/run persisted axes; moved direct request-preflight checks into Area 6 and removed the loud launch-refusal BREAK from pi.
+- Block completion, Area 2: combined wrapper fields/lenses; anchored checks and corrected switched-provider guard attribution.
+- Block completion, Area 3: folded identity policy, sample safeguard, G8 and source-specific checks into save.
+- Block completion, Area 4: folded codex executed-model consumer checks and anchored failure cases.
+- Block completion, Area 5: folded pi executed-model consumer checks and anchored failure cases.
+- Block completion, Area 6: folded chat executed-model and request-preflight checks; anchored classifier/HTTP checks.
+- Block completion, Area 7: folded discovery family checks and anchored failure cases.
+- Block completion, Area 8: named executable release-gate entry and always-on consumers; distinguished required items from deferred LR-05/06 and corrected `applied_to` evidence.
+- Block completion, Area 1: added explicit persistence/key/endpoint symbols to the existing concrete checks.
+- Block presence: No changes needed; all required fields existed before the critique.
+- Size/budget: 2 × 8 + 6 = 22 ≤ 500 × 0.35 = 175; No changes needed to budget or deferrals. Both tables and all final-area references renumbered.
+- Risk order: former paired row 6 (profile ↔ codex) is now high, row 3; silent model/effort substitution outranks diagnostic quality. No changes needed to single-system risk order.
+- Retained release validation as a behaviour: `TestProductionR7RegisterApplication`/`TestProductionR7CompletionApplication` read real evidence and runtime facts and fail independently of profile save; it is not merely a docs page or constant table.
 
 ## Role: single-review-1
 
