@@ -83,7 +83,7 @@ func TestAgentEvidenceClaudeMemoryFactorySink(t *testing.T) {
 			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			require.NoError(t, os.Unsetenv("CLAUDE_CONFIG_DIR"))
 			client, calls := agentFactoryProbeClient(t)
-			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, capture)
+			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, capture, "")
 			started := time.Now().UTC()
 			result, err := executePreparedAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "claude-code"), ws)
 			require.NoError(t, err)

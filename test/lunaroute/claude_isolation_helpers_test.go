@@ -31,6 +31,7 @@ type claudeIsolation struct {
 	session       string
 	memory        string // private source-formatted path/nonce, never serialized
 	limits        claudeMainLimitProof
+	effort        claudeMainEffortProof
 }
 
 func seedClaudeIsolation(home, project string) (*claudeIsolation, error) {
@@ -126,6 +127,7 @@ type claudeIsolationRunner struct {
 	isolation *claudeIsolation
 	rules     provider.CapabilityRules
 	capture   *inferenceCapture
+	effort    provider.Effort
 }
 
 func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -133,6 +135,10 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 		return nil, nil, provider.LocalLunaRouteError("config isolation", errAgentEvidence)
 	}
 	if r.isolation == nil || r.isolation.session != "" || r.isolation.validateLaunch(spec) != nil || r.capture.expectClaudeMemory(r.isolation) != nil {
+		return fail()
+	}
+	effort, err := collectClaudeEffortSelection(spec, r.rules, r.effort)
+	if err != nil {
 		return fail()
 	}
 	lines, err := runCapturedLines(ctx, r.next, spec)
@@ -147,6 +153,8 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 		return fail()
 	}
 	r.isolation.limits = limits
+	effort.Session = limits.Session
+	r.isolation.effort = effort
 	r.isolation.session = limits.Session
 	out := make(chan string, len(lines))
 	for _, line := range lines {
@@ -156,8 +164,8 @@ func (r claudeIsolationRunner) Run(ctx context.Context, spec claudecli.RunSpec) 
 	return out, func() error { return nil }, nil
 }
 
-func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.CapabilityRules, client *http.Client, isolation *claudeIsolation, capture *inferenceCapture) *providersadapter.Factory {
-	runner := claudeIsolationRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, isolation: isolation, rules: rules, capture: capture}
+func liveClaudeIsolationFactoryWithClient(ws, bin string, rules provider.CapabilityRules, client *http.Client, isolation *claudeIsolation, capture *inferenceCapture, effort provider.Effort) *providersadapter.Factory {
+	runner := claudeIsolationRunner{next: claudeStartupRunner{next: claudecli.NewExecRunner()}, isolation: isolation, rules: rules, capture: capture, effort: effort}
 	return providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeAgentConfig: claudecli.Config{BinaryPath: bin, WorkspaceRoot: ws, Runner: runner, Timeout: agentExperimentTimeout,
 			MaxResponseBytes: captureBodyLimit, AllowedTools: []string{"Read", "Write", "Bash"}, CapabilityRules: rules},
@@ -173,6 +181,7 @@ type claudeIsolationObservation struct {
 	ConfigUnchanged bool                     `json:"config_unchanged"`
 	AuthUnchanged   bool                     `json:"auth_unchanged"`
 	Limits          claudeMainLimitProof     `json:"main_limits"`
+	Effort          claudeMainEffortProof    `json:"main_effort"`
 	ProjectMemory   claudeProjectMemoryProof `json:"project_memory"`
 	Inference       []capturedInference      `json:"inference"`
 }
@@ -204,6 +213,10 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if !memory.Loaded {
 		return fail()
 	}
+	effort, err := joinClaudeRequestEffort(s.effort, s.session, result.Model, records)
+	if err != nil {
+		return fail()
+	}
 	tool := false
 	for _, step := range result.Steps {
 		tool = tool || step.Kind == "tool_call"
@@ -218,6 +231,6 @@ func collectClaudeIsolationEvidence(s *claudeIsolation, records []capturedInfere
 	if !tool || proofErr != nil || commandErr != nil || string(proof) != agentProofText || strings.TrimSpace(string(command)) != strconv.Itoa(len(agentProofText)) {
 		return fail()
 	}
-	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget and first-request project memory only; no helper or complete contract verification", Source: claudeIsolationSource,
-		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, ProjectMemory: memory, Inference: records}, nil
+	return claudeIsolationObservation{Scope: "main config/auth isolation, reported context, requested output budget, graded effort and first-request project memory only; no helper or complete contract verification", Source: claudeIsolationSource,
+		Version: claudeStartupVersion, Session: s.session, ConfigUnchanged: true, AuthUnchanged: true, Limits: limits, Effort: effort, ProjectMemory: memory, Inference: records}, nil
 }

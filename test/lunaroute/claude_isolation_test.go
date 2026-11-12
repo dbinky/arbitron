@@ -45,7 +45,7 @@ func TestAgentEvidenceClaudeIsolationFactorySink(t *testing.T) {
 				bin = wrapper
 			}
 			client, calls := agentFactoryProbeClient(t)
-			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, capture)
+			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, capture, "")
 			started := time.Now().UTC()
 			result, err := executePreparedAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "claude-code"), ws)
 			if mutation != "" {
@@ -141,7 +141,7 @@ func TestAgentEvidenceClaudeIsolationLaunchBoundary(t *testing.T) {
 			if mode == "missing-memory-capture" {
 				memoryCapture = nil
 			}
-			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, memoryCapture)
+			factory := liveClaudeIsolationFactoryWithClient(root, bin, agentFactoryRules(t), client, isolation, memoryCapture, "")
 			result, err := executePreparedAgentMission(context.Background(), factory, liveBinding(captureFixtureKey, "glm-5.3", "claude-code"), ws)
 			require.Error(t, err)
 			assert.Nil(t, result)

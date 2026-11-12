@@ -21,6 +21,15 @@ import (
 // contract evidence. The real Factory/runner must supply every launch input.
 func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *inferenceCapture) {
 	t.Helper()
+	return agentFactoryFixtureWithEffort(t, backend, mode, provider.EffortDefault)
+}
+
+func agentFactoryFixtureWithEffort(t *testing.T, backend, mode string, selected provider.Effort) (string, string, *inferenceCapture) {
+	t.Helper()
+	expectedEffort := string(selected)
+	if selected == provider.EffortDefault {
+		expectedEffort = ""
+	}
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	bins := t.TempDir()
@@ -35,10 +44,13 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 	c := fixtureCapture(t, func(w http.ResponseWriter, r *http.Request) {
 		firstRequest.Do(func() { fixtureStarted = time.Now().UTC() })
 		var body struct {
-			Model     string `json:"model"`
-			Stream    bool   `json:"stream"`
-			MaxTokens int    `json:"max_tokens"`
-			Messages  []struct {
+			Model        string `json:"model"`
+			Stream       bool   `json:"stream"`
+			MaxTokens    int    `json:"max_tokens"`
+			OutputConfig struct {
+				Effort string `json:"effort"`
+			} `json:"output_config"`
+			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
@@ -53,6 +65,18 @@ func agentFactoryFixture(t *testing.T, backend, mode string) (string, string, *i
 			return
 		}
 		if backend == "claude-code" {
+			wantEffort := expectedEffort
+			switch mode {
+			case "effort-absent":
+				wantEffort = ""
+			case "effort-drift":
+				wantEffort = "medium"
+			}
+			if body.OutputConfig.Effort != wantEffort {
+				t.Error("Claude request did not feed the expected effort wire shape")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			wantBudget := 32768
 			if mode == "limits-output-absent" {
 				wantBudget = 0
@@ -211,6 +235,7 @@ for v in ANTHROPIC_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_SMALL_FAST_MODE
 done
 [ "$CLAUDE_CODE_MAX_CONTEXT_TOKENS" = 202752 ] || exit 47
 [ "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" = 32768 ] || exit 48
+[ "${CLAUDE_CODE_EFFORT_LEVEL-}" = '@CLAUDE_EFFORT_LEVEL@' ] || exit 52
 case " $* " in *' --model glm-5.3 '*) ;; *) exit 49 ;; esac
 case " $* " in *' --allowedTools Read,Write,Bash '*) ;; *) exit 50 ;; esac
 prev=; isolated=0
@@ -298,6 +323,14 @@ make_memory_body() {
 if [ "$path" = messages ] && [ -f CLAUDE.md ]; then
  case '@MODE@' in memory-absent|memory-late) ;; *) request_body=$(make_memory_body) ;; esac
 fi
+case '@MODE@' in effort-*)
+ [ -n "${CLAUDE_CODE_EFFORT_LEVEL-}" ] || exit 52
+ effort=$CLAUDE_CODE_EFFORT_LEVEL
+ if [ '@MODE@' = effort-drift ]; then effort=medium; fi
+ if [ '@MODE@' != effort-absent ]; then
+  request_body='{"output_config":{"effort":"'"$effort"'"},'"${request_body#?}"
+ fi
+ ;; esac
 /usr/bin/curl --fail --silent --show-error --noproxy '' --cacert "$SSL_CERT_FILE" --proxy "$HTTPS_PROXY" -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "$session_header" -d "$request_body" "https://gw.lunaroute.com/v1/$path" >/dev/null
 if [ '@MODE@' = memory-late ]; then
  request_body=$(make_memory_body)
@@ -389,7 +422,7 @@ fi
 	case "limits-context-secret":
 		contextField = `"contextWindow":"` + captureFixtureKey + `"`
 	}
-	script := strings.NewReplacer("@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
+	script := strings.NewReplacer("@CLAUDE_EFFORT_LEVEL@", expectedEffort, "@CLAUDE_BUDGET@", budget, "@CLAUDE_CONTEXT@", contextField, "@BACKEND@", backend, "@ROOT@", root, "@KEY@", captureFixtureKey, "@PROMPT@", agentMissionPromptFor(backend), "@CONTINUATION@", openCodeCompactionContinuation, "@MODE@", mode, "@TITLE_BODY@", "'"+strings.ReplaceAll(string(titleBody), "'", "'\"'\"'")+"'", "@COMPACTION_BODY@", "'"+strings.ReplaceAll(string(compactionBody), "'", "'\"'\"'")+"'").Replace(common + body + finish)
 	bin := filepath.Join(bins, name)
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0700))
 	wrapped := c.WrapBinary(t, bin)

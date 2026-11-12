@@ -19,7 +19,7 @@ func TestLiveClaudeCodeIsolation(t *testing.T) {
 	model := liveModel(t, "ARBITRON_LUNAROUTE_E2E_CLAUDE_MODEL")
 	bin := liveBinary(t, "claude")
 	rules := liveRules(t)
-	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource} {
+	for _, source := range []string{claudeIsolationSource, claudeLimitsSource, claudeMemorySource, claudeEffortSource} {
 		if _, err := readRepoFile(repoRoot(t), source); err != nil {
 			t.Fatal("isolation/control source unavailable")
 		}
@@ -63,7 +63,7 @@ func TestLiveClaudeCodeIsolation(t *testing.T) {
 	}
 	capture := startInferenceCapture(t, "claude-isolation-"+time.Now().UTC().Format("20060102T150405.000000000Z"), "claude-code", binding.ConnectionRef, key)
 	wrapper := capture.WrapBinary(t, bin)
-	factory := liveClaudeIsolationFactoryWithClient(root, wrapper, rules, client, isolation, capture)
+	factory := liveClaudeIsolationFactoryWithClient(root, wrapper, rules, client, isolation, capture, binding.Effort)
 	started := time.Now().UTC()
 	result, err := executePreparedAgentMission(ctx, factory, binding, ws)
 	if err != nil {

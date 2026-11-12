@@ -338,9 +338,20 @@ material. See [the memory producer and unresolved settings-source concern](sourc
 and `go test ./test/lunaroute -run TestAgentEvidenceClaudeMemory -count=1`.
 Source review does not establish that the installed binary preserves memory
 under empty settings sources; the operator experiment must fail if it does not.
+The same Factory now also consumes the selected binding's effort, the actual
+emitted env and the same capability table. The Messages proxy projects the
+actual `output_config.effort`; missing projection or a downgraded/absent explicit
+graded level refuses the final private `main_effort` sink despite completed
+inference/files. Default records only the observed value/absence, never an
+inferred exact effort. Current production Claude effort facts stay unknown;
+explicit levels are tested with distinctive offline facts, not invented live
+support. Per-message overrides and `none` require separate effective-control
+proof and are refused by this narrow experiment. See [the versioned source and
+scope](sources/lr05-effort.md) and
+`go test ./test/lunaroute -run TestAgentEvidenceClaudeEffort -count=1`.
 This is **not** the full Claude agent/contract entry point: keychain isolation,
-effective selectors/effort, complete limit enforcement, installed memory and
-helper verification remain pending. A short request establishes no gateway maximum.
+effective selectors, complete thinking/effort and limit enforcement, installed
+memory and helper verification remain pending. A short request establishes no gateway maximum.
 No operator observation or support/status change is inferred.
 
 The Factory's experiment runner now queries OpenCode `debug config --pure`
