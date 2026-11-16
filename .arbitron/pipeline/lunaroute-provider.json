@@ -216,6 +216,18 @@
       "finished_at": "2026-11-16T06:26:00Z",
       "instance_id": "55bf9e19-0a7f-420a-bce0-2af074b56f38",
       "workflow": "feature-pipeline"
+    },
+    {
+      "stage": "review",
+      "status": "done",
+      "outputs": {
+        "push_ok": true,
+        "fix_scope": "all-but-defer"
+      },
+      "commit": "7aa964114a7f2965dda39d8541c59f0027bf1b7f",
+      "finished_at": "2026-11-16T07:35:42Z",
+      "instance_id": "55bf9e19-0a7f-420a-bce0-2af074b56f38",
+      "workflow": "feature-pipeline"
     }
   ]
 }
