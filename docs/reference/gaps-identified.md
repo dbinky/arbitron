@@ -90,6 +90,16 @@
 
 ## Review evidence
 
+- **paired:5 — APPROVED independently for f21f8bc and f576a28 (both directions).**
+  SHARED: `domain/provider/lunaroute_errors.go:LocalLunaRouteError` retains `ErrLunaRouteLocalFailure` through sanitization.
+  Production TRACE: `cmd/arbitron/main.go:initDomainWithModelDependencies` supplies Probes/rules; `adapter/provider/factory.go:AgentProviderFor` wraps its pi arm with the same guarded binding/rules.
+  Pi → diagnosis: `adapter/pi/provider.go:RunAgent` / `localError` and `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` / `ensureLunaRouteCompatible` mark preparation failures before mission launch.
+  Diagnosis → pi: `adapter/provider/lunaroute_agent.go:lunaRouteDiagnosable` skips that marker; `RunAgent` diagnoses unmarked failed turns/process/evidence failures once, without retrying.
+  BREAK: `cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringFailures` checks zero HTTP hits/no observation for local errors and one authenticated hit/observation for failed-turn, drift and nonzero exit; errors/logs exclude the key.
+  Independent temporary Go overlays: unmark version → both version cases fail; mark failed turn local → failed-turn fails; ignore marker in consumer → private-dir and both version cases fail (all exit 1).
+  Unmark write → `adapter/pi/lunaroute_test.go:TestLunaRoutePi_FilesystemFailures/write` fails (exit 1); unchanged test also covers chmod. Overlays removed; production files untouched.
+  Verified: `go test -count=1 -timeout 15m ./cmd/arbitron ./adapter/pi ./adapter/provider ./domain/provider` passes (exit 0; root 327.694s); focused tests also pass. G15 remains a separate Area 5 cleanup defect; no new seam defect found.
+
 - **paired:5 — Area 2 diagnosis ↔ Area 5 pi launch (refiner: recommend approve; no seam defect found).**
   Wiring: `main.go:1050` Probes → `factory.go:AgentProviderFor` wraps the pi arm (`agentProviderFor` → `pi.New` with the same rules) in `wrapLunaRouteAgent`.
   Pi → diagnosis: every pre-launch stage is marked — `pi/provider.go:RunAgent` workspace/model selection/preflight/preparation via `localError`;
