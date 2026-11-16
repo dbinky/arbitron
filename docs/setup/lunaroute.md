@@ -155,6 +155,15 @@ facts in the deployed capability table.
   Supported reasoning becomes `true`; known unsupported reasoning becomes
   `false`; unknown reasoning is refused, not silently treated as false.
 
+LunaRoute launches require **codex-cli 0.167.2 or newer** and **pi 1.5.2 or
+newer**, the oldest releases on which the private-home/agent-directory isolation
+and auth-independence controls are verified in the committed evidence
+(`docs/evidence/lunaroute-provider/observations/`). An older binary is refused
+before the key-bearing launch, even though it still works for subscription use,
+which keeps its own, lower compatibility floor. Enabling claude-code or opencode
+is gated by the checklist in
+[enablement-checklist.md](../evidence/lunaroute-provider/enablement-checklist.md).
+
 Non-default `effort` on codex accepts only `low|medium|high|xhigh` (no
 `none`/`max`), and only when the table records exact support on codex for that
 model. On pi: `none` through `max` when recorded for that model, with an exact

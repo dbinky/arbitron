@@ -29,6 +29,12 @@ var ErrLunaRouteModelSpelling = fmt.Errorf("%w: %w: use a reviewed fixed LunaRou
 
 // R7 (2026-11-12) releases LunaRoute agents only on codex and pi. The retained
 // claude-code/opencode emitters remain disabled at this shared production gate.
+//
+// Adding a backend here requires every item for it in the tracked enablement
+// checklist, docs/evidence/lunaroute-provider/enablement-checklist.md: deployed
+// versions, live routing/identity provenance, credential/project isolation,
+// existing-provider regressions and (opencode) SDK provenance. Constructor tests
+// and documentation checks do not satisfy it.
 var lunaRouteEnabledBackends = map[string]bool{
 	workflow.BackendCodex: true,
 	workflow.BackendPi:    true,

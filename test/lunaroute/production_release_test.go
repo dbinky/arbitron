@@ -130,3 +130,25 @@ func TestProductionR7RegisterApplication(t *testing.T) {
 	}
 	assert.Empty(t, releaseProblems(repoRoot(t), r), "all released contracts have evidence AND runtime application; matrix enforcement is separate")
 }
+
+// The gate's comment points at a tracked checklist; neither may rot. Both
+// unreleased backends stay refused until their sections are complete.
+func TestProductionEnablementChecklistLinkedToGate(t *testing.T) {
+	const checklist = evidencePath + "/enablement-checklist.md"
+	gate, err := readRepoFile(repoRoot(t), "domain/provider/lunaroute_validate.go")
+	require.NoError(t, err)
+	assert.Contains(t, string(gate), "docs/evidence/lunaroute-provider/enablement-checklist.md")
+	raw, err := readRepoFile(repoRoot(t), checklist)
+	require.NoError(t, err)
+	require.False(t, unsafeText(string(raw), ""))
+	for _, want := range []string{
+		"lunaRouteEnabledBackends", "Deployed versions", "Live routing and identity provenance",
+		"Credential and project isolation", "Existing-provider regressions", "SDK provenance",
+		"## claude-code (disabled)", "## opencode (disabled)",
+	} {
+		assert.Contains(t, string(raw), want)
+	}
+	for _, backend := range []string{"claude-code", "opencode"} {
+		assert.False(t, provider.LunaRouteBackendEnabled(backend), backend)
+	}
+}
