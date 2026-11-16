@@ -83,6 +83,15 @@
 
 ## Review evidence
 
+- **Area 6 / single:6/review2 — approver WITHHELD at 28b8bd2 (independent review).**
+  Ran `go build ./...` and `go test -count=1 ./adapter/openrouter ./adapter/provider ./domain/provider ./domain/modelidentity`: all pass; no regression.
+  C1–C3, C5 demonstrated (`TestClassifyLunaRoute_StatusMapping`, `TestLunaRouteChat_Stream` frames, `TestLunaRouteChat_StreamFailureBoundaries`, `TestLunaRouteChat_PreflightRefusesBeforeIO` both modes, zero reqs). G4 and stream cancellation closures accepted.
+  C6 is acceptable: JSON real-factory `TestLunaRouteChat_ExecutionEvidence` (drift + absent), SSE `hooks_test.go:TestAcceptExecutedModel_ChatAndStream` (drift/empty → no Done, empty output), exact-match `glm-5.3` FixedTarget in `modelidentity/version.go:LunaRouteExecutedModelAccepted`.
+  **C7 FAILS:** `TestLunaRouteChat_RequestSettings` refuses `output_schema` only via `Chat`; there is no `StreamChat` schema-refusal case and no accepted case
+  captures `response_format`/`temperature`/`max_tokens` to compare with what `lunaroute_chat.go:lunaRouteChat` Preflight inspected (no LunaRoute test mentions `response_format`).
+  Next pass: add G17's table, using both modes, output limit 1000 + MaxTokens 2000 + unsupported schema (zero reqs), and accepted schema/temperature cases asserting captured body fields.
+  C4/G3 is still open, as the refiner reported: no per-boundary fixture yet for Retry-After digits, snippet cut or transport precedence (`TestNormalizeLunaRouteRetryAfter` exists; I did not mutation-test it).
+
 - **Area 6 / single:6/review2 — failure checks and bounded recommendation.**
   C1: `domain/provider/lunaroute_classify_test.go:TestClassifyLunaRoute_StatusMapping`/`RetryGuidance` and adapter classified/header tests pass; code overrides status and refusal omits retry guidance.
   C2: new `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries` proves empty frames and mid-stream errors terminate once, with no Done/retry/later content or gateway prose; G4 closed.
