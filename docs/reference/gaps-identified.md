@@ -78,6 +78,15 @@
 
 ## Review evidence
 
+- **paired:3 — APPROVED independently at 2a173bc (both directions; no seam defect found).**
+  SHARED/wiring: `cmd/arbitron/main.go:initDomainWithModelDependencies` passes one loaded capabilityRules to ProfileService and Factory (factory Deps at line 1076, not 826); `adapter/provider/factory.go:agentProviderFor` passes it to codex.
+  Save→codex: `domain/provider/profile_service.go:write` / `validateAxes` validate before persistence; `domain/provider/selection.go:checkLunaRouteProfile` checks table support plus `domain/provider/lunaroute_validate.go:lunaRouteExactEffort`.
+  `adapter/provider/dynamic.go:Resolve` preserves saved axes; `domain/provider/pinning.go:Resolve` supplies the run's model pin; `adapter/codex/lunaroute.go:lunaRouteEffortArgs` / `lunaRouteExecExtra` emit exact effort and pinned review_model/base URL.
+  Codex→save: `adapter/codex/provider.go:RunAgent` calls CheckLunaRouteAdapterLaunch before args/env/I/O and bypasses native effort flooring; `adapter/codex/lunaroute_test.go:TestLunaRouteCodex_PreflightBeforeIO` proves invalid bindings never reveal or run.
+  BREAK: independently ran `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiringMCPSavedEffortReachesArgv` green; five temporary Go overlays each failed this test (exit 1, no build failures): xhigh→high, dropped effort, wrong review_model, save admits max, table effort check bypassed. Source files were untouched.
+  The root test proves MCP create low/update xhigh/default through the production factory; none/max/medium refusals preserve the stored effort. All 54 Go packages passed fresh with `-count=1 -timeout 15m` (six affected packages plus the remaining 48); cmd/arbitron took 338.400s.
+  Verification: `go build ./...`, `go vet ./cmd/arbitron/`, and `git diff --check` exited 0. Supplied verification placeholders were unresolved, so actual exit codes were measured locally; no Go suite regression or broken build found.
+
 - **paired:3 — Area 3 save ↔ Area 4 codex launch evidence (refiner recommends approve; no gap found).**
   New root test `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiringMCPSavedEffortReachesArgv`: override codex efforts `[none, low, xhigh, max]`
   for glm-5.3; MCP create `low`, update `xhigh`, `default` each run through the real factory → fake codex, which exits 48 unless argv has exactly one
