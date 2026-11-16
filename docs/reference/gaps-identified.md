@@ -310,3 +310,10 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
 - **Codex warns "Model metadata for glm-5.3 not found".** R7 records this as a known, non-fatal degradation.
 - **Repository content outside the LunaRoute scope.** The squashed single-commit branch makes the whole repo look changed;
   see `RALPH.md` → Scope. Layout, dashboard, spawn, queue, teams and other features are not this branch's work.
+
+- **G16 (Area 6, review1, closed): `ClassifyError` closure's Retry-After/Status/Code inputs were unpinned.**
+  `adapter/provider/lunaroute_chat.go:lunaRouteChat` mutants `RetryAfter: ""`, `Status: 0`, `Code: ""` all passed the
+  suite (`TestLunaRouteChat_ClassifiedErrors` uses no header; the `openrouter` hook tests use a fake classifier). Added
+  `TestLunaRouteChat_ClassifierReceivesHeaderStatusAndCode`; all three mutants now fail it (3/5/3 subtests red).
+  Not for this lens: `TestLunaRouteGatewayRejectsMutatedInputs` (cmd) exercises the fake gateway, not production — it
+  pins the fake's strictness only; Review 2 may weigh whether it should stay named as coverage for check 2.

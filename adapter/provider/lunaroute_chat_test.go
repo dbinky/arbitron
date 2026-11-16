@@ -196,6 +196,42 @@ func TestLunaRouteChat_ClassifiedErrors(t *testing.T) {
 	assert.NotContains(t, err.Error(), lrChatKey)
 }
 
+// The gateway's Retry-After header, status and verified code must reach the
+// classifier through the factory-built provider: dropping any of them in
+// lunaRouteChat's ClassifyError closure must turn this red.
+func TestLunaRouteChat_ClassifierReceivesHeaderStatusAndCode(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       string
+		retryAfter string
+		want       error
+		wantRetry  string
+	}{
+		{"busy by code, delta seconds", 429, `{"code":"CONCURRENT_REQUEST_LIMIT_EXCEEDED"}`, "17", domprovider.ErrLunaRouteBusy, "17"},
+		{"busy by status, delta seconds", 429, `{}`, "17", domprovider.ErrLunaRouteBusy, "17"},
+		{"refused is not busy and carries no retry", 429, `{"code":"BYOK_SPEND_CAP_REACHED"}`, "17", domprovider.ErrLunaRouteRequestRefused, ""},
+		{"code outranks a misleading status", 400, `{"error":{"code":"INFERENCE_MODEL_NOT_FOUND"}}`, "", domprovider.ErrLunaRouteModelUnavailable, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newChatGW()
+			g.status, g.body = tc.status, tc.body
+			if tc.retryAfter != "" {
+				g.header = http.Header{"Retry-After": []string{tc.retryAfter}}
+			}
+			_, err := chatProvider(t, g, lrChatBinding("", lrChatKey, nil)).Chat(context.Background(), lrChatRequest())
+			require.ErrorIs(t, err, tc.want)
+			var failure *domprovider.LunaRouteFailure
+			require.ErrorAs(t, err, &failure)
+			assert.Equal(t, tc.status, failure.Status, "real HTTP status reaches the classifier")
+			assert.Equal(t, tc.wantRetry, failure.RetryAfter)
+			if tc.wantRetry != "" {
+				assert.Contains(t, err.Error(), "retry after "+tc.wantRetry)
+			}
+		})
+	}
+}
+
 func TestLunaRouteChat_PreflightRefusesBeforeIO(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
