@@ -36,11 +36,6 @@
   `p.classify != nil && len(frame.Choices) == 0 && frame.Usage == nil` survives, and so does the scanner buffer at line 209.
   A structured LunaRoute error frame mid-stream may produce empty content instead of a classified failure. Prove it is
   caught, or fix it.
-- [ ] **G5 (Area 2): diagnosis branches are not discriminated.**
-  The `harden:adapter/provider/lunaroute_agent.go` survivors are at lines 83 and 85, and the
-  `harden:domain/provider/lunaroute_diagnosis.go` survivors at lines 17 and 23. Classified-probe-error, local-probe-error
-  and nil-original paths are not told apart by any assertion. Add tests on `Checked`, `Observation`, the error text and
-  `errors.Is` for each branch.
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
@@ -82,6 +77,23 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **[ESCALATION] Area 2 / single:2/review2 acceptance boundary.** Approval requires committed fixtures at
+  `adapter/provider/lunaroute_agent_test.go` proving refusal before both reveal/run counters, pi table narrowing,
+  switched-provider pin rejection, and a stalled diagnostic HTTP request ending at the effective deadline without retry.
+  G5 additionally needs exact `Checked`/`Observation`/text/identity assertions and nil-original coverage at
+  `domain/provider/lunaroute_diagnosis_test.go:TestLunaRouteDiagnosis`. These are missing fixtures, not an external
+  dependency or an undecided policy. All required fixtures now pass as recorded below; no external blocker remains.
+
+- **Area 2 / single:2/review2 — failure-lens assessment.** Pre-change targeted tests in adapter/provider, domain/provider and cmd/arbitron passed; no baseline failure was found.
+  Checks 1–3/5/6/12: `adapter/provider/lunaroute_agent_test.go:TestLunaRouteAgent_EffectiveRouteRefusalsBeforeRevealAndRun` runs the real preflight with saved pi facts, removed limits/efforts, node overrides, legacy codex default, nil capabilities, empty/unreviewed/alias pins and counts both reveal and inner launch; every refusal counts zero, while the valid route counts one each.
+  Check 4: the same test rejects tampered hosted endpoints before both sinks; `TestLunaRouteAgent_SwitchedProviderPinRefusedBeforeRevealAndRunner` follows `dynamic.go:Resolve` → `factory.go:AgentProviderFor` → `pinned_route.go:validatePinnedRoute` for pi/codex with an incompatible retained pin and counts zero store reveals/runner calls.
+  Check 7: `TestLunaRouteAgent_NoDiagnosisForLocalOrCancelled` and root `TestLunaRouteCodexWiringLocalFailureNeverProbes` pass, including every local sentinel and cancellation; root legacy/default/deferred/explicit-node refusal tests also pass.
+  Checks 8–10/G5: `TestLunaRouteAgent_DiagnosisObservations` now asserts exact observation identity, checked/listed flags, current-observation versus unchecked text, original identity, partial-result preservation, one mission call and at most one probe; `domain/provider/lunaroute_diagnosis_test.go:TestLunaRouteDiagnosis_NilOriginalAndObservationPrecedence` covers nil-original formatting and redacted observation precedence.
+  Check 11: `TestLunaRouteAgent_StalledDiagnosisHonorsDeadline` drives the real probe HTTP sink until its 20-second deadline (and separately a 50ms parent deadline), preserving original/deadline error identities and partial result with exactly one request/run; nil probes remain explicitly unchecked.
+  Ordering/concurrency: `adapter/provider/lunaroute_agent.go:RunAgent` validates before dispatch and `diagnose` allocates its result locally without changing wrapper fields; no rollback state or shared diagnosis result is introduced. Success, local faults, opaque failures, empty listings and nil ports are covered.
+  Verification: `go test -timeout 2m ./adapter/provider ./domain/provider ./adapter/probe ./cmd/arbitron -run 'Test(LunaRouteAgent_|LunaRouteDiagnosis|CheckLunaRouteLaunch|CheckLunaRouteAdapterLaunch|SnapshotLunaRouteCapabilityPolicy|ValidatePinnedRoute_LunaRouteCodexKeepsProvider|RouteBinding_NonLunaRouteCodexNeverReveals|LunaRoute(LegacyDefaultBackendRefused|DeferredNodeOverridesRefused|ExplicitNodeOverrideChecked|CodexWiringOpaqueFailure|CodexWiringLocalFailureNeverProbes|Probe_CancellationAndTimeout))' -count=1` exited 0; six temporary Go-overlay mutations each exited 1 on assertions (classified flag, local-error guard, nil-original guard, observation guard, nil capability input, removed timeout); overlays were removed.
+  Recommend: approve single:2/review2 — all twelve failure checks demonstrated; G5 closed, including nil/empty, refusal ordering, deadline, partial-result and no-retry evidence; approval boxes untouched.
 
 - **Area 2 / single:2/review1 — APPROVED by independent approver at f890e22.** All eleven wiring checks demonstrated; only Review 1 ticked.
   Check 1: `adapter/provider/dynamic.go:Resolve` (both arms), `adapter/provider/path_inventory.go:routeBinding`, `domain/engine/executor_agent.go:Execute` and `domain/provider/pinning.go:PinningResolver.Resolve` preserve author intent; `TestDynamicProfileResolver_BackendExplicitProvenance`, `TestAgentCallExecutor_BackendExplicitProvenance` and `cmd/arbitron/lunaroute_reveal_wiring_test.go:TestLunaRouteBackendProvenanceWiring` pass. Each dynamic inversion independently fails the new tests (exit 1).
@@ -140,6 +152,7 @@
 
 ## Closed
 
+- **G5 (Area 2) closed:** `adapter/provider/lunaroute_agent_test.go:TestLunaRouteAgent_DiagnosisObservations` and `domain/provider/lunaroute_diagnosis_test.go:TestLunaRouteDiagnosis_NilOriginalAndObservationPrecedence` discriminate checked/observation/text/identity and nil-original branches; four corresponding branch/flag mutations fail assertions.
 - **G2 (Area 2) closed:** `adapter/provider/dynamic_backend_explicit_test.go` (`TestDynamicProfileResolver_BackendExplicitProvenance`, `..._BackendProvenanceReachesLaunchGate`) drives the real `DynamicProfileResolver` on both arms into `CheckLunaRouteLaunch`; negating `dynamic.go:89` or `:124` now fails them (verified by hand-mutation).
 - **G1 (Area 1) closed:** `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` requires a replacement on switch-away; `adapter/sqlite/connection_repo.go:Update` guards every retained-key write; red/green repo and real-root MCP tests prove refusal and concurrent-switch safety.
 - **G9 (Area 1) closed:** embedded-space coverage added to key-shape/create/update tests; temporary whitespace and generated-query guard mutations both fail, with `TestConnectionRepo_LunaRoutePersistenceErrors` exercising meta-read and conditional-SQL errors.

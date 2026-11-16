@@ -6,6 +6,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLunaRouteDiagnosis(t *testing.T) {
@@ -34,6 +35,33 @@ func TestLunaRouteDiagnosis(t *testing.T) {
 			}
 			var got *provider.LunaRouteDiagnosis
 			assert.ErrorAs(t, d, &got)
+		})
+	}
+}
+
+func TestLunaRouteDiagnosis_NilOriginalAndObservationPrecedence(t *testing.T) {
+	observation := errors.New("gateway observation lr_observation_SECRET")
+	for _, tc := range []struct {
+		name string
+		d    provider.LunaRouteDiagnosis
+		text string
+		want error
+	}{
+		{"nil original unchecked", provider.LunaRouteDiagnosis{}, "could not be checked afterwards, so the cause is unknown", provider.ErrLunaRouteCauseUnknown},
+		{"nil original listed", provider.LunaRouteDiagnosis{Checked: true, ModelListed: true}, "the credential was accepted and the model is listed now, so the cause is unknown", provider.ErrLunaRouteCauseUnknown},
+		{"nil original unknown", provider.LunaRouteDiagnosis{Checked: true}, "not proof of the original cause): the cause is unknown", provider.ErrLunaRouteCauseUnknown},
+		{"observation before listed", provider.LunaRouteDiagnosis{Checked: true, ModelListed: true, Observation: observation}, "gateway observation lr_[REDACTED]", observation},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var text string
+			require.NotPanics(t, func() { text = tc.d.Error() })
+			assert.Contains(t, text, tc.text)
+			assert.NotContains(t, text, "lr_observation_SECRET")
+			assert.NotContains(t, text, "<nil>")
+			assert.ErrorIs(t, &tc.d, tc.want)
+			if tc.d.Observation != nil {
+				assert.NotContains(t, text, "credential was accepted")
+			}
 		})
 	}
 }
