@@ -281,3 +281,68 @@ func TestLunaRouteGatewayBodyReadError(t *testing.T) {
 type lunaRouteBrokenBody struct{}
 
 func (lunaRouteBrokenBody) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+// paired:2 — Area 3 save ↔ Area 6 chat. Every effort saved through MCP (create
+// and update) must reach the gateway body verbatim via the reloaded profile
+// cache and run pinning resolver; the fake gateway answers 400 to any body that
+// differs from the expectation, so a dropped, floored or remapped effort, or a
+// model other than the pin, fails the run. xhigh, which the OpenAI-compatible
+// emitter floors to high, must be refused at save even when the table lists it.
+func TestLunaRouteChatWiringMCPSavedAxesReachBody(t *testing.T) {
+	caps := strings.Replace(lrChatCaps, "levels: [low, high]", "levels: [low, high, xhigh]", 1)
+	gw := newFakeLunaRouteGateway(t, "lr_mcp_chat", "glm-5.3", "glm-5.3-flash")
+	ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, caps)+"\n", gw, func(ws string) {
+		writeLunaRouteChatWorkflow(t, ws, "lr-mcp", "lr-mcp", 1234, false)
+	})
+	call := lunaRouteToolCaller(t, ds)
+	bad, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "api_key": "lr_mcp_chat"})
+	require.False(t, bad, text)
+	stored := func() string {
+		var effort, model string
+		require.NoError(t, ds.db.QueryRow(`SELECT effort, model FROM profiles WHERE alias='lr-mcp'`).Scan(&effort, &model))
+		require.Equal(t, "glm-5.3", model)
+		return effort
+	}
+	runExpecting := func(effort string) {
+		t.Helper()
+		before := len(gw.Requests())
+		gw.ExpectChat("glm-5.3", lrRootPrompt, 1234, effort)
+		id, inst := triggerLunaRouteChat(t, ds, "lr-mcp")
+		require.Equal(t, instance.StateCompleted, inst.State, "body must match the saved axes exactly")
+		reqs := gw.Requests()
+		require.Len(t, reqs, before+1)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(reqs[len(reqs)-1].Body, &body))
+		assert.Equal(t, "glm-5.3", body["model"])
+		if effort == "" {
+			assert.NotContains(t, body, "reasoning_effort")
+		} else {
+			assert.Equal(t, effort, body["reasoning_effort"])
+		}
+		var model string
+		require.NoError(t, ds.db.QueryRow(`SELECT llm_model FROM node_executions WHERE instance_id=? AND node_id='ask'`, id.String()).Scan(&model))
+		assert.Equal(t, "glm-5.3", model)
+	}
+
+	bad, text = call("profile_create", map[string]any{"alias": "lr-mcp", "kind": "chat", "connection_ref": "lr", "model": "glm-5.3", "effort": "low"})
+	require.False(t, bad, text)
+	require.Equal(t, "low", stored())
+	runExpecting("low")
+
+	bad, text = call("profile_update", map[string]any{"alias": "lr-mcp", "effort": "high"})
+	require.False(t, bad, text)
+	require.Equal(t, "high", stored())
+	runExpecting("high")
+
+	for _, effort := range []string{"medium", "xhigh"} {
+		bad, text = call("profile_update", map[string]any{"alias": "lr-mcp", "effort": effort})
+		require.True(t, bad, "effort %s must be refused at save", effort)
+		assert.Contains(t, text, effort)
+		require.Equal(t, "high", stored(), "a refused update leaves the saved effort intact")
+	}
+	runExpecting("high")
+
+	bad, text = call("profile_update", map[string]any{"alias": "lr-mcp", "effort": "default"})
+	require.False(t, bad, text)
+	runExpecting("")
+}

@@ -78,6 +78,13 @@
 
 ## Review evidence
 
+- **paired:2 — Area 3 save ↔ Area 6 chat evidence (refiner recommends approve; no gap found).**
+  A→B: `lunaroute_validate.go:lunaRouteExactEffort[chat]` = none/low/medium/high/max, exactly the set `axes.go:ChatReasoningEffort` emits verbatim; xhigh (floored to high) is refused at save even when the table lists it.
+  B→A: `dynamic.go:Resolve` copies `p.Model`/`p.Effort` verbatim; `lunaroute_chat.go:lunaRouteChat` Preflight re-runs `CheckLunaRouteRequest` with the root caps (legacy rows cannot bypass); `request.go:buildBody` emits from `binding.Effort`.
+  New root sink test `cmd/arbitron/lunaroute_chat_wiring_test.go:TestLunaRouteChatWiringMCPSavedAxesReachBody`: MCP `profile_create` low → `profile_update` high → refused medium/xhigh leave `high` → `default` emits no field; fake gateway 400s any non-exact body.
+  Mutations, each red then restored: xhigh added to chat allowlist; `dynamic.go:127` Effort dropped; `buildBody` hardcoding `low`.
+  Wiring: `main.go:810` caps → `NewProfileService` (994) and Factory deps (826/1076/1353). SSE: llm_call uses `Chat` only; the stream body with effort is pinned at adapter level `adapter/provider/lunaroute_chat_test.go` (~400–445, `stream:true` + exact body).
+
 - **paired:1 — APPROVED at 4ead337 (independent review, both directions; G20 verified closed).**
   SHARED: `cmd/arbitron/main.go:initDomainWithModelDependencies` loads one rules value for ProfileService and Factory;
   `adapter/provider/factory.go:agentProviderFor` feeds it into pi; no production table replacement exists.
