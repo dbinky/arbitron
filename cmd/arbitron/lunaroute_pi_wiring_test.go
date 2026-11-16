@@ -58,7 +58,7 @@ func piRootWith(t *testing.T, want piRootFixture, caps string) (*domainStack, *a
 	dir := t.TempDir()
 	f := piRootFixture{
 		Thinking: want.Thinking, Output: want.Output, Reasoning: want.Reasoning,
-		Model:    model, Capture: filepath.Join(dir, "models.json"), Dirs: filepath.Join(dir, "dirs"),
+		Model: model, Capture: filepath.Join(dir, "models.json"), Dirs: filepath.Join(dir, "dirs"),
 		Argv: filepath.Join(dir, "argv"), Cwd: filepath.Join(dir, "cwd"), Mode: filepath.Join(dir, "mode"),
 	}
 	raw, err := json.Marshal(f)
