@@ -78,6 +78,17 @@
 
 ## Review evidence
 
+- **paired:3 — Area 3 save ↔ Area 4 codex launch evidence (refiner recommends approve; no gap found).**
+  New root test `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiringMCPSavedEffortReachesArgv`: override codex efforts `[none, low, xhigh, max]`
+  for glm-5.3; MCP create `low`, update `xhigh`, `default` each run through the real factory → fake codex, which exits 48 unless argv has exactly one
+  `-c model_reasoning_effort=<saved>` (none for default) and 47 unless `review_model="glm-5.3"`; `-m glm-5.3` asserted at the argv log. none/max refused at save
+  ("no exact emission on codex"), medium refused (table), stored effort unchanged. Mutations, each red then restored: `lunaRouteEffortArgs` remaps xhigh→high;
+  `lunaRouteExecExtra` drops effort; `lunaRouteExactEffort[codex]` admits max (save accepts, launch refuses); `review_model` hardcoded; table-level check disabled.
+  B→A: `provider.go:RunAgent` reruns `CheckLunaRouteAdapterLaunch(p.rules, …)` and uses only `lunaRouteExecExtra` (no native `codexEffortGrade` floor on LunaRoute).
+  Wiring: one `capabilityRules` (`main.go:810`) → factory `:826` → `factory.go:341` codex Config, and `NewProfileService` `:994`.
+  Note (not a BREAK): codex save does not consult `Reasoning.Support`; an unsupported-reasoning model still receives the effort verbatim (no local clamp in codex).
+  Recommend: approve paired:3.
+
 - **paired:2 — APPROVED independently at cbbf613 (both directions; G21 confirmed closed).**
   SHARED: persisted model/effort and one loaded rules value; `cmd/arbitron/main.go:initDomainWithModelDependencies` feeds ProfileService, Factory and the shared ProfileCache-backed resolvers.
   Save→chat: `domain/provider/profile_service.go:validateAxes` and `domain/provider/lunaroute_validate.go:lunaRouteExactEffort` validate exact axes before persistence; `adapter/provider/dynamic.go:Resolve` copies them verbatim.

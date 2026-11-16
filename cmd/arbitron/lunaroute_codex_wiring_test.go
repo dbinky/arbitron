@@ -28,7 +28,7 @@ func fakeLunaRouteCodex(t *testing.T, dir, model string) (argvLog, homesLog, fai
 	t.Helper()
 	argvLog, homesLog = filepath.Join(dir, "argv"), filepath.Join(dir, "homes")
 	failFlag, versionFlag, driftFlag = filepath.Join(dir, "FAIL"), filepath.Join(dir, "BAD_VERSION"), filepath.Join(dir, "DRIFT")
-	script := strings.NewReplacer("@ARGV@", argvLog, "@HOMES@", homesLog, "@FAIL@", failFlag, "@VERSION@", versionFlag, "@DRIFT@", driftFlag, "@MODEL@", model, "@KEY@", lrRootKey).Replace(`#!/bin/sh
+	script := strings.NewReplacer("@ARGV@", argvLog, "@HOMES@", homesLog, "@FAIL@", failFlag, "@VERSION@", versionFlag, "@DRIFT@", driftFlag, "@EFFORT@", filepath.Join(dir, "EFFORT"), "@MODEL@", model, "@KEY@", lrRootKey).Replace(`#!/bin/sh
 set -eu
 [ -z "${OPENAI_API_KEY-}" ] && [ -z "${OPENAI_BASE_URL-}" ] || exit 41
 [ -n "${CODEX_HOME-}" ] && [ -d "$CODEX_HOME" ] || exit 42
@@ -51,9 +51,12 @@ printf '%s\n' "$*" >> '@ARGV@'
 printf '%s\n' "$CODEX_HOME" >> '@HOMES@'
 case "$*" in *'@KEY@'*) exit 51 ;; esac
 case " $* " in *' exec --dangerously-bypass-approvals-and-sandbox '*) ;; *) exit 56 ;; esac
-for cfg in 'model_provider="lunaroute"' 'model_providers.lunaroute.name="LunaRoute"' 'model_providers.lunaroute.base_url="https://gw.lunaroute.com/v1"' 'model_providers.lunaroute.env_key="LUNAROUTE_API_KEY"' 'model_providers.lunaroute.wire_api="responses"' 'review_model="@MODEL@"' 'model_reasoning_effort=high'; do
+for cfg in 'model_provider="lunaroute"' 'model_providers.lunaroute.name="LunaRoute"' 'model_providers.lunaroute.base_url="https://gw.lunaroute.com/v1"' 'model_providers.lunaroute.env_key="LUNAROUTE_API_KEY"' 'model_providers.lunaroute.wire_api="responses"' 'review_model="@MODEL@"'; do
  case " $* " in *" -c $cfg "*) ;; *) exit 47 ;; esac
 done
+want=high; [ ! -f '@EFFORT@' ] || want=$(cat '@EFFORT@')
+efforts=$(printf '%s\n' "$@" | grep '^model_reasoning_effort=' || true)
+if [ -z "$want" ]; then [ -z "$efforts" ] || exit 48; else [ "$efforts" = "model_reasoning_effort=$want" ] || exit 48; case " $* " in *" -c model_reasoning_effort=$want "*) ;; *) exit 48 ;; esac; fi
 m=; wd=; while [ "$#" -gt 0 ]; do
  case "$1" in -m) shift; m="$1" ;; --cd) shift; wd="$1" ;; esac
  shift
@@ -75,6 +78,17 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
 
 func codexRoot(t *testing.T, model string, gw *agentListingGateway) (*domainStack, string, string, string, string, string) {
 	t.Helper()
+	return codexRootWith(t, model, gw, fmt.Sprintf(`lunaroute_models:
+  %s:
+    efforts:
+      codex: {levels: [high], evidence: "root-fixture#exact-codex-high"}
+`, model), "high")
+}
+
+// codexRootWith boots the real root against the fake codex with the given
+// capability override and saves the pinned codex profile with effort through MCP.
+func codexRootWith(t *testing.T, model string, gw *agentListingGateway, capsYAML, effort string) (*domainStack, string, string, string, string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	argv, homes, fail, version, drift := fakeLunaRouteCodex(t, dir, model)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -90,11 +104,7 @@ func codexRoot(t *testing.T, model string, gw *agentListingGateway) (*domainStac
 	t.Setenv("CODEX_HOME", operator)
 	t.Setenv("OPENAI_API_KEY", "sk-ambient-must-not-reach")
 	t.Setenv("OPENAI_BASE_URL", "https://foreign.example/v1")
-	caps := lunaRouteCapsFile(t, fmt.Sprintf(`lunaroute_models:
-  %s:
-    efforts:
-      codex: {levels: [high], evidence: "root-fixture#exact-codex-high"}
-`, model))
+	caps := lunaRouteCapsFile(t, capsYAML)
 	ds := bootLunaRouteRoot(t, "capabilitiespath: "+caps+"\n", gw, func(ws string) { writeAgentWorkflow(t, ws, "lr-codex", "lr-codex-agent") })
 	call := lunaRouteToolCaller(t, ds)
 	bad, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "api_key": lrRootKey})
@@ -107,7 +117,7 @@ func codexRoot(t *testing.T, model string, gw *agentListingGateway) (*domainStac
 		require.NoError(t, ds.db.QueryRow(`SELECT COUNT(*) FROM profiles WHERE alias='lr-codex-wrong'`).Scan(&n))
 		assert.Zero(t, n)
 	}
-	bad, text = call("profile_create", map[string]any{"alias": "lr-codex-agent", "kind": "agent", "connection_ref": "lr", "model": model, "backend": "codex", "effort": "high"})
+	bad, text = call("profile_create", map[string]any{"alias": "lr-codex-agent", "kind": "agent", "connection_ref": "lr", "model": model, "backend": "codex", "effort": effort})
 	require.False(t, bad, text)
 	t.Cleanup(func() {
 		for _, root := range []string{filepath.Join(home, ".codex"), operator} {
@@ -196,6 +206,77 @@ func TestLunaRouteCodexWiring(t *testing.T) {
 			assert.True(t, seen["lr"] && seen["or"], "both real inventory paths exist")
 		})
 	}
+}
+
+// paired:3 — Area 3 save <-> Area 4 codex launch. One override file lists
+// glm-5.3's codex efforts as [none, low, xhigh, max]. Every effort saved through
+// MCP (create and update) must reach the real codex argv as exactly one
+// `-c model_reasoning_effort=<saved>`, with review_model and -m naming the saved
+// pin; default sends none. The fake child exits non-zero on any other argv, so a
+// dropped, duplicated, floored or remapped effort fails the run. none/max are in
+// the table but have no exact codex emission, and medium is absent from the
+// table: all three must be refused at save, leaving the stored effort intact.
+func TestLunaRouteCodexWiringMCPSavedEffortReachesArgv(t *testing.T) {
+	const model = "glm-5.3"
+	caps := `lunaroute_models:
+  glm-5.3:
+    efforts:
+      codex: {levels: [none, low, xhigh, max], evidence: "root-fixture#paired-3"}
+`
+	gw := &agentListingGateway{models: []string{model}}
+	ds, argv, _, _, _, _ := codexRootWith(t, model, gw, caps, "low")
+	call := lunaRouteToolCaller(t, ds)
+	stored := func() string {
+		var effort, m string
+		require.NoError(t, ds.db.QueryRow(`SELECT effort, model FROM profiles WHERE alias='lr-codex-agent'`).Scan(&effort, &m))
+		require.Equal(t, model, m)
+		return effort
+	}
+	runs := 0
+	runExpecting := func(effort string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(argv), "EFFORT"), []byte(effort), 0o600))
+		id, _, err := ds.eng.Trigger(adminCtxForLocalUser(t, ds), "lr-codex", nil, "normal")
+		require.NoError(t, err)
+		inst := waitTerminal(t, ds, id)
+		if inst.State != instance.StateCompleted {
+			t.Fatalf("effort %q: run ended %s: %s", effort, inst.State, nodeError(t, ds, id))
+		}
+		assert.Equal(t, map[string]string{"lr-codex-agent": model}, inst.ModelPins)
+		runs++
+		lines := readArgvLog(t, argv)
+		require.Len(t, lines, runs)
+		got := " " + lines[runs-1] + " "
+		assert.Contains(t, got, ` -c review_model="`+model+`" `)
+		assert.Contains(t, got, " -m "+model+" ")
+		if effort == "" {
+			assert.NotContains(t, got, "model_reasoning_effort")
+		} else {
+			assert.Equal(t, 1, strings.Count(got, "model_reasoning_effort"))
+			assert.Contains(t, got, " -c model_reasoning_effort="+effort+" ")
+		}
+	}
+
+	require.Equal(t, "low", stored())
+	runExpecting("low")
+
+	bad, text := call("profile_update", map[string]any{"alias": "lr-codex-agent", "effort": "xhigh"})
+	require.False(t, bad, text)
+	require.Equal(t, "xhigh", stored())
+	runExpecting("xhigh")
+
+	for _, tc := range []struct{ effort, why string }{{"none", "no exact emission on codex"}, {"max", "no exact emission on codex"}, {"medium", "not known to be supported"}} {
+		bad, text = call("profile_update", map[string]any{"alias": "lr-codex-agent", "effort": tc.effort})
+		require.True(t, bad, "effort %s must be refused at save", tc.effort)
+		assert.Contains(t, text, tc.why)
+		require.Equal(t, "xhigh", stored(), "a refused update leaves the saved effort intact")
+	}
+	runExpecting("xhigh")
+
+	bad, text = call("profile_update", map[string]any{"alias": "lr-codex-agent", "effort": "default"})
+	require.False(t, bad, text)
+	runExpecting("")
+	assert.Empty(t, gw.seen(), "no diagnosis probe on successful runs")
 }
 
 func TestLunaRouteCodexWiringOpaqueFailure(t *testing.T) {
