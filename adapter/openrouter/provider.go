@@ -191,15 +191,35 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 	}
 
 	out := make(chan engine.ChatChunk)
+	if p.classify != nil {
+		// Keep a slot for the terminal outcome even when cancellation means
+		// the consumer has stopped reading. Other providers retain their
+		// existing unbuffered stream behavior.
+		out = make(chan engine.ChatChunk, 1)
+	}
 	go func() {
 		defer cancel()
 		defer close(out)
 		defer func() { _ = resp.Body.Close() }()
+		fail := func(err error) {
+			chunk := engine.ChatChunk{Error: err}
+			if send(streamCtx, out, chunk) || p.classify == nil {
+				return
+			}
+			// The context expired while delivering the failure. This goroutine
+			// is the only producer: discard at most one pending partial token
+			// to guarantee room for the terminal error without blocking cleanup.
+			select {
+			case <-out:
+			default:
+			}
+			out <- chunk
+		}
 
 		reader := p.boundedReader(streamCtx, resp.Body)
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			send(streamCtx, out, engine.ChatChunk{Error: p.statusError(resp.StatusCode, reader, resp.Header.Get("Retry-After"), key)})
+			fail(p.statusError(resp.StatusCode, reader, resp.Header.Get("Retry-After"), key))
 			return
 		}
 
@@ -208,15 +228,19 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
+			if p.classify != nil && streamCtx.Err() != nil {
+				fail(p.transportError("stream", streamCtx.Err(), key))
+				return
+			}
 			if p.classify != nil {
 				if body, failed := gatewayErrorFrame(scanner.Bytes()); failed {
-					send(streamCtx, out, engine.ChatChunk{Error: p.statusError(resp.StatusCode, bytes.NewReader(body), resp.Header.Get("Retry-After"), key)})
+					fail(p.statusError(resp.StatusCode, bytes.NewReader(body), resp.Header.Get("Retry-After"), key))
 					return
 				}
 			}
 			frame, done, perr := parseSSELine(scanner.Bytes())
 			if perr != nil {
-				send(streamCtx, out, engine.ChatChunk{Error: p.responseError(perr, key)})
+				fail(p.responseError(perr, key))
 				return
 			}
 			if done {
@@ -228,7 +252,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			}
 			if requireModel {
 				if err := p.verifyExecutedModel(p.binding.Model, frame.Model); err != nil {
-					send(streamCtx, out, engine.ChatChunk{Error: err})
+					fail(err)
 					return
 				}
 				sawModel = true
@@ -238,33 +262,40 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			}
 			sawChoice = sawChoice || len(frame.Choices) > 0
 			if p.classify != nil && len(frame.Choices) == 0 && frame.Usage == nil {
-				send(streamCtx, out, engine.ChatChunk{Error: p.responseError(errors.New("openrouter: stream frame has no choices or usage"), key)})
+				fail(p.responseError(errors.New("openrouter: stream frame has no choices or usage"), key))
 				return
 			}
 			if len(frame.Choices) > 0 && frame.Choices[0].Delta.Content != "" {
 				if !send(streamCtx, out, engine.ChatChunk{Token: frame.Choices[0].Delta.Content}) {
+					if p.classify != nil {
+						fail(p.transportError("stream", streamCtx.Err(), key))
+					}
 					return
 				}
 			}
 		}
 		if serr := scanner.Err(); serr != nil {
-			send(streamCtx, out, engine.ChatChunk{Error: p.responseError(fmt.Errorf("openrouter: read stream: %w", serr), key)})
+			fail(p.responseError(fmt.Errorf("openrouter: read stream: %w", serr), key))
+			return
+		}
+		if p.classify != nil && streamCtx.Err() != nil {
+			fail(p.transportError("stream", streamCtx.Err(), key))
 			return
 		}
 
 		// Probe budgets cover the complete response, including bytes after DONE.
 		if procenv.ResponseLimit(streamCtx, 0) > 0 {
 			if _, err := io.Copy(io.Discard, reader); err != nil {
-				send(streamCtx, out, engine.ChatChunk{Error: p.responseError(err, key)})
+				fail(p.responseError(err, key))
 				return
 			}
 		}
 		if requireModel && (!sawModel || !sawDone) {
-			send(streamCtx, out, engine.ChatChunk{Error: fmt.Errorf("%w: incomplete stream", errModelExecutionEvidence)})
+			fail(fmt.Errorf("%w: incomplete stream", errModelExecutionEvidence))
 			return
 		}
 		if p.classify != nil && (!sawChoice || !sawDone) {
-			send(streamCtx, out, engine.ChatChunk{Error: p.responseError(errors.New("openrouter: incomplete stream"), key)})
+			fail(p.responseError(errors.New("openrouter: incomplete stream"), key))
 			return
 		}
 		final := engine.ChatChunk{Done: true}
@@ -272,7 +303,9 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			final.TokensIn = usage.PromptTokens
 			final.TokensOut = usage.CompletionTokens
 		}
-		send(streamCtx, out, final)
+		if !send(streamCtx, out, final) && p.classify != nil {
+			fail(p.transportError("stream", streamCtx.Err(), key))
+		}
 	}()
 
 	return out, nil

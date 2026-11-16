@@ -9,6 +9,14 @@
 
 ## Open
 
+- **[ESCALATION] Area 6 / single:6/review2 — concrete acceptance boundary.**
+  Approval needs discriminating fixtures for G3's classifier boundaries and G4's empty/large/mid-stream frames,
+  plus completed failure-lens checks 1–7 at `adapter/openrouter/provider.go:Chat`/`StreamChat` through the real classifier.
+  Any surviving mutation needs either a failing fixture or a documented equivalence argument; test-only gateway
+  simulations are insufficient. No live credential or external dependency is needed for these offline fixtures.
+  Cancellation/deadline checks must also show termination without a successful Done or accepted partial response.
+  This pass supplies G4 and cancellation evidence; the remaining offline fixtures are G3 and G17 below.
+
 - **[RESOLVED at approval of d11128a] Area 5 / single:5/review2 — exact remaining approval conditions.**
   Per the approver at 868c0b0, the missing fixture was a direct boundary table for
   `adapter/pi/model_probe.go:safeModelIdentity`; this pass supplies `TestSafeModelIdentity_EachClause`.
@@ -44,11 +52,13 @@
   - verified-code-before-status precedence.
 
   Add a table test per boundary that fails under each mutant.
-- [ ] **G4 (Area 6): StreamChat may not classify SSE error frames.**
-  The `harden:adapter/openrouter/provider.go` survivors are at lines 239–240: negating
-  `p.classify != nil && len(frame.Choices) == 0 && frame.Usage == nil` survives, and so does the scanner buffer at line 209.
-  A structured LunaRoute error frame mid-stream may produce empty content instead of a classified failure. Prove it is
-  caught, or fix it.
+- [ ] **G17 (Area 6): remaining failure fixtures for checks 6–7.**
+  `adapter/provider/lunaroute_chat_test.go:TestLunaRouteChat_ExecutionEvidence` checks fixed ids in JSON;
+  add real-factory JSON/SSE cases selecting `glm-5.3` with absent or `glm-5.3-flash` execution evidence.
+  `TestLunaRouteChat_RequestSettings` exercises schema policy only in JSON and only schema refusal.
+  Add both modes with output limit 1000, MaxTokens 2000 and unsupported schema (zero HTTP calls), then accepted
+  schema/temperature/max_tokens cases comparing preflight policy with the captured `response_format`/request fields.
+  These are missing discriminating fixtures, not a demonstrated production mismatch; no external credential is needed.
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
@@ -72,6 +82,17 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 6 / single:6/review2 — failure checks and bounded recommendation.**
+  C1: `domain/provider/lunaroute_classify_test.go:TestClassifyLunaRoute_StatusMapping`/`RetryGuidance` and adapter classified/header tests pass; code overrides status and refusal omits retry guidance.
+  C2: new `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries` proves empty frames and mid-stream errors terminate once, with no Done/retry/later content or gateway prose; G4 closed.
+  C3: `adapter/openrouter/provider.go:statusError` discards incomplete/oversized bodies; `hooks_test.go:TestClassifyError_ChatReadAndDecode`/`NoPartialSecretAtBodyLimit` cover real reads, unlike the fake-only root body-read fixture.
+  C4: classifier transport/TLS/deadline tests pass; new `TestLunaRouteChat_StreamCancellationOutcome` was red (zero errors) for cancellation/deadlines/backpressure and is green after terminal delivery repair. G3 mutation boundaries remain unproved.
+  C5: `lunaroute_chat_test.go:TestLunaRouteChat_PreflightRefusesBeforeIO`/`EmptyTableDoesNotAuthorizeEffort` pass in both modes, with zero HTTP calls and preflight before reveal. C6–7: G17 records exact missing factory-level fixtures.
+  Production grep `rg -n 'ClassifyError:|Preflight:|AcceptExecutedModel:' adapter --glob '*.go' --glob '!**/*_test.go'` finds all three at `adapter/provider/lunaroute_chat.go:lunaRouteChat`; no new exported collaborator was introduced.
+  Targeted race runs: `go test -race -count=10 -timeout 30m ./adapter/provider -run '^TestLunaRouteChat_Stream'` and `go test -race -count=1 -timeout 30m ./adapter/openrouter` pass; classifier targeted tests pass. No whole suites run.
+  Five categories: happy/existing HappyPath, success/70 KiB SSE, failure/mid-stream refusal, error/cancellation and timeout, edge/empty frames and scanner ceiling. Temporary overlays negating/removing the empty guard, removing Scanner.Buffer, ignoring error frames and restoring old cancellation each fail; overlays removed.
+Recommend: no approval for single:6/review2 — G3 classifier mutation boundaries and G17 JSON/SSE identity/request-policy fixtures remain incomplete; approval boxes untouched.
 
 - **Area 6 / single:6/review1 — approver TICKED at 4d5c1e6 (independent review).**
   C1: `cmd/arbitron/main.go:initDomainWithModelDependencies` wires the loaded rules, factory and pinning resolver through `cmd/arbitron/model_consumers.go:newRunModelConsumers`; `adapter/provider/dynamic.go:Resolve` guards the stored binding. `cmd/arbitron/lunaroute_chat_wiring_test.go:TestLunaRouteChatWiring` proves exact /v1 URL, credential, prompt, axes and persisted output/model.
@@ -275,6 +296,9 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- [x] **G4 (Area 6):** `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries`/`StreamFrameSizeBoundary` distinguish empty-frame, structured-error and scanner-buffer mutations through the real factory/classifier.
+- [x] **Area 6 silent cancellation:** `adapter/openrouter/provider.go:StreamChat` retains one terminal error after cancellation/deadline, releases blocked consumers and closes the body; `TestLunaRouteChat_StreamCancellationOutcome` proves red/green with cause identity and secret-free errors.
 
 - [x] **G10 (Areas 4, 5):** guard boundaries covered by `adapter/codex/lunaroute_identity_test.go:TestSafeLunaRouteIdentity_EachClause` and `adapter/pi/lunaroute_identity_test.go:TestSafeModelIdentity_EachClause`; redundant length/control removals are documented above.
 
