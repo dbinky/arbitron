@@ -78,6 +78,17 @@
 
 ## Review evidence
 
+- **paired:1 — APPROVED at 4ead337 (independent review, both directions; G20 verified closed).**
+  SHARED: `cmd/arbitron/main.go:initDomainWithModelDependencies` loads one rules value for ProfileService and Factory;
+  `adapter/provider/factory.go:agentProviderFor` feeds it into pi; no production table replacement exists.
+  Save→launch: `domain/provider/profile_service.go:write` validates before persistence via `selection.go:checkLunaRouteProfile`
+  and `domain/provider/lunaroute_validate.go:checkLunaRouteRoute`; `adapter/provider/dynamic.go:Resolve` preserves effort.
+  Launch→save: `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` rechecks the same policy before reveal/files;
+  `adapter/pi/lunaroute.go:lunaRouteModelsJSON` emits table limits/reasoning; `adapter/pi/args.go:thinkingLevel` preserves levels.
+  TRACE `cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringEffortReachesArgv` passes (4096; none/low/high, real child).
+  Independent overlays changing output, reasoning, low→off or removing the reasoning guard each exit 1; stdout-close removal fails held-pipe at 2.03s after cancel.
+  Clean sources: pi wiring tests, Codex control test ×3, `go test -count=1 -timeout 30m ./...` and `go build ./...` all exit 0; no seam gap remains.
+
 - **paired:1 — refiner pass after G20 withhold: G20 closed; seam evidence unchanged from ddb27e4 (see entries below).**
   Root cause: held-pipe's 500 ms deadline started before two Go-test-binary fixture launches, so under suite load it expired
   before `--version` wrote the marker (line 136). Now the fixture appends `:held` after `/bin/sleep` holds stdout; the test
