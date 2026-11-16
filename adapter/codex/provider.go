@@ -276,12 +276,18 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 		}
 		verifier, err := newRolloutVerifier(env)
 		if err != nil {
+			if lunaroute {
+				return nil, provider.LocalLunaRouteError("rollout evidence", err)
+			}
 			return nil, err
 		}
 		if lunaroute {
+			// The final turn completed on the gateway; a private rollout that
+			// cannot prove the route is a local harness fault, so it carries the
+			// local marker and the diagnosis wrapper does not probe.
 			evidence, err = verifier.lunaRouteAfterTurn(res.sessionID, model)
 			if err != nil {
-				return nil, err
+				return nil, provider.LocalLunaRouteError("rollout evidence", err)
 			}
 		} else if err := verifier.afterTurn(res.sessionID, model, 0); err != nil {
 			return nil, err

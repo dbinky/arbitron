@@ -345,7 +345,13 @@ func TestLunaRouteCodexWiringRejectsRolloutDrift(t *testing.T) {
 	require.NoError(t, err)
 	inst := waitTerminal(t, ds, id)
 	require.Equal(t, instance.StateFailed, inst.State)
-	assert.Contains(t, nodeError(t, ds, id), "executed-model evidence rejected")
+	msg := nodeError(t, ds, id)
+	assert.Contains(t, msg, "executed-model evidence rejected")
+	// paired:4: the turn completed on the gateway; a rollout that cannot prove
+	// the route is a local codex fault and must not trigger a gateway probe.
+	assert.Contains(t, msg, "rollout evidence")
+	assert.NotContains(t, msg, "current observation")
+	assert.Empty(t, gw.seen(), "local rollout failures must not diagnose")
 	require.Len(t, readArgvLog(t, argv), 1)
 	assert.Equal(t, map[string]string{"lr-codex-agent": "glm-5.3"}, inst.ModelPins)
 }

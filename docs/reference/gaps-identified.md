@@ -9,6 +9,16 @@
 
 ## Open
 
+- [ ] **G22 (paired:4, Areas 2/4): a private-home cleanup failure marks an opaque codex failure local.**
+  `adapter/codex/provider.go:RunAgent` deferred cleanup does `errors.Join(err, LocalLunaRouteError("private home cleanup", …))`
+  even when `err` is already an opaque post-launch failure; `lunaRouteDiagnosable` then sees `ErrLunaRouteLocalFailure`
+  and never probes (BREAK direction 2). Fix: add the local marker to the cleanup error only when it is the sole failure.
+  Needs a removal-failure seam (no injection exists in RunAgent; `prepareLunaRouteLaunch` hardwires `os`).
+- [ ] **G23 (paired:4, Areas 2/4): an empty codex WorkDir is unmarked, so it probes the gateway.**
+  `adapter/codex/provider.go:RunAgent` returns bare `ErrWorkDirRequired` for LunaRoute; it is not in
+  `adapter/provider/lunaroute_agent.go:lunaRouteLocalErrors`. Reachable when `{{workspace}}` is unseeded
+  (`domain/engine/executor_agent.go` comment at line 94). Mark it with `LocalLunaRouteError("workdir", …)` on the LunaRoute arm.
+
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
@@ -77,6 +87,17 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **paired:4 — Area 2 diagnosis ↔ Area 4 codex launch (refiner: fixed rollout BREAK; recommends no approval).**
+  Found: a completed codex turn whose private rollout could not prove the route (missing/drift/foreign/unsafe/wrong session)
+  returned unmarked `ErrModelEvidence`; the wrapper probed `/v1/models` and reported a gateway observation for a local fault.
+  Fix: `adapter/codex/provider.go:RunAgent` wraps `newRolloutVerifier`/`lunaRouteAfterTurn` errors in `LocalLunaRouteError("rollout evidence")`.
+  Tests: `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiringRejectsRolloutDrift` now asserts zero probe hits — red at HEAD
+  (`[GET …/v1/models auth=ok]`), green after. `adapter/codex/lunaroute_test.go:TestLunaRouteCodex_EvidenceRequiredOnEverySuccess` requires the
+  marker for rollout cases and its absence for "no terminal"; `_FinalTurnMustComplete` and `_ProcessErrorsSafeAndClean` keep opaque failures unmarked.
+  Already guarded: preflight/args/env/home/version marked (`provider.go:RunAgent`, `lunaroute.go:prepareLunaRouteLaunchWithFS`, `ensureLunaRouteCompatible`);
+  root `TestLunaRouteCodexWiringLocalFailureNeverProbes` (version, private-home, reveal) and `TestLunaRouteCodexWiringOpaqueFailure` (one probe, key-free).
+  Remaining: G22 (cleanup join masks opaque failure), G23 (empty WorkDir unmarked). Recommend: no approval for paired:4 until G22/G23 close.
 
 - **paired:3 — APPROVED independently at 2a173bc (both directions; no seam defect found).**
   SHARED/wiring: `cmd/arbitron/main.go:initDomainWithModelDependencies` passes one loaded capabilityRules to ProfileService and Factory (factory Deps at line 1076, not 826); `adapter/provider/factory.go:agentProviderFor` passes it to codex.

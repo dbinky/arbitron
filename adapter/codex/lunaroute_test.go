@@ -282,6 +282,14 @@ func TestLunaRouteCodex_EvidenceRequiredOnEverySuccess(t *testing.T) {
 				require.ErrorIs(t, err, ErrModelEvidence)
 				assert.Nil(t, res)
 				assert.NotContains(t, err.Error(), lrKey)
+				// paired:4: a completed turn whose private rollout cannot prove the
+				// route is a local evidence fault, never a gateway diagnosis trigger;
+				// an incomplete turn stays opaque so the wrapper can diagnose it.
+				if proof == "no terminal" {
+					assert.NotErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+				} else {
+					assert.ErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+				}
 				lrNoLeftovers(t, tmp)
 			})
 		}
@@ -295,6 +303,7 @@ func TestLunaRouteCodex_FinalTurnMustComplete(t *testing.T) {
 	r.inner.scripts = []runScript{compatibleProbe(), s}
 	res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 	require.ErrorIs(t, err, ErrModelEvidence)
+	assert.NotErrorIs(t, err, provider.ErrLunaRouteLocalFailure, "an unfinished turn is opaque and must stay diagnosable")
 	assert.Nil(t, res)
 	lrNoLeftovers(t, tmp)
 }
