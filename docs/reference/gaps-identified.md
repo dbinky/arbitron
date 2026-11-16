@@ -9,6 +9,13 @@
 
 ## Open
 
+- [ ] **G20 (blocking verification, Go suite at ddb27e4): baseline-green suite exits nonzero.**
+  `go test -count=1 -timeout 30m ./...` exited 1: `github.com/arbitron/arbitron/test/lunaroute` failed at
+  `test/lunaroute/codex_controls_test.go:TestCodexConfigControlsExperimentToPrivateSink/held-pipe` (line 136): query marker absent.
+  Supplied `test-baseline.json` reports the Go suite green. The exact isolated subtest rerun exited 0; intermittency is observed,
+  not proof of a change-caused defect. Its context expires after 500 ms, including fixture startup; investigate under suite load.
+  Rule 1 blocks paired:1. Next pass needs a clean full Go suite or measured baseline-equivalence, not only this isolated rerun.
+
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
@@ -77,6 +84,17 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **paired:1 — WITHHELD at ddb27e4 solely by the Go suite gate (G20); both seam directions independently verified.**
+  SHARED: `cmd/arbitron/main.go:initDomainWithModelDependencies` loads once and feeds ProfileService and Factory;
+  `adapter/provider/factory.go:agentProviderFor` passes the same rules into pi. No production table replacement was found.
+  Save→launch: `domain/provider/profile_service.go:write` validates before persistence through `selection.go:checkLunaRouteProfile`
+  and `domain/provider/lunaroute_validate.go:checkLunaRouteRoute`; `adapter/provider/dynamic.go:Resolve` preserves effort.
+  Launch→save: `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` rechecks that rule before reveal/files;
+  `adapter/pi/lunaroute.go:lunaRouteModelsJSON` emits table limits/reasoning and `adapter/pi/args.go:thinkingLevel` preserves levels.
+  TRACE `cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringEffortReachesArgv` passes (4096; none/low/high, real child).
+  Independent overlays removing the reasoning guard, maxTokens←context, low→off, or flipping reasoning each exit 1; sources untouched.
+  Targeted domain/pi/root tests and `go build ./...` exit 0; full Go exits 1 (G20). No direction/BREAK evidence remains missing.
 
 - **paired:1 — Area 3 save ↔ Area 5 pi launch evidence (recommend approve).**
   SHARED: `main.go:810` one `capabilityRules` → `NewProfileService` (:994) and factory Deps → `factory.go:356` `pi.Config.CapabilityRules`
