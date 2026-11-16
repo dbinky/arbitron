@@ -90,6 +90,16 @@
 
 ## Review evidence
 
+- **paired:6 — APPROVED independently for 979afba (Area 2 ↔ Area 7, both directions).**
+  SHARED: `domain/provider/probe.go:ProbeResult` and `domain/provider/lunaroute_classify.go:LunaRouteFailure` are the actual producer/consumer contract.
+  Area 2 → Area 7: `adapter/provider/lunaroute_agent.go:RunAgent` calls the inner run first; `diagnose` probes once with the same guarded binding under a 20-second child deadline, without retrying.
+  Area 7 → Area 2: `adapter/probe/lunaroute.go:Probe` validates the full bounded read, JSON, data array and string ids before Reachable; malformed/read/status failures retain the typed verdict, including sanitized joined errors.
+  Production TRACE: `cmd/arbitron/main.go:initDomainWithModelDependencies` shares the configured probe factory with discovery and `Deps.Probes`; `adapter/provider/factory.go:AgentProviderFor` wraps both enabled backends; `adapter/probe/factory.go:ProbeFor` selects the LunaRoute probe.
+  Consumer guard: `adapter/provider/lunaroute_agent.go:diagnose` accepts only typed gateway errors as verdicts; plain errors, !Reachable and ModelsUnsupported remain unchecked (`TestLunaRouteAgent_DiagnosisObservations`).
+  BREAK: `cmd/arbitron/lunaroute_diagnosis_probe_wiring_test.go:TestLunaRouteCodexWiringDiagnosisReadsProbeContract` passes all 10 answers through the real root to persisted node errors; checks one authenticated probe, no run retry and no key.
+  Independently reran overlay mutations: ignoring 2xx read errors plus returning plain JSON errors fails 3 root cases; ignoring typed verdicts in diagnose fails 7. Overlays never changed production files.
+  Supplied measurement fields were unresolved; manual `go test -timeout 30m ./...`, uncached affected-package tests, the isolated root test and `go build ./...` all exited 0. No seam defect found; only paired:6 ticked.
+
 - **paired:6 — Area 2 diagnosis ↔ Area 7 discovery probe (refiner: recommend approve; no seam defect found).**
   Wiring: `main.go:1030` `adaptprobe.NewProbeFactory` (cfg timeout/MaxResponseBytes) → `main.go:1050` `Deps.Probes` → `factory.go:270` `wrapLunaRouteAgent`; `probe/factory.go:80` routes lunaroute to `newLunaRouteProbe`.
   Probe → diagnosis: `probe/lunaroute.go:Probe` returns `Reachable` only after a complete read, valid JSON, a non-null `data` array and string ids; any read error,
