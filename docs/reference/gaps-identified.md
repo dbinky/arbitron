@@ -9,6 +9,23 @@
 
 ## Open
 
+- [ ] **G16 (Area 8, for review2 check 4): guide prose claiming claude-code/opencode support turns no test red.**
+  Temporary overlay appended "LunaRoute works with claude-code and opencode agent backends." to `docs/setup/lunaroute.md`;
+  `go test ./test/lunaroute/ ./adapter/mcp/` stayed green. `docs_examples_test.go:TestLunaRouteGuideExamplesAreValid` pins required
+  phrases and example blocks only; nothing scans guide prose negatively. Overlay reverted. Add a negative scan (claude-code/opencode
+  only in a "not supported/deferred" sentence) for the guide and MCP text; owner: single:8/review2.
+
+- **single:8/review1 — wiring-lens evidence (recommend approve).**
+  C1 `register.yaml` LR-01..08, LR-05/06 `deferred` empty applied_to; `TestRegisterDeferredScope`. C2 all 20 `applied_to` pointers grepped as real
+  declarations; the helper matched by substring only, so a renamed target (`Probe`→`ProbeX`) kept a stale pointer green. Fixed:
+  `test/lunaroute/evidence_helpers_test.go:declaresSymbol` (func/method/type/var/const or YAML key); new case `symbol only in a comment`
+  in `TestRegisterRejectsBadEvidence` was red before, green after. C3 overlays on `capabilities.default.yaml` (anchor typo line 55, chat evidence ->
+  docs page, agent evidence -> missing file) and `version.go:lunaRouteReviewedIDs` anchor typo each failed `TestProductionCapabilitySnapshot`/
+  `TestProductionCapabilityEvidence`/`TestProductionR7CompletionApplication`/`TestLunaRouteProductionIdentityEvidence`. C4 operator observation pinned by
+  `TestProductionR7CompletionApplication`. C5 examples codex/pi only. C6 `TestProductionR7*` run in the ordinary suite; flipping LR-04 to pending and a stale pointer both fail them.
+  Verified: `go test -count=1 ./test/lunaroute/ ./domain/modelidentity/ ./adapter/mcp/` ok.
+  Recommend: approve single:8/review1.
+
 - **[RESOLVED at approval of d9544b4] Area 7 / single:7/review2 — APPROVED (independent failure review).**
   Ran `go test ./domain/provider/... ./adapter/probe/... ./adapter/mcp/... ./cmd/arbitron/... ./domain/modelidentity/...`; all passed, `go build ./...` clean.
   Mutant 1: disabling the `ConfigRevision` comparison in `domain/provider/probe.go:ProbeBindingFromConnection` made 10/12 `TestLunaRouteDiscovery_ConcurrentConnectionChange` cases fail (both surfaces). The 2 delete cases still pass because Get fails.

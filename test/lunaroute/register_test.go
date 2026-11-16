@@ -198,8 +198,11 @@ func TestRegisterRejectsBadEvidence(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, evidencePath, "observations/run.json"), []byte(`{"broken"`), 0600))
 			it.Evidence = []string{evidencePath + "/observations/run.json"}
 		},
-		"no applied":       func(_ string, it *registerItem) { it.AppliedTo = nil },
-		"missing symbol":   func(_ string, it *registerItem) { it.AppliedTo = []string{"domain/runtime.go:MissingSymbol"} },
+		"no applied":     func(_ string, it *registerItem) { it.AppliedTo = nil },
+		"missing symbol": func(_ string, it *registerItem) { it.AppliedTo = []string{"domain/runtime.go:MissingSymbol"} },
+		"symbol only in a comment": func(root string, it *registerItem) {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "domain/runtime.go"), []byte("// HostedRoot was removed\nconst HostedRootV2 = \"x\"\nfunc use() { _ = HostedRoot }\n"), 0600))
+		},
 		"bad decision":     func(_ string, it *registerItem) { it.Decision = "https://example.org/decision" },
 		"bad status":       func(_ string, it *registerItem) { it.Status = "ready" },
 		"empty escalation": func(_ string, it *registerItem) { it.Status = "escalated"; it.Escalation = "" },

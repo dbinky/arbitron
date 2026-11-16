@@ -150,13 +150,22 @@ func validateRegisterAt(root string, r register) []string {
 				continue
 			}
 			raw, err := readRepoFile(root, path)
-			if err != nil || !bytes.Contains(raw, []byte(symbol)) {
+			if err != nil || !declaresSymbol(raw, symbol) {
 				bad("runtime application unavailable")
 			}
 		}
 	}
 	return problems
 }
+
+// declaresSymbol reports whether raw declares symbol: a Go func (or method),
+// type, var or const, or a top-level YAML key. A substring or a comment
+// mention is not a live symbol, so a renamed target cannot leave a stale pointer.
+func declaresSymbol(raw []byte, symbol string) bool {
+	name := regexp.QuoteMeta(symbol)
+	return regexp.MustCompile(`(?m)^(?:(?:func\s+(?:\([^)]*\)\s*)?|type\s+|var\s+|const\s+)` + name + `\b|` + name + `:)`).Match(raw)
+}
+
 func releaseProblems(root string, r register) []string {
 	problems := validateRegisterAt(root, r)
 	// R7 defers LR-05/LR-06, not evidence or application for released paths.
