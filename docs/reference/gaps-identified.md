@@ -81,6 +81,15 @@
 
 ## Review evidence
 
+- **Area 5 / single:5/review2 — approver withheld at 868c0b0 on check 7 only (G10 pi half).**
+  Overlays on `adapter/pi/model_probe.go:safeModelIdentity`: dropping the nonempty, length, space, control or redaction clause,
+  or `return true ||` for the whole function, all leave `go test -count=1 ./adapter/pi` and root `-run LunaRoutePi` at exit 0.
+  `lunaroute_test.go:TestLunaRoutePi_ReportedEvidenceEveryEntry` cases are rejected by `LunaRouteExecutedModelAccepted` instead.
+  Next pass: add `TestSafeModelIdentity_EachClause` calling `safeModelIdentity` directly (mirror codex
+  `TestSafeLunaRouteIdentity_EachClause`), one case per clause; record any clause proven equivalent with the reason.
+  Checks 1–6/8 not disputed: `./adapter/pi` passes uncached; new cancellation tests cover check 3 (`ctx.Err()` after write, clean exit).
+  G15 (removal-error surfacing) is a sibling defect, not required by check 2. It does **not** gate this box (rule 5).
+
 - **Area 5 / single:5/review2 — cancellation fix; approval withheld.**
   Baseline `go test -timeout 30m ./adapter/pi -run 'TestLunaRoutePi|TestModelProbePiLunaRoute' -count=1` passed (0.719s).
   Strict TDD: new cancellation tests failed at mkdir/chmod/write and clean probe/turn exits; all pass after context checks
