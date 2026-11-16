@@ -55,6 +55,8 @@
   Temporary overlay `TestArea5RemovalFailureSurfaced` injected chmod plus removal failures: exit 1, removal error absent
   from the local error chain and directory still present. Overlay removed; fixture directories cleaned by `t.TempDir`.
   Preserve secret-free cleanup failure alongside the primary error and cover removal failure after otherwise successful runs.
+  paired:5 constraint: when fixing, do NOT repeat G22 — add the local marker only when cleanup is the sole failure, or a
+  failed turn/non-zero exit stops being diagnosed (`cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringFailures/failed-turn`).
 
 - [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
   exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
@@ -87,6 +89,18 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **paired:5 — Area 2 diagnosis ↔ Area 5 pi launch (refiner: recommend approve; no seam defect found).**
+  Wiring: `main.go:1050` Probes → `factory.go:AgentProviderFor` wraps the pi arm (`agentProviderFor` → `pi.New` with the same rules) in `wrapLunaRouteAgent`.
+  Pi → diagnosis: every pre-launch stage is marked — `pi/provider.go:RunAgent` workspace/model selection/preflight/preparation via `localError`;
+  `pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` preflight/definition/arguments/environment/mkdir/chmod/write; `ensureLunaRouteCompatible` version.
+  Post-launch failures (ErrTurnFailed on exit 0, non-zero exit, ErrParse, ErrModelEvidence drift, start error) stay unmarked, so they are diagnosed
+  (start error matches codex at paired:4). Pi discards cleanup errors (G15), so no G22-style masking exists today.
+  Diagnosis → pi: `provider/lunaroute_agent.go:lunaRouteDiagnosable` skips `ErrLunaRouteLocalFailure` (`TestLunaRouteAgent_NoDiagnosisForLocalOrCancelled`).
+  Added root cases `TestLunaRoutePiWiringFailures/version-old|version-exit` (zero `/v1/models` hits, no gateway observation, key-free) and the
+  observation-text assertion for every mode. Mutations: unmarking version → both version cases red; marking ErrTurnFailed local → failed-turn red;
+  unmarking the write stage → `adapter/pi:TestLunaRoutePi_FilesystemFailures/write` red (write/chmod are only injectable through the package seam). Sources restored.
+  Recommend: approve paired:5.
 
 - **paired:4 — APPROVED independently for refinement 644cb67 (both directions).**
   SHARED: `domain/provider/lunaroute_errors.go:LocalLunaRouteError` / `SanitizeLunaRouteError` retain error identity; `adapter/provider/lunaroute_agent.go:lunaRouteDiagnosable` consumes the marker through `errors.Is`.

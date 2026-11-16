@@ -259,7 +259,11 @@ func TestLunaRoutePiWiringMissingMetadata(t *testing.T) {
 }
 
 func TestLunaRoutePiWiringFailures(t *testing.T) {
-	for _, mode := range []string{"failed-turn", "drift", "wrong-definition", "private-dir"} {
+	// paired:5 seam (Area 2 diagnosis <-> Area 5 pi launch): local preparation
+	// failures (private dir, version probe) carry the local marker and never
+	// probe the gateway; opaque post-launch failures (failed turn with exit 0,
+	// drift, non-zero exit) probe exactly once.
+	for _, mode := range []string{"failed-turn", "drift", "wrong-definition", "private-dir", "version-old", "version-exit"} {
 		t.Run(mode, func(t *testing.T) {
 			caps := piRootCaps("glm-5.3")
 			if mode == "wrong-definition" {
@@ -287,12 +291,22 @@ func TestLunaRoutePiWiringFailures(t *testing.T) {
 				assert.Contains(t, msg, "harness process failed")
 			case "private-dir":
 				assert.Contains(t, msg, "private agent dir")
+			case "version-old":
+				assert.Contains(t, msg, "lunaroute version")
+			case "version-exit":
+				assert.Contains(t, msg, "lunaroute version")
+			}
+			local := mode == "private-dir" || strings.HasPrefix(mode, "version-")
+			if local {
+				assert.NotContains(t, msg, "gateway check after the failure", "a local fault never carries a gateway observation")
+			} else {
+				assert.Contains(t, msg, "gateway check after the failure", "an opaque failure is diagnosed")
 			}
 			var n int
 			require.NoError(t, ds.db.QueryRow(`SELECT COUNT(*) FROM node_executions WHERE instance_id=? AND status='succeeded'`, id.String()).Scan(&n))
 			assert.Zero(t, n)
-			if mode == "private-dir" {
-				assert.Empty(t, gw.seen(), "local definition preparation failure never diagnoses")
+			if local {
+				assert.Empty(t, gw.seen(), "local preparation failure never diagnoses")
 				_, err := os.Stat(f.Argv)
 				assert.True(t, os.IsNotExist(err))
 			} else {
@@ -345,6 +359,14 @@ func TestLunaRoutePiRootChild(t *testing.T) {
 	if reflect.DeepEqual(args, []string{"--version"}) {
 		if os.Getenv("LUNAROUTE_API_KEY") != "" {
 			fail()
+		}
+		switch mode, _ := os.ReadFile(f.Mode); string(mode) {
+		case "version-old":
+			fmt.Println("0.0.1 " + lrRootKey)
+			os.Exit(0)
+		case "version-exit":
+			fmt.Fprintln(os.Stderr, "version failed "+lrRootKey)
+			os.Exit(3)
 		}
 		fmt.Println("1.5.1")
 		os.Exit(0)
