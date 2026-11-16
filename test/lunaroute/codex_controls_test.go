@@ -82,27 +82,26 @@ func TestCodexConfigControlsExperimentToPrivateSink(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if mode == "held-pipe" {
-				var deadlineCancel context.CancelFunc
-				ctx, deadlineCancel = context.WithTimeout(ctx, 500*time.Millisecond)
-				defer deadlineCancel()
-			}
-			if mode == "cancel" {
+			// Cancel only once the fixture reports the stage under test, so
+			// process start-up under suite load cannot race the cancellation.
+			cancelledAt := make(chan time.Time, 1)
+			if token := map[string]string{"cancel": ":config", "held-pipe": ":held"}[mode]; token != "" {
 				go func() {
-					for i := 0; i < 5000; i++ {
-						if raw, e := os.ReadFile(marker); e == nil && strings.Contains(string(raw), ":config") {
-							cancel()
-							return
+					for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+						if raw, e := os.ReadFile(marker); e == nil && strings.Contains(string(raw), token) {
+							break
 						}
-						time.Sleep(time.Millisecond)
 					}
+					cancelledAt <- time.Now()
 					cancel()
 				}()
 			}
-			started := time.Now()
 			err = publishCodexConfigControls(ctx, root, bin, "glm-5.3", parent, "codex-controls.json")
 			if mode == "held-pipe" {
-				assert.Less(t, time.Since(started), 1500*time.Millisecond, "cancel must close stdout even if a descendant holds its pipe")
+				journal, e := os.ReadFile(marker)
+				require.NoError(t, e)
+				require.Contains(t, string(journal), ":held", "descendant must hold stdout before cancellation")
+				assert.Less(t, time.Since(<-cancelledAt), 1500*time.Millisecond, "cancel must close stdout even if a descendant holds its pipe")
 			}
 			raw, readErr := os.ReadFile(filepath.Join(root, evidencePath, "observations/codex-controls.json"))
 			if mode == "success" {
@@ -235,6 +234,11 @@ func TestCodexConfigControlsProcessFixture(t *testing.T) {
 		if child.Start() != nil {
 			os.Exit(93)
 		}
+		if f, e = os.OpenFile(marker, os.O_APPEND|os.O_WRONLY, 0600); e != nil {
+			os.Exit(85)
+		}
+		fmt.Fprintln(f, inputCase+":held")
+		f.Close()
 		os.Exit(0)
 	}
 	if mode == "cancel" {

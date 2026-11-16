@@ -9,13 +9,6 @@
 
 ## Open
 
-- [ ] **G20 (blocking verification, Go suite at ddb27e4): baseline-green suite exits nonzero.**
-  `go test -count=1 -timeout 30m ./...` exited 1: `github.com/arbitron/arbitron/test/lunaroute` failed at
-  `test/lunaroute/codex_controls_test.go:TestCodexConfigControlsExperimentToPrivateSink/held-pipe` (line 136): query marker absent.
-  Supplied `test-baseline.json` reports the Go suite green. The exact isolated subtest rerun exited 0; intermittency is observed,
-  not proof of a change-caused defect. Its context expires after 500 ms, including fixture startup; investigate under suite load.
-  Rule 1 blocks paired:1. Next pass needs a clean full Go suite or measured baseline-equivalence, not only this isolated rerun.
-
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
@@ -84,6 +77,12 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **paired:1 — refiner pass after G20 withhold: G20 closed; seam evidence unchanged from ddb27e4 (see entries below).**
+  Root cause: held-pipe's 500 ms deadline started before two Go-test-binary fixture launches, so under suite load it expired
+  before `--version` wrote the marker (line 136). Now the fixture appends `:held` after `/bin/sleep` holds stdout; the test
+  cancels on that marker and asserts <1.5 s from cancel. Mutation (AfterFunc no-op) → 2.13 s, FAIL. `go test -count=3
+  ./test/lunaroute/` with `./domain/...` running concurrently: ok. Full Go suite left to verify-tests.
 
 - **paired:1 — WITHHELD at ddb27e4 solely by the Go suite gate (G20); both seam directions independently verified.**
   SHARED: `cmd/arbitron/main.go:initDomainWithModelDependencies` loads once and feeds ProfileService and Factory;
@@ -427,6 +426,8 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- [x] **G20** — held-pipe flake fixed: `test/lunaroute/codex_controls_test.go:TestCodexConfigControlsExperimentToPrivateSink` cancels on the fixture's `:held` marker (not a 500 ms clock from before process start-up) and bounds return time from cancellation; red at 2.1 s with `queryCodexControlConfig`'s stdout-close AfterFunc stubbed; package green ×3 under concurrent load.
 
 - **G19 (paired:1, Area 3 ↔ Area 5): pi reasoning effort saved on a reasoning-unsupported model was silently dropped.**
   Save validated `effort ∈ efforts.pi` only; `adapter/pi/lunaroute.go:lunaRouteModelsJSON` then wrote `reasoning:false`,
