@@ -10,11 +10,11 @@
 ## Open
 
 - **[ESCALATION] Area 5 / single:5/review2 — exact remaining approval conditions.**
-  `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` must handle removal failure explicitly, including rollback
-  and deferred run cleanup, with secret-free errors and deterministic fixtures proving the outcome before success persists.
-  G10 additionally needs pi guard-level boundary tests; exact-model mismatch tests currently mask individual guard removals.
-  No external credential or live gateway is needed for either condition; cancellation fixtures now exist in
-  `adapter/pi/lunaroute_cancellation_test.go:TestLunaRoutePi_CancelDuringPreparation` and `TestLunaRoutePi_CancelWithCleanExit`.
+  Per the approver at 868c0b0, the missing fixture was a direct boundary table for
+  `adapter/pi/model_probe.go:safeModelIdentity`; this pass supplies `TestSafeModelIdentity_EachClause`.
+  To tick this box, independent review must verify rejection cases and mutation failures for each nonredundant guard,
+  and accept a reason for each equivalent removal. No external credential, dependency or operator decision is required.
+  G15 remains a separate cleanup-error defect, explicitly ruled non-blocking for this review by that approver.
 - [ ] **G15 (Area 5): private-directory removal errors are discarded.**
   `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` defines `cleanup := func() { _ = fs.removeAll(dir) }`;
   both preparation rollback and `adapter/pi/provider.go:RunAgent`'s deferred cleanup lose failures.
@@ -52,14 +52,6 @@
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
-- [ ] **G10 (Areas 4, 5): executed-identity safety checks are untested.**
-  The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
-  `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
-  `lr_` text or more than 256 bytes must be rejected as evidence. Add a case per clause.
-  Codex coverage: `adapter/codex/lunaroute_identity_test.go:TestSafeLunaRouteIdentity_EachClause`; approver overlays removing
-  nonempty, quote/backslash, whitespace or redaction checks each fail (exit 1). Length/control removals pass: equivalent guards,
-  because `domain/provider/lunaroute_classify.go:RedactLunaRoute` truncates at 256 bytes and scrubs controls before equality.
-  The pi half (`adapter/pi/model_probe.go:safeModelIdentity`) remains open for Area 5; this failure-lens gap does not gate Area 4 review1.
 - [ ] **G11 (Areas 3, 7): text survivors need a decision.**
   The survivors `harden:adapter/mcp/tools_connection_models.go`, `harden:adapter/mcp/lunaroute_backend_hint.go` and
   `harden:domain/provider/model_discovery.go` are string-concatenation mutants in LLM-facing text. Pin the load-bearing
@@ -80,6 +72,36 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 5 / single:5/review2 — direct identity boundaries and mutation evidence.**
+  `adapter/pi/lunaroute_identity_test.go:TestSafeModelIdentity_EachClause` calls the real predicate, independent of exact-model matching.
+  21 cases cover empty/provider/model inputs, ASCII/UTF-8 256/257/258-byte boundaries, whitespace, controls and redacted auth text.
+  Temporary `go test -overlay <json> -count=1 -timeout 30m ./adapter/pi -run '^TestSafeModelIdentity_EachClause$'` runs:
+  removing nonempty, whitespace or redaction guards, always accepting, and excluding exactly 256 bytes each fail (exit 1).
+  Removing length alone is equivalent (exit 0): `domain/provider/lunaroute_classify.go:RedactLunaRoute` caps output at 256 bytes.
+  Removing control alone is equivalent (exit 0): that same helper replaces every Unicode control before equality with input.
+  All overlays were outside the worktree and removed; production source is unchanged. G15 remains open per the prior ruling.
+
+- **Area 5 / single:5/review2 — failure-lens checks in order.**
+  1. `adapter/pi/lunaroute_test.go:TestLunaRoutePi_RefusalsBeforeIO` refuses empty limits/unknown reasoning before reveal or mkdir.
+  2. `TestLunaRoutePi_FilesystemFailures` injects mkdir/chmod/partial-write failures, asserts rollback and the local marker.
+  3. `lunaroute_cancellation_test.go:TestLunaRoutePi_CancelDuringPreparation`, `CancelWithCleanExit` and `DeadlineCleansDirectory` pass.
+  4. `TestLunaRoutePi_CleanupAndSafeErrors` preserves `ErrTurnFailed` after exit 0 and removes directories on errors/panic.
+  5. `TestLunaRoutePi_ConcurrentDistinctDirs` passes under the race detector with distinct directories and no leftovers.
+  6. `procenv/credential.go:CredentialEnv` starts from allowlisted `BaseEnv`; `TestLunaRoutePi_HappyPath` rejects ambient env/config.
+  7. `TestSafeModelIdentity_EachClause` and the mutation evidence above cover every safety requirement without a matching-model veto.
+  8. `model_probe_test.go:TestModelProbePiLunaRouteReportedModelEvidence` rejects empty/mismatched earlier evidence despite later matches;
+  `TestLunaRoutePi_ReportedEvidenceEveryEntry` rejects foreign provider/model evidence; `NoUsabilityProbeAndDirectEnv` refuses probing.
+
+- **Area 5 / single:5/review2 — completed targeted verification.**
+  Before changes, `go test -count=1 -timeout 30m ./adapter/pi -run 'TestLunaRoutePi|TestModelProbePiLunaRoute|TestRunAgent'` passed (0.654s).
+  After changes, the same command with `TestSafeModelIdentity_EachClause|` prepended passed (0.623s); no new failure observed.
+  `go test -count=1 -timeout 30m ./cmd/arbitron -run '^TestLunaRoutePi(WiringMissingMetadata|WiringFailures)$'` passed (2.139s), including zero successful persisted nodes on failures.
+  `go test -race -count=1 -timeout 30m ./adapter/pi -run '^TestLunaRoutePi_(CancelDuringPreparation|CancelWithCleanExit|DeadlineCleansDirectory|ConcurrentDistinctDirs)$'` passed (1.470s).
+  `rg -n 'safeModelIdentity|prepareLunaRoutePiLaunchWithFS|ctx.Err\(\)|CredentialEnv|BaseEnv|IsBaseName|ErrTurnFailed|executedModels' adapter/pi adapter/procenv --glob '*.go' --glob '!**/*_test.go'` confirms fail-closed guards and env filtering.
+  `TestLunaRoutePi_RefusalsBeforeIO`'s empty-rules case fails if production stops requiring metadata; happy/subprocess tests require the actual definition/env/argv.
+
+Recommend: approve single:5/review2 — all eight failure checks pass; direct identity tests kill nonredundant guard mutations, with length/control equivalence documented.
 
 - **Area 5 / single:5/review2 — approver withheld at 868c0b0 on check 7 only (G10 pi half).**
   Overlays on `adapter/pi/model_probe.go:safeModelIdentity`: dropping the nonempty, length, space, control or redaction clause,
@@ -234,6 +256,8 @@
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- [x] **G10 (Areas 4, 5):** guard boundaries covered by `adapter/codex/lunaroute_identity_test.go:TestSafeLunaRouteIdentity_EachClause` and `adapter/pi/lunaroute_identity_test.go:TestSafeModelIdentity_EachClause`; redundant length/control removals are documented above.
 
 - [x] **Area 5 cancellation boundaries:** `adapter/pi/lunaroute_cancellation_test.go` now proves rollback during reveal/mkdir/chmod/write, no mission after probe cancellation, no success after clean-exit cancellation, and cleanup on mission/default deadlines.
 
