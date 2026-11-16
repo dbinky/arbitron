@@ -73,6 +73,17 @@
 
 ## Review evidence
 
+- **Area 6 / single:6/review1 — approver TICKED at 4d5c1e6 (independent review).**
+  C1: `cmd/arbitron/main.go:initDomainWithModelDependencies` wires the loaded rules, factory and pinning resolver through `cmd/arbitron/model_consumers.go:newRunModelConsumers`; `adapter/provider/dynamic.go:Resolve` guards the stored binding. `cmd/arbitron/lunaroute_chat_wiring_test.go:TestLunaRouteChatWiring` proves exact /v1 URL, credential, prompt, axes and persisted output/model.
+  C2: `adapter/provider/lunaroute_chat.go:lunaRouteChat` forwards real status/body/transport/header/secrets and parsed code; `adapter/openrouter/hooks_test.go:TestClassifyError_ChatStatus` checks the HTTP producer; `adapter/provider/lunaroute_chat_test.go:TestLunaRouteChat_ClassifierReceivesHeaderStatusAndCode` checks the real classifier sink.
+  C3: `adapter/provider/lunaroute_chat.go:lunaRouteChat` preflights actual MaxTokens and emitted setting names against root rules before reveal/I/O; `adapter/provider/lunaroute_chat_test.go:TestLunaRouteChat_PreflightRefusesBeforeIO` and `TestLunaRouteChat_RequestSettings` prove refusal and accepted emission.
+  C4: `adapter/openrouter/request.go:newRequest` emits no OpenRouter headers; `adapter/procenv/httpx.go:NoRedirectClient` refuses redirects. `adapter/provider/lunaroute_chat_test.go:TestLunaRouteChat_HappyPath` and `TestLunaRouteChat_RedirectNotFollowed` check both.
+  C5: `domain/provider/lunaroute_validate.go:checkLunaRouteRoute` requires exact axes; `cmd/arbitron/lunaroute_chat_wiring_test.go:TestLunaRouteChatWiringEffectiveAxesNeverFloor` and `TestLunaRouteChatWiringMissingEffortFactsRefuse` demonstrate high stays high and absent/unsupported facts refuse.
+  C6: `adapter/provider/lunaroute_chat.go:lunaRouteChat` injects `domain/modelidentity/version.go:LunaRouteExecutedModelAccepted`; `adapter/openrouter/provider.go:Chat`/`StreamChat` call `verifyExecutedModel`, exercised in both modes by `adapter/openrouter/hooks_test.go:TestAcceptExecutedModel_ChatAndStream`.
+  Five categories: happy = root wiring; success = adapter HappyPath/Stream; failure = ClassifiedErrors; error = ProtocolFailures; edge = PreflightRefusesBeforeIO/RedirectNotFollowed (all adapter tests in `adapter/provider/lunaroute_chat_test.go`). Strict gateway fakes compare complete request bodies before scripted responses.
+  Fresh `go test -count=1 -timeout 30m ./...` exits 0 (cmd 350.639s); no affected-suite regression/build break. Own temporary Go overlays dropping RetryAfter, status, code, transport, rules, validated MaxTokens/settings, or executor prompt each exit 1 with assertion failures; no production files changed.
+  G16 verified closed. G3/G4 remain Review-2 boundary questions, not wiring blockers; the fake-only gateway mutation/body-read tests do not establish production classifier coverage.
+
 - **Area 5 / single:5/review2 — approver TICKED at d11128a (independent re-run).**
   Own overlays on `adapter/pi/model_probe.go:safeModelIdentity`, `go test -count=1 ./adapter/pi`: dropping nonempty, space or
   redaction clause, `return true ||`, or `<=`→`<` each exit 1 (killed by `lunaroute_identity_test.go:TestSafeModelIdentity_EachClause`).
