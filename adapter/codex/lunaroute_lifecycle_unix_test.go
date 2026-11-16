@@ -29,7 +29,7 @@ func TestLunaRouteCodex_RealProcessCancellationCleanup(t *testing.T) {
 set -eu
 if [ "$1" = --version ]; then
  [ -z "${LUNAROUTE_API_KEY:-}" ]
- printf 'codex-cli 0.167.0\n'
+ printf 'codex-cli 0.167.2\n'
  exit 0
 fi
 [ "$LUNAROUTE_API_KEY" = lr_live_codexTestKey123 ]

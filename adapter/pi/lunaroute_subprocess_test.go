@@ -58,7 +58,7 @@ func TestLunaRoutePi_SubprocessChild(t *testing.T) {
 		if os.Getenv(LunaRouteKeyVar) != "" {
 			fail()
 		}
-		io.WriteString(os.Stdout, minPiVersion+"\n")
+		io.WriteString(os.Stdout, minLunaRoutePiVersion+"\n")
 		os.Exit(0)
 	}
 	if !reflect.DeepEqual(args, []string{"--print", "--mode", "json", "--no-session", "--model", "lunaroute/glm-5.3"}) || os.Getenv(LunaRouteKeyVar) != lrPiKey || os.Getenv("OPENAI_API_KEY") != "" {

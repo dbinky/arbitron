@@ -107,13 +107,19 @@ func removeLunaRouteHome(home string) error {
 	return os.RemoveAll(home)
 }
 
-// Reuse the existing compatibility floor, but never forward the operator's
-// subscription home or the inference credential to the version subprocess.
+// Reuse the existing compatibility probe, but never forward the operator's
+// subscription home or the inference credential to the version subprocess. The
+// LunaRoute-only floor is checked here, after the memoized probe and before the
+// key-bearing launch, so it cannot affect subscription use of the same binary.
 func (c *core) ensureLunaRouteCompatible(ctx context.Context, env []string) error {
 	c.probeOnce.Do(func() {
 		c.version, c.probeErr = compatibleVersion(ctx, c.runner, c.binPath, procenv.RemoveVar(env, LunaRouteKeyVar))
 	})
-	return provider.LocalLunaRouteError("version", c.probeErr)
+	err := c.probeErr
+	if err == nil {
+		err = requireLunaRouteVersion(c.version)
+	}
+	return provider.LocalLunaRouteError("version", err)
 }
 
 func safeLunaRouteIdentity(s string) bool {

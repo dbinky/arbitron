@@ -48,7 +48,7 @@ func TestLunaRouteCodex_ReadOnlyHomeCleanup(t *testing.T) {
 				require.NoError(t, os.Chmod(home, 0500))
 			}
 			s.onWait = func() { onWait(); lockHome() }
-			r.inner.scripts = []runScript{compatibleProbe(), s}
+			r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), s}
 			if outcome == "version error" {
 				r.inner.scripts = []runScript{{waitErr: context.Canceled, onWait: lockHome}}
 			}
@@ -89,7 +89,7 @@ func TestLunaRouteCodex_CleanupFailureIsLocalAndPreservesCause(t *testing.T) {
 			}
 			onWait := s.onWait
 			s.onWait = func() { onWait(); require.NoError(t, os.Chmod(tmp, 0500)) }
-			r.inner.scripts = []runScript{compatibleProbe(), s}
+			r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), s}
 			res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 			require.Error(t, err, "a retained home cannot be reported as success")
 			assert.Nil(t, res)

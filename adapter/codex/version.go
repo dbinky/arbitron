@@ -19,6 +19,28 @@ import (
 // 0.137.0 at implementation time. Package/binary name: `codex`.
 const minCodexVersion = "0.137.0"
 
+// minLunaRouteCodexVersion is the minimum codex-cli release for a LunaRoute
+// launch. It is higher than minCodexVersion because a LunaRoute launch hands
+// the binary a credential and depends on controls the CLI-compatibility floor
+// never established: the private CODEX_HOME relocation, auth independence from
+// the operator's login, and the model_providers.* / review_model overrides. It
+// is the oldest release a committed record verifies those controls on:
+// docs/evidence/lunaroute-provider/observations/lr07-codex-config-controls.json
+// (codex-cli 0.167.2). Subscription launches keep minCodexVersion.
+const minLunaRouteCodexVersion = "0.167.2"
+
+// requireLunaRouteVersion refuses a binary older than minLunaRouteCodexVersion.
+// It is applied only on the LunaRoute launch path, never to subscription use.
+func requireLunaRouteVersion(found []int) error {
+	if len(found) != 3 {
+		return fmt.Errorf("%w: unknown version (LunaRoute launches require >= %s)", ErrIncompatibleCodex, minLunaRouteCodexVersion)
+	}
+	if compareVersion(found, mustParseVersion(minLunaRouteCodexVersion)) < 0 {
+		return fmt.Errorf("%w: found %d.%d.%d, LunaRoute launches require >= %s", ErrIncompatibleCodex, found[0], found[1], found[2], minLunaRouteCodexVersion)
+	}
+	return nil
+}
+
 // probeMaxResponseBytes caps cumulative stdout for the `--version` and `login
 // status` probes. A version string and a login-status line are tiny, so a small
 // ceiling is ample; it bounds the memory a wedged/hostile codex build can grow

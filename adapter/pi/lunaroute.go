@@ -143,9 +143,18 @@ func (p *Provider) localError(stage string, err error) error {
 	}
 	return err
 }
+
+// ensureLunaRouteCompatible probes without the credential, then applies the
+// LunaRoute-only floor after the memoized probe, before the key-bearing launch.
+// The floor is not part of the memoized result, so subscription use of the same
+// binary keeps minPiVersion.
 func (p *Provider) ensureLunaRouteCompatible(ctx context.Context, env []string) error {
 	p.probeOnce.Do(func() {
 		p.version, p.probeErr = probeVersion(ctx, p.runner, p.binPath, procenv.RemoveVar(env, LunaRouteKeyVar))
 	})
-	return p.localError("version", claudecli.SanitizeProcessError(p.probeErr))
+	err := p.probeErr
+	if err == nil {
+		err = requireLunaRouteVersion(p.version)
+	}
+	return p.localError("version", claudecli.SanitizeProcessError(err))
 }

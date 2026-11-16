@@ -25,6 +25,30 @@ const minPiVersion = "0.87.0"
 // a turn with tools enabled; regular missions keep minPiVersion.
 const minPiToolFreeVersion = "1.3.0"
 
+// minLunaRoutePiVersion is the minimum pi release for a LunaRoute launch. It is
+// higher than minPiVersion because a LunaRoute launch hands the binary a
+// credential and depends on controls the CLI-compatibility floor never
+// established: PI_CODING_AGENT_DIR relocation of the whole agent directory,
+// project .pi config/extensions not loading from a private (untrusted) agent
+// directory, and $LUNAROUTE_API_KEY interpolation in models.json. It is the
+// oldest release a committed record verifies them on:
+// docs/evidence/lunaroute-provider/observations/lr08-pi-model-controls.json
+// (pi 1.5.2). Subscription launches keep minPiVersion.
+const minLunaRoutePiVersion = "1.5.2"
+
+// requireLunaRouteVersion refuses a binary older than minLunaRoutePiVersion.
+// It is applied only on the LunaRoute launch path, never to subscription use.
+func requireLunaRouteVersion(found []int) error {
+	if len(found) != 3 {
+		return fmt.Errorf("%w: unknown version (LunaRoute launches require >= %s)", ErrIncompatiblePi, minLunaRoutePiVersion)
+	}
+	if compareVersion(found, mustParseVersion(minLunaRoutePiVersion)) < 0 {
+		return fmt.Errorf("%w: found %d.%d.%d, LunaRoute launches require >= %s",
+			ErrIncompatiblePi, found[0], found[1], found[2], minLunaRoutePiVersion)
+	}
+	return nil
+}
+
 // probeMaxResponseBytes caps cumulative stdout for the `--version` probe. A
 // version string is tiny, so a small ceiling is ample; it bounds the memory a
 // wedged or hostile `pi` build can grow by streaming unbounded output on a

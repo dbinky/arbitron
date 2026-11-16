@@ -71,7 +71,7 @@ func (c *capturingRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-ch
 	return c.inner.Run(ctx, spec)
 }
 func lrPiRunner(lines ...string) *capturingRunner {
-	return &capturingRunner{inner: &multiRunner{scripts: []runScript{compatibleProbe(), {lines: append([]string{sessionLine}, lines...)}}}}
+	return &capturingRunner{inner: &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), {lines: append([]string{sessionLine}, lines...)}}}}
 }
 
 func TestLunaRoutePi_HappyPath(t *testing.T) {
@@ -131,7 +131,7 @@ func TestLunaRoutePi_HappyPath(t *testing.T) {
 
 func TestLunaRoutePi_NonLunaRouteUnchanged(t *testing.T) {
 	tmp := isolatePiTemp(t)
-	mr := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
+	mr := &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), happyMission()}}
 	b := piBinding("anthropic/claude-sonnet-5", provider.EffortHigh)
 	_, err := lrPiProvider(mr, b, lrRules()).RunAgent(context.Background(), mission())
 	require.NoError(t, err)
@@ -423,4 +423,38 @@ func TestLunaRoutePi_FilesystemFailures(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "private agent dir")
 	assert.Empty(t, mr.calls)
+}
+
+// LunaRoute launches hand the binary a credential and rely on isolation/auth
+// controls verified only from minLunaRoutePiVersion. An older binary that still
+// satisfies the subscription floor is refused before the key-bearing launch; the
+// floor is not applied to subscription use.
+func TestLunaRoutePi_VersionFloorIsLunaRouteOnly(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{minPiVersion, false}, {"1.3.0", false}, {"1.5.1", false},
+		{minLunaRoutePiVersion, true}, {"1.5.3", true}, {"2.0.0", true},
+		{"unparseable", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			tmp := isolatePiTemp(t)
+			r := lrPiRunner(lrAssistant)
+			r.inner.scripts[0] = runScript{lines: []string{tc.version}}
+			_, err := lrPiProvider(r, lrPiBinding(), lrRules()).RunAgent(context.Background(), piMission())
+			if tc.ok {
+				require.NoError(t, err)
+				require.Len(t, r.inner.calls, 2)
+			} else {
+				require.ErrorIs(t, err, ErrIncompatiblePi)
+				require.ErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+				require.Len(t, r.inner.calls, 1, "only the credential-free version probe ran")
+				_, hasKey := envValue(r.inner.calls[0].Env, LunaRouteKeyVar)
+				assert.False(t, hasKey)
+				assert.NotContains(t, err.Error(), lrPiKey)
+			}
+			assert.Empty(t, piLeftovers(t, tmp))
+		})
+	}
 }

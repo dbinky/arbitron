@@ -55,3 +55,6 @@ func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan s
 
 // compatibleProbe is the canned `pi --version` reply that passes the probe.
 func compatibleProbe() runScript { return runScript{lines: []string{minPiVersion}} }
+
+// lunaRouteCompatibleProbe reports the oldest release a LunaRoute launch accepts.
+func lunaRouteCompatibleProbe() runScript { return runScript{lines: []string{minLunaRoutePiVersion}} }

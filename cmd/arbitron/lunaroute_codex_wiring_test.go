@@ -40,7 +40,7 @@ case "$permissions" in drwx------*) ;; *) exit 58 ;; esac
 if [ "$1" = --version ]; then
  printf '%s\n' "$CODEX_HOME" >> '@HOMES@.version'
  [ -z "${LUNAROUTE_API_KEY-}" ] || exit 46
- if [ -f '@VERSION@' ]; then echo 'codex-cli 0.1.0'; else echo 'codex-cli 0.167.0'; fi
+ if [ -f '@VERSION@' ]; then echo 'codex-cli 0.163.0'; else echo 'codex-cli 0.167.2'; fi
  exit 0
 fi
 [ "$LUNAROUTE_API_KEY" = '@KEY@' ] || exit 40

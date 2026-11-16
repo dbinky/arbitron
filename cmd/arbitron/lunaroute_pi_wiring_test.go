@@ -362,13 +362,14 @@ func TestLunaRoutePiRootChild(t *testing.T) {
 		}
 		switch mode, _ := os.ReadFile(f.Mode); string(mode) {
 		case "version-old":
-			fmt.Println("0.0.1 " + lrRootKey)
+			// Accepted by the subscription floor (0.87.0), below the LunaRoute-only floor.
+			fmt.Println("1.5.1 " + lrRootKey)
 			os.Exit(0)
 		case "version-exit":
 			fmt.Fprintln(os.Stderr, "version failed "+lrRootKey)
 			os.Exit(3)
 		}
-		fmt.Println("1.5.1")
+		fmt.Println("1.5.2")
 		os.Exit(0)
 	}
 	// Log the attempted launch, even if a subsequent sink assertion refuses it.

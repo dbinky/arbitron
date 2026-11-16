@@ -104,7 +104,7 @@ func TestLunaRouteCodex_HappyPath(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-ambient")
 	t.Setenv("OPENAI_BASE_URL", "https://foreign.example")
 	r := &lrSinkRunner{t: t}
-	r.inner.scripts = []runScript{compatibleProbe(), lrSuccessScript(t, r, "glm-5.3", "lunaroute")}
+	r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), lrSuccessScript(t, r, "glm-5.3", "lunaroute")}
 	b := lrCodexBinding()
 	b.Pinned = true
 	res, err := New(Config{Binding: b, Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
@@ -124,6 +124,7 @@ func TestLunaRouteCodex_SubscriptionUnchanged(t *testing.T) {
 	tmp := isolateTemp(t)
 	t.Setenv("CODEX_HOME", "/operator/codex-home")
 	revealed := false
+	// Subscription keeps the older compatibility floor: 0.163.0 is accepted.
 	r := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
 	res, err := New(Config{Binding: codexBinding("gpt-5-codex", &revealed), Runner: r}).RunAgent(context.Background(), lrMission())
 	require.NoError(t, err)
@@ -139,7 +140,7 @@ func TestLunaRouteCodex_ExactEffort(t *testing.T) {
 		t.Run(string(e), func(t *testing.T) {
 			tmp := isolateTemp(t)
 			r := &lrSinkRunner{t: t}
-			r.inner.scripts = []runScript{compatibleProbe(), lrSuccessScript(t, r, "glm-5.3", "")}
+			r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), lrSuccessScript(t, r, "glm-5.3", "")}
 			b := lrCodexBinding()
 			b.Effort = e
 			res, err := New(Config{Binding: b, Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
@@ -277,7 +278,7 @@ func TestLunaRouteCodex_EvidenceRequiredOnEverySuccess(t *testing.T) {
 				case "no terminal":
 					s.lines = s.lines[:len(s.lines)-1]
 				}
-				r.inner.scripts = []runScript{compatibleProbe(), s}
+				r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), s}
 				res, err := New(Config{Binding: b, Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 				require.ErrorIs(t, err, ErrModelEvidence)
 				assert.Nil(t, res)
@@ -300,7 +301,7 @@ func TestLunaRouteCodex_FinalTurnMustComplete(t *testing.T) {
 	r := &lrSinkRunner{t: t}
 	s := lrSuccessScript(t, r, "glm-5.3", "")
 	s.lines = append(s.lines, `{"type":"turn.started"}`)
-	r.inner.scripts = []runScript{compatibleProbe(), s}
+	r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), s}
 	res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 	require.ErrorIs(t, err, ErrModelEvidence)
 	assert.NotErrorIs(t, err, provider.ErrLunaRouteLocalFailure, "an unfinished turn is opaque and must stay diagnosable")
@@ -315,7 +316,7 @@ func TestLunaRouteCodex_ProcessErrorsSafeAndClean(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(old) })
 	for _, s := range []runScript{{waitErr: &claudecli.StderrError{Err: errors.New("exit status 1"), Summary: lrKey, Tail: []byte(lrKey)}}, {startErr: errors.New(lrKey)}, {waitErr: errors.New(lrKey), lines: []string{`{"type":"error","message":"` + lrKey + `"}`}}, {lines: []string{`{"type":"item.completed","item":` + lrKey}}, {lines: []string{`{"type":"turn.failed","error":{"message":"` + lrKey + `"}}`}}} {
 		tmp := isolateTemp(t)
-		r := &multiRunner{scripts: []runScript{compatibleProbe(), s}}
+		r := &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), s}}
 		res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 		require.Error(t, err)
 		assert.Nil(t, res)
@@ -329,11 +330,11 @@ func TestLunaRouteCodex_CancellationAndPanicCleanup(t *testing.T) {
 	tmp := isolateTemp(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	r := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
+	r := &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), {blockOnCtx: true}}}
 	_, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(ctx, lrMission())
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	lrNoLeftovers(t, tmp)
-	r = &multiRunner{scripts: []runScript{compatibleProbe(), {onWait: func() { panic("fixture panic") }}}}
+	r = &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), {onWait: func() { panic("fixture panic") }}}}
 	assert.Panics(t, func() {
 		_, _ = New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 	})
@@ -372,7 +373,7 @@ func TestLunaRouteCodex_MkdirFailureBeforeLaunch(t *testing.T) {
 func TestLunaRouteCodex_DefaultAllowsUnknownOptionalFacts(t *testing.T) {
 	tmp := isolateTemp(t)
 	r := &lrSinkRunner{t: t}
-	r.inner.scripts = []runScript{compatibleProbe(), lrSuccessScript(t, r, "glm-5.3", "")}
+	r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), lrSuccessScript(t, r, "glm-5.3", "")}
 	mission := lrMission()
 	mission.Model = ""
 	res, err := New(Config{Binding: lrCodexBinding(), Runner: r}).RunAgent(context.Background(), mission)
@@ -394,7 +395,7 @@ func TestLunaRouteCodex_ConcurrentHomes(t *testing.T) {
 			s := lrSuccessScript(t, r, "glm-5.3", "")
 			onWait := s.onWait
 			s.onWait = func() { homes[i], _ = envValue(r.inner.calls[1].Env, codexHomeVar); onWait() }
-			r.inner.scripts = []runScript{compatibleProbe(), s}
+			r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), s}
 			_, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 			assert.NoError(t, err)
 		}(i)
@@ -420,7 +421,7 @@ set -eu
 [ -z "${OPENAI_BASE_URL:-}" ]
 if [ "$1" = --version ]; then
  [ -z "${LUNAROUTE_API_KEY:-}" ]
- printf 'codex-cli 0.167.0\n'
+ printf 'codex-cli 0.167.2\n'
  exit 0
 fi
 [ "$LUNAROUTE_API_KEY" = lr_live_codexTestKey123 ]
@@ -460,4 +461,44 @@ func TestLunaRouteCodex_NoUsabilityProbe(t *testing.T) {
 	require.ErrorIs(t, err, ErrModelEvidence)
 	assert.Contains(t, err.Error(), "pinned-only")
 	assert.Empty(t, r.calls)
+}
+
+// LunaRoute launches hand the binary a credential and rely on isolation/auth
+// controls verified only from minLunaRouteCodexVersion. An older binary that
+// still satisfies the subscription floor is refused before any key-bearing
+// launch; the floor is not applied to subscription use.
+func TestLunaRouteCodex_VersionFloorIsLunaRouteOnly(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{"codex-cli 0.137.0", false}, {"codex-cli 0.163.0", false}, {"codex-cli 0.167.1", false},
+		{"codex-cli 0.167.2", true}, {"codex-cli 0.168.0", true}, {"codex-cli 1.0.0", true},
+		{"unparseable", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			tmp := isolateTemp(t)
+			r := &lrSinkRunner{t: t}
+			r.inner.scripts = []runScript{{lines: []string{tc.version}}, lrSuccessScript(t, r, "glm-5.3", "lunaroute")}
+			_, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
+			if tc.ok {
+				require.NoError(t, err)
+				require.Len(t, r.inner.calls, 2)
+			} else {
+				require.ErrorIs(t, err, ErrIncompatibleCodex)
+				require.ErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+				require.Len(t, r.inner.calls, 1, "only the credential-free version probe ran")
+				_, hasKey := envValue(r.inner.calls[0].Env, LunaRouteKeyVar)
+				assert.False(t, hasKey)
+				assert.NotContains(t, err.Error(), lrKey)
+			}
+			lrNoLeftovers(t, tmp)
+		})
+	}
+	// The same older binary is still accepted on the subscription path.
+	r := &multiRunner{scripts: []runScript{{lines: []string{"codex-cli " + minCodexVersion}}, happyMission()}}
+	revealed := false
+	_, err := New(Config{Binding: codexBinding("gpt-5-codex", &revealed), Runner: r}).RunAgent(context.Background(), lrMission())
+	require.NoError(t, err)
+	assert.False(t, revealed)
 }
