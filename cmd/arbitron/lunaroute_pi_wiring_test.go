@@ -36,13 +36,20 @@ func piRootCaps(model string) string {
 // and validate every load-bearing definition field before it emits success.
 type piRootFixture struct {
 	Model, Capture, Dirs, Argv, Cwd, Mode string
+	// Thinking is the exact --thinking value the child must receive; empty means the flag must be absent.
+	Thinking string
 }
 
 func piRoot(t *testing.T, model, caps string) (*domainStack, *agentListingGateway, piRootFixture) {
+	return piRootThinking(t, model, caps, "")
+}
+
+func piRootThinking(t *testing.T, model, caps, thinking string) (*domainStack, *agentListingGateway, piRootFixture) {
 	t.Helper()
 	dir := t.TempDir()
 	f := piRootFixture{
-		Model: model, Capture: filepath.Join(dir, "models.json"), Dirs: filepath.Join(dir, "dirs"),
+		Thinking: thinking,
+		Model:    model, Capture: filepath.Join(dir, "models.json"), Dirs: filepath.Join(dir, "dirs"),
 		Argv: filepath.Join(dir, "argv"), Cwd: filepath.Join(dir, "cwd"), Mode: filepath.Join(dir, "mode"),
 	}
 	raw, err := json.Marshal(f)
@@ -90,6 +97,28 @@ func piRoot(t *testing.T, model, caps string) (*domainStack, *agentListingGatewa
 func savePiRoot(t *testing.T, ds *domainStack, model string) (bool, string) {
 	t.Helper()
 	return lunaRouteToolCaller(t, ds)("profile_create", map[string]any{"alias": "lr-pi-agent", "kind": "agent", "connection_ref": "lr", "model": model, "backend": "pi"})
+}
+
+// The saved effort must survive resolution and reach the real pi argv exactly
+// (none -> off, never floored); the child fails the run on any other argv.
+func TestLunaRoutePiWiringEffortReachesArgv(t *testing.T) {
+	for _, tc := range []struct{ effort, thinking string }{{"none", "off"}, {"high", "high"}} {
+		t.Run(tc.effort, func(t *testing.T) {
+			caps := piRootCaps("glm-5.3") + "    efforts:\n      pi: {levels: [none, high], evidence: \"root-fixture#effort\"}\n"
+			ds, _, f := piRootThinking(t, "glm-5.3", caps, tc.thinking)
+			bad, text := lunaRouteToolCaller(t, ds)("profile_create", map[string]any{"alias": "lr-pi-agent", "kind": "agent", "connection_ref": "lr", "model": "glm-5.3", "backend": "pi", "effort": tc.effort})
+			require.False(t, bad, text)
+			id, _, err := ds.eng.Trigger(adminCtxForLocalUser(t, ds), "lr-pi", nil, "normal")
+			require.NoError(t, err)
+			inst := waitTerminal(t, ds, id)
+			if inst.State != instance.StateCompleted {
+				t.Fatalf("run ended %s: %s", inst.State, nodeError(t, ds, id))
+			}
+			argv := readArgvLog(t, f.Argv)
+			require.Len(t, argv, 1)
+			assert.Equal(t, "--print --mode json --no-session --model lunaroute/glm-5.3 --thinking "+tc.thinking, argv[0])
+		})
+	}
 }
 
 func TestLunaRoutePiWiring(t *testing.T) {
@@ -240,6 +269,14 @@ func piRootDefinition(model string) map[string]any {
 	}}}
 }
 
+func wantArgs(f piRootFixture) []string {
+	args := []string{"--print", "--mode", "json", "--no-session", "--model", "lunaroute/" + f.Model}
+	if f.Thinking != "" {
+		args = append(args, "--thinking", f.Thinking)
+	}
+	return args
+}
+
 func TestLunaRoutePiRootChild(t *testing.T) {
 	config := os.Getenv("ARBITRON_PI_ROOT_FIXTURE")
 	if config == "" {
@@ -279,7 +316,7 @@ func TestLunaRoutePiRootChild(t *testing.T) {
 	appendLog(f.Argv, strings.Join(args, " "))
 	appendLog(f.Dirs, dir)
 	if os.Getenv("LUNAROUTE_API_KEY") != lrRootKey || os.Getenv("OPENAI_API_KEY") != "" ||
-		!reflect.DeepEqual(args, []string{"--print", "--mode", "json", "--no-session", "--model", "lunaroute/" + f.Model}) {
+		!reflect.DeepEqual(args, wantArgs(f)) {
 		fail()
 	}
 	cwd, err := os.Getwd()

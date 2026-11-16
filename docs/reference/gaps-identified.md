@@ -191,6 +191,13 @@
 
 ## Closed
 
+- [x] **G14 (Area 5, review1): root pi test never ran a non-default effort to argv.** Closed:
+  `cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringEffortReachesArgv` saves a profile with effort
+  `none`/`high`, runs it through the real engine and fake-pi subprocess; the child fails unless argv ends in
+  `--thinking off`/`--thinking high` (mutating `thinkingLevel` none→"" fails it). Checks 1-6 otherwise verified:
+  `factory.go` pi arm passes `Deps.CapabilityRules` (root `main.go:1076`); the models.json the child read equals the table;
+  `$LUNAROUTE_API_KEY` literal, key only in child env; evidence from `pi_message_end` persisted at `executor_agent.go:128`.
+  Still open for review2: G10 pi half (`safeModelIdentity` per-clause tests).
 - [x] **Area 4 / single:4/review2 ticked by approver at 450a269.** The verify-tests placeholders were not substituted, so the approver ran the suites itself: `go build ./...`, `go test ./adapter/codex ./domain/provider ./domain/engine ./adapter/provider`, `./cmd/arbitron -run LunaRouteCodex` and `-race -count=3 ./adapter/codex -run TestLunaRouteCodex_` all pass.
   Hand mutants, each reverted: skipping the `lunaroute.go:removeLunaRouteHome` repair → `ReadOnlyHomeCleanup` and `RealProcessCancellationCleanup` fail; dropping the deferred `launch.cleanup()` in `provider.go:RunAgent` → `RealProcessCancellationCleanup` and `ProcessErrorsSafeAndClean` fail; swallowing `cleanupErr` → `CleanupFailureIsLocalAndPreservesCause` fails; `rollout.go:lunaRouteAfterTurn` checking selected-vs-selected → `EvidenceRequiredOnEverySuccess`, `TestRolloutLunaRouteReportedEvidence` and root `TestLunaRouteCodexWiringRejectsRolloutDrift` fail.
   Checks 1, 2 and 4–7 rely on the cited tests that already exist (`CredentialFailures`, `HomeFailures`, `MkdirFailureBeforeLaunch`, `ExactEffort`, `SafeLunaRouteIdentity_EachClause`, `ConcurrentHomes`, `VersionFailureIsLocalAndClean`), and every one of them passes.
