@@ -9,17 +9,6 @@
 
 ## Open
 
-- **Area 3 / single:3/review2 — failure-lens assessment (G8).** Pre-change focused tests passed; no baseline failure.
-  `domain/modelidentity/family_test.go:TestClassifyFamily` now distinguishes contradictory/matching vendor+Bedrock prefixes and unknown qualifiers.
-  `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency` tests conflicting/matching alias hints with cleanup; no production alias is authorized.
-  Before edits, the Bedrock and alias `hint != lab`→`hint == lab` overlays survived; afterwards both fail their new assertions.
-  All three seeded `family.go:ClassifyFamily` negations (89/98/110) and `version.go:explicitVersion` LunaRoute-case negation fail (exit 1), using temporary Go overlays.
-  Checks 1–4/7: root Scope/ProfileSave/AgentProfileSave/PiEffortEcho/DeferredBackendsSave tests pass, as do domain route/identity refusals; writes remain absent or unchanged.
-  Checks 5–6/9: mixed-route create/update in both orders, leased-route rechecks, native Profile tests and sample JudgeFamily/JudgePairing/ModelFamily pass; scoped `rg -n 't.Skip'` returns none.
-  Validation: `go test -count=1 -timeout 30m ./domain/modelidentity ./domain/provider ./adapter/config ./adapter/mcp ./samples -run 'ClassifyFamily|ReviewedAlias|LunaRoute|Lunaroute|Version|Profile|LoadCapabilityRules|AuthoringGuidance_ModelDiscoveryAndExplicitSelection|JudgeFamily|JudgePairing|ModelFamily'` exits 0.
-  Root: `go test -count=1 -timeout 30m ./cmd/arbitron -run '^TestLunaRoute(ProfileSaveWiring|ProfileScopeWiring|AgentProfileSaveWiring|PiEffortEchoWiring|DeferredBackendsSaveWiring)$'` exits 0; PiEffortEcho would refuse with empty capability input. No production code or approval boxes changed.
-  Recommend: approve single:3/review2 — all nine failure checks pass; G8's remaining discriminating fixtures kill the seeded mutations, and other providers retain passing profile behavior.
-
 - [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
   exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
 - **[ESCALATION] Area 1 scope ruling (approver, 142dcc5): G12/G13 do not gate review2 — box ticked.** Review-2 checks
@@ -177,6 +166,7 @@
 
 ## Closed
 
+- [x] **Area 3 / single:3/review2 ticked by approver at 75b7d6a.** Hand mutants re-measured independently: `family.go:ClassifyFamily` 89 (`!=`→`==`), 98 (`lab==""`, `hint!=""`, `hint!=lab`) and 110 (`hint!=lab`) and `version.go:192` (lunaroute case) each fail `./domain/modelidentity` (98/hint!=lab via `family_test.go:TestClassifyFamily`; 110 via `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency`). Restored tree: `go test ./domain/modelidentity ./domain/provider ./adapter/config ./adapter/mcp ./samples` ok; root ProfileSave/ProfileScope/AgentProfileSave/PiEffortEcho/DeferredBackendsSave wiring tests pass; no LunaRoute `t.Skip` in domain/provider or adapter/mcp.
 - **[ESCALATION] Area 3 / single:3/review2 acceptance boundary resolved:** approval required contradictory/matching prefix and reviewed-alias fixtures at `domain/modelidentity/family_test.go:TestClassifyFamily` / `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency`, seeded-mutation failures and all nine failure checks passing; this pass supplies them without a policy decision or external dependency.
 - **G8 (Area 3) closed:** `family_test.go:TestClassifyFamily` and `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency` kill family.go:89/98/110 negations; existing version tests kill version.go:192, with restored-code targeted tests passing.
 
