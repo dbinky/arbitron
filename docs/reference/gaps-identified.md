@@ -43,8 +43,10 @@
   The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
   `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
   `lr_` text or more than 256 bytes must be rejected as evidence. Add a case per clause.
-  Progress (single:4/review1): codex half pinned by `adapter/codex/lunaroute_identity_test.go:TestSafeLunaRouteIdentity_EachClause`
-  (dropping the quote/backslash clause fails it). The pi half (`adapter/pi/model_probe.go` 60/62) remains open for Area 5.
+  Codex coverage: `adapter/codex/lunaroute_identity_test.go:TestSafeLunaRouteIdentity_EachClause`; approver overlays removing
+  nonempty, quote/backslash, whitespace or redaction checks each fail (exit 1). Length/control removals pass: equivalent guards,
+  because `domain/provider/lunaroute_classify.go:RedactLunaRoute` truncates at 256 bytes and scrubs controls before equality.
+  The pi half (`adapter/pi/model_probe.go:safeModelIdentity`) remains open for Area 5; this failure-lens gap does not gate Area 4 review1.
 - [ ] **G11 (Areas 3, 7): text survivors need a decision.**
   The survivors `harden:adapter/mcp/tools_connection_models.go`, `harden:adapter/mcp/lunaroute_backend_hint.go` and
   `harden:domain/provider/model_discovery.go` are string-concatenation mutants in LLM-facing text. Pin the load-bearing
@@ -65,6 +67,16 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 4 / single:4/review1 — approved wiring evidence.** Checks 1–6 traced from production constructors to sinks.
+  Check 1: `cmd/arbitron/main.go:initDomainWithModelDependencies` → `cmd/arbitron/model_consumers.go:newRunModelConsumers` feeds the real factory/rules; `adapter/provider/dynamic.go:Resolve` supplies stored endpoint/reveal, and `adapter/provider/factory.go:AgentProviderFor` guards the binding before codex construction.
+  Checks 2–3: `adapter/codex/lunaroute.go:lunaRouteExecExtra` derives `/v1` once; `prepareLunaRouteLaunchWithFS` injects only the guarded key/private 0700 home. `adapter/codex/lunaroute_test.go:TestLunaRouteCodex_HappyPath` checks exact argv/env and cleanup at the runner.
+  Checks 4/6: `adapter/codex/provider.go:RunAgent` verifies before deferred cleanup; `adapter/codex/rollout.go:lunaRouteAfterTurn` checks every observed model with `domain/modelidentity/version.go:LunaRouteExecutedModelAccepted`; `domain/engine/executor_agent.go:Execute` persists evidence.
+  Sink proof: `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiring` checks subprocess routing, untouched operator login, removed homes and persisted conversation for three models. Emptying factory codex rules or returned evidence independently makes all three cases fail (overlay exit 1); unmodified focused runs pass (exit 0).
+  Check 5: `adapter/codex/lunaroute_test.go:TestLunaRouteCodex_SubscriptionUnchanged` asserts unchanged subscription argv/env and zero reveal.
+  Folded: `adapter/codex/lunaroute.go:ensureLunaRouteCompatible` probes once without the key; `TestLunaRouteCodex_NoUsabilityProbe` requires ErrModelEvidence/no runner calls; `adapter/mcp/lunaroute_backend_hint.go:LunaRouteBackendHint` matches the ungated execution path.
+  Scenarios: `TestLunaRouteCodex_HappyPath`/`RealProcessSink`, root `TestLunaRouteCodexWiringOpaqueFailure`/`LocalFailureNeverProbes`, and `TestLunaRouteCodex_EvidenceRequiredOnEverySuccess` cover happy/success/failure/error/edge with argument-checking sinks. G10's codex equivalents are documented above; pi remains Area 5.
+  Verification: `go test -timeout 30m ./adapter/codex ./adapter/provider ./domain/engine ./cmd/arbitron` passes (exit 0; root 325.986s); uncached codex LunaRoute and root codex-wiring reruns also pass. Measurement placeholders were unresolved, so these commands supplied direct evidence.
 
 - **Area 3 / single:3/review2 — failure assessment (G7).** Initial targeted tests built and passed; no baseline failure.
   Checks 1–4: root `TestLunaRouteProfileScopeWiring`, `TestLunaRouteAgentProfileSaveWiring`, `TestLunaRoutePiEffortEchoWiring`,
