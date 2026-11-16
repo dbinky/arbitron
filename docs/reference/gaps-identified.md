@@ -10,12 +10,11 @@
 ## Open
 
 - **[ESCALATION] Area 6 / single:6/review2 — concrete acceptance boundary.**
-  To tick this box, G3 needs only two fixtures (approver at 0bb44e3): exact-256-byte `RedactLunaRoute` and digit-9 `NormalizeLunaRouteRetryAfter`; see G3.
-  `NormalizeLunaRouteRetryAfter` and `ClassifyLunaRoute` for redaction sizing, the 256-byte cut, digit boundaries,
-  transport-before-code and verified-code-before-status precedence. Each cited survivor needs a failing fixture
-  or a documented equivalence argument accepted by the independent approver. No operator key or dependency is missing.
-  G4/cancellation were accepted at 28b8bd2; this pass supplies G17's JSON/SSE policy and identity sink fixtures.
-  Stop here after that evidence change; remaining work is the specific offline G3 boundary audit, not another wiring pass.
+  The approver at 0bb44e3 requires only G3's two offline fixtures in `domain/provider/lunaroute_classify_test.go`:
+  `TestRedactLunaRoute_ByteLimit` must preserve 256 bytes and truncate 257; `TestNormalizeLunaRouteRetryAfter` must preserve 9 and 19.
+  Approval requires those fixtures to fail the respective `<=` → `<` and `> '9'` → `>= '9'` mutants and pass real code.
+  Prior C1–C3/C5–C7 evidence and accepted equivalence arguments stand. No credential, dependency or operator decision is missing.
+  This pass supplies only those fixtures and their mutation evidence, then stops for independent review; approval boxes stay untouched.
 
 - **[RESOLVED at approval of d11128a] Area 5 / single:5/review2 — exact remaining approval conditions.**
   Per the approver at 868c0b0, the missing fixture was a direct boundary table for
@@ -42,15 +41,6 @@
   behaviour) and no invalid key is persisted; an operator must decide whether to narrow that. G13 (explicit `lr_` key on
   a foreign provider) is a sibling defect under rule 5 — fix it as its own gap, but it does not gate this box.
 
-- [ ] **G3 (Area 6): two classifier boundaries still untested (narrowed by approver at 0bb44e3).**
-  Mutation-probed `domain/provider/lunaroute_classify.go` against `./domain/provider ./adapter/openrouter ./adapter/provider`.
-  Still SURVIVE (need one fixture each, nothing else):
-  - L137 `len(s) <= lunaRouteSnippetMax` → `<`: no case with a post-redaction string of exactly 256 bytes (mutant panics on `s[256]`).
-    Add `RedactLunaRoute(strings.Repeat("a",256))` == input, plus 257 bytes → 256.
-  - L189 `r > '9'` → `>=`: no Retry-After containing digit 9. Add `NormalizeLunaRouteRetryAfter("9")=="9"` and `"19"`.
-  Accepted as equivalent: L118 `len(ordered)*2` (capacity only); L141 `cut > 0` → `>=0` (strings.Map output is valid UTF-8, s[0] is a rune start);
-  L229 dropping `o.Code != ""` (nil map lookup for "").
-  Killed: RuneStart negation, '0' boundary, transport/malformed precedence over code and status, code-over-status, 401/429/500/599 bounds.
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
@@ -74,6 +64,16 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 6 / single:6/review2 — G3 boundary audit and final failure assessment.** Pre-change targeted domain/provider and adapter/provider tests passed; no baseline failure.
+  C1: `domain/provider/lunaroute_classify_internal_test.go:TestLunaRouteDocumentedCodeTable` and `lunaroute_classify_test.go:TestClassifyLunaRoute_StatusMapping` prove code/status precedence and exactly one gateway sentinel.
+  C2–C3: `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries` and `adapter/openrouter/hooks_test.go:TestClassifyError_ChatReadAndDecode`/`NoPartialSecretAtBodyLimit` pass; partial output terminates once and incomplete bodies never become diagnostic text.
+  C4: new `domain/provider/lunaroute_classify_test.go:TestRedactLunaRoute_ByteLimit` preserves 256 bytes and truncates 257; `TestNormalizeLunaRouteRetryAfter` preserves 9 and 19. Both recorded mutants passed before these fixtures; temporary Go overlays now exit 1 (256-byte panic; 9/19 become empty). Overlays removed; production unchanged.
+  C5–C7: `adapter/provider/lunaroute_chat_policy_test.go:TestLunaRouteChat_RequestPolicyJSONAndStream`/`FixedIdentityJSONAndStream` and existing preflight tests pass in both modes: zero HTTP/reveals on policy refusal, absent/different identities fail before content, accepted body fields equal validated settings.
+  Fresh `go test -race -count=1 -timeout 30m ./domain/provider ./adapter/openrouter ./adapter/provider -run 'ClassifyLunaRoute|RedactLunaRoute|NormalizeLunaRouteRetryAfter|LunaRouteErrorCode|LunaRouteDocumentedCodeTable|LunaRouteCodesAreOperationScoped|CheckLunaRoute|ClassifyError|AcceptExecutedModel|Preflight|^TestLunaRouteChat_'` passes all three packages, including cancellation/deadlines and concurrent credential rotation.
+  Production `rg -n 'ClassifyError:|Preflight:|AcceptExecutedModel:' adapter --glob '*.go' --glob '!**/*_test.go'` finds all three hooks at `adapter/provider/lunaroute_chat.go:lunaRouteChat`; no new exported collaborator/config. Five categories: happy completion, successful SSE, gateway refusal, transport/read error, boundary/empty inputs.
+  Prior G3 equivalences retained: L118 capacity-only allocation; L141 `cut >= 0` cannot overrun because scrubbed UTF-8 has a rune start at index 0; L229 empty-code map lookup is nil. Other cited classifier survivors were killed and accepted at 0bb44e3. Approval boxes untouched.
+Recommend: approve single:6/review2 — all seven failure checks pass; the last two G3 mutants now fail discriminating boundary fixtures, and targeted race checks pass.
 
 - **Area 6 / single:6/review2 — approver WITHHELD at 0bb44e3 (independent review).**
   Ran `go build ./...` and `go test -count=1 ./adapter/openrouter ./adapter/provider ./domain/provider ./domain/modelidentity ./cmd/arbitron`: all pass.
@@ -314,6 +314,7 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
 
 ## Closed
 
+- [x] **G3 (Area 6):** `domain/provider/lunaroute_classify_test.go:TestRedactLunaRoute_ByteLimit` and `TestNormalizeLunaRouteRetryAfter` kill the exact-256-byte and digit-9 survivors (both exit 1); real-code targeted race tests pass.
 - [x] **G17 (Area 6):** `adapter/provider/lunaroute_chat_policy_test.go:TestLunaRouteChat_RequestPolicyJSONAndStream`/`FixedIdentityJSONAndStream` prove loaded request policy and pinned identity at JSON/SSE sinks; seven production mutations fail.
 - [x] **G4 (Area 6):** `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries`/`StreamFrameSizeBoundary` distinguish empty-frame, structured-error and scanner-buffer mutations through the real factory/classifier.
 - [x] **Area 6 silent cancellation:** `adapter/openrouter/provider.go:StreamChat` retains one terminal error after cancellation/deadline, releases blocked consumers and closes the body; `TestLunaRouteChat_StreamCancellationOutcome` proves red/green with cause identity and secret-free errors.

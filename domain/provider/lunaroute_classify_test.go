@@ -122,6 +122,14 @@ func TestRedactLunaRoute_BeforeTruncation(t *testing.T) {
 	assert.NotContains(t, out, "foreign")
 }
 
+func TestRedactLunaRoute_ByteLimit(t *testing.T) {
+	for _, size := range []int{256, 257} {
+		t.Run(fmt.Sprintf("bytes=%d", size), func(t *testing.T) {
+			assert.Equal(t, strings.Repeat("a", 256), provider.RedactLunaRoute(strings.Repeat("a", size)))
+		})
+	}
+}
+
 func TestRedactLunaRoute_ScrubsControlsAndBearer(t *testing.T) {
 	out := provider.RedactLunaRoute("line1\nline2\x00 Bearer sk-or-abc123 x-api-key: lr_abc", "")
 	assert.Contains(t, out, "line1 line2 ")
@@ -194,6 +202,7 @@ func TestLunaRouteErrorCode_Envelopes(t *testing.T) {
 func TestNormalizeLunaRouteRetryAfter(t *testing.T) {
 	cases := []struct{ raw, want string }{
 		{"0", "0"}, {"00120", "120"}, {" 60 ", "60"},
+		{"9", "9"}, {"19", "19"},
 		{"Wed, 21 Oct 2015 07:28:00 GMT", "Wed, 21 Oct 2015 07:28:00 GMT"},
 		{"", ""}, {"-1", ""}, {"+1", ""}, {"1.5", ""},
 		{"18446744073709551616", ""}, {"60\r\nX-Key: " + secretKey, ""}, {"60\n", ""},
