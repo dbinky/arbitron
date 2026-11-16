@@ -50,19 +50,30 @@ var ErrNoProbeForProvider = errors.New("provider: no probe for provider")
 func ProbeBindingFromConnection(store ConnectionStore, name string, c Connection) ResolvedBinding {
 	return GuardLunaRouteReveal(ResolvedBinding{
 		Provider: c.Provider, BaseURL: c.BaseURL, Extras: c.Extras, ConnectionRef: name,
-		RevealKey: func(ctx context.Context) (string, error) {
-			key, err := store.Reveal(ctx, name)
-			if err != nil {
-				return "", SanitizeLunaRouteError(err, key)
-			}
-			current, err := store.Get(ctx, name)
-			if err != nil {
-				return "", SanitizeLunaRouteError(err, key)
-			}
-			if current.ConfigRevision != c.ConfigRevision {
-				return "", ErrConnectionChangedConcurrently
-			}
-			return key, nil
-		},
+		RevealKey: RevealBoundToRevision(store, name, c),
 	})
+}
+
+// RevealBoundToRevision returns a lazy reveal for the connection metadata c
+// captured earlier. After decryption it re-reads the connection and fails
+// closed with ErrConnectionChangedConcurrently unless ConfigRevision still
+// matches, so a key stored by a later edit (or a deleted-and-recreated row,
+// whose revision is monotonic) is never returned for the captured route. The
+// check applies to every provider, not only LunaRoute. Every binding producer
+// that captures a route and reveals later uses this one function.
+func RevealBoundToRevision(store ConnectionStore, name string, c Connection) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		key, err := store.Reveal(ctx, name)
+		if err != nil {
+			return "", SanitizeLunaRouteError(err, key)
+		}
+		current, err := store.Get(ctx, name)
+		if err != nil {
+			return "", SanitizeLunaRouteError(err, key)
+		}
+		if current.ConfigRevision != c.ConfigRevision {
+			return "", ErrConnectionChangedConcurrently
+		}
+		return key, nil
+	}
 }

@@ -111,8 +111,6 @@ func (r *DynamicProfileResolver) Resolve(ctx context.Context, alias string) (pro
 			"provider: profile %q references connection %q: %w", alias, p.ConnectionRef, err)
 	}
 
-	connRef := p.ConnectionRef
-	store := r.store
 	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{
 		Kind:            p.Kind,
 		ConnectionRef:   p.ConnectionRef,
@@ -127,10 +125,11 @@ func (r *DynamicProfileResolver) Resolve(ctx context.Context, alias string) (pro
 		Effort:          p.Effort,
 		// RevealKey is lazy: it decrypts the connection's key only when invoked,
 		// at call/launch time. SECURITY: the revealed key is returned to the
-		// caller and never logged here. LunaRoute bindings additionally check
-		// the hosted endpoint and lr_ shape before any adapter sees the key.
-		RevealKey: func(ctx context.Context) (string, error) {
-			return store.Reveal(ctx, connRef)
-		},
+		// caller and never logged here. It is bound to the revision captured
+		// above, so a concurrent edit (e.g. a foreign provider switched to
+		// LunaRoute with a fresh lr_ key) fails closed instead of pairing the new
+		// key with the old endpoint. LunaRoute bindings additionally check the
+		// hosted endpoint and lr_ shape before any adapter sees the key.
+		RevealKey: provider.RevealBoundToRevision(r.store, p.ConnectionRef, conn),
 	}), nil
 }

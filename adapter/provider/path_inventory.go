@@ -594,7 +594,7 @@ func routeBinding(p provider.Profile, backend string, conn provider.Connection, 
 			b.Extras[k] = v
 		}
 		if backend != workflow.BackendCodex || provider.IsLunaRoute(conn.Provider) {
-			b.RevealKey = func(ctx context.Context) (string, error) { return store.Reveal(ctx, p.ConnectionRef) }
+			b.RevealKey = provider.RevealBoundToRevision(store, p.ConnectionRef, conn)
 		}
 	} else if backend == workflow.BackendCodex {
 		b.Provider = ""
