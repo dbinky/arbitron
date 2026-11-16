@@ -18,6 +18,30 @@ func TestReviewedAliasVendors(t *testing.T) {
 	assert.Equal(t, FamilyUnresolved, ClassifyFamily("openrouter", "muse-spark-open"), "mappings are per route")
 }
 
+// The alias has no name-derived vendor. A contradictory prefix must not
+// override its reviewed vendor, and a matching prefix must remain usable.
+func TestReviewedAliasVendorPrefixConsistency(t *testing.T) {
+	saved := reviewedAliasVendors
+	t.Cleanup(func() { reviewedAliasVendors = saved })
+	reviewedAliasVendors = map[string]map[string]string{"lunaroute": {"reviewed-model": "zhipuai"}}
+	for _, route := range []string{"", "lunaroute"} {
+		for _, tc := range []struct {
+			model string
+			want  Family
+		}{
+			{"reviewed-model", "zhipuai"},
+			{"zhipuai/reviewed-model", "zhipuai"},
+			{"us.zhipuai.reviewed-model", "zhipuai"},
+			{"openai/reviewed-model", FamilyUnresolved},
+			{"us.openai.reviewed-model", FamilyUnresolved},
+		} {
+			t.Run(route+"|"+tc.model, func(t *testing.T) {
+				assert.Equal(t, tc.want, ClassifyFamily(route, tc.model))
+			})
+		}
+	}
+}
+
 func TestLunaRouteClaudeAliasesCannotBeReauthorized(t *testing.T) {
 	savedVendors, savedIDs := reviewedAliasVendors, lunaRouteReviewedIDs
 	t.Cleanup(func() { reviewedAliasVendors, lunaRouteReviewedIDs = savedVendors, savedIDs })

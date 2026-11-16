@@ -9,12 +9,16 @@
 
 ## Open
 
-- **[ESCALATION] Area 3 / single:3/review2 acceptance boundary.** G7 is resolved below; G11's Area 3 guidance is
-  covered by `adapter/mcp/lunaroute_backend_hint_test.go:TestLunaRouteBackendHint_ReachesProfileTools` and its negative cases.
-  The remaining blocker is G8: `domain/modelidentity/family.go:ClassifyFamily` needs discriminating fixtures for unknown
-  vendor prefixes, vendor/Bedrock qualifier disagreement, and a reviewed alias whose vendor contradicts its prefix,
-  with consistent positive controls. Prove the three seeded negations fail those fixtures. No policy decision or live
-  dependency is missing; after that evidence, all nine failure checks must pass without changing native-provider behavior.
+- **Area 3 / single:3/review2 — failure-lens assessment (G8).** Pre-change focused tests passed; no baseline failure.
+  `domain/modelidentity/family_test.go:TestClassifyFamily` now distinguishes contradictory/matching vendor+Bedrock prefixes and unknown qualifiers.
+  `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency` tests conflicting/matching alias hints with cleanup; no production alias is authorized.
+  Before edits, the Bedrock and alias `hint != lab`→`hint == lab` overlays survived; afterwards both fail their new assertions.
+  All three seeded `family.go:ClassifyFamily` negations (89/98/110) and `version.go:explicitVersion` LunaRoute-case negation fail (exit 1), using temporary Go overlays.
+  Checks 1–4/7: root Scope/ProfileSave/AgentProfileSave/PiEffortEcho/DeferredBackendsSave tests pass, as do domain route/identity refusals; writes remain absent or unchanged.
+  Checks 5–6/9: mixed-route create/update in both orders, leased-route rechecks, native Profile tests and sample JudgeFamily/JudgePairing/ModelFamily pass; scoped `rg -n 't.Skip'` returns none.
+  Validation: `go test -count=1 -timeout 30m ./domain/modelidentity ./domain/provider ./adapter/config ./adapter/mcp ./samples -run 'ClassifyFamily|ReviewedAlias|LunaRoute|Lunaroute|Version|Profile|LoadCapabilityRules|AuthoringGuidance_ModelDiscoveryAndExplicitSelection|JudgeFamily|JudgePairing|ModelFamily'` exits 0.
+  Root: `go test -count=1 -timeout 30m ./cmd/arbitron -run '^TestLunaRoute(ProfileSaveWiring|ProfileScopeWiring|AgentProfileSaveWiring|PiEffortEchoWiring|DeferredBackendsSaveWiring)$'` exits 0; PiEffortEcho would refuse with empty capability input. No production code or approval boxes changed.
+  Recommend: approve single:3/review2 — all nine failure checks pass; G8's remaining discriminating fixtures kill the seeded mutations, and other providers retain passing profile behavior.
 
 - [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
   exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
@@ -46,18 +50,6 @@
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
-- [ ] **G8 (Area 3): vendor-prefix consistency is under-tested.**
-  The survivors are `harden:domain/modelidentity/family.go` (negations at lines 89, 98 and 110) and
-  `harden:domain/modelidentity/version.go` (line 192, the lunaroute case).
-  Add cases where a vendor prefix contradicts the id, where a bedrock qualifier contradicts the prefix, and where an alias
-  hint conflicts. Add an id that only the non-lunaroute grammar accepts.
-  **Approver re-measure at be26096 (single:3/review2 withheld on check 8 only):** hand mutants of `family.go:ClassifyFamily`
-  showed 89, 98 `lab == ""`, 98 `hint != ""` and version.go:192 are killed. **Only `family.go:98` `hint != lab`→`hint == lab` survives**
-  `go test ./domain/modelidentity ./samples`, and it changes behaviour: `ClassifyFamily("", "anthropic/us.openai.gpt-6.1")`
-  becomes `openai` (should be unresolved), `openai/anthropic.claude-opus-5-5` becomes `anthropic`, and the positive control
-  `anthropic/us.anthropic.claude-opus-5-5` becomes unresolved (should be `anthropic`). Fix: add these three rows to
-  `family_test.go:TestClassifyFamily`. Line 110 (`hint == lab`) also survives, but it cannot be reached in production because
-  `reviewedAliasVendors` is empty (R3). Record it as equivalent, or add it to the internal test with an injected alias whose lab contradicts its prefix.
 - [ ] **G10 (Areas 4, 5): executed-identity safety checks are untested.**
   The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
   `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
@@ -184,6 +176,9 @@
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- **[ESCALATION] Area 3 / single:3/review2 acceptance boundary resolved:** approval required contradictory/matching prefix and reviewed-alias fixtures at `domain/modelidentity/family_test.go:TestClassifyFamily` / `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency`, seeded-mutation failures and all nine failure checks passing; this pass supplies them without a policy decision or external dependency.
+- **G8 (Area 3) closed:** `family_test.go:TestClassifyFamily` and `family_internal_test.go:TestReviewedAliasVendorPrefixConsistency` kill family.go:89/98/110 negations; existing version tests kill version.go:192, with restored-code targeted tests passing.
 
 - **G7 (Area 3) closed:** `TestLunaRouteMixedRouteBackendsPreserveAxes` kills the backend negation; `TestLoadCapabilityRules_LunaRouteEmptyMapsReplaceKnownFacts` pins unknown semantics; five boundary survivors are equivalent for valid loaded tables (proof and overlay results above).
 - **G5 (Area 2) closed:** `adapter/provider/lunaroute_agent_test.go:TestLunaRouteAgent_DiagnosisObservations` and `domain/provider/lunaroute_diagnosis_test.go:TestLunaRouteDiagnosis_NilOriginalAndObservationPrecedence` discriminate checked/observation/text/identity and nil-original branches; four corresponding branch/flag mutations fail assertions.
