@@ -9,6 +9,13 @@
 
 ## Open
 
+- **[ESCALATION] Area 3 / single:3/review2 acceptance boundary.** G7 is resolved below; G11's Area 3 guidance is
+  covered by `adapter/mcp/lunaroute_backend_hint_test.go:TestLunaRouteBackendHint_ReachesProfileTools` and its negative cases.
+  The remaining blocker is G8: `domain/modelidentity/family.go:ClassifyFamily` needs discriminating fixtures for unknown
+  vendor prefixes, vendor/Bedrock qualifier disagreement, and a reviewed alias whose vendor contradicts its prefix,
+  with consistent positive controls. Prove the three seeded negations fail those fixtures. No policy decision or live
+  dependency is missing; after that evidence, all nine failure checks must pass without changing native-provider behavior.
+
 - [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
   exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
 - **[ESCALATION] Area 1 scope ruling (approver, 142dcc5): G12/G13 do not gate review2 — box ticked.** Review-2 checks
@@ -39,15 +46,6 @@
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
-- [ ] **G7 (Area 3): loader and save boundaries are untested.**
-  The survivors are:
-  - `harden:adapter/config/capabilities.go` (`len(...) > 0` guards at lines 186, 200 and 220);
-  - `harden:domain/provider/profile_service.go` (line 316, the mixed-route agent-backend axis);
-  - `harden:domain/provider/lunaroute_validate.go` (line 135, the `MaxOutputTokens > 0` boundary);
-  - `harden:domain/provider/lunaroute_capability.go` (line 109, sort order).
-
-  Add tests for: empty `tasks`, `backends` and `efforts` maps; mixed routes on two backends; `MaxOutputTokens` equal to the
-  limit; and sorted ids.
 - [ ] **G8 (Area 3): vendor-prefix consistency is under-tested.**
   The survivors are `harden:domain/modelidentity/family.go` (negations at lines 89, 98 and 110) and
   `harden:domain/modelidentity/version.go` (line 192, the lunaroute case).
@@ -77,6 +75,17 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 3 / single:3/review2 — failure assessment (G7).** Initial targeted tests built and passed; no baseline failure.
+  Checks 1–4: root `TestLunaRouteProfileScopeWiring`, `TestLunaRouteAgentProfileSaveWiring`, `TestLunaRoutePiEffortEchoWiring`,
+  `TestLunaRouteDeferredBackendsSaveWiring` and domain `TestCheckLunaRouteRoute_*` pass: following/backend/axis/limit refusals precede writes.
+  Check 5: `domain/provider/lunaroute_profile_policy_test.go:TestLunaRouteMixedRouteBackendsPreserveAxes` uses real version grammar;
+  both route orders/create/update refuse different axes without row changes; equal axes persist/echo. Negating the backend branch fails all four refusal cases (overlay exit 1).
+  Folded G7: `adapter/config/capabilities_lunaroute_test.go:TestLoadCapabilityRules_LunaRouteEmptyMapsReplaceKnownFacts` proves omitted/null/empty maps replace known facts with unknown.
+  Three loader `>0`→`>=0` mutants only allocate empty maps: getters expose identical unknown facts; output `>0`→`>=0` is redundant because Known() implies a positive limit; sort `<`→`<=` is equivalent for distinct loaded ids. All five overlays pass.
+  Check 6: `profileUsesLunaRoute` gates axes; native Profile/LoadCapabilityRules tests pass; `rg -n 't.Skip'` in LunaRoute domain/profile MCP tests returns none. Checks 7–9: existing identity/root/sample tests pass, but G8's qualifier/alias-hint distinctions remain unproved.
+  Validation: `go test -count=1 -timeout 5m ./domain/provider ./adapter/config ./adapter/mcp -run 'LunaRoute|LoadCapabilityRules|Profile|AuthoringGuidance_ModelDiscoveryAndExplicitSelection'` exits 0; targeted root stale-admin/profile tests and identity/sample tests also exit 0. No production code or approval boxes changed.
+  Recommend: no approval for single:3/review2 — G8 still lacks discriminating contradictory vendor/Bedrock/reviewed-alias fixtures named in the escalation above.
 
 - **Area 3 / single:3/review1 — APPROVED independently at refinement 0f37e73.** Only Review 1 ticked; all eight wiring checks verified.
   Check 1: `cmd/arbitron/main.go:initDomainWithModelDependencies` feeds the same loaded `capabilityRules` to ProfileService, Factory, discovery and snapshotter; `cmd/arbitron/lunaroute_capabilities_wiring_test.go:TestLunaRouteCapabilityTableWiring` and `TestLunaRouteEmbeddedOutputLimitWiring` verify override facts and embedded bounds at real sinks.
@@ -169,6 +178,7 @@
 
 ## Closed
 
+- **G7 (Area 3) closed:** `TestLunaRouteMixedRouteBackendsPreserveAxes` kills the backend negation; `TestLoadCapabilityRules_LunaRouteEmptyMapsReplaceKnownFacts` pins unknown semantics; five boundary survivors are equivalent for valid loaded tables (proof and overlay results above).
 - **G5 (Area 2) closed:** `adapter/provider/lunaroute_agent_test.go:TestLunaRouteAgent_DiagnosisObservations` and `domain/provider/lunaroute_diagnosis_test.go:TestLunaRouteDiagnosis_NilOriginalAndObservationPrecedence` discriminate checked/observation/text/identity and nil-original branches; four corresponding branch/flag mutations fail assertions.
 - **G2 (Area 2) closed:** `adapter/provider/dynamic_backend_explicit_test.go` (`TestDynamicProfileResolver_BackendExplicitProvenance`, `..._BackendProvenanceReachesLaunchGate`) drives the real `DynamicProfileResolver` on both arms into `CheckLunaRouteLaunch`; negating `dynamic.go:89` or `:124` now fails them (verified by hand-mutation).
 - **G1 (Area 1) closed:** `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` requires a replacement on switch-away; `adapter/sqlite/connection_repo.go:Update` guards every retained-key write; red/green repo and real-root MCP tests prove refusal and concurrent-switch safety.

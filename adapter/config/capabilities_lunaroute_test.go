@@ -165,3 +165,29 @@ func TestLoadCapabilityRules_ExplicitUnknownNeedsNoEvidence(t *testing.T) {
 	assert.Equal(t, provider.SupportUnknown, m.Reasoning.Support)
 	assert.Equal(t, provider.SupportUnknown, m.RequestSettings["output_schema"].Support)
 }
+
+func TestLoadCapabilityRules_LunaRouteEmptyMapsReplaceKnownFacts(t *testing.T) {
+	for _, fields := range []string{
+		"{}",
+		"\n    tasks: {}\n    backends: {}\n    efforts: {}",
+		"\n    tasks: null\n    backends: null\n    efforts: null",
+	} {
+		t.Run(fields, func(t *testing.T) {
+			r, err := adapterconfig.LoadCapabilityRules(writeCaps(t, "lunaroute_models:\n  glm-5.3: "+fields+"\n"))
+			require.NoError(t, err)
+			m, ok := r.LunaRouteModel("glm-5.3")
+			require.True(t, ok)
+			for _, kind := range []provider.ProfileKind{provider.ProfileKindChat, provider.ProfileKindAgent} {
+				assert.Equal(t, provider.SupportFact{Support: provider.SupportUnknown}, m.Task(kind))
+			}
+			for _, axis := range []string{"chat", "codex", "pi", "claude-code", "opencode"} {
+				assert.Equal(t, provider.SupportFact{Support: provider.SupportUnknown}, m.Backend(axis))
+				assert.Equal(t, provider.EffortFact{}, m.Effort(axis), "empty map is unknown, not a known-empty effort fact")
+			}
+			assert.False(t, m.ContextTokens.Known(), "override replaces the embedded record")
+			assert.False(t, m.OutputTokens.Known())
+			assert.Equal(t, provider.SupportUnknown, m.Reasoning.Support)
+			assert.True(t, r.Has("codex"), "native backend rules survive the model override")
+		})
+	}
+}

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -13,13 +14,14 @@ import (
 
 type lrPolicySource struct {
 	EligibleCandidateSource
-	provider string
-	mixed    bool
-	reverse  bool
-	err      error
-	calls    int
-	changeAt int
-	switchAt int
+	provider     string
+	mixed        bool
+	otherBackend string
+	reverse      bool
+	err          error
+	calls        int
+	changeAt     int
+	switchAt     int
 }
 
 func (s *lrPolicySource) VersionRequests(_ context.Context, p Profile) ([]VersionRequest, error) {
@@ -32,7 +34,11 @@ func (s *lrPolicySource) VersionRequests(_ context.Context, p Profile) ([]Versio
 	}
 	requests := []VersionRequest{{Model: p.Model, RouteProvider: s.provider, ConnectionRef: p.ConnectionRef, Backend: p.Backend}}
 	if s.mixed {
-		requests = append(requests, VersionRequest{Model: p.Model, RouteProvider: "zhipuai", Backend: p.Backend})
+		backend := p.Backend
+		if s.otherBackend != "" {
+			backend = s.otherBackend
+		}
+		requests = append(requests, VersionRequest{Model: p.Model, RouteProvider: "zhipuai", Backend: backend})
 	}
 	if s.reverse && len(requests) == 2 {
 		requests[0], requests[1] = requests[1], requests[0]
@@ -200,5 +206,50 @@ func TestLunaRouteMixedRoutesAndSourceErrors(t *testing.T) {
 			require.ErrorIs(t, err, expected)
 			assert.Zero(t, store.writes)
 		})
+	}
+}
+
+// Every route must honor the requested axes, including a native route on a
+// different backend. Using the profile backend for that route hides flooring.
+func TestLunaRouteMixedRouteBackendsPreserveAxes(t *testing.T) {
+	for _, update := range []bool{false, true} {
+		for _, reverse := range []bool{false, true} {
+			for _, nativeLevel := range []Effort{EffortLow, EffortHigh} {
+				t.Run(fmt.Sprintf("update=%t/reverse=%t/native=%s", update, reverse, nativeLevel), func(t *testing.T) {
+					glm := fullGLM()
+					glm.Efforts["codex"] = EffortFact{Known: true, Levels: []Effort{EffortHigh}, Evidence: "fixture#codex"}
+					rules := NewCapabilityRules(map[string]BackendCapability{
+						"pi":    {Backend: "pi", EffortLevels: []Effort{nativeLevel}},
+						"codex": {Backend: "codex", EffortLevels: []Effort{EffortHigh}},
+					}).WithLunaRouteModels(map[string]LunaRouteModel{glm.ID: glm})
+					src := &lrPolicySource{provider: "lunaroute", mixed: true, reverse: reverse, otherBackend: "pi"}
+					prior := Profile{Alias: "mixed", Kind: ProfileKindAgent, Backend: "codex", ConnectionRef: "opaque", Model: glm.ID, Effort: EffortLow, Revision: 7}
+					store := &lrPolicyStore{row: prior}
+					svc := NewProfileService(store, rules, lrPolicyReload{})
+					svc.SetModelSelection(modelidentity.NewVersionResolver(), src)
+					ctx := identity.WithIdentity(context.Background(), identity.Identity{Role: identity.RoleAdmin})
+					next := prior
+					next.Effort = EffortHigh
+					write := svc.Create
+					if update {
+						write = svc.Update
+					}
+					saved, effective, err := write(ctx, next)
+					if nativeLevel == EffortLow {
+						require.ErrorIs(t, err, ErrInvalidSelection)
+						assert.Contains(t, err.Error(), "mixed routes require different effective axes")
+						assert.Zero(t, store.writes)
+						assert.Equal(t, prior, store.row, "refused write preserves the entire prior row")
+						assert.Empty(t, saved)
+						assert.Empty(t, effective)
+					} else {
+						require.NoError(t, err)
+						assert.Equal(t, 1, store.writes)
+						assert.Equal(t, EffortHigh, saved.Effort)
+						assert.Equal(t, Effective{ContextWindow: ContextDefault, Effort: EffortHigh}, effective)
+					}
+				})
+			}
+		}
 	}
 }
