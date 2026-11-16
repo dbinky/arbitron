@@ -91,6 +91,11 @@
 
 ## Review evidence
 
+- **Area 8 / single:8/review2 — WITHHELD at 6523e3c (independent failure review).**
+  Re-ran `go test -count=1 ./test/lunaroute/` and MCP `LunaRoute|AuthoringGuidance|Initialize` (both pass). C1, C2, C4 accepted: `docs_scope_test.go:validateLunaRouteAuthorScope` whitelists exact refusal clauses, and `TestLunaRouteAuthorSurfacesRejectContradictoryProse` mutates the real guide/instructions/hint inputs.
+  C3 fails: `observations/operator-manual-agent-tasks-2026-11-12.md` line 7 holds the verbatim task prompt, and `evidence_helpers_test.go:validateRegisterAt` checks that note only with `unsafeText` (credentials, not prompts) — G18 confirmed.
+  The "[ESCALATION]" label on G18 is wrong: no human ruling is needed. To tick next time: redact the prompt (keep the result table), add a Markdown prompt rejection to `validateRegisterAt`, and add a negative fixture that goes red when the prompt is re-added.
+
 - **Area 8 / single:8/review2 — failure-lens review; no approval.**
   C1 `register_test.go:TestReleaseGateRejectsPending`/`TestRegisterDeferredScope` pass; explicit-gate LR-04 pending/escalated/deferred overlays each fail; LR-05/06 stay excluded.
   C2 `TestRegisterRejectsBadEvidence` covers missing/empty/unreadable/symlink evidence; a real `capabilities.default.yaml` wrong-anchor overlay fails `TestProductionCapabilityEvidence`.
