@@ -9,6 +9,15 @@
 
 ## Open
 
+- [ ] **G21 (paired:2, Area 3 ↔ Area 6): failed save-time cache publication permits a successful chat with stale effort.**
+  Independently reproduced at cfc6918 with unchanged production code using an approver-only test overlay (`TestPaired2ReviewReloadFailure`).
+  Create `cache-review` and `unrelated` chat profiles at low; SQL-set unrelated.context_window to `not-a-tier` (existing `profile_repo_test.go:TestProfileRepo_CorruptedAxis_ListErrors` fault).
+  MCP `profile_update(cache-review, effort=high)` succeeds and SQLite stores high; the next real llm_call completes with reasoning_effort=low (assertion exits 1).
+  `domain/provider/profile_service.go:write` → `recache` discards the reload error; `cmd/arbitron/logging_reloader.go:Reload` only warns; `adapter/provider/cache.go:Load` keeps the old snapshot on List failure.
+  `dynamic.go:Resolve` and `lunaroute_chat.go:lunaRouteChat` consequently validate/send the stale low binding, so neither preflight nor run pinning catches the mismatch.
+  Control: identical overlay with unrelated.context_window=default passes, publishing/sending high (exit 0). This is the row's save→chat BREAK, not an adjacent emitter variant.
+  Next approval requires publishing the durable axes before chat, or refusing stale resolution/execution after reload failure; retain an MCP update → failed reload → real chat regression proving no successful stale send.
+
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
@@ -77,6 +86,14 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **paired:2 — WITHHELD at cfc6918 (independent review; G21).**
+  Normal save→chat: `profile_service.go:validateAxes` → `lunaroute_validate.go:lunaRouteExactEffort` preserves exact axes; `main.go:initDomainWithModelDependencies` shares the loaded rules with ProfileService/Factory.
+  Chat→save: `dynamic.go:Resolve` copies axes, `pinning.go:PinningResolver.Resolve` preserves effort and enforces the model pin, and `lunaroute_chat.go:lunaRouteChat` preflights before `request.go:buildBody`/HTTP.
+  Independently killed four overlays with `lunaroute_chat_wiring_test.go:TestLunaRouteChatWiringMCPSavedAxesReachBody`: accepting xhigh, dropping resolver effort, forcing low, and changing the emitted model (all exit 1).
+  Clean `go test -count=1 -timeout 5m ./cmd/arbitron -run '^TestLunaRouteChat'`, the analogous `./adapter/provider` command (including SSE), and `go build ./...` exit 0.
+  Supplied metrics were unexpanded placeholders; independently ran full `go test -count=1 -timeout 30m ./...` (exit 0, all packages green). Against the green Go baseline: new_failures=0, build_broken=false.
+  G21's unchanged-code failure-path overlay exits 1; repairing only the unrelated row makes it exit 0. Approval needs failed cache publication to prevent a successful stale send; row 2 remains unticked.
 
 - **paired:2 — Area 3 save ↔ Area 6 chat evidence (refiner recommends approve; no gap found).**
   A→B: `lunaroute_validate.go:lunaRouteExactEffort[chat]` = none/low/medium/high/max, exactly the set `axes.go:ChatReasoningEffort` emits verbatim; xhigh (floored to high) is refused at save even when the table lists it.
