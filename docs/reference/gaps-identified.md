@@ -9,6 +9,11 @@
 
 ## Open
 
+- **[ESCALATION] Area 7 / single:7/review2 — precise acceptance boundary.**
+  Approval requires `domain/provider/probe.go:ProbeBindingFromConnection` to reject a changed stored revision after decryption at both discovery and CLI callers, before any HTTP request.
+  The previously absent fixture is now `cmd/arbitron/lunaroute_discovery_concurrency_test.go:TestLunaRouteDiscovery_ConcurrentConnectionChange`: real encrypted SQLite, both provider-switch directions, rotation, recreation and post-decrypt mutation/deletion, on both surfaces.
+  The independent approver must verify that fixture and checks C1–C6 below; no live credential, external dependency or operator policy decision is needed. No approval box was edited.
+
 - **[RESOLVED at approval of b03188d] Area 6 / single:6/review2 — G3 boundary fixtures supplied and independently mutation-verified.**
 
 - **[RESOLVED at approval of d11128a] Area 5 / single:5/review2 — exact remaining approval conditions.**
@@ -55,6 +60,24 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 7 / single:7/review2 — failure-lens checks.**
+  C1: `domain/provider/model_discovery_test.go:TestDiscover_AuthzAndNotFound` verifies forbidden/unauthenticated before any store or selector read, and unknown connection before probing; `TestDiscover_NilPortsAreWiringFaults` covers missing dependencies.
+  C2: `adapter/probe/lunaroute_test.go:TestLunaRouteProbe_MalformedListingIsNeverAnEmptyCatalog`, `OversizedBody`, `ReadDiagnosticsDropIncompleteBodies` and `EmptyListIsReachable` distinguish invalid/partial/oversized responses from a reachable empty list; valid rows followed by malformed rows return no partial catalog.
+  C3: `adapter/probe/lunaroute_test.go:TestLunaRouteProbe_RedirectNotFollowed` covers 300/302/307 with valid-looking catalogs and exactly one request; `CancellationAndTimeout` preserves cancellation/deadline identity.
+  C4: `adapter/mcp/tools_connection_models_test.go:TestConnectionModels_LogsNeverEchoUnclassifiedErrors` verifies generic output and a connection-name-only log; `domain/provider/model_discovery_test.go:TestDiscover_RevealFailureDoesNotDiscloseReturnedKey` pins exact-secret redaction when Reveal returns both key and error.
+  C5: `domain/provider/model_discovery_test.go:TestDiscover_LunaRouteView` verifies sorting/deduplication, exclusion of table-only models and unknown facts for listed-only models; `NonLunaRouteProviderIsAllUnknown` and `ListingUnsupported` cover folded contracts.
+  C6: `domain/provider/model_discovery_test.go:TestDiscover_RevokedAliasFamily` now checks both contradictory vendor prefixes, Claude-shaped/opaque aliases and `glm-5.3` at the discovery view sink.
+  Concurrency: `domain/provider/probe.go:ProbeBindingFromConnection` checks the production `Connection.ConfigRevision` after Reveal; repository-wide `grep -rn 'ProbeBindingFromConnection' --include='*.go' .` finds real callers in `model_discovery.go:Discover` and `cmd/arbitron/connection.go:bindingFromConnection`.
+
+- **Area 7 / single:7/review2 — verification.**
+  Before edits, targeted discovery/probe/MCP/CLI tests passed in all four packages, with no baseline failure found.
+  `cmd/arbitron/lunaroute_discovery_concurrency_test.go:TestLunaRouteDiscovery_ConcurrentConnectionChange` failed before implementation: switch-to-LunaRoute returned a successful catalog through the stale foreign route; all twelve cases now reject with no HTTP and no success output. The returned-key reveal-error regression was also observed red before its redaction fix.
+  `go test -timeout 30m ./domain/provider ./adapter/probe ./adapter/mcp ./cmd/arbitron -run 'Test(Discover_|LunaRouteProbe_|ConnectionModels_|LunaRouteDiscovery|RunConnectionValidate|ConnectionValidate|BindingFromConnection|FormatProbeResult)' -count=1` passed (four packages).
+  `go test -timeout 30m ./adapter/sqlite -run '^TestConnectionExecutionRevision' -count=1` passed, including concurrent increments and deletion/recreation revision monotonicity used by the guard.
+  `go test -race -timeout 30m ./cmd/arbitron -run '^TestLunaRouteDiscovery_ConcurrentConnectionChange$' -count=1` passed after the final code change (29.533s).
+
+Recommend: approve single:7/review2 — all six failure checks pass; `domain/provider/probe.go:ProbeBindingFromConnection` has two production callers confirmed by grep, and `TestLunaRouteDiscovery_ConcurrentConnectionChange` was red before the fix and now passes all twelve real-SQLite cases with zero HTTP; targeted discovery/probe/MCP/CLI, revision and race checks pass.
 
 - **Area 7 / single:7/review1 — APPROVED at 28da84b (independent wiring review).**
   C1: `cmd/arbitron/main.go:initDomainWithModelDependencies` feeds one shared-client ProbeFactory into discovery and Factory.Probes; `mcpDeps` and `adapter/mcp/tools_connection.go:RegisterConnectionTools` expose the tool. `cmd/arbitron/lunaroute_discovery_wiring_test.go:TestLunaRouteDiscoveryWiring` checks the actual HTTP and MCP JSON sinks.
@@ -321,6 +344,8 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+- Area 7 discovery credential race: `domain/provider/probe.go:ProbeBindingFromConnection` now rejects revision drift after decryption for discovery and CLI; twelve real-SQLite interleavings prove zero outgoing requests and no partial success.
+
 - G6 (Area 7): closed single:7/review1 — `adapter/probe/lunaroute_test.go:TestLunaRouteProbe_RedirectNotFollowed` now includes 300 with a valid body; `>= 300`→`> 300` mutant verified to fail it.
 
 - [x] **G3 (Area 6):** `domain/provider/lunaroute_classify_test.go:TestRedactLunaRoute_ByteLimit` and `TestNormalizeLunaRouteRetryAfter` kill the exact-256-byte and digit-9 survivors (both exit 1); real-code targeted race tests pass.

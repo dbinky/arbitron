@@ -16,6 +16,7 @@ type discStore struct {
 	provider.ConnectionStore
 	conns         map[string]provider.Connection
 	key           string
+	revealErr     error
 	reveals, gets int
 }
 
@@ -33,7 +34,7 @@ func (s *discStore) Reveal(_ context.Context, name string) (string, error) {
 	if _, ok := s.conns[name]; !ok {
 		return "", provider.ErrConnectionNotFound
 	}
-	return s.key, nil
+	return s.key, s.revealErr
 }
 
 func checkDiscBinding(b provider.ResolvedBinding) error {
@@ -207,6 +208,18 @@ func TestDiscover_GuardAppliesToDiscoveryBinding(t *testing.T) {
 	assert.NotContains(t, err.Error(), store.key)
 }
 
+func TestDiscover_RevealFailureDoesNotDiscloseReturnedKey(t *testing.T) {
+	store := lrStore()
+	store.key = "foreign-unstructured-secret"
+	store.revealErr = errors.New("decrypt failed " + store.key)
+	probe := &discProbe{}
+	view, err := provider.NewModelDiscoveryService(store, &discSelector{probe: probe}, discCaps()).Discover(admin(), "lr")
+	require.ErrorIs(t, err, store.revealErr)
+	assert.NotContains(t, err.Error(), store.key)
+	assert.Empty(t, probe.key)
+	assert.Equal(t, provider.DiscoveryView{}, view)
+}
+
 func TestDiscover_NonLunaRouteProviderIsAllUnknown(t *testing.T) {
 	probe := &discProbe{result: provider.ProbeResult{Reachable: true, Models: []string{"glm-5.3", "anthropic/claude-sonnet-4.5"}}}
 	view, err := provider.NewModelDiscoveryService(lrStore(), &discSelector{probe: probe}, discCaps()).Discover(admin(), "or")
@@ -312,10 +325,17 @@ func TestDiscover_SelectorFailurePropagates(t *testing.T) {
 }
 
 func TestDiscover_RevokedAliasFamily(t *testing.T) {
-	probe := &discProbe{result: provider.ProbeResult{Reachable: true, Models: []string{"claude-sonnet-5-lr1", "opaque-lr999"}}}
+	probe := &discProbe{result: provider.ProbeResult{Reachable: true, Models: []string{
+		"claude-sonnet-5-lr1", "opaque-lr999", "anthropic/gpt-6.1", "openai/claude-sonnet-4.5", "glm-5.3",
+	}}}
 	view, err := provider.NewModelDiscoveryService(lrStore(), &discSelector{probe: probe}, discCaps()).Discover(admin(), "lr")
 	require.NoError(t, err)
-	require.Len(t, view.Models, 2)
-	assert.Equal(t, "unresolved", view.Models[0].Family, "R3: listing cannot turn an open-weight alias into Anthropic")
-	assert.Equal(t, "unresolved", view.Models[1].Family)
+	require.Len(t, view.Models, 5)
+	want := map[string]string{
+		"claude-sonnet-5-lr1": "unresolved", "opaque-lr999": "unresolved",
+		"anthropic/gpt-6.1": "unresolved", "openai/claude-sonnet-4.5": "unresolved", "glm-5.3": "zhipuai",
+	}
+	for _, m := range view.Models {
+		assert.Equal(t, want[m.ID], m.Family, "listing cannot establish vendor identity: %s", m.ID)
+	}
 }

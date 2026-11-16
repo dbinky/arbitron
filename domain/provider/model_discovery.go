@@ -108,11 +108,7 @@ func (s *ModelDiscoveryService) Discover(ctx context.Context, name string) (Disc
 	if err != nil {
 		return DiscoveryView{}, err
 	}
-	store := s.store
-	binding := GuardLunaRouteReveal(ResolvedBinding{
-		Provider: conn.Provider, BaseURL: conn.BaseURL, Extras: conn.Extras, ConnectionRef: name,
-		RevealKey: func(ctx context.Context) (string, error) { return store.Reveal(ctx, name) },
-	})
+	binding := ProbeBindingFromConnection(s.store, name, conn)
 	view := DiscoveryView{Connection: name, Provider: conn.Provider, ListingSupported: true, Note: DiscoveryNote, Models: []DiscoveredModel{}}
 	probe, err := s.probes.ProbeFor(binding)
 	if errors.Is(err, ErrNoProbeForProvider) {

@@ -212,6 +212,7 @@ func TestLunaRouteProbe_MalformedListingIsNeverAnEmptyCatalog(t *testing.T) {
 	for _, body := range []string{
 		`<html>oops</html>`, `{"object":"list"}`, `{"data":"nope"}`, `null`, `{"data":null}`, `{"data":[null]}`,
 		`{"data":[{}]}`, `{"data":[{"id":null}]}`, `{"data":[{"id":12}]}`, `{"data":[{"id":true}]}`, `{"data":["glm-5.3"]}`, `{"data":[]} trailing`,
+		`{"data":[{"id":"glm-5.3"},null]}`, `{"data":[{"id":"glm-5.3"},{}]}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			g := &lrGateway{status: 200, body: body}

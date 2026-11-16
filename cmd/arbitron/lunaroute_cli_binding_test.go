@@ -16,6 +16,13 @@ type cliKeyStore struct {
 	calls int
 }
 
+func (s *cliKeyStore) Get(_ context.Context, name string) (provider.Connection, error) {
+	if name != s.name {
+		return provider.Connection{}, provider.ErrConnectionNotFound
+	}
+	return provider.Connection{Name: name, Provider: "lunaroute", BaseURL: "https://gw.lunaroute.com"}, nil
+}
+
 func (s *cliKeyStore) Reveal(_ context.Context, name string) (string, error) {
 	if name != s.name {
 		return "", provider.ErrConnectionNotFound
