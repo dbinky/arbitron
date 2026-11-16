@@ -88,6 +88,16 @@
 
 ## Review evidence
 
+- **paired:4 — APPROVED independently for refinement 644cb67 (both directions).**
+  SHARED: `domain/provider/lunaroute_errors.go:LocalLunaRouteError` / `SanitizeLunaRouteError` retain error identity; `adapter/provider/lunaroute_agent.go:lunaRouteDiagnosable` consumes the marker through `errors.Is`.
+  Production TRACE: `cmd/arbitron/main.go:initDomainWithModelDependencies` supplies Probes; `adapter/provider/factory.go:AgentProviderFor` wraps the codex arm of `agentProviderFor`, passing the same guarded binding and capability rules.
+  Codex → diagnosis: `adapter/codex/provider.go:RunAgent` marks verifier failures only after the final turn completes; preflight/args precede reveal/launch, and rollout reads precede deferred cleanup. `adapter/codex/lunaroute.go:prepareLunaRouteLaunchWithFS` / `ensureLunaRouteCompatible` mark preparation failures.
+  Diagnosis → codex: `adapter/provider/lunaroute_agent.go:RunAgent` checks policy before dispatch, then skips local errors and diagnoses opaque failures once; `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiringOpaqueFailure` proves one HTTP hit and secret-free node/log output; `TestLunaRouteCodexWiringLocalFailureNeverProbes` proves zero for version/home/reveal.
+  BREAK: old-provider Go overlay made `cmd/arbitron/lunaroute_codex_wiring_test.go:TestLunaRouteCodexWiringRejectsRolloutDrift` fail with an unwanted `/v1/models` hit; a second overlay marking an opaque process error local made `TestLunaRouteCodexWiringOpaqueFailure` fail with zero hits. Both exited 1 on assertions, not compilation; unchanged-source controls passed.
+  Boundary: `adapter/codex/lunaroute_test.go:TestLunaRouteCodex_EvidenceRequiredOnEverySuccess` covers missing/empty/drift/foreign/unsafe/wrong-session evidence for both pin modes; `TestLunaRouteCodex_FinalTurnMustComplete` preserves the unfinished-turn exception. Focused codex/provider/root tests passed uncached (`-count=1`).
+  Gates: supplied verification fields were unresolved; independently ran `go test -timeout 30m ./...` (exit 0, cmd/arbitron 330.887s) and `go build ./...` (exit 0). No affected Go-suite regression or broken build; dashboard/script suites are outside this Go-only refinement's scope.
+  Rule 5: G22/G23 are newly discovered sibling variants in cleanup and empty WorkDir, unchanged by this rollout fix; both remain open with concrete repair guidance above. Their existence does not require exhausting the defect family before approving this verified change.
+
 - **paired:4 — Area 2 diagnosis ↔ Area 4 codex launch (refiner: fixed rollout BREAK; recommends no approval).**
   Found: a completed codex turn whose private rollout could not prove the route (missing/drift/foreign/unsafe/wrong session)
   returned unmarked `ErrModelEvidence`; the wrapper probed `/v1/models` and reported a gateway observation for a local fault.
