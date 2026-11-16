@@ -78,6 +78,16 @@
 
 ## Review evidence
 
+- **paired:2 — APPROVED independently at cbbf613 (both directions; G21 confirmed closed).**
+  SHARED: persisted model/effort and one loaded rules value; `cmd/arbitron/main.go:initDomainWithModelDependencies` feeds ProfileService, Factory and the shared ProfileCache-backed resolvers.
+  Save→chat: `domain/provider/profile_service.go:validateAxes` and `domain/provider/lunaroute_validate.go:lunaRouteExactEffort` validate exact axes before persistence; `adapter/provider/dynamic.go:Resolve` copies them verbatim.
+  Publication: `domain/provider/profile_service.go:recache` publishes the committed row before releasing the mutation lease; `cmd/arbitron/logging_reloader.go:PublishProfile` forwards to `adapter/provider/cache.go:PublishProfile`, serialized with Load and revision-guarded. Delete/seed use the same production cache.
+  Chat→save: `domain/provider/pinning.go:PinningResolver.Resolve` preserves live effort while enforcing the run's model pin; `adapter/provider/lunaroute_chat.go:lunaRouteChat` rechecks the same policy before body construction, reveal or HTTP, so incompatible live axes refuse execution.
+  TRACE: `cmd/arbitron/lunaroute_chat_wiring_test.go:TestLunaRouteChatWiringMCPSavedAxesReachBody` passes for MCP create low, update high, refused medium/xhigh and default omission, comparing SQLite and the real llm_call HTTP body/model.
+  SSE: llm_call uses Chat; `adapter/openrouter/provider.go:StreamChat` uses the same binding and `adapter/openrouter/request.go:buildBody`; `adapter/provider/lunaroute_chat_test.go:TestLunaRouteChat_Stream` passes against exact-body fake SSE responses.
+  BREAK: `cmd/arbitron/lunaroute_chat_wiring_test.go:TestLunaRouteChatWiringReloadFailurePublishesSavedAxes` passes; removing wrapper publication via an untracked temporary overlay makes it fail (exit 1). Inverting the cache revision guard similarly fails `adapter/provider/cache_test.go:TestProfileCache_TargetedPublishAndForget` (exit 1).
+  Gates: `go test -timeout 30m ./...` exit 0 against the green branch-point Go baseline (new_failures=0); fresh `go test -count=1 -timeout 10m ./adapter/provider ./domain/provider ./cmd/arbitron -run 'Profile|LunaRouteChat|LoggingReloader|Seed'` exit 0. `go build ./...` and `go vet ./adapter/provider ./domain/provider ./cmd/arbitron` exit 0 (build_broken=false).
+
 - **paired:2 — refiner pass after G21 (recommend approve).**
   Fix: `profile_service.go:recache(ctx, committed)` now also calls `ProfilePublisher.PublishProfile` with the committed row under the mutation lease (Delete → `ForgetProfile`; seed batch passes its stored row).
   `cache.go:ProfileCache.PublishProfile` is serialized with `Load` (loadMu) and never replaces a newer cached revision; `logging_reloader.go` forwards both methods so the root decorator does not hide them.
