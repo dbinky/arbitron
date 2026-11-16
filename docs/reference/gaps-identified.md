@@ -9,18 +9,12 @@
 
 ## Open
 
-- **[ESCALATION] Area 8 / single:8/review2 — exact remaining approval conditions.**
-  G16's negative prose guard is now supplied by `test/lunaroute/docs_scope_test.go:TestLunaRouteAuthorSurfacesR7` for the guide and both MCP surfaces.
-  Independent review must verify its appended/reworded support-claim controls, including mutations of the real source inputs.
-  `test/lunaroute/evidence_helpers_test.go:validateRegisterAt` also needs prompt rejection for the R7 Markdown observation (G18 below).
-  Remove the verbatim task prompt from the accepted operator note while retaining its genuine result/configuration evidence, then prove prompt reinsertion fails.
-  These fixtures and redaction, followed by independent failure-lens verification, are needed to tick the box; no live key or new operator run is needed.
-
-- [ ] **G18 (Area 8, review2 check 3): accepted manual observation contains a raw prompt.**
-  `docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md:Operator manual agent tool tasks` includes a verbatim task prompt in a blockquote.
-  `test/lunaroute/evidence_helpers_test.go:validateRegisterAt` exempts this Markdown note from JSON validation and checks only `unsafeText` (credentials).
-  Temporary `TestArea8MarkdownPromptRejected` required rejection of a prompt blockquote; `go test -count=1 -timeout 30m ./test/lunaroute -run '^TestArea8MarkdownPromptRejected$'` failed (accepted); fixture removed.
-  Redact the prompt without changing the observed results and add a negative Markdown prompt fixture through the release validator.
+- **[ESCALATION] Area 8 / single:8/review2 — fourth-pass acceptance boundary.**
+  To tick this box, the independent approver must verify all four failure checks, including prompt rejection through `test/lunaroute/evidence_helpers_test.go:validateRegisterAt`.
+  Required fixture: `test/lunaroute/register_test.go:TestReleaseGateRejectsManualPromptPayloads` must reject reinsertion while the redacted real operator record remains accepted.
+  Required artifact: `observations/operator-manual-agent-tasks-2026-11-12.md:Operator manual agent tool tasks` must retain its genuine configuration/result rows and omit the task prompt.
+  Required negative controls: pending/escalated/deferred required items, broken evidence anchors, credentials, and contradictory guide/MCP support claims must fail.
+  This pass supplies the missing G18 fixture/redaction; independent failure-lens approval is the remaining acceptance step, with no operator decision, live key or new run required. G17 stays a sibling documentation gap.
 
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
@@ -90,6 +84,16 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 8 / single:8/review2 — failure-lens verification after G18 repair.**
+  C1 `evidence_helpers_test.go:releaseProblems`: required LR-01–04/07/08 remain verified-only; `TestRegisterDeferredScope` excludes only LR-05/06. Real LR-04 pending/escalated/deferred mutations each fail explicit release mode.
+  C2 `register_test.go:TestRegisterRejectsBadEvidence` covers absent/empty/unreadable/unsafe evidence; a real capability-anchor mutation fails `TestProductionCapabilityEvidence`; `TestLunaRouteProductionIdentityEvidence` passes.
+  C3 `evidence_helpers_test.go:unsafeManualObservation` rejects quoted/fenced/indented or labeled prompt/body/message payloads after decoding, alongside credentials; errors retain fixed labels only.
+  `register_test.go:TestReleaseGateRejectsManualPromptPayloads` was red for all 11 formats, then green before/after the genuine note; restoring its original prompt fails `TestReleaseGate`, and removing the guard makes the new fixture red.
+  `TestObservationBoundaryRedaction`/`TestObservationPrivateSink` pass: rejected payloads cause zero writes, private/exclusive publication refuses overwrites and symlinks. The gate reads local evidence synchronously; live timeout/helper collectors remain deferred by R7.
+  C4 `docs_scope_test.go:TestLunaRouteAuthorSurfacesRejectContradictoryProse` passes all 18 controls; contradictory claims injected into each real guide/instructions/hint input fail `TestLunaRouteAuthorSurfacesR7`.
+  Verified targeted `go test -count=1 -timeout 30m` runs for release/register/observation/production/docs tests, MCP hints/initialize guidance, identity evidence, and explicit `ARBITRON_LUNAROUTE_RELEASE_GATE=1` `TestReleaseGate`; all pass. Nine mutation controls rejected; sources restored.
+  Recommend: approve single:8/review2 — all four failure checks pass, including real prompt reinsertion and guard-removal controls; G17 remains a sibling documentation gap.
 
 - **Area 8 / single:8/review2 — WITHHELD at 6523e3c (independent failure review).**
   Re-ran `go test -count=1 ./test/lunaroute/` and MCP `LunaRoute|AuthoringGuidance|Initialize` (both pass). C1, C2, C4 accepted: `docs_scope_test.go:validateLunaRouteAuthorScope` whitelists exact refusal clauses, and `TestLunaRouteAuthorSurfacesRejectContradictoryProse` mutates the real guide/instructions/hint inputs.
@@ -398,6 +402,8 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- **G18 (Area 8):** redacted the operator task prompt while preserving every result row; `test/lunaroute/evidence_helpers_test.go:unsafeManualObservation` and `register_test.go:TestReleaseGateRejectsManualPromptPayloads` now reject reinsertion through the release validator (11 formats, red → green).
 
 - **G16 (Area 8):** `test/lunaroute/docs_scope_test.go:TestLunaRouteAuthorSurfacesR7` rejects contradictory guide/MCP support claims; 18 mutation cases and all three real-source overlays verified, with no approval box changed.
 - Area 7 discovery credential race: `domain/provider/probe.go:ProbeBindingFromConnection` now rejects revision drift after decryption for discovery and CLI; twelve real-SQLite interleavings prove zero outgoing requests and no partial success.

@@ -2,9 +2,8 @@
 
 Credential-free record of manual operator runs against the hosted gateway
 (`https://gw.lunaroute.com`) with an `lr_` key held only by the operator. Each
-run used the launch shape the production adapter emits. The prompt was:
-
-> Create a file named hello.txt in the current directory containing exactly the word DONE, then reply DONE.
+run used the launch shape the production adapter emits. Task instructions are
+omitted; only configuration and outcome metadata are retained below.
 
 | Backend | Binary | Model | Launch shape | Result |
 |---|---|---|---|---|

@@ -111,6 +111,53 @@ func TestRegisterManualOperatorNoteBoundary(t *testing.T) {
 	require.NotEmpty(t, validateRegisterAt(root, r), "only the R7 operator note is Markdown observation evidence")
 }
 
+// A credential-only scan must not let a reintroduced prompt make the released
+// register ready. Start with the actual operator record and retain its results.
+func TestReleaseGateRejectsManualPromptPayloads(t *testing.T) {
+	raw, err := readRepoFile(repoRoot(t), manualTaskEvidence)
+	require.NoError(t, err)
+	const prompt = "Write a private-sentinel file, then report its contents."
+	for name, payload := range map[string]string{
+		"blockquote":      "> " + prompt,
+		"indented quote":  "  > " + prompt,
+		"escaped quote":   `\u003e ` + prompt,
+		"fenced prompt":   "```text\n" + prompt + "\n```",
+		"tilde fence":     "~~~\n" + prompt + "\n~~~",
+		"indented code":   "    " + prompt,
+		"prompt label":    "The prompt was: " + prompt,
+		"formatted label": "**Prompt:** " + prompt,
+		"prompt heading":  "## Task prompt\n" + prompt,
+		"request body":    "Request body: " + prompt,
+		"message payload": `{"messages": [{"content": "` + prompt + `"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, r := fixtureRegister(t)
+			for id, it := range r.Items {
+				it.Status = "verified"
+				it.Evidence = []string{evidencePath + "/source.md"}
+				it.AppliedTo = []string{"domain/runtime.go:HostedRoot"}
+				if id == "LR-05" || id == "LR-06" {
+					it.Status, it.Evidence, it.AppliedTo = "deferred", nil, nil
+				}
+				if id == "LR-07" || id == "LR-08" {
+					it.Evidence = []string{manualTaskEvidence}
+				}
+				r.Items[id] = it
+			}
+			path := filepath.Join(root, manualTaskEvidence)
+			require.NoError(t, os.WriteFile(path, raw, 0600))
+			require.Empty(t, releaseProblems(root, r), "redacted operator results remain release evidence")
+			for _, body := range []string{payload + "\n" + string(raw), string(raw) + "\n" + payload} {
+				require.NoError(t, os.WriteFile(path, []byte(body), 0600))
+				problems := releaseProblems(root, r)
+				require.Contains(t, problems, "LR-07: invalid or unsafe observation")
+				require.Contains(t, problems, "LR-08: invalid or unsafe observation")
+				assert.NotContains(t, strings.Join(problems, " "), "private-sentinel")
+			}
+		})
+	}
+}
+
 func TestVerifiedEvidenceReferences(t *testing.T) {
 	root, r := fixtureRegister(t)
 	it := r.Items["LR-01"]

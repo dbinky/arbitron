@@ -135,7 +135,7 @@ func validateRegisterAt(root string, r register) []string {
 			if strings.HasPrefix(ref, evidencePath+"/observations/") {
 				if ref == evidencePath+"/observations/operator-manual-agent-tasks-2026-11-12.md" {
 					// R7 supplies this reviewed operator record instead of a generated collector artifact.
-					if unsafeText(string(raw), "") {
+					if unsafeManualObservation(raw) {
 						bad("invalid or unsafe observation")
 					}
 				} else if filepath.Ext(ref) != ".json" || validateObservationJSON(raw, "") != nil {
@@ -234,6 +234,26 @@ func decodedText(s string) string {
 func unsafeText(s, key string) bool {
 	s = decodedText(s)
 	return key != "" && strings.Contains(s, key) || secretToken.MatchString(s)
+}
+
+var manualPayloadLabel = regexp.MustCompile(`(?im)\b(?:prompts?|request body|messages?|content)\s*(?:was\s*)?[:=]|^\s*#{1,6}\s+(?:task\s+)?(?:prompts?|request body|messages?|content)\b`)
+
+// The reviewed Markdown exception retains configuration and result metadata,
+// never quoted/fenced request text or labeled prompt/body/message payloads.
+// Scan decoded input and strip label formatting without echoing rejected data.
+func unsafeManualObservation(raw []byte) bool {
+	text := decodedText(string(raw))
+	if unsafeText(text, "") {
+		return true
+	}
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, ">") || strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") ||
+			strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			return true
+		}
+	}
+	return manualPayloadLabel.MatchString(strings.NewReplacer("*", "", "`", "", `"`, "").Replace(text))
 }
 
 // JSON object members must be unique before converting to maps. Otherwise a
