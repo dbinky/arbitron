@@ -21,6 +21,15 @@ type agentListingGateway struct {
 	mu       sync.Mutex
 	models   []string
 	requests []string
+	// answer, when set, replaces the authenticated listing reply so a root
+	// test can make the gateway answer the diagnosis probe in any shape.
+	answer func(*http.Request) *http.Response
+}
+
+func (g *agentListingGateway) setAnswer(answer func(*http.Request) *http.Response) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.answer = answer
 }
 
 func (g *agentListingGateway) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -39,6 +48,9 @@ func (g *agentListingGateway) RoundTrip(r *http.Request) (*http.Response, error)
 	}
 	if auth != "ok" {
 		return reply(401, `{"code":"INVALID_API_KEY"}`)
+	}
+	if g.answer != nil {
+		return g.answer(r), nil
 	}
 	data := make([]map[string]string, 0, len(g.models))
 	for _, m := range g.models {

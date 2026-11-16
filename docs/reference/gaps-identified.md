@@ -90,6 +90,17 @@
 
 ## Review evidence
 
+- **paired:6 — Area 2 diagnosis ↔ Area 7 discovery probe (refiner: recommend approve; no seam defect found).**
+  Wiring: `main.go:1030` `adaptprobe.NewProbeFactory` (cfg timeout/MaxResponseBytes) → `main.go:1050` `Deps.Probes` → `factory.go:270` `wrapLunaRouteAgent`; `probe/factory.go:80` routes lunaroute to `newLunaRouteProbe`.
+  Probe → diagnosis: `probe/lunaroute.go:Probe` returns `Reachable` only after a complete read, valid JSON, a non-null `data` array and string ids; any read error,
+  cut/non-JSON body or missing array is `ClassifyLunaRoute(Malformed)` → `*LunaRouteFailure` (service failure); non-2xx (+read error via sanitized Join) stays a `*LunaRouteFailure`.
+  Diagnosis → probe: `provider/lunaroute_agent.go:diagnose` treats only `errors.As(*LunaRouteFailure)` as a checked verdict, other errors / !Reachable / ModelsUnsupported as unchecked.
+  Before: only the "200 listing the model" case crossed the real seam (`TestLunaRouteCodexWiringOpaqueFailure`, `TestLunaRouteAgent_PostFailureHTTPSink`); the matrix used a fake probe.
+  Added root `cmd/arbitron/lunaroute_diagnosis_probe_wiring_test.go:TestLunaRouteCodexWiringDiagnosisReadsProbeContract` (10 gateway answers, node error sink, one probe, no retry, key-free).
+  Mutations: probe ignores 2xx read error + returns plain error on bad JSON → cut/read-error/non-JSON red; `diagnose` ignores `*LunaRouteFailure` → 6 verdict cases red. Sources restored.
+  Not a defect: rows with `"id":""` are skipped, so a listing of only empty ids reads as "model unavailable" — an authoritative listing that lacks the pin.
+  Recommend: approve paired:6.
+
 - **paired:5 — APPROVED independently for f21f8bc and f576a28 (both directions).**
   SHARED: `domain/provider/lunaroute_errors.go:LocalLunaRouteError` retains `ErrLunaRouteLocalFailure` through sanitization.
   Production TRACE: `cmd/arbitron/main.go:initDomainWithModelDependencies` supplies Probes/rules; `adapter/provider/factory.go:AgentProviderFor` wraps its pi arm with the same guarded binding/rules.
