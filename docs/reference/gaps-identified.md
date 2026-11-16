@@ -43,6 +43,8 @@
   The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
   `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
   `lr_` text or more than 256 bytes must be rejected as evidence. Add a case per clause.
+  Progress (single:4/review1): codex half pinned by `adapter/codex/lunaroute_identity_test.go:TestSafeLunaRouteIdentity_EachClause`
+  (dropping the quote/backslash clause fails it). The pi half (`adapter/pi/model_probe.go` 60/62) remains open for Area 5.
 - [ ] **G11 (Areas 3, 7): text survivors need a decision.**
   The survivors `harden:adapter/mcp/tools_connection_models.go`, `harden:adapter/mcp/lunaroute_backend_hint.go` and
   `harden:domain/provider/model_discovery.go` are string-concatenation mutants in LLM-facing text. Pin the load-bearing
