@@ -9,16 +9,23 @@
 
 ## Open
 
+- **[ESCALATION] Area 8 / single:8/review2 — exact remaining approval conditions.**
+  G16's negative prose guard is now supplied by `test/lunaroute/docs_scope_test.go:TestLunaRouteAuthorSurfacesR7` for the guide and both MCP surfaces.
+  Independent review must verify its appended/reworded support-claim controls, including mutations of the real source inputs.
+  `test/lunaroute/evidence_helpers_test.go:validateRegisterAt` also needs prompt rejection for the R7 Markdown observation (G18 below).
+  Remove the verbatim task prompt from the accepted operator note while retaining its genuine result/configuration evidence, then prove prompt reinsertion fails.
+  These fixtures and redaction, followed by independent failure-lens verification, are needed to tick the box; no live key or new operator run is needed.
+
+- [ ] **G18 (Area 8, review2 check 3): accepted manual observation contains a raw prompt.**
+  `docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md:Operator manual agent tool tasks` includes a verbatim task prompt in a blockquote.
+  `test/lunaroute/evidence_helpers_test.go:validateRegisterAt` exempts this Markdown note from JSON validation and checks only `unsafeText` (credentials).
+  Temporary `TestArea8MarkdownPromptRejected` required rejection of a prompt blockquote; `go test -count=1 -timeout 30m ./test/lunaroute -run '^TestArea8MarkdownPromptRejected$'` failed (accepted); fixture removed.
+  Redact the prompt without changing the observed results and add a negative Markdown prompt fixture through the release validator.
+
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
   Update both the introduction and `README.md:Release enforcement` to match the current gate and R7. This does not fail Review 1 checks 1–6.
-
-- [ ] **G16 (Area 8, for review2 check 4): guide prose claiming claude-code/opencode support turns no test red.**
-  Temporary overlay appended "LunaRoute works with claude-code and opencode agent backends." to `docs/setup/lunaroute.md`;
-  `go test ./test/lunaroute/ ./adapter/mcp/` stayed green. `docs_examples_test.go:TestLunaRouteGuideExamplesAreValid` pins required
-  phrases and example blocks only; nothing scans guide prose negatively. Overlay reverted. Add a negative scan (claude-code/opencode
-  only in a "not supported/deferred" sentence) for the guide and MCP text; owner: single:8/review2.
 
 - **single:8/review1 — wiring-lens evidence (recommend approve).**
   C1 `register.yaml` LR-01..08, LR-05/06 `deferred` empty applied_to; `TestRegisterDeferredScope`. C2 all 20 `applied_to` pointers grepped as real
@@ -83,6 +90,15 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 8 / single:8/review2 — failure-lens review; no approval.**
+  C1 `register_test.go:TestReleaseGateRejectsPending`/`TestRegisterDeferredScope` pass; explicit-gate LR-04 pending/escalated/deferred overlays each fail; LR-05/06 stay excluded.
+  C2 `TestRegisterRejectsBadEvidence` covers missing/empty/unreadable/symlink evidence; a real `capabilities.default.yaml` wrong-anchor overlay fails `TestProductionCapabilityEvidence`.
+  C3 `TestObservationBoundaryRedaction`/`TestObservationPrivateSink` pass (zero writes on rejection, exclusive private sink); Markdown prompt rejection is missing (G18).
+  C4 `docs_scope_test.go:TestLunaRouteAuthorSurfacesRejectContradictoryProse` was red with the no-op validator, then green for 18 mutations; real guide/instructions/hint support-claim overlays each fail `TestLunaRouteAuthorSurfacesR7`.
+  Verified `go test -count=1 -timeout 30m ./test/lunaroute -run 'Test(Register|VerifiedEvidenceReferences|ReleaseGate|Observation|ProductionR7|ProductionCapability|ProductionIdentity|ProductionGateway|ProductionDiscovery|LunaRouteGuide|LunaRouteDoc|ParseLunaRouteDoc|LunaRouteAuthorSurfaces)'` (pass).
+  Verified MCP `TestLunaRouteBackendHint*`, `TestAuthoringGuidance_ModelDiscoveryAndExplicitSelection`, `TestServer_InitializeCarriesAuthoringInstructions` and explicit `ARBITRON_LUNAROUTE_RELEASE_GATE=1` `TestReleaseGate` (pass); all overlays restored.
+  Recommend: no approval for single:8/review2 — G18 allows raw prompt text in accepted operator Markdown evidence; redact and add a release-validator rejection fixture.
 
 - **Area 8 / single:8/review1 — APPROVED at bf04b3f (independent wiring review).**
   C1 `test/lunaroute/register_test.go:TestRegisterDeferredScope` and the checked-in register confirm exactly eight items, only LR-05/06 deferred.
@@ -377,6 +393,8 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- **G16 (Area 8):** `test/lunaroute/docs_scope_test.go:TestLunaRouteAuthorSurfacesR7` rejects contradictory guide/MCP support claims; 18 mutation cases and all three real-source overlays verified, with no approval box changed.
 - Area 7 discovery credential race: `domain/provider/probe.go:ProbeBindingFromConnection` now rejects revision drift after decryption for discovery and CLI; twelve real-SQLite interleavings prove zero outgoing requests and no partial success.
 
 - G6 (Area 7): closed single:7/review1 — `adapter/probe/lunaroute_test.go:TestLunaRouteProbe_RedirectNotFollowed` now includes 300 with a valid body; `>= 300`→`> 300` mutant verified to fail it.
