@@ -204,6 +204,18 @@
       "finished_at": "2026-11-12T22:06:08Z",
       "instance_id": "63f92cf0-d0ac-49bf-9014-e95414e572fb",
       "workflow": "harden"
+    },
+    {
+      "stage": "refine",
+      "status": "done",
+      "outputs": {
+        "pr_number": 92,
+        "pr_url": "https://github.com/dbinky/arbitron/pull/92"
+      },
+      "commit": "c006671f40ab0817eb28f53de0076c13d998049b",
+      "finished_at": "2026-11-16T06:26:00Z",
+      "instance_id": "55bf9e19-0a7f-420a-bce0-2af074b56f38",
+      "workflow": "feature-pipeline"
     }
   ]
 }
