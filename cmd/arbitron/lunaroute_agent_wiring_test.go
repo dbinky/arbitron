@@ -102,3 +102,35 @@ func TestLunaRouteAgentProfileSaveWiring(t *testing.T) {
 	}
 	assert.Empty(t, gw.seen(), "save performs no gateway I/O")
 }
+
+// A pinned pi glm-5.3 save with the embedded capability table must persist the
+// requested effort and echo it unfloored as the effective axis. Empty capability
+// input at the root would refuse the effort or floor it to "default".
+func TestLunaRoutePiEffortEchoWiring(t *testing.T) {
+	gw := &agentListingGateway{models: []string{"glm-5.3"}}
+	ds := bootLunaRouteRoot(t, "", gw, func(string) {})
+	call := lunaRouteToolCaller(t, ds)
+	bad, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "api_key": lrRootKey})
+	require.False(t, bad, text)
+	for _, effort := range []string{"none", "low", "high", "max"} {
+		alias := "lr-pi-" + effort
+		bad, text = call("profile_create", map[string]any{"alias": alias, "kind": "agent", "connection_ref": "lr", "model": "glm-5.3", "backend": "pi", "effort": effort})
+		require.False(t, bad, text)
+		var echo struct {
+			Profile   struct{ Effort string } `json:"profile"`
+			Effective struct{ Effort string } `json:"effective"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(text), &echo), text)
+		assert.Equal(t, effort, echo.Profile.Effort)
+		assert.Equal(t, effort, echo.Effective.Effort, "requested effort echoed without native flooring")
+		var stored string
+		require.NoError(t, ds.db.QueryRow(`SELECT effort FROM profiles WHERE alias=?`, alias).Scan(&stored))
+		assert.Equal(t, effort, stored)
+	}
+	bad, text = call("profile_create", map[string]any{"alias": "lr-pi-medium", "kind": "agent", "connection_ref": "lr", "model": "glm-5.3", "backend": "pi", "effort": "medium"})
+	assert.True(t, bad, "medium is absent from the pi table for glm-5.3")
+	assert.NotContains(t, text, lrRootKey)
+	var n int
+	require.NoError(t, ds.db.QueryRow(`SELECT COUNT(*) FROM profiles WHERE alias='lr-pi-medium'`).Scan(&n))
+	assert.Zero(t, n)
+}

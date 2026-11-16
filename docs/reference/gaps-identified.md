@@ -163,6 +163,8 @@
 - **G1 (Area 1) closed:** `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` requires a replacement on switch-away; `adapter/sqlite/connection_repo.go:Update` guards every retained-key write; red/green repo and real-root MCP tests prove refusal and concurrent-switch safety.
 - **G9 (Area 1) closed:** embedded-space coverage added to key-shape/create/update tests; temporary whitespace and generated-query guard mutations both fail, with `TestConnectionRepo_LunaRoutePersistenceErrors` exercising meta-read and conditional-SQL errors.
 
+- **W3-1 (Area 3, review 1) closed:** wiring checks 4 and 8 had no root/sample test. Added `cmd/arbitron/lunaroute_agent_wiring_test.go:TestLunaRoutePiEffortEchoWiring` (embedded table, real MCP root: pi `glm-5.3` none/low/high/max persist and echo `effective.effort` unfloored; `medium` refused, nothing persisted) and `samples/family_test.go:TestJudgePairingProblems` cases (LunaRoute `glm-5.3` doer vs direct `ollama/glm-5.1` judge fails; vs `deepseek-4.1-flash` passes) plus `TestModelFamily` rows for the three reviewed ids. Open G7/G8/G11 are boundary/failure-lens items, not wiring.
+
 ## Won't Fix
 
 - **Dormant claude-code and opencode LunaRoute emitters. Escalated and decided by operator ruling R7 (2026-11-12).**

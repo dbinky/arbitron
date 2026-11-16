@@ -28,6 +28,10 @@ func TestModelFamily(t *testing.T) {
 		{"anthropic.claude-opus-5-5", "anthropic", true},
 		{"deepseek-v4-pro", "deepseek", true},
 		{"ollama/glm-5.1", "zhipuai", true},
+		// LunaRoute reviewed fixed ids classify by vendor, not by routing provider.
+		{"glm-5.3", "zhipuai", true},
+		{"glm-5.3-flash", "zhipuai", true},
+		{"deepseek-4.1-flash", "deepseek", true},
 		{"Kimi-K3", "moonshotai", true},
 		// R3: claude-*-lrN gateway aliases are open-weight models under Claude names
 		// with unstable numbers, so they never classify as anthropic.
@@ -172,6 +176,9 @@ func TestJudgePairingProblems(t *testing.T) {
 		"blank":        {Alias: "blank", Model: ""},
 		"claude-alias": {Alias: "claude-alias", Model: "claude-sonnet-5-lr1"},
 		"opaque":       {Alias: "opaque", Model: "muse-spark-open"},
+		"lr-glm":       {Alias: "lr-glm", Model: "glm-5.3"},
+		"direct-glm":   {Alias: "direct-glm", Model: "ollama/glm-5.1"},
+		"lr-deepseek":  {Alias: "lr-deepseek", Model: "deepseek-4.1-flash"},
 	}}
 
 	tests := []struct {
@@ -195,6 +202,10 @@ func TestJudgePairingProblems(t *testing.T) {
 			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
 		{"claude-named gateway alias never passes as cross-family (R3)", mk(agent("doer", "gpt-a"), agent("judge-x", "claude-alias")),
 			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
+		{"LunaRoute glm doer judged by direct zhipuai fails (routing provider is not a vendor)", mk(agent("doer", "lr-glm"), agent("judge-x", "direct-glm")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
+		{"LunaRoute glm doer judged by LunaRoute deepseek passes", mk(agent("doer", "lr-glm"), agent("judge-x", "lr-deepseek")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 0},
 		{"same family fails", mk(agent("doer", "gpt-a"), agent("judge-x", "gpt-b")),
 			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
 		{"unknown judge node fails", mk(agent("doer", "claude-a")),
