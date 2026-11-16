@@ -10,12 +10,12 @@
 ## Open
 
 - **[ESCALATION] Area 6 / single:6/review2 — concrete acceptance boundary.**
-  Approval needs discriminating fixtures for G3's classifier boundaries and G4's empty/large/mid-stream frames,
-  plus completed failure-lens checks 1–7 at `adapter/openrouter/provider.go:Chat`/`StreamChat` through the real classifier.
-  Any surviving mutation needs either a failing fixture or a documented equivalence argument; test-only gateway
-  simulations are insufficient. No live credential or external dependency is needed for these offline fixtures.
-  Cancellation/deadline checks must also show termination without a successful Done or accepted partial response.
-  This pass supplies G4 and cancellation evidence; the remaining offline fixtures are G3 and G17 below.
+  To tick this box, G3 still needs discriminating fixtures at `domain/provider/lunaroute_classify.go:RedactLunaRoute`,
+  `NormalizeLunaRouteRetryAfter` and `ClassifyLunaRoute` for redaction sizing, the 256-byte cut, digit boundaries,
+  transport-before-code and verified-code-before-status precedence. Each cited survivor needs a failing fixture
+  or a documented equivalence argument accepted by the independent approver. No operator key or dependency is missing.
+  G4/cancellation were accepted at 28b8bd2; this pass supplies G17's JSON/SSE policy and identity sink fixtures.
+  Stop here after that evidence change; remaining work is the specific offline G3 boundary audit, not another wiring pass.
 
 - **[RESOLVED at approval of d11128a] Area 5 / single:5/review2 — exact remaining approval conditions.**
   Per the approver at 868c0b0, the missing fixture was a direct boundary table for
@@ -52,13 +52,6 @@
   - verified-code-before-status precedence.
 
   Add a table test per boundary that fails under each mutant.
-- [ ] **G17 (Area 6): remaining failure fixtures for checks 6–7.**
-  `adapter/provider/lunaroute_chat_test.go:TestLunaRouteChat_ExecutionEvidence` checks fixed ids in JSON;
-  add real-factory JSON/SSE cases selecting `glm-5.3` with absent or `glm-5.3-flash` execution evidence.
-  `TestLunaRouteChat_RequestSettings` exercises schema policy only in JSON and only schema refusal.
-  Add both modes with output limit 1000, MaxTokens 2000 and unsupported schema (zero HTTP calls), then accepted
-  schema/temperature/max_tokens cases comparing preflight policy with the captured `response_format`/request fields.
-  These are missing discriminating fixtures, not a demonstrated production mismatch; no external credential is needed.
 - [ ] **G6 (Area 7): a 3xx listing status may count as success.**
   `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
   gateway: it must classify as a failure, never as a listing.
@@ -82,6 +75,16 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 6 / single:6/review2 — G17 offline fixture closure.** Pre-change `go test -count=1 -timeout 30m ./adapter/provider -run '^TestLunaRouteChat_'` passes; no baseline failure.
+  C1/C4: classifier/redaction/code/Retry-After targeted tests pass; G3's per-survivor boundary proof remains outstanding.
+  C2/C3: `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries` and `adapter/openrouter/hooks_test.go:TestClassifyError_ChatReadAndDecode`/`NoPartialSecretAtBodyLimit` pass, including cancellation, deadlines and credential rotation coverage.
+  C5–C7: `adapter/provider/lunaroute_chat_policy_test.go:TestLunaRouteChat_RequestPolicyJSONAndStream` loads YAML output limit 1000 and independent schema/temperature policy; both modes refuse schema/MaxTokens 2000 before reveal and HTTP, and emit exact accepted `response_format`, temperature and tokens.
+  `TestLunaRouteChat_FixedIdentityJSONAndStream` selects pinned glm-5.3; absent/different ids yield nil JSON response or exactly one SSE error, no token/Done/retry; exact-id controls succeed.
+  Temporary Go overlays emptying settings/MaxTokens/capabilities, omitting schema, changing temperature/tokens or disabling identity verification each fail the new fixtures (exit 1); overlays removed, production unchanged.
+  Fresh `go test -race -count=1 -timeout 30m ./adapter/provider -run '^TestLunaRouteChat_'` passes; targeted `./domain/provider` classifier tests and `./adapter/openrouter` ClassifyError/AcceptExecutedModel/Preflight tests pass. Five categories include accepted schemas, successful streams, policy refusal, identity error and omitted-setting/limit edges.
+  `rg -n 'ClassifyError:|Preflight:|AcceptExecutedModel:' adapter --glob '*.go' --glob '!**/*_test.go'` still finds the three production hooks at `adapter/provider/lunaroute_chat.go:lunaRouteChat`; no new collaborator/config was introduced.
+Recommend: no approval for single:6/review2 — G17 is covered; G3 classifier survivor boundaries still require discriminating fixtures or accepted equivalence arguments.
 
 - **Area 6 / single:6/review2 — approver WITHHELD at 28b8bd2 (independent review).**
   Ran `go build ./...` and `go test -count=1 ./adapter/openrouter ./adapter/provider ./domain/provider ./domain/modelidentity`: all pass; no regression.
@@ -306,6 +309,7 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
 
 ## Closed
 
+- [x] **G17 (Area 6):** `adapter/provider/lunaroute_chat_policy_test.go:TestLunaRouteChat_RequestPolicyJSONAndStream`/`FixedIdentityJSONAndStream` prove loaded request policy and pinned identity at JSON/SSE sinks; seven production mutations fail.
 - [x] **G4 (Area 6):** `adapter/provider/lunaroute_chat_stream_failure_test.go:TestLunaRouteChat_StreamFailureBoundaries`/`StreamFrameSizeBoundary` distinguish empty-frame, structured-error and scanner-buffer mutations through the real factory/classifier.
 - [x] **Area 6 silent cancellation:** `adapter/openrouter/provider.go:StreamChat` retains one terminal error after cancellation/deadline, releases blocked consumers and closes the body; `TestLunaRouteChat_StreamCancellationOutcome` proves red/green with cause identity and secret-free errors.
 
