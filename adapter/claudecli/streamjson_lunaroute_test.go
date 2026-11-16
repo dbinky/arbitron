@@ -15,7 +15,7 @@ func TestLunaRouteTerminalEvidenceProducer(t *testing.T) {
 	ev, ok, err := parseEvent([]byte(lrResult("glm-5.3-flash", "glm-5.3")))
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Source: "claude_model_usage"}, {Model: "glm-5.3-flash", Source: "claude_model_usage"}}, ev.modelEvidence())
+	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Source: "claude_model_usage", Kind: engine.EvidenceReportedExecution}, {Model: "glm-5.3-flash", Source: "claude_model_usage", Kind: engine.EvidenceReportedExecution}}, ev.modelEvidence())
 	assert.False(t, lunaRouteModelsAccepted("glm-5.3", ev.ModelUsage), "all billed models, not just the main model")
 	for _, reported := range []string{"", "glm-5.3\x00", "glm-5.3\n", "glm-5.3\u0085", strings.Repeat("x", 257), "claude-" + lrTestKey, "glm-5.3[1m]"} {
 		assert.False(t, lunaRouteModelsAccepted("glm-5.3", []string{reported}))

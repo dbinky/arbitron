@@ -121,7 +121,10 @@ func verifyModelExport(raw []byte, proof runModelProof, providerID, model string
 			return nil, ErrModelExecutionEvidence
 		}
 		seen[info.ID] = true
-		evidence = append(evidence, engine.ModelEvidence{Model: info.ModelID, Provider: info.ProviderID, Source: "opencode_export"})
+		// Routing intent: the export records the model/provider opencode used to
+		// address the call. Nothing here establishes that the gateway's own
+		// response reported that identity, so it is not execution evidence.
+		evidence = append(evidence, engine.ModelEvidence{Model: info.ModelID, Provider: info.ProviderID, Source: "opencode_export", Kind: engine.EvidenceRoutingIntent})
 	}
 	for id := range proof.messageIDs {
 		if !seen[id] {

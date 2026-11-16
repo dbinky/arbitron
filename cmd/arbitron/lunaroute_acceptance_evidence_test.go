@@ -112,9 +112,10 @@ func acceptanceNodeFixture(t *testing.T, backend, model, reported string) accept
 	cmd.Dir = ws
 	require.NoError(t, cmd.Run())
 	source := map[string]string{"codex": "codex_turn_context", "pi": "pi_message_end", "claude-code": "claude_model_usage", "opencode": "opencode_export"}[backend]
+	kind := map[string]engine.EvidenceKind{"codex": engine.EvidenceRoutingIntent, "opencode": engine.EvidenceRoutingIntent, "pi": engine.EvidenceReportedExecution, "claude-code": engine.EvidenceReportedExecution}[backend]
 	return acceptanceNodeInput{RunID: id, Backend: backend, Model: model, ExpectedOutput: "done", Nonce: nonce, Workspace: ws,
 		Node: instance.NodeExecution{InstanceID: id, NodeID: "work", Status: instance.NodeStatusSucceeded, Output: map[string]any{"response": "done"}, LLMModel: &model, StartedAt: start, CompletedAt: &end,
-			LLMConversation: map[string]any{"steps": []engine.AgentStep{{Kind: "tool_call", Summary: "write proof"}, {Kind: "tool_call", Summary: "derive proof"}}, "model_evidence": []engine.ModelEvidence{{Model: reported, Source: source}}}},
+			LLMConversation: map[string]any{"steps": []engine.AgentStep{{Kind: "tool_call", Summary: "write proof"}, {Kind: "tool_call", Summary: "derive proof"}}, "model_evidence": []engine.ModelEvidence{{Model: reported, Source: source, Kind: kind}}}},
 	}
 }
 
@@ -167,16 +168,28 @@ func TestLunaRouteAcceptanceEvidence_RefusesFalseCompletion(t *testing.T) {
 		"no tool trace":          func(in *acceptanceNodeInput) { delete(in.Node.LLMConversation, "steps") },
 		"no reported models":     func(in *acceptanceNodeInput) { delete(in.Node.LLMConversation, "model_evidence") },
 		"foreign model": func(in *acceptanceNodeInput) {
-			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "gpt-6.1", Source: "pi_message_end"}}
+			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "gpt-6.1", Source: "pi_message_end", Kind: engine.EvidenceReportedExecution}}
 		},
 		"foreign provider": func(in *acceptanceNodeInput) {
-			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "glm-5.3", Provider: "openai", Source: "pi_message_end"}}
+			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "glm-5.3", Provider: "openai", Source: "pi_message_end", Kind: engine.EvidenceReportedExecution}}
 		},
 		"wrong source": func(in *acceptanceNodeInput) {
 			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "glm-5.3", Source: "argv"}}
 		},
+		"missing evidence kind": func(in *acceptanceNodeInput) {
+			ev := in.Node.LLMConversation["model_evidence"].([]engine.ModelEvidence)
+			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: ev[0].Model, Source: ev[0].Source}}
+		},
+		"overclaimed evidence kind": func(in *acceptanceNodeInput) {
+			ev := in.Node.LLMConversation["model_evidence"].([]engine.ModelEvidence)
+			other := engine.EvidenceRoutingIntent
+			if ev[0].Kind == engine.EvidenceRoutingIntent {
+				other = engine.EvidenceReportedExecution
+			}
+			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: ev[0].Model, Source: ev[0].Source, Kind: other}}
+		},
 		"credential model": func(in *acceptanceNodeInput) {
-			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "claude-" + acceptanceFixtureKey, Source: "pi_message_end"}}
+			in.Node.LLMConversation["model_evidence"] = []engine.ModelEvidence{{Model: "claude-" + acceptanceFixtureKey, Source: "pi_message_end", Kind: engine.EvidenceReportedExecution}}
 		},
 		"malformed trace": func(in *acceptanceNodeInput) { in.Node.LLMConversation["steps"] = "broken" },
 		"missing file": func(in *acceptanceNodeInput) {
@@ -335,4 +348,6 @@ func TestLunaRouteAcceptanceEvidence_JSONTraceRoundTrip(t *testing.T) {
 	proof, err := collectAcceptanceNode(in, acceptanceFixtureKey)
 	require.NoError(t, err)
 	assert.Equal(t, "codex_turn_context", proof.Models[0].Source, "harness intent is not gateway response evidence")
+	assert.Equal(t, engine.EvidenceRoutingIntent, proof.Models[0].Kind)
+	assert.False(t, proof.Models[0].ReportsExecution())
 }

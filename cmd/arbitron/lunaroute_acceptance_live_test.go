@@ -228,6 +228,9 @@ func collectAcceptanceNode(in acceptanceNodeInput, key string) (acceptanceNodePr
 	if source == "" {
 		return fail()
 	}
+	// The persisted evidence strength must match what the producer can claim:
+	// codex turn_context and the opencode export are routing intent only.
+	kind := map[string]engine.EvidenceKind{"claude-code": engine.EvidenceReportedExecution, "codex": engine.EvidenceRoutingIntent, "opencode": engine.EvidenceRoutingIntent, "pi": engine.EvidenceReportedExecution}[in.Backend]
 	// Persisted JSON maps and in-memory executor values share this schema.
 	raw, err := json.Marshal(n.LLMConversation)
 	if err != nil || len(raw) > acceptanceReadLimit || unsafeAcceptanceText(string(raw), key) {
@@ -248,7 +251,7 @@ func collectAcceptanceNode(in acceptanceNodeInput, key string) (acceptanceNodePr
 		return fail()
 	}
 	for _, m := range trace.Models {
-		if !safeAcceptanceIdentity(m.Model, key) || m.Source != source || m.Provider != "" && m.Provider != provider.CanonicalLunaRoute || !modelidentity.LunaRouteExecutedModelAccepted(in.Model, m.Model) {
+		if !safeAcceptanceIdentity(m.Model, key) || m.Source != source || m.Kind != kind || m.Provider != "" && m.Provider != provider.CanonicalLunaRoute || !modelidentity.LunaRouteExecutedModelAccepted(in.Model, m.Model) {
 			return fail()
 		}
 	}

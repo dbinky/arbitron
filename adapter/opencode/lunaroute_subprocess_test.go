@@ -70,7 +70,7 @@ printf '{"type":"text","sessionID":"ses_run","part":{"sessionID":"ses_run","mess
 			assert.Equal(t, model, res.Model)
 			raw, err = json.Marshal(res.ModelEvidence)
 			require.NoError(t, err)
-			assert.JSONEq(t, fmt.Sprintf(`[{"model":%q,"provider":"lunaroute","source":"opencode_export"}]`, model), string(raw))
+			assert.JSONEq(t, fmt.Sprintf(`[{"model":%q,"provider":"lunaroute","source":"opencode_export","kind":"routing_intent"}]`, model), string(raw))
 			assert.NotContains(t, string(raw), lrKey)
 		})
 	}

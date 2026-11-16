@@ -112,7 +112,7 @@ func TestLunaRouteCodex_HappyPath(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, "glm-5.3", res.Model)
 	assert.Equal(t, "Done: edited the workspace.", res.Summary)
-	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "codex_turn_context"}}, res.ModelEvidence)
+	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "codex_turn_context", Kind: engine.EvidenceRoutingIntent}}, res.ModelEvidence)
 	require.Len(t, r.inner.calls, 2)
 	assert.Equal(t, r.homes[0], r.homes[1])
 	assert.NotEqual(t, "/operator/private", r.homes[0])
@@ -450,7 +450,7 @@ printf '{"type":"thread.started","thread_id":"lr-thread-0001"}\n{"type":"item.co
 	require.NoError(t, err)
 	assert.Equal(t, "nonce proof", string(proof))
 	assert.Equal(t, "command completed", res.Summary)
-	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Source: "codex_turn_context"}}, res.ModelEvidence)
+	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Source: "codex_turn_context", Kind: engine.EvidenceRoutingIntent}}, res.ModelEvidence)
 	lrNoLeftovers(t, tmp)
 }
 

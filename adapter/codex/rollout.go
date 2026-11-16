@@ -232,7 +232,8 @@ func (v *rolloutVerifier) lunaRouteAfterTurn(threadID, selected string) ([]engin
 			p != "" && (!safeLunaRouteIdentity(p) || p != "lunaroute") {
 			return nil, ErrModelEvidence
 		}
-		evidence = append(evidence, engine.ModelEvidence{Model: model, Provider: p, Source: "codex_turn_context"})
+		// Routing intent only, however the record is later consumed.
+		evidence = append(evidence, engine.ModelEvidence{Model: model, Provider: p, Source: "codex_turn_context", Kind: engine.EvidenceRoutingIntent})
 	}
 	return evidence, nil
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,6 +78,7 @@ func TestModelProbePiLunaRouteReportedModelEvidence(t *testing.T) {
 	assert.Empty(t, evidence[1].Provider)
 	assert.Equal(t, binding.Model, evidence[1].Model)
 	assert.Equal(t, "pi_message_end", evidence[1].Source)
+	assert.Equal(t, engine.EvidenceReportedExecution, evidence[1].Kind)
 	for _, wrong := range []string{"glm-5.3-flash", "claude-sonnet-5-lr1", "", "glm-" + lrPiKey} {
 		out, err := parseOutput(append([]string{modelMessage("assistant", "lunaroute", wrong)}, lines...))
 		require.NoError(t, err)

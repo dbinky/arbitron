@@ -84,7 +84,7 @@ printf '{"type":"result","result":"workspace complete","session_id":"s1","modelU
 			assert.Equal(t, "workspace complete", res.Summary)
 			encoded, err := json.Marshal(res.ModelEvidence)
 			require.NoError(t, err)
-			assert.JSONEq(t, fmt.Sprintf(`[{"model":%q,"source":"claude_model_usage"}]`, model), string(encoded))
+			assert.JSONEq(t, fmt.Sprintf(`[{"model":%q,"source":"claude_model_usage","kind":"reported_execution"}]`, model), string(encoded))
 			assert.NotContains(t, string(encoded), lrTestKey)
 		})
 	}

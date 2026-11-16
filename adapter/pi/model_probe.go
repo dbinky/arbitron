@@ -65,7 +65,8 @@ func safeModelIdentity(s string) bool {
 func (out *parsed) modelEvidence() []engine.ModelEvidence {
 	evidence := make([]engine.ModelEvidence, 0, len(out.executedModels))
 	for _, m := range out.executedModels {
-		evidence = append(evidence, engine.ModelEvidence{Model: m.model, Provider: m.provider, Source: "pi_message_end"})
+		// Reported execution: the assistant message_end of the completed call.
+		evidence = append(evidence, engine.ModelEvidence{Model: m.model, Provider: m.provider, Source: "pi_message_end", Kind: engine.EvidenceReportedExecution})
 	}
 	return evidence
 }

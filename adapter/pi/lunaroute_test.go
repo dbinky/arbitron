@@ -89,7 +89,7 @@ func TestLunaRoutePi_HappyPath(t *testing.T) {
 	res, err := lrPiProvider(r, b, lrRules()).RunAgent(context.Background(), piMission())
 	require.NoError(t, err)
 	assert.Equal(t, "done", res.Summary)
-	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "pi_message_end"}}, res.ModelEvidence)
+	assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "pi_message_end", Kind: engine.EvidenceReportedExecution}}, res.ModelEvidence)
 	versionSpec := r.inner.calls[0]
 	assert.Equal(t, []string{"--version"}, versionSpec.Args)
 	_, hasKey := envValue(versionSpec.Env, LunaRouteKeyVar)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,6 +45,8 @@ func TestRolloutLunaRouteReportedEvidence(t *testing.T) {
 	assert.Empty(t, ev[0].Provider, "never invent a provider from the selected binding")
 	assert.Equal(t, "lunaroute", ev[1].Provider)
 	assert.Equal(t, "codex_turn_context", ev[1].Source)
+	assert.Equal(t, engine.EvidenceRoutingIntent, ev[1].Kind)
+	assert.False(t, ev[1].ReportsExecution(), "turn_context is configured routing, not an executed identity")
 	for _, model := range []string{"", "glm-5.3-flash", "gpt-6.1-sol", "claude-sonnet-5-lr1", "glm-5.3 lr_private", "glm-5.3\u00a0", strings.Repeat("x", 257)} {
 		writeRollout(t, home, rolloutThread, metaLine(rolloutThread), ctxLine(model))
 		ev, err := v.lunaRouteAfterTurn(rolloutThread, "glm-5.3")

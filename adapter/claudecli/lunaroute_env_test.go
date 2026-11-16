@@ -196,5 +196,6 @@ func TestAgentAdapter_LunaRouteEnvReachesRunSpec(t *testing.T) {
 	require.Len(t, res.ModelEvidence, 1)
 	assert.Equal(t, "glm-5.3", res.ModelEvidence[0].Model)
 	assert.Equal(t, "claude_model_usage", res.ModelEvidence[0].Source)
+	assert.Equal(t, engine.EvidenceReportedExecution, res.ModelEvidence[0].Kind)
 	assert.Empty(t, res.ModelEvidence[0].Provider)
 }

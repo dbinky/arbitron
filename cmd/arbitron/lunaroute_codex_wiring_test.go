@@ -174,7 +174,7 @@ func TestLunaRouteCodexWiring(t *testing.T) {
 				Evidence []engine.ModelEvidence `json:"model_evidence"`
 			}
 			require.NoError(t, json.Unmarshal([]byte(raw), &trace))
-			assert.Equal(t, []engine.ModelEvidence{{Model: model, Provider: "lunaroute", Source: "codex_turn_context"}}, trace.Evidence)
+			assert.Equal(t, []engine.ModelEvidence{{Model: model, Provider: "lunaroute", Source: "codex_turn_context", Kind: engine.EvidenceRoutingIntent}}, trace.Evidence)
 			assert.Empty(t, gw.seen())
 
 			call := lunaRouteToolCaller(t, ds)

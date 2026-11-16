@@ -241,7 +241,8 @@ func lunaRouteCollectPolicy(b provider.ResolvedBinding) collectPolicy {
 func (ev streamEvent) modelEvidence() []engine.ModelEvidence {
 	evidence := make([]engine.ModelEvidence, 0, len(ev.ModelUsage))
 	for _, m := range ev.ModelUsage {
-		evidence = append(evidence, engine.ModelEvidence{Model: m, Source: "claude_model_usage"})
+		// Reported execution: the result event's per-model usage.
+		evidence = append(evidence, engine.ModelEvidence{Model: m, Source: "claude_model_usage", Kind: engine.EvidenceReportedExecution})
 	}
 	return evidence
 }

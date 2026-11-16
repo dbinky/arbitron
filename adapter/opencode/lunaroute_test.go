@@ -131,7 +131,7 @@ func TestRunAgent_LunaRouteHappyPathSpec(t *testing.T) {
 		assert.Equal(t, "verified output", res.Summary)
 		assert.Equal(t, "ses_run", res.SessionID, "retain the current verified export session for helper correlation")
 		assert.Contains(t, res.Steps, engine.AgentStep{Kind: "tool_call", Summary: "bash"})
-		assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "opencode_export"}}, res.ModelEvidence)
+		assert.Equal(t, []engine.ModelEvidence{{Model: "glm-5.3", Provider: "lunaroute", Source: "opencode_export", Kind: engine.EvidenceRoutingIntent}}, res.ModelEvidence)
 		require.Len(t, r.calls, 3)
 		run := r.calls[1]
 		assert.Contains(t, run.Args, "lunaroute/glm-5.3")

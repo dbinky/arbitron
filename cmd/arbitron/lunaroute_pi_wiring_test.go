@@ -210,7 +210,7 @@ func TestLunaRoutePiWiring(t *testing.T) {
 				Evidence []engine.ModelEvidence `json:"model_evidence"`
 			}
 			require.NoError(t, json.Unmarshal([]byte(traceRaw), &trace))
-			assert.Equal(t, []engine.ModelEvidence{{Model: model, Provider: "lunaroute", Source: "pi_message_end"}}, trace.Evidence)
+			assert.Equal(t, []engine.ModelEvidence{{Model: model, Provider: "lunaroute", Source: "pi_message_end", Kind: engine.EvidenceReportedExecution}}, trace.Evidence)
 			assert.Empty(t, gw.seen())
 		})
 	}

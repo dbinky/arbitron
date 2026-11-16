@@ -586,7 +586,9 @@ assistant message must precede exactly one final `agent_end`; missing, premature
 duplicate or trailing lifecycle events prevent publication. Codex requires a
 thread before its turn, an active turn for tool/completion events, and the same
 thread's rollout session before model contexts; `codex_turn_context_intent`
-explicitly denotes harness intent, **not** a gateway-reported model. Independent
+explicitly denotes harness intent, **not** a gateway-reported model; the
+persisted `model_evidence` record carries `kind: routing_intent` for it and for
+the OpenCode export, and `kind: reported_execution` for pi and Claude Code. Independent
 nonempty main/helper request/response records are mandatory for both backends.
 Pi's separate reasoning fact and both limits must be known; absent metadata is
 never replaced by defaults or inferred from effort. R3 requires exact requested
@@ -785,8 +787,9 @@ SQLite's second-precision node timestamps are handled without allowing proof
 files from a later second. Missing, unreadable, symlinked, stale or oversized
 files cannot pass. Chat uses the actual response model; agent traces require
 nonempty `model_evidence` and a persisted `tool_call`, preserve permitted alias
-drift and reject unsafe identity fields. `codex_turn_context` remains explicitly
-harness intent, not gateway response evidence.
+drift and reject unsafe identity fields. Each record's persisted `kind` must match
+its backend's producer. `codex_turn_context` remains explicitly harness intent
+(`routing_intent`), not gateway response evidence.
 
 `go test ./cmd/arbitron -run 'LunaRouteAcceptanceEvidence' -count=1` exercises
 these boundaries. Its offline real-MCP chat case loads a distinctive capability
