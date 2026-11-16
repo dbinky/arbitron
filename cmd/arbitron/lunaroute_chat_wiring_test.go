@@ -346,3 +346,44 @@ func TestLunaRouteChatWiringMCPSavedAxesReachBody(t *testing.T) {
 	require.False(t, bad, text)
 	runExpecting("")
 }
+
+// G21 (paired:2): a save whose post-write cache reload fails (an unrelated
+// corrupt row makes the whole List fail) must still publish the committed axes
+// before the next chat, so the run never succeeds with the stale effort. The
+// fake gateway answers 400 to a body carrying any effort but the expected one.
+func TestLunaRouteChatWiringReloadFailurePublishesSavedAxes(t *testing.T) {
+	gw := newFakeLunaRouteGateway(t, "lr_mcp_chat", "glm-5.3", "glm-5.3-flash")
+	ds := bootLunaRouteRoot(t, "capabilitiespath: "+lunaRouteCapsFile(t, lrChatCaps)+"\n", gw, func(ws string) {
+		writeLunaRouteChatWorkflow(t, ws, "lr-mcp", "lr-mcp", 1234, false)
+	})
+	call := lunaRouteToolCaller(t, ds)
+	bad, text := call("connection_create", map[string]any{"name": "lr", "provider": "lunaroute", "api_key": "lr_mcp_chat"})
+	require.False(t, bad, text)
+	for _, alias := range []string{"lr-mcp", "unrelated"} {
+		bad, text = call("profile_create", map[string]any{"alias": alias, "kind": "chat", "connection_ref": "lr", "model": "glm-5.3", "effort": "low"})
+		require.False(t, bad, text)
+	}
+	run := func(effort string) {
+		t.Helper()
+		gw.ExpectChat("glm-5.3", lrRootPrompt, 1234, effort)
+		_, inst := triggerLunaRouteChat(t, ds, "lr-mcp")
+		require.Equal(t, instance.StateCompleted, inst.State, "the run must send the saved effort %q", effort)
+		reqs := gw.Requests()
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(reqs[len(reqs)-1].Body, &body))
+		assert.Equal(t, effort, body["reasoning_effort"])
+		assert.Equal(t, "glm-5.3", body["model"])
+	}
+	run("low")
+
+	// Corrupt an unrelated row: every full reload now fails.
+	_, err := ds.db.Exec(`UPDATE profiles SET context_window='not-a-tier' WHERE alias='unrelated'`)
+	require.NoError(t, err)
+
+	bad, text = call("profile_update", map[string]any{"alias": "lr-mcp", "effort": "high"})
+	require.False(t, bad, text)
+	var effort string
+	require.NoError(t, ds.db.QueryRow(`SELECT effort FROM profiles WHERE alias='lr-mcp'`).Scan(&effort))
+	require.Equal(t, "high", effort)
+	run("high")
+}

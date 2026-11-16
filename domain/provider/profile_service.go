@@ -182,7 +182,7 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 			out, err = persist(ctx, p)
 		}
 		if err == nil {
-			s.recache(ctx)
+			s.recache(ctx, out)
 		}
 		return err
 	})
@@ -375,7 +375,10 @@ func (s *ProfileService) Delete(ctx context.Context, alias string) error {
 		if err := store.DeleteExpected(ctx, prior); err != nil {
 			return err
 		}
-		s.recache(ctx)
+		_ = s.reloader.Reload(ctx)
+		if pub, ok := s.reloader.(ProfilePublisher); ok {
+			pub.ForgetProfile(alias)
+		}
 		return nil
 	})
 }
@@ -387,8 +390,16 @@ func (s *ProfileService) Delete(ctx context.Context, alias string) error {
 // split-brain on this live admin surface is surfaced. Keeping the discard here in
 // one place (rather than three bare `_ =` sites) makes the best-effort contract
 // explicit and the logging boundary unambiguous.
-func (s *ProfileService) recache(ctx context.Context) {
+//
+// A failed full reload must not leave the committed row stale (G21): when the
+// reloader is also a ProfilePublisher, the committed row is published still
+// under the mutation lease, before the write returns, so the next resolve sees
+// exactly the persisted axes whether or not Reload succeeded.
+func (s *ProfileService) recache(ctx context.Context, committed Profile) {
 	_ = s.reloader.Reload(ctx)
+	if pub, ok := s.reloader.(ProfilePublisher); ok {
+		pub.PublishProfile(committed)
+	}
 }
 
 // Capabilities exposes the capability ruleset for the read-only

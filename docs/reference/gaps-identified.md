@@ -9,15 +9,6 @@
 
 ## Open
 
-- [ ] **G21 (paired:2, Area 3 ↔ Area 6): failed save-time cache publication permits a successful chat with stale effort.**
-  Independently reproduced at cfc6918 with unchanged production code using an approver-only test overlay (`TestPaired2ReviewReloadFailure`).
-  Create `cache-review` and `unrelated` chat profiles at low; SQL-set unrelated.context_window to `not-a-tier` (existing `profile_repo_test.go:TestProfileRepo_CorruptedAxis_ListErrors` fault).
-  MCP `profile_update(cache-review, effort=high)` succeeds and SQLite stores high; the next real llm_call completes with reasoning_effort=low (assertion exits 1).
-  `domain/provider/profile_service.go:write` → `recache` discards the reload error; `cmd/arbitron/logging_reloader.go:Reload` only warns; `adapter/provider/cache.go:Load` keeps the old snapshot on List failure.
-  `dynamic.go:Resolve` and `lunaroute_chat.go:lunaRouteChat` consequently validate/send the stale low binding, so neither preflight nor run pinning catches the mismatch.
-  Control: identical overlay with unrelated.context_window=default passes, publishing/sending high (exit 0). This is the row's save→chat BREAK, not an adjacent emitter variant.
-  Next approval requires publishing the durable axes before chat, or refusing stale resolution/execution after reload failure; retain an MCP update → failed reload → real chat regression proving no successful stale send.
-
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
@@ -86,6 +77,13 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **paired:2 — refiner pass after G21 (recommend approve).**
+  Fix: `profile_service.go:recache(ctx, committed)` now also calls `ProfilePublisher.PublishProfile` with the committed row under the mutation lease (Delete → `ForgetProfile`; seed batch passes its stored row).
+  `cache.go:ProfileCache.PublishProfile` is serialized with `Load` (loadMu) and never replaces a newer cached revision; `logging_reloader.go` forwards both methods so the root decorator does not hide them.
+  Wiring: `main.go` `newLoggingReloader(profileCache, …)` → `NewProfileService`; the type assertion is satisfied in production (`var _ provider.ProfilePublisher = (*ProfileCache)(nil)`).
+  Regression: `lunaroute_chat_wiring_test.go:TestLunaRouteChatWiringReloadFailurePublishesSavedAxes` (corrupt unrelated row → MCP update high → real llm_call sends high) was red before the fix and red again with the decorator forwarding mutated out.
+  Unit: `cache_test.go:TestProfileCache_TargetedPublishAndForget` (publish, no revision regression, create, forget).
 
 - **paired:2 — WITHHELD at cfc6918 (independent review; G21).**
   Normal save→chat: `profile_service.go:validateAxes` → `lunaroute_validate.go:lunaRouteExactEffort` preserves exact axes; `main.go:initDomainWithModelDependencies` shares the loaded rules with ProfileService/Factory.
@@ -462,6 +460,7 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
 
 ## Closed
 
+- [x] **G21 (paired:2)** — closed: committed row published to the cache after every write even when the full reload fails; root regression `TestLunaRouteChatWiringReloadFailurePublishesSavedAxes`.
 - [x] **G20** — held-pipe flake fixed: `test/lunaroute/codex_controls_test.go:TestCodexConfigControlsExperimentToPrivateSink` cancels on the fixture's `:held` marker (not a 500 ms clock from before process start-up) and bounds return time from cancellation; red at 2.1 s with `queryCodexControlConfig`'s stdout-close AfterFunc stubbed; package green ×3 under concurrent load.
 
 - **G19 (paired:1, Area 3 ↔ Area 5): pi reasoning effort saved on a reasoning-unsupported model was silently dropped.**

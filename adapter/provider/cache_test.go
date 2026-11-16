@@ -253,3 +253,35 @@ func TestProfileCache_ConcurrentLoadsCannotRegressSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "model-y", snap["a"].Model, "stale read must not overwrite the newer snapshot")
 }
+
+// G21: PublishProfile installs the committed row without a full reload, never
+// regresses a newer revision, and ForgetProfile drops a deleted alias.
+func TestProfileCache_TargetedPublishAndForget(t *testing.T) {
+	cache := adapterprovider.NewProfileCacheFromProfiles(
+		provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Effort: provider.EffortLow, Revision: 2},
+		provider.Profile{Alias: "b", Kind: provider.ProfileKindChat, Revision: 1},
+	)
+	snap := func(alias string) (provider.Profile, error) {
+		m, err := cache.SnapshotProfiles([]string{alias})
+		return m[alias], err
+	}
+
+	cache.PublishProfile(provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Effort: provider.EffortHigh, Revision: 3})
+	got, err := snap("a")
+	require.NoError(t, err)
+	assert.Equal(t, provider.EffortHigh, got.Effort, "a newer committed row replaces the cached one")
+
+	cache.PublishProfile(provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Effort: provider.EffortLow, Revision: 2})
+	got, _ = snap("a")
+	assert.Equal(t, provider.EffortHigh, got.Effort, "an older row never regresses the cache")
+
+	cache.PublishProfile(provider.Profile{Alias: "c", Kind: provider.ProfileKindChat, Revision: 1})
+	_, err = snap("c")
+	assert.NoError(t, err, "a created alias becomes resolvable")
+
+	cache.ForgetProfile("b")
+	_, err = snap("b")
+	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
+	_, err = snap("a")
+	assert.NoError(t, err, "forget touches only the named alias")
+}
