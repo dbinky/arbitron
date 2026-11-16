@@ -265,8 +265,10 @@ func TestLunaRouteProbe_ReadDiagnosticsDropIncompleteBodies(t *testing.T) {
 }
 
 func TestLunaRouteProbe_RedirectNotFollowed(t *testing.T) {
-	for _, status := range []int{http.StatusFound, http.StatusTemporaryRedirect} {
-		g := &lrGateway{status: status, header: http.Header{"Location": {"https://evil.example/v1/models"}}}
+	// 300 is the >= 300 boundary (G6): a valid-looking listing body at 300 must
+	// still be a failure, never a catalog.
+	for _, status := range []int{http.StatusMultipleChoices, http.StatusFound, http.StatusTemporaryRedirect} {
+		g := &lrGateway{status: status, body: `{"data":[{"id":"glm-5.3"}]}`, header: http.Header{"Location": {"https://evil.example/v1/models"}}}
 		_, err := newLRProbe(g, 0).Probe(context.Background(), lrProbeBinding("", lrProbeKey))
 		require.ErrorIs(t, err, domprovider.ErrLunaRouteCauseUnknown)
 		assert.Len(t, g.reqs, 1, "credential never replayed to Location")

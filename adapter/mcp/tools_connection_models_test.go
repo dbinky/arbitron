@@ -166,7 +166,14 @@ func TestConnectionModels_LogsNeverEchoUnclassifiedErrors(t *testing.T) {
 }
 
 func TestConnectionModels_DescriptionGuidesTheLLM(t *testing.T) {
-	for _, s := range []string{"unknown", "does NOT imply", "explicitly", "backend", "pinned", "vendor", "recommended"} {
+	// One load-bearing phrase per concatenated segment, so a mutated or dropped
+	// segment in the LLM-facing text fails (G11).
+	for _, s := range []string{
+		"(admin only)", "claude-code, opencode, codex, pi", "supported efforts",
+		"unknown is not a guarantee", "does NOT imply task or backend compatibility",
+		"nothing is recommended or auto-selected", "must name their backend and use pinned selection",
+		"keep doer and judge on different vendors", `an "unresolved" family is refused`, "Never returns credentials.",
+	} {
 		assert.Contains(t, connectionModelsDescription, s)
 	}
 }

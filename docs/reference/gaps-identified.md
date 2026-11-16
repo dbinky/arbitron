@@ -36,14 +36,10 @@
   behaviour) and no invalid key is persisted; an operator must decide whether to narrow that. G13 (explicit `lr_` key on
   a foreign provider) is a sibling defect under rule 5 — fix it as its own gap, but it does not gate this box.
 
-- [ ] **G6 (Area 7): a 3xx listing status may count as success.**
-  `harden:adapter/probe/lunaroute.go` survives at line 76 (`resp.StatusCode >= 300`). Add a 300 response at the fake
-  gateway: it must classify as a failure, never as a listing.
-- [ ] **G11 (Areas 3, 7): text survivors need a decision.**
-  The survivors `harden:adapter/mcp/tools_connection_models.go`, `harden:adapter/mcp/lunaroute_backend_hint.go` and
-  `harden:domain/provider/model_discovery.go` are string-concatenation mutants in LLM-facing text. Pin the load-bearing
-  phrases in tests (unknown is not a guarantee; codex or pi only; pinned only), or record each mutant as equivalent with a
-  reason.
+- [ ] **G11 (Areas 3, 7): text survivors need a decision — Area 7 half pinned, Area 3 half open.**
+  Area 7 done (single:7/review1): per-segment phrases pinned in `adapter/mcp/tools_connection_models_test.go:TestConnectionModels_DescriptionGuidesTheLLM`
+  and `domain/provider/model_discovery_test.go:TestDiscover_LunaRouteView`. Still open: `harden:adapter/mcp/lunaroute_backend_hint.go`
+  (Area 3: pin "codex or pi only", "pinned only", or record as equivalent). Mutation re-run needed to confirm Area 7 survivors die.
 
 - [ ] **G12 (Area 1): MCP accepts an explicit empty key on an existing LunaRoute connection.**
   `adapter/mcp/tools_connection.go:connectionUpdateHandler` turns `api_key: ""` into nil; the repo preserves the old key
@@ -314,6 +310,7 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+- G6 (Area 7): closed single:7/review1 — `adapter/probe/lunaroute_test.go:TestLunaRouteProbe_RedirectNotFollowed` now includes 300 with a valid body; `>= 300`→`> 300` mutant verified to fail it.
 
 - [x] **G3 (Area 6):** `domain/provider/lunaroute_classify_test.go:TestRedactLunaRoute_ByteLimit` and `TestNormalizeLunaRouteRetryAfter` kill the exact-256-byte and digit-9 survivors (both exit 1); real-code targeted race tests pass.
 - [x] **G17 (Area 6):** `adapter/provider/lunaroute_chat_policy_test.go:TestLunaRouteChat_RequestPolicyJSONAndStream`/`FixedIdentityJSONAndStream` prove loaded request policy and pinned identity at JSON/SSE sinks; seven production mutations fail.
@@ -372,3 +369,5 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   `TestLunaRouteChat_ClassifierReceivesHeaderStatusAndCode`; all three mutants now fail it (3/5/3 subtests red).
   Not for this lens: `TestLunaRouteGatewayRejectsMutatedInputs` (cmd) exercises the fake gateway, not production — it
   pins the fake's strictness only; Review 2 may weigh whether it should stay named as coverage for check 2.
+
+Recommend: approve single:7/review1 — wiring verified: main.go:1030 probeFactory (shared httpClient) → NewModelDiscoveryService(main.go:1078) → ds.modelDiscovery in MCP deps (main.go:462); TestLunaRouteDiscoveryWiring drives the real root and asserts the sink (one GET https://gw.lunaroute.com/v1/models, Bearer lr_, no key in output, authz before gateway); embedded-defaults, CLI guard and probe tests pass. G6 closed (300 mutant killed); G11 Area 7 half pinned.

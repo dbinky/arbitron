@@ -130,7 +130,13 @@ func TestDiscover_LunaRouteView(t *testing.T) {
 	assert.Equal(t, "lunaroute", view.Provider)
 	assert.True(t, view.ListingSupported)
 	assert.Equal(t, provider.DiscoveryNote, view.Note)
-	for _, guidance := range []string{"does not imply", "unknown", "explicitly", "pinned", "backend"} {
+	// One load-bearing phrase per concatenated segment (G11).
+	for _, guidance := range []string{
+		"Availability does not imply task or backend compatibility",
+		`Fields marked "unknown" are not guarantees`, "known facts cite their evidence",
+		"nothing is recommended or auto-selected", "must name their backend and use pinned selection",
+		"keep doer and judge on different vendors", `an "unresolved" family is refused`,
+	} {
 		assert.Contains(t, view.Note, guidance)
 	}
 	ids := []string{}
