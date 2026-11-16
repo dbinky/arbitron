@@ -9,6 +9,11 @@
 
 ## Open
 
+- [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
+  `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
+  `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
+  Update both the introduction and `README.md:Release enforcement` to match the current gate and R7. This does not fail Review 1 checks 1–6.
+
 - [ ] **G16 (Area 8, for review2 check 4): guide prose claiming claude-code/opencode support turns no test red.**
   Temporary overlay appended "LunaRoute works with claude-code and opencode agent backends." to `docs/setup/lunaroute.md`;
   `go test ./test/lunaroute/ ./adapter/mcp/` stayed green. `docs_examples_test.go:TestLunaRouteGuideExamplesAreValid` pins required
@@ -78,6 +83,16 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 8 / single:8/review1 — APPROVED at bf04b3f (independent wiring review).**
+  C1 `test/lunaroute/register_test.go:TestRegisterDeferredScope` and the checked-in register confirm exactly eight items, only LR-05/06 deferred.
+  C2 `test/lunaroute/evidence_helpers_test.go:validateRegisterAt`: independently grepped all 21 application pointers as declarations; reverting the fix makes `TestRegisterRejectsBadEvidence/symbol_only_in_a_comment` fail.
+  C3 `test/lunaroute/production_evidence_test.go:TestProductionCapabilitySnapshot`/`TestProductionCapabilityEvidence` and `domain/modelidentity/version_lunaroute_internal_test.go:TestLunaRouteProductionIdentityEvidence` consume all 19 capability refs and three identity anchors; broken-anchor overlays fail both consumers.
+  C4 `test/lunaroute/production_release_test.go:TestProductionR7CompletionApplication` binds supported facts to committed operator observations; docs-page agent evidence and empty embedded models each turn it red. Real loader feed: `cmd/arbitron/main.go:initDomainWithModelDependencies` calls `LoadCapabilityRules` and `NewModelDiscoveryService`.
+  C5 `test/lunaroute/docs_examples_test.go:TestLunaRouteGuideExamplesAreValid` parses chat/codex/pi examples; `adapter/mcp/lunaroute_backend_hint_test.go:TestLunaRouteBackendHint_ReachesProfileTools` checks tools/list, and `adapter/mcp/server.go:NewServer` installs `AuthoringGuidance`.
+  C6 `test/lunaroute/production_release_test.go:TestProductionR7RegisterApplication` fails for stale application and pending LR-04; the explicit `ARBITRON_LUNAROUTE_RELEASE_GATE=1` `TestReleaseGate` passes without the descoped matrix.
+  Verification: `go test -count=1 -timeout 30m ./test/lunaroute ./adapter/mcp ./adapter/config ./domain/modelidentity`, explicit gate, and `go build ./...` all exit 0; seven negative controls exit 1, then all inputs restored. Happy/success, failure, read-error and edge cases run in these suites, including `TestObservationBoundaryRedaction`/`TestObservationPrivateSink`.
+  Only Review 1 ticked; G16 belongs to Review 2, and G17 is a separate stale-documentation gap.
 
 - **Area 7 / single:7/review2 — failure-lens checks.**
   C1: `domain/provider/model_discovery_test.go:TestDiscover_AuthzAndNotFound` verifies forbidden/unauthenticated before any store or selector read, and unknown connection before probing; `TestDiscover_NilPortsAreWiringFaults` covers missing dependencies.
