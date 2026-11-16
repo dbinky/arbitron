@@ -160,7 +160,7 @@ newer**, the oldest releases on which the private-home/agent-directory isolation
 and auth-independence controls are verified in the committed evidence
 (`docs/evidence/lunaroute-provider/observations/`). An older binary is refused
 before the key-bearing launch, even though it still works for subscription use,
-which keeps its own, lower compatibility floor. Enabling claude-code or opencode
+which keeps its own, lower compatibility floor. Enabling any further backend
 is gated by the checklist in
 [enablement-checklist.md](../evidence/lunaroute-provider/enablement-checklist.md).
 
