@@ -78,6 +78,12 @@
 
 ## Review evidence
 
+- **Area 2 / single:2/review2 — APPROVED by independent approver at 65fd03a.** All twelve failure checks demonstrated; only Review 2 ticked.
+  Checks 1–6/12: `adapter/provider/lunaroute_agent_test.go:TestLunaRouteAgent_EffectiveRouteRefusalsBeforeRevealAndRun` counts reveal + inner launch (zero on every refusal incl. nil caps → `ErrSelectionPortsMissing`, alias/unreviewed/empty pins, pi limits/efforts narrowed, tampered endpoint); `TestLunaRouteAgent_SwitchedProviderPinRefusedBeforeRevealAndRunner` traces `dynamic.go:Resolve` → `pinned_route.go:validatePinnedRoute`; root override/legacy tests pass.
+  Checks 7–11: `lunaroute_agent.go:diagnose`/`lunaRouteDiagnosable` covered by `TestLunaRouteAgent_DiagnosisObservations`, `_NoDiagnosisForLocalOrCancelled`, `_NilProbesIsUncheckedNotPanic`, `_StalledDiagnosisHonorsDeadline`; `domain/provider/lunaroute_diagnosis_test.go` covers redaction + nil original.
+  Approver mutations of `lunaroute_agent.go` (local probe error → Checked; listed → credentials rejected; preflight removed; timeout removed) each exit 1. `go test` of adapter/provider, domain/provider, adapter/probe, domain/engine, cmd/arbitron (-run LunaRoute) exit 0; `go build ./...` clean.
+  Note (non-blocking): `_StalledDiagnosisHonorsDeadline/parentBound=false` waits the real 20 s; consider an injectable timeout to keep the suite fast. The `[ESCALATION]` entry above is resolved by this approval.
+
 - **[ESCALATION] Area 2 / single:2/review2 acceptance boundary.** Approval requires committed fixtures at
   `adapter/provider/lunaroute_agent_test.go` proving refusal before both reveal/run counters, pi table narrowing,
   switched-provider pin rejection, and a stalled diagnostic HTTP request ending at the effective deadline without retry.
