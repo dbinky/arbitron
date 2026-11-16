@@ -39,7 +39,7 @@
 - [ ] **G11 (Areas 3, 7): text survivors need a decision — Area 7 half pinned, Area 3 half open.**
   Area 7 done (single:7/review1): per-segment phrases pinned in `adapter/mcp/tools_connection_models_test.go:TestConnectionModels_DescriptionGuidesTheLLM`
   and `domain/provider/model_discovery_test.go:TestDiscover_LunaRouteView`. Still open: `harden:adapter/mcp/lunaroute_backend_hint.go`
-  (Area 3: pin "codex or pi only", "pinned only", or record as equivalent). Mutation re-run needed to confirm Area 7 survivors die.
+  (Area 3: pin "codex or pi only", "pinned only", or record as equivalent). Area 7 independently verified at approval of 28da84b: all eight single-segment-removal overlays fail the named tests.
 
 - [ ] **G12 (Area 1): MCP accepts an explicit empty key on an existing LunaRoute connection.**
   `adapter/mcp/tools_connection.go:connectionUpdateHandler` turns `api_key: ""` into nil; the repo preserves the old key
@@ -55,6 +55,17 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 7 / single:7/review1 — APPROVED at 28da84b (independent wiring review).**
+  C1: `cmd/arbitron/main.go:initDomainWithModelDependencies` feeds one shared-client ProbeFactory into discovery and Factory.Probes; `mcpDeps` and `adapter/mcp/tools_connection.go:RegisterConnectionTools` expose the tool. `cmd/arbitron/lunaroute_discovery_wiring_test.go:TestLunaRouteDiscoveryWiring` checks the actual HTTP and MCP JSON sinks.
+  C2: `domain/provider/model_discovery.go:Discover` gates before Get/Probe and wraps the stored binding with GuardLunaRouteReveal; `domain/provider/model_discovery_test.go:TestDiscover_AuthzAndNotFound` checks zero store/selector reads, and `TestDiscover_GuardAppliesToDiscoveryBinding` checks the guard.
+  C3: `adapter/probe/lunaroute.go:Probe` sends exactly GET https://gw.lunaroute.com/v1/models with the revealed Bearer key through NoRedirectClient, feeding Code/RetryAfter/Secrets to ClassifyLunaRoute; `adapter/probe/lunaroute_test.go:TestLunaRouteProbe_ListsModels`, `TestLunaRouteProbe_VerifiedCodeFromHTTP` and `TestLunaRouteProbe_StatusClassification` exercise these inputs.
+  C4: `cmd/arbitron/main.go:initDomainWithModelDependencies` loads capabilityRules through `adapter/config/capabilities.go:LoadCapabilityRules`; `cmd/arbitron/lunaroute_discovery_wiring_test.go:TestLunaRouteDiscoveryWiringEmbeddedDefaults` checks embedded limits, evidence and known/unknown facts at MCP JSON.
+  C5: `cmd/arbitron/connection.go:bindingFromConnection` guards the stored binding; `cmd/arbitron/lunaroute_cli_validate_test.go:TestConnectionValidate_LunaRouteProductionWiring` exercises Cobra -> encrypted SQLite -> real factory -> HTTP/output; `lunaroute_cli_binding_test.go:TestBindingFromConnection_GuardsLunaRoute` verifies the guard.
+  C6: `domain/provider/model_discovery.go:Discover` calls `domain/modelidentity/family.go:ClassifyFamily(route,id)` independently of listing/capabilities; `domain/provider/model_discovery_test.go:TestDiscover_LunaRouteView` and `TestDiscover_RevokedAliasFamily` verify known and unresolved vendors.
+  Folded/scenarios: `domain/provider/model_discovery_test.go:TestDiscover_NonLunaRouteProviderIsAllUnknown`, `TestDiscover_ListingUnsupported`, `TestDiscover_EmptyListing`, `TestDiscover_ProbeFailurePropagates` and `adapter/mcp/tools_connection_models_test.go:TestConnectionModels_LogsNeverEchoUnclassifiedErrors` cover unknown/unsupported, edge, failure and error paths alongside root success. No wiring gap found; Area 3 G11 remains separate.
+  Verification: `go build ./...` and `go test -count=1 ./domain/provider ./domain/modelidentity ./adapter/probe ./adapter/mcp ./cmd/arbitron ./test/lunaroute` all exit 0 (CLI package 321s); supplied measurement fields were unresolved, so these are fresh local results.
+  Independent red checks: temporary Go overlays removing each of five connectionModelsDescription segments and three DiscoveryNote segments fail `TestConnectionModels_DescriptionGuidesTheLLM` / `TestDiscover_LunaRouteView`; >=300 -> >300 fails `TestLunaRouteProbe_RedirectNotFollowed`; a nil root capability feed fails `TestLunaRouteDiscoveryWiring`. All ten exit 1 on assertions; overlays removed, production files unchanged.
 
 - **Area 6 / single:6/review2 — approver APPROVED at b03188d (independent review).**
   Ran `go build ./...` and `go test -count=1 ./domain/provider ./adapter/openrouter ./adapter/provider ./domain/modelidentity ./cmd/arbitron`: all ok.

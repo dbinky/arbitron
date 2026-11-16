@@ -19,7 +19,7 @@ Budget: **2 × 8 + 6 = 22** minimum passes ≤ **500 × 0.35 = 175**; no deferra
 | 4 | A LunaRoute codex agent runs keyed against the Responses endpoint in a private, always-removed CODEX_HOME and never touches the operator's codex login | high | [x] | [x] |
 | 5 | A LunaRoute pi agent runs from a private PI_CODING_AGENT_DIR whose models.json carries table-sourced limits and an env-referenced key | high | [x] |[x] |
 | 6 | A LunaRoute chat node completes through /v1/chat/completions with exactly the validated settings, or fails with one classified, secret-free gateway outcome | high | [x] | [x] |
-| 7 | connection_models (and CLI connection validate) lists a LunaRoute connection's live models with curated known/unknown facts, admin-only and key-free | med | [ ] | [ ] |
+| 7 | connection_models (and CLI connection validate) lists a LunaRoute connection's live models with curated known/unknown facts, admin-only and key-free | med | [x] | [ ] |
 | 8 | Release readiness is claimed only for LR-01–04, LR-07 and LR-08 with existing evidence, and every author-facing surface lists chat, codex and pi only | low | [ ] | [ ] |
 
 ---
