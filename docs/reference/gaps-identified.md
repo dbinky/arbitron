@@ -9,10 +9,11 @@
 
 ## Open
 
-- **[ESCALATION] Area 7 / single:7/review2 — precise acceptance boundary.**
-  Approval requires `domain/provider/probe.go:ProbeBindingFromConnection` to reject a changed stored revision after decryption at both discovery and CLI callers, before any HTTP request.
-  The previously absent fixture is now `cmd/arbitron/lunaroute_discovery_concurrency_test.go:TestLunaRouteDiscovery_ConcurrentConnectionChange`: real encrypted SQLite, both provider-switch directions, rotation, recreation and post-decrypt mutation/deletion, on both surfaces.
-  The independent approver must verify that fixture and checks C1–C6 below; no live credential, external dependency or operator policy decision is needed. No approval box was edited.
+- **[RESOLVED at approval of d9544b4] Area 7 / single:7/review2 — APPROVED (independent failure review).**
+  Ran `go test ./domain/provider/... ./adapter/probe/... ./adapter/mcp/... ./cmd/arbitron/... ./domain/modelidentity/...`; all passed, `go build ./...` clean.
+  Mutant 1: disabling the `ConfigRevision` comparison in `domain/provider/probe.go:ProbeBindingFromConnection` made 10/12 `TestLunaRouteDiscovery_ConcurrentConnectionChange` cases fail (both surfaces). The 2 delete cases still pass because Get fails.
+  Mutant 2: changing `>= 300` to `> 300` in `adapter/probe/lunaroute.go:Probe` made `TestLunaRouteProbe_RedirectNotFollowed` fail, so G6 is killed. Both files were restored.
+  C1 `TestDiscover_AuthzAndNotFound`, C2 `TestLunaRouteProbe_MalformedListingIsNeverAnEmptyCatalog`/`_OversizedBody`/`_EmptyListIsReachable`, C4 `TestConnectionModels_LogsNeverEchoUnclassifiedErrors`, C5 `TestDiscover_LunaRouteView` (table-only id excluded, unlisted ids unknown), C6 `TestDiscover_RevokedAliasFamily`.
 
 - **[RESOLVED at approval of b03188d] Area 6 / single:6/review2 — G3 boundary fixtures supplied and independently mutation-verified.**
 
