@@ -78,6 +78,13 @@
 
 ## Review evidence
 
+- **paired:1 — Area 3 save ↔ Area 5 pi launch evidence (recommend approve).**
+  SHARED: `main.go:810` one `capabilityRules` → `NewProfileService` (:994) and factory Deps → `factory.go:356` `pi.Config.CapabilityRules`
+  → `pi/provider.go:154/168`; save and launch both call `lunaroute_validate.go:checkLunaRouteRoute`; rules load once, no drift.
+  A→B: save's exact effort/limits/reasoning now imply pi's emission (G19 closed). B→A: pi trusts no default — `lunaRouteModelsJSON`
+  refuses unknown facts, `args.go:thinkingLevel` is lossless. Root TRACE: `TestLunaRoutePiWiringEffortReachesArgv` (override output
+  4096, efforts none/low/high, child checks models.json + argv). Mutants killed: guard removed, maxTokens←context, low→off.
+
 - **Area 8 / single:8/review2 — APPROVED at 7847169 (independent failure review).**
   C3 now holds: `evidence_helpers_test.go:unsafeManualObservation` replaces the credential-only scan for the R7 note; redacted note keeps every result row.
   Restoring the HEAD~1 note (with the prompt) fails `TestReleaseGate` (release mode) and always-on `TestProductionR7RegisterApplication` (LR-02/07/08 unsafe).
@@ -402,6 +409,14 @@ Recommend: approve single:5/review2 — all eight failure checks pass; direct id
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- **G19 (paired:1, Area 3 ↔ Area 5): pi reasoning effort saved on a reasoning-unsupported model was silently dropped.**
+  Save validated `effort ∈ efforts.pi` only; `adapter/pi/lunaroute.go:lunaRouteModelsJSON` then wrote `reasoning:false`,
+  and pi clamps every `--thinking` to `off` for non-reasoning models (pi docs `extensions.md`, "non-reasoning models always
+  use off"). Fixed in `domain/provider/lunaroute_validate.go:checkLunaRouteRoute` (shared by save and pi launch preflight):
+  pi + reasoning `unsupported` + effort other than default/none → `ErrLunaRouteAxisUnsupported`. Tests:
+  `TestCheckLunaRouteRoute_PiReasoningEffortNeedsReasoningModel` (red→green), root `TestLunaRoutePiWiringReasoningEffortNeedsReasoningModel`.
+  The embedded table marks all three ids reasoning `supported`, so only override files could reach it.
 
 - **G18 (Area 8):** redacted the operator task prompt while preserving every result row; `test/lunaroute/evidence_helpers_test.go:unsafeManualObservation` and `register_test.go:TestReleaseGateRejectsManualPromptPayloads` now reject reinsertion through the release validator (11 formats, red → green).
 

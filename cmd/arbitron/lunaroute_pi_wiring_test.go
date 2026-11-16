@@ -38,6 +38,10 @@ type piRootFixture struct {
 	Model, Capture, Dirs, Argv, Cwd, Mode string
 	// Thinking is the exact --thinking value the child must receive; empty means the flag must be absent.
 	Thinking string
+	// Output and Reasoning are the models.json values the child must receive;
+	// zero Output means piRootOutput (the piRootCaps fixture).
+	Output    int
+	Reasoning bool
 }
 
 func piRoot(t *testing.T, model, caps string) (*domainStack, *agentListingGateway, piRootFixture) {
@@ -45,10 +49,15 @@ func piRoot(t *testing.T, model, caps string) (*domainStack, *agentListingGatewa
 }
 
 func piRootThinking(t *testing.T, model, caps, thinking string) (*domainStack, *agentListingGateway, piRootFixture) {
+	return piRootWith(t, piRootFixture{Model: model, Thinking: thinking}, caps)
+}
+
+func piRootWith(t *testing.T, want piRootFixture, caps string) (*domainStack, *agentListingGateway, piRootFixture) {
 	t.Helper()
+	model := want.Model
 	dir := t.TempDir()
 	f := piRootFixture{
-		Thinking: thinking,
+		Thinking: want.Thinking, Output: want.Output, Reasoning: want.Reasoning,
 		Model:    model, Capture: filepath.Join(dir, "models.json"), Dirs: filepath.Join(dir, "dirs"),
 		Argv: filepath.Join(dir, "argv"), Cwd: filepath.Join(dir, "cwd"), Mode: filepath.Join(dir, "mode"),
 	}
@@ -99,15 +108,27 @@ func savePiRoot(t *testing.T, ds *domainStack, model string) (bool, string) {
 	return lunaRouteToolCaller(t, ds)("profile_create", map[string]any{"alias": "lr-pi-agent", "kind": "agent", "connection_ref": "lr", "model": model, "backend": "pi"})
 }
 
-// The saved effort must survive resolution and reach the real pi argv exactly
-// (none -> off, never floored); the child fails the run on any other argv.
+// paired:1 seam (Area 3 save <-> Area 5 pi launch). One override file sets
+// glm-5.3's output to 4096 and its pi efforts; the effort saved through MCP must
+// reach the real child's argv exactly (none -> off, never floored or remapped)
+// and models.json must carry the same limits/reasoning save validated. The child
+// fails the run on any other argv or definition.
 func TestLunaRoutePiWiringEffortReachesArgv(t *testing.T) {
-	for _, tc := range []struct{ effort, thinking string }{{"none", "off"}, {"high", "high"}} {
+	const output = 4096
+	caps := fmt.Sprintf(`lunaroute_models:
+  glm-5.3:
+    context_tokens: {tokens: %d, evidence: "root-fixture#context"}
+    output_tokens: {tokens: %d, evidence: "root-fixture#output"}
+    reasoning: {support: supported, evidence: "root-fixture#reasoning"}
+    efforts:
+      pi: {levels: [none, low, high], evidence: "root-fixture#effort"}
+`, piRootContext, output)
+	for _, tc := range []struct{ effort, thinking string }{{"none", "off"}, {"low", "low"}, {"high", "high"}} {
 		t.Run(tc.effort, func(t *testing.T) {
-			caps := piRootCaps("glm-5.3") + "    efforts:\n      pi: {levels: [none, high], evidence: \"root-fixture#effort\"}\n"
-			ds, _, f := piRootThinking(t, "glm-5.3", caps, tc.thinking)
+			ds, _, f := piRootWith(t, piRootFixture{Model: "glm-5.3", Thinking: tc.thinking, Output: output, Reasoning: true}, caps)
 			bad, text := lunaRouteToolCaller(t, ds)("profile_create", map[string]any{"alias": "lr-pi-agent", "kind": "agent", "connection_ref": "lr", "model": "glm-5.3", "backend": "pi", "effort": tc.effort})
 			require.False(t, bad, text)
+			assert.Contains(t, text, tc.effort, "save echoes the requested effort")
 			id, _, err := ds.eng.Trigger(adminCtxForLocalUser(t, ds), "lr-pi", nil, "normal")
 			require.NoError(t, err)
 			inst := waitTerminal(t, ds, id)
@@ -117,8 +138,31 @@ func TestLunaRoutePiWiringEffortReachesArgv(t *testing.T) {
 			argv := readArgvLog(t, f.Argv)
 			require.Len(t, argv, 1)
 			assert.Equal(t, "--print --mode json --no-session --model lunaroute/glm-5.3 --thinking "+tc.thinking, argv[0])
+			raw, err := os.ReadFile(f.Capture)
+			require.NoError(t, err)
+			var def map[string]any
+			require.NoError(t, json.Unmarshal(raw, &def))
+			assert.Equal(t, piRootDefinition(f), def, "override limits and reasoning reached the subprocess file")
 		})
 	}
+}
+
+// A table whose reasoning fact is unsupported makes pi's definition say
+// reasoning:false, and pi then clamps --thinking to off. Save must refuse a
+// reasoning effort there instead of letting the run silently drop it; none
+// (-> off) stays exact and still saves.
+func TestLunaRoutePiWiringReasoningEffortNeedsReasoningModel(t *testing.T) {
+	caps := piRootCaps("glm-5.3") + "    efforts:\n      pi: {levels: [none, low], evidence: \"root-fixture#effort\"}\n"
+	ds, _, f := piRootThinking(t, "glm-5.3", caps, "off")
+	call := lunaRouteToolCaller(t, ds)
+	bad, text := call("profile_create", map[string]any{"alias": "lr-pi-agent", "kind": "agent", "connection_ref": "lr", "model": "glm-5.3", "backend": "pi", "effort": "low"})
+	require.True(t, bad, text)
+	assert.Contains(t, text, "reasoning unsupported")
+	assert.Contains(t, text, "root-fixture#reasoning")
+	_, err := os.Stat(f.Argv)
+	assert.True(t, os.IsNotExist(err), "no launch after a refused save")
+	bad, text = call("profile_create", map[string]any{"alias": "lr-pi-agent", "kind": "agent", "connection_ref": "lr", "model": "glm-5.3", "backend": "pi", "effort": "none"})
+	require.False(t, bad, text)
 }
 
 func TestLunaRoutePiWiring(t *testing.T) {
@@ -152,7 +196,7 @@ func TestLunaRoutePiWiring(t *testing.T) {
 			require.NoError(t, err)
 			var def map[string]any
 			require.NoError(t, json.Unmarshal(raw, &def))
-			assert.Equal(t, piRootDefinition(model), def, "loaded operator facts reached the actual subprocess file")
+			assert.Equal(t, piRootDefinition(f), def, "loaded operator facts reached the actual subprocess file")
 			assert.NotContains(t, string(raw), lrRootKey)
 			require.Len(t, readArgvLog(t, f.Argv), 1)
 			assert.NotContains(t, readArgvLog(t, f.Argv)[0], lrRootKey)
@@ -262,10 +306,14 @@ func TestLunaRoutePiWiringFailures(t *testing.T) {
 	}
 }
 
-func piRootDefinition(model string) map[string]any {
+func piRootDefinition(f piRootFixture) map[string]any {
+	model, output := f.Model, f.Output
+	if output == 0 {
+		output = piRootOutput
+	}
 	return map[string]any{"providers": map[string]any{"lunaroute": map[string]any{
 		"baseUrl": "https://gw.lunaroute.com/v1", "api": "openai-completions", "apiKey": "$LUNAROUTE_API_KEY", "authHeader": true,
-		"models": []any{map[string]any{"id": model, "name": model, "reasoning": false, "input": []any{"text"}, "contextWindow": float64(piRootContext), "maxTokens": float64(piRootOutput)}},
+		"models": []any{map[string]any{"id": model, "name": model, "reasoning": f.Reasoning, "input": []any{"text"}, "contextWindow": float64(piRootContext), "maxTokens": float64(output)}},
 	}}}
 }
 
@@ -340,7 +388,7 @@ func TestLunaRoutePiRootChild(t *testing.T) {
 		fail()
 	}
 	var def map[string]any
-	if json.Unmarshal(raw, &def) != nil || !reflect.DeepEqual(def, piRootDefinition(f.Model)) {
+	if json.Unmarshal(raw, &def) != nil || !reflect.DeepEqual(def, piRootDefinition(f)) {
 		fail()
 	}
 	if os.WriteFile(f.Capture, raw, 0600) != nil {

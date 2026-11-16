@@ -132,6 +132,13 @@ func checkLunaRouteRoute(caps LunaRouteCapabilities, r LunaRouteRoute, requireEn
 		m.Reasoning.Support != SupportSupported && m.Reasoning.Support != SupportUnsupported {
 		return refuse(ErrLunaRouteLimitsUnknown, "pi on LunaRoute needs known reasoning metadata from an independent evidence-backed reasoning fact")
 	}
+	// The pi definition declares reasoning:false for an unsupported fact, and pi
+	// then clamps every --thinking level to "off". Saving or launching a reasoning
+	// effort there would run silently without it; only none/default stay exact.
+	if r.Kind == ProfileKindAgent && r.Backend == workflow.BackendPi && m.Reasoning.Support == SupportUnsupported &&
+		r.Effort != "" && r.Effort != EffortDefault && r.Effort != EffortNone {
+		return refuse(ErrLunaRouteAxisUnsupported, fmt.Sprintf("effort %q needs a reasoning model, but the capability table marks reasoning unsupported%s and pi would run with thinking off; set effort to default or none", r.Effort, evidenceNote(m.Reasoning.Evidence)))
+	}
 	if r.MaxOutputTokens > 0 && m.OutputTokens.Known() && r.MaxOutputTokens > m.OutputTokens.Tokens {
 		return refuse(ErrLunaRouteSettingConflict, fmt.Sprintf("max tokens %d exceeds the model's known output limit %d; lower max tokens", r.MaxOutputTokens, m.OutputTokens.Tokens))
 	}

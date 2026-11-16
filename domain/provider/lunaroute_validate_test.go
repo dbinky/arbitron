@@ -433,3 +433,41 @@ func TestCheckLunaRouteIdentity_GrammarBeforeFamily(t *testing.T) {
 	}
 	require.NoError(t, checkLunaRouteIdentity("glm-5.3", modelidentity.NewVersionResolver(), modelidentity.ClassifyFamily))
 }
+
+// pi clamps --thinking to "off" for a model whose definition says
+// reasoning:false (pi docs/extensions.md, "non-reasoning models always use
+// off"). A reasoning effort on such a model would save and launch, then run
+// with no reasoning at all, so save and launch both refuse it. `none` (-> off)
+// and default (no flag) stay consistent with reasoning:false.
+func TestCheckLunaRouteRoute_PiReasoningEffortNeedsReasoningModel(t *testing.T) {
+	EnableLunaRouteBackendsForTest(t, "pi", "codex")
+	for _, support := range []Support{SupportSupported, SupportUnsupported} {
+		for _, effort := range []Effort{"", EffortDefault, EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax} {
+			t.Run(string(support)+"/"+string(effort), func(t *testing.T) {
+				glm := fullGLM()
+				glm.Reasoning = SupportFact{Support: support, Evidence: "ev#reasoning"}
+				glm.Efforts = map[string]EffortFact{"pi": {Known: true, Levels: []Effort{EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}, Evidence: "ev#pi"}}
+				route := agentRoute("glm-5.3", "pi")
+				route.Effort = effort
+				err := CheckLunaRouteRoute(fakeLRCaps{"glm-5.3": glm}, route)
+				launch := CheckLunaRouteAdapterLaunch(fakeLRCaps{"glm-5.3": glm}, ResolvedBinding{BackendExplicit: true, Kind: ProfileKindAgent, Provider: "lunaroute", BaseURL: "https://gw.lunaroute.com", Model: "glm-5.3", Backend: "pi", Effort: effort}, 0)
+				thinks := effort != "" && effort != EffortDefault && effort != EffortNone
+				if support == SupportUnsupported && thinks {
+					r := requireRefusal(t, err, ErrLunaRouteAxisUnsupported)
+					assert.Contains(t, r.Error(), "ev#reasoning")
+					assert.Contains(t, r.Error(), string(effort))
+					requireRefusal(t, launch, ErrLunaRouteAxisUnsupported)
+					return
+				}
+				require.NoError(t, err)
+				require.NoError(t, launch)
+			})
+		}
+	}
+	// codex has no reasoning boolean in its definition; this rule is pi's.
+	glm := fullGLM()
+	glm.Reasoning = SupportFact{Support: SupportUnsupported, Evidence: "ev#reasoning"}
+	route := agentRoute("glm-5.3", "codex")
+	route.Effort = EffortLow
+	require.NoError(t, CheckLunaRouteRoute(fakeLRCaps{"glm-5.3": glm}, route))
+}
