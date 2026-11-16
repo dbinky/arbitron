@@ -47,6 +47,17 @@ type Config struct {
 	// Preflight validates before body construction, key reveal or I/O. Its
 	// error is returned unchanged, even before pinned-model validation.
 	Preflight func(req engine.ChatRequest) error
+	// StrictStream selects the strict streaming protocol, independently of
+	// error classification: a one-slot terminal buffer, cancellation delivery,
+	// structured error-frame recognition, rejection of frames with neither
+	// choices nor usage, and a required DONE. Off preserves the ordinary
+	// OpenAI-compatible stream behavior.
+	StrictStream bool
+	// AlwaysRequireExecutedModel makes every Chat and StreamChat verify the
+	// response's executed model against the binding, whether or not the
+	// binding is pinned or the request asks for it. A gateway that can route to
+	// a foreign model must not rely on the run's pin format for identity.
+	AlwaysRequireExecutedModel bool
 	// AcceptExecutedModel overrides exact matching for pinned execution
 	// evidence. Empty expected/reported models are always refused.
 	AcceptExecutedModel func(expected, actual string) bool
@@ -62,6 +73,8 @@ type Provider struct {
 	classify         func(status int, body string, transport error, retryAfter string, secrets ...string) error
 	preflight        func(engine.ChatRequest) error
 	acceptModel      func(expected, actual string) bool
+	strictStream     bool
+	alwaysRequire    bool
 }
 
 var _ engine.ChatProvider = (*Provider)(nil)
@@ -81,7 +94,16 @@ func New(cfg Config) *Provider {
 		classify:         cfg.ClassifyError,
 		preflight:        cfg.Preflight,
 		acceptModel:      cfg.AcceptExecutedModel,
+		strictStream:     cfg.StrictStream,
+		alwaysRequire:    cfg.AlwaysRequireExecutedModel,
 	}
+}
+
+// requiresExecutedModel reports whether this call must verify response model
+// identity: pinned bindings, requests that ask for it, or providers that always
+// enforce it.
+func (p *Provider) requiresExecutedModel(req engine.ChatRequest) bool {
+	return p.alwaysRequire || p.binding.Pinned || req.RequireExecutedModel
 }
 
 // boundedReader wraps r with the configured MaxResponseBytes cap (the shared
@@ -101,7 +123,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	ctx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	requireModel := p.binding.Pinned || req.RequireExecutedModel
+	requireModel := p.requiresExecutedModel(req)
 	if requireModel && (p.binding.Model == "" || (req.Model != "" && req.Model != p.binding.Model)) {
 		return nil, errModelExecutionEvidence
 	}
@@ -167,7 +189,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 	}
 	streamCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
-	requireModel := p.binding.Pinned || req.RequireExecutedModel
+	requireModel := p.requiresExecutedModel(req)
 	if requireModel && (p.binding.Model == "" || (req.Model != "" && req.Model != p.binding.Model)) {
 		cancel()
 		return nil, errModelExecutionEvidence
@@ -191,10 +213,10 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 	}
 
 	out := make(chan engine.ChatChunk)
-	if p.classify != nil {
+	if p.strictStream {
 		// Keep a slot for the terminal outcome even when cancellation means
-		// the consumer has stopped reading. Other providers retain their
-		// existing unbuffered stream behavior.
+		// the consumer has stopped reading. Non-strict streams retain their
+		// existing unbuffered behavior.
 		out = make(chan engine.ChatChunk, 1)
 	}
 	go func() {
@@ -203,7 +225,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		defer func() { _ = resp.Body.Close() }()
 		fail := func(err error) {
 			chunk := engine.ChatChunk{Error: err}
-			if send(streamCtx, out, chunk) || p.classify == nil {
+			if send(streamCtx, out, chunk) || !p.strictStream {
 				return
 			}
 			// The context expired while delivering the failure. This goroutine
@@ -228,11 +250,11 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			if p.classify != nil && streamCtx.Err() != nil {
+			if p.strictStream && streamCtx.Err() != nil {
 				fail(p.transportError("stream", streamCtx.Err(), key))
 				return
 			}
-			if p.classify != nil {
+			if p.strictStream {
 				if body, failed := gatewayErrorFrame(scanner.Bytes()); failed {
 					fail(p.statusError(resp.StatusCode, bytes.NewReader(body), resp.Header.Get("Retry-After"), key))
 					return
@@ -261,13 +283,13 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 				usage = frame.Usage
 			}
 			sawChoice = sawChoice || len(frame.Choices) > 0
-			if p.classify != nil && len(frame.Choices) == 0 && frame.Usage == nil {
+			if p.strictStream && len(frame.Choices) == 0 && frame.Usage == nil {
 				fail(p.responseError(errors.New("openrouter: stream frame has no choices or usage"), key))
 				return
 			}
 			if len(frame.Choices) > 0 && frame.Choices[0].Delta.Content != "" {
 				if !send(streamCtx, out, engine.ChatChunk{Token: frame.Choices[0].Delta.Content}) {
-					if p.classify != nil {
+					if p.strictStream {
 						fail(p.transportError("stream", streamCtx.Err(), key))
 					}
 					return
@@ -278,7 +300,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			fail(p.responseError(fmt.Errorf("openrouter: read stream: %w", serr), key))
 			return
 		}
-		if p.classify != nil && streamCtx.Err() != nil {
+		if p.strictStream && streamCtx.Err() != nil {
 			fail(p.transportError("stream", streamCtx.Err(), key))
 			return
 		}
@@ -294,7 +316,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			fail(fmt.Errorf("%w: incomplete stream", errModelExecutionEvidence))
 			return
 		}
-		if p.classify != nil && (!sawChoice || !sawDone) {
+		if p.strictStream && (!sawChoice || !sawDone) {
 			fail(p.responseError(errors.New("openrouter: incomplete stream"), key))
 			return
 		}
@@ -303,7 +325,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 			final.TokensIn = usage.PromptTokens
 			final.TokensOut = usage.CompletionTokens
 		}
-		if !send(streamCtx, out, final) && p.classify != nil {
+		if !send(streamCtx, out, final) && p.strictStream {
 			fail(p.transportError("stream", streamCtx.Err(), key))
 		}
 	}()

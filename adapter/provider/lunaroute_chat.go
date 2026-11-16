@@ -31,7 +31,14 @@ func (f *Factory) lunaRouteChat(b domprovider.ResolvedBinding) engine.ChatProvid
 				Code: domprovider.LunaRouteErrorCode(domprovider.LunaRouteChat, body),
 			})
 		},
-		AcceptExecutedModel: modelidentity.LunaRouteExecutedModelAccepted,
+		// The strict stream protocol is chosen here, explicitly, rather than
+		// inferred from the presence of the error classifier above.
+		StrictStream: true,
+		// LunaRoute can route to a different model than the one selected, so
+		// response identity is enforced for every call. Legacy (version-0) runs
+		// resolve to an unpinned binding and never set RequireExecutedModel.
+		AlwaysRequireExecutedModel: true,
+		AcceptExecutedModel:        modelidentity.LunaRouteExecutedModelAccepted,
 		Preflight: func(req engine.ChatRequest) error {
 			var settings []string
 			if req.Temperature != 0 {

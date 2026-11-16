@@ -31,8 +31,9 @@ type hookCall struct {
 
 func hookedProvider(ft *fakeTransport, calls *[]hookCall, preflight func(engine.ChatRequest) error) *Provider {
 	return New(Config{
-		Binding:    staticBinding("https://gw.example/v1", "m"),
-		HTTPClient: &http.Client{Transport: ft},
+		Binding:      staticBinding("https://gw.example/v1", "m"),
+		HTTPClient:   &http.Client{Transport: ft},
+		StrictStream: true,
 		ClassifyError: func(status int, body string, transport error, retryAfter string, secrets ...string) error {
 			*calls = append(*calls, hookCall{status, body, transport, retryAfter, append([]string(nil), secrets...)})
 			return errHooked
@@ -508,7 +509,7 @@ func TestClassifyError_ConcurrentCredentialRotation(t *testing.T) {
 				}
 				return nil, errors.New("echo " + key)
 			})
-			p := New(Config{Binding: b, HTTPClient: &http.Client{Transport: transport}, ClassifyError: func(status int, body string, cause error, retry string, secrets ...string) error {
+			p := New(Config{Binding: b, HTTPClient: &http.Client{Transport: transport}, StrictStream: true, ClassifyError: func(status int, body string, cause error, retry string, secrets ...string) error {
 				calls <- hookCall{status, body, cause, retry, append([]string(nil), secrets...)}
 				return provider.ClassifyLunaRoute(provider.LunaRouteOutcome{Operation: provider.LunaRouteChat, Status: status, Body: body, Code: provider.LunaRouteErrorCode(provider.LunaRouteChat, body), Transport: cause, Secrets: secrets})
 			}})
@@ -568,7 +569,7 @@ func TestClassifyError_RetryAfterAndPricing(t *testing.T) {
 					resp = sseResponse(200, "data: "+body+"\n\n")
 				}
 				resp.Header.Set("Retry-After", "007")
-				p := New(Config{Binding: staticBinding("https://gw.example/v1", "m"), HTTPClient: &http.Client{Transport: &fakeTransport{resp: resp}}, ClassifyError: func(status int, body string, cause error, retry string, secrets ...string) error {
+				p := New(Config{Binding: staticBinding("https://gw.example/v1", "m"), HTTPClient: &http.Client{Transport: &fakeTransport{resp: resp}}, StrictStream: true, ClassifyError: func(status int, body string, cause error, retry string, secrets ...string) error {
 					return provider.ClassifyLunaRoute(provider.LunaRouteOutcome{Operation: provider.LunaRouteChat, Status: status, Code: provider.LunaRouteErrorCode(provider.LunaRouteChat, body), Transport: cause, RetryAfter: retry, Secrets: secrets})
 				}})
 				var err error
