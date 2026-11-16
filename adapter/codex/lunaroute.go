@@ -2,8 +2,11 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -53,7 +56,7 @@ func lunaRouteEffortArgs(b provider.ResolvedBinding) ([]string, error) {
 type lunaRouteLaunch struct {
 	env     []string
 	home    string
-	cleanup func()
+	cleanup func() error
 }
 
 func prepareLunaRouteLaunch(ctx context.Context, b provider.ResolvedBinding) (lunaRouteLaunch, error) {
@@ -72,16 +75,36 @@ func prepareLunaRouteLaunchWithFS(ctx context.Context, b provider.ResolvedBindin
 	if err != nil {
 		return lunaRouteLaunch{}, provider.LocalLunaRouteError("private home", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(home) }
+	cleanup := func() error { return removeLunaRouteHome(home) }
 	if err := chmod(home, 0700); err != nil {
-		cleanup()
-		return lunaRouteLaunch{}, provider.LocalLunaRouteError("private home permissions", err)
+		return lunaRouteLaunch{}, provider.LocalLunaRouteError("private home permissions", errors.Join(err, cleanup()))
 	}
 	for _, name := range []string{codexHomeVar, "OPENAI_API_KEY", "OPENAI_BASE_URL"} {
 		env = procenv.RemoveVar(env, name)
 	}
 	env = append(env, codexHomeVar+"="+home)
 	return lunaRouteLaunch{env: env, home: home, cleanup: cleanup}, nil
+}
+
+// The harness can leave non-writable directories in its private home. Repair
+// only that tree after the process has stopped; WalkDir does not follow links
+// into the operator's files. Never change permissions on the shared temp parent.
+func removeLunaRouteHome(home string) error {
+	if err := os.RemoveAll(home); err == nil {
+		return nil
+	}
+	if err := filepath.WalkDir(home, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Chmod(path, 0700)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return os.RemoveAll(home)
 }
 
 // Reuse the existing compatibility floor, but never forward the operator's

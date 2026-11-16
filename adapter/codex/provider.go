@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -183,7 +184,12 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 			return nil, lerr
 		}
 		// Rollout evidence below is read before this private home is removed.
-		defer launch.cleanup()
+		defer func() {
+			if cleanupErr := launch.cleanup(); cleanupErr != nil {
+				result = nil
+				err = errors.Join(err, provider.LocalLunaRouteError("private home cleanup", cleanupErr))
+			}
+		}()
 		env = launch.env
 		if err := p.ensureLunaRouteCompatible(ctx, env); err != nil {
 			return nil, err
