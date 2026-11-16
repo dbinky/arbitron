@@ -9,12 +9,7 @@
 
 ## Open
 
-- **[ESCALATION] Area 6 / single:6/review2 — concrete acceptance boundary.**
-  The approver at 0bb44e3 requires only G3's two offline fixtures in `domain/provider/lunaroute_classify_test.go`:
-  `TestRedactLunaRoute_ByteLimit` must preserve 256 bytes and truncate 257; `TestNormalizeLunaRouteRetryAfter` must preserve 9 and 19.
-  Approval requires those fixtures to fail the respective `<=` → `<` and `> '9'` → `>= '9'` mutants and pass real code.
-  Prior C1–C3/C5–C7 evidence and accepted equivalence arguments stand. No credential, dependency or operator decision is missing.
-  This pass supplies only those fixtures and their mutation evidence, then stops for independent review; approval boxes stay untouched.
+- **[RESOLVED at approval of b03188d] Area 6 / single:6/review2 — G3 boundary fixtures supplied and independently mutation-verified.**
 
 - **[RESOLVED at approval of d11128a] Area 5 / single:5/review2 — exact remaining approval conditions.**
   Per the approver at 868c0b0, the missing fixture was a direct boundary table for
@@ -64,6 +59,12 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 6 / single:6/review2 — approver APPROVED at b03188d (independent review).**
+  Ran `go build ./...` and `go test -count=1 ./domain/provider ./adapter/openrouter ./adapter/provider ./domain/modelidentity ./cmd/arbitron`: all ok.
+  Re-applied mutants myself: `lunaroute_classify.go:RedactLunaRoute` `<=`→`<` fails `TestRedactLunaRoute_ByteLimit` (panic at s[256]);
+  `NormalizeLunaRouteRetryAfter` `> '9'`→`>= '9'` fails `TestNormalizeLunaRouteRetryAfter/9` and `/19`. Reverted; tree clean.
+  C1–C3, C5–C7 accepted at 0bb44e3; G3 equivalences (L118, L141, L229) accepted. All seven failure checks now demonstrated.
 
 - **Area 6 / single:6/review2 — G3 boundary audit and final failure assessment.** Pre-change targeted domain/provider and adapter/provider tests passed; no baseline failure.
   C1: `domain/provider/lunaroute_classify_internal_test.go:TestLunaRouteDocumentedCodeTable` and `lunaroute_classify_test.go:TestClassifyLunaRoute_StatusMapping` prove code/status precedence and exactly one gateway sentinel.
