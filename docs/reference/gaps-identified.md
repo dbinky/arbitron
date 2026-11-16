@@ -191,6 +191,10 @@
 
 ## Closed
 
+- [x] **Area 4 / single:4/review2 ticked by approver at 450a269.** The verify-tests placeholders were not substituted, so the approver ran the suites itself: `go build ./...`, `go test ./adapter/codex ./domain/provider ./domain/engine ./adapter/provider`, `./cmd/arbitron -run LunaRouteCodex` and `-race -count=3 ./adapter/codex -run TestLunaRouteCodex_` all pass.
+  Hand mutants, each reverted: skipping the `lunaroute.go:removeLunaRouteHome` repair → `ReadOnlyHomeCleanup` and `RealProcessCancellationCleanup` fail; dropping the deferred `launch.cleanup()` in `provider.go:RunAgent` → `RealProcessCancellationCleanup` and `ProcessErrorsSafeAndClean` fail; swallowing `cleanupErr` → `CleanupFailureIsLocalAndPreservesCause` fails; `rollout.go:lunaRouteAfterTurn` checking selected-vs-selected → `EvidenceRequiredOnEverySuccess`, `TestRolloutLunaRouteReportedEvidence` and root `TestLunaRouteCodexWiringRejectsRolloutDrift` fail.
+  Checks 1, 2 and 4–7 rely on the cited tests that already exist (`CredentialFailures`, `HomeFailures`, `MkdirFailureBeforeLaunch`, `ExactEffort`, `SafeLunaRouteIdentity_EachClause`, `ConcurrentHomes`, `VersionFailureIsLocalAndClean`), and every one of them passes.
+
 - **[ESCALATION] Area 4 / single:4/review2 acceptance boundary resolved:** approval required read-only-home removal, visible irrecoverable cleanup errors, real cancel/deadline teardown fixtures and all eight failure checks; `adapter/codex/lunaroute.go:removeLunaRouteHome`, `provider.go:RunAgent` and the cleanup/lifecycle tests now supply them without an operator key or policy dependency.
 - **Area 4 cleanup gap closed:** `lunaroute_cleanup_test.go:TestLunaRouteCodex_ReadOnlyHomeCleanup` and `TestLunaRouteCodex_CleanupFailureIsLocalAndPreservesCause` fail before the fix and pass afterward; private permission repair and joined local errors replace silently discarded deletion failures.
 

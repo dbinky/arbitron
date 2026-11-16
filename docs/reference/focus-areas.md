@@ -16,7 +16,7 @@ Budget: **2 × 8 + 6 = 22** minimum passes ≤ **500 × 0.35 = 175**; no deferra
 | 1 | A LunaRoute connection is written only with its own lr_ key and the hosted endpoint, and its key is never paired with a foreign provider | high | [x] | [x] |
 | 2 | A LunaRoute agent call validates its effective route before launch and diagnoses opaque failures once, without retrying | high | [x] | [x] |
 | 3 | A LunaRoute profile saves only as a pinned, explicitly backed (codex or pi), table-compatible selection, and other providers keep the shipped behaviour | high | [x] | [x] |
-| 4 | A LunaRoute codex agent runs keyed against the Responses endpoint in a private, always-removed CODEX_HOME and never touches the operator's codex login | high | [x] | [ ] |
+| 4 | A LunaRoute codex agent runs keyed against the Responses endpoint in a private, always-removed CODEX_HOME and never touches the operator's codex login | high | [x] | [x] |
 | 5 | A LunaRoute pi agent runs from a private PI_CODING_AGENT_DIR whose models.json carries table-sourced limits and an env-referenced key | high | [ ] | [ ] |
 | 6 | A LunaRoute chat node completes through /v1/chat/completions with exactly the validated settings, or fails with one classified, secret-free gateway outcome | high | [ ] | [ ] |
 | 7 | connection_models (and CLI connection validate) lists a LunaRoute connection's live models with curated known/unknown facts, admin-only and key-free | med | [ ] | [ ] |
