@@ -51,6 +51,13 @@
   `harden:domain/modelidentity/version.go` (line 192, the lunaroute case).
   Add cases where a vendor prefix contradicts the id, where a bedrock qualifier contradicts the prefix, and where an alias
   hint conflicts. Add an id that only the non-lunaroute grammar accepts.
+  **Approver re-measure at be26096 (single:3/review2 withheld on check 8 only):** hand mutants of `family.go:ClassifyFamily`
+  showed 89, 98 `lab == ""`, 98 `hint != ""` and version.go:192 are killed. **Only `family.go:98` `hint != lab`→`hint == lab` survives**
+  `go test ./domain/modelidentity ./samples`, and it changes behaviour: `ClassifyFamily("", "anthropic/us.openai.gpt-6.1")`
+  becomes `openai` (should be unresolved), `openai/anthropic.claude-opus-5-5` becomes `anthropic`, and the positive control
+  `anthropic/us.anthropic.claude-opus-5-5` becomes unresolved (should be `anthropic`). Fix: add these three rows to
+  `family_test.go:TestClassifyFamily`. Line 110 (`hint == lab`) also survives, but it cannot be reached in production because
+  `reviewedAliasVendors` is empty (R3). Record it as equivalent, or add it to the internal test with an injected alias whose lab contradicts its prefix.
 - [ ] **G10 (Areas 4, 5): executed-identity safety checks are untested.**
   The survivors are `harden:adapter/codex/lunaroute.go` (line 97, `safeLunaRouteIdentity`) and
   `harden:adapter/pi/model_probe.go` (lines 60 and 62). Reported model strings with quotes, whitespace, control characters,
