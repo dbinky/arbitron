@@ -124,6 +124,11 @@ func prepareLunaRoutePiLaunchWithFS(ctx context.Context, b provider.ResolvedBind
 	if err := fs.writeFile(filepath.Join(dir, "models.json"), def, 0600); err != nil {
 		return local("write provider definition", err)
 	}
+	// Cancellation can arrive during any filesystem operation. Keep rollback
+	// ownership until preparation has also passed this final context check.
+	if err := ctx.Err(); err != nil {
+		return local("preparation", err)
+	}
 	env = procenv.RemoveVar(env, PiAgentDirVar)
 	env = append(env, PiAgentDirVar+"="+dir)
 	complete = true

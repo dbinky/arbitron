@@ -174,6 +174,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		if err := p.ensureLunaRouteCompatible(ctx, env); err != nil {
 			return nil, err
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, p.localError("preparation", err)
+		}
 	} else {
 		args, err = buildArgs(p.binding)
 		if err != nil {
@@ -216,6 +219,13 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		collected = append(collected, line)
 	}
 	waitErr := wait()
+	// A clean exit can race cancellation. LunaRoute must not persist success
+	// from the stream after its execution context has been cancelled.
+	if provider.IsLunaRoute(p.binding.Provider) && waitErr == nil {
+		if ctxErr := runCtx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("pi: mission stopped (model %q): %w", model, ctxErr)
+		}
+	}
 
 	// Fold FIRST, even on a non-zero exit: the stream is where pi states what
 	// actually happened, and a bare exit status explains nothing on its own.

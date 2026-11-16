@@ -9,6 +9,19 @@
 
 ## Open
 
+- **[ESCALATION] Area 5 / single:5/review2 — exact remaining approval conditions.**
+  `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` must handle removal failure explicitly, including rollback
+  and deferred run cleanup, with secret-free errors and deterministic fixtures proving the outcome before success persists.
+  G10 additionally needs pi guard-level boundary tests; exact-model mismatch tests currently mask individual guard removals.
+  No external credential or live gateway is needed for either condition; cancellation fixtures now exist in
+  `adapter/pi/lunaroute_cancellation_test.go:TestLunaRoutePi_CancelDuringPreparation` and `TestLunaRoutePi_CancelWithCleanExit`.
+- [ ] **G15 (Area 5): private-directory removal errors are discarded.**
+  `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` defines `cleanup := func() { _ = fs.removeAll(dir) }`;
+  both preparation rollback and `adapter/pi/provider.go:RunAgent`'s deferred cleanup lose failures.
+  Temporary overlay `TestArea5RemovalFailureSurfaced` injected chmod plus removal failures: exit 1, removal error absent
+  from the local error chain and directory still present. Overlay removed; fixture directories cleaned by `t.TempDir`.
+  Preserve secret-free cleanup failure alongside the primary error and cover removal failure after otherwise successful runs.
+
 - [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
   exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
 - **[ESCALATION] Area 1 scope ruling (approver, 142dcc5): G12/G13 do not gate review2 — box ticked.** Review-2 checks
@@ -67,6 +80,17 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 5 / single:5/review2 — cancellation fix; approval withheld.**
+  Baseline `go test -timeout 30m ./adapter/pi -run 'TestLunaRoutePi|TestModelProbePiLunaRoute' -count=1` passed (0.719s).
+  Strict TDD: new cancellation tests failed at mkdir/chmod/write and clean probe/turn exits; all pass after context checks
+  at `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` and `adapter/pi/provider.go:RunAgent` (no success after cancel).
+  Checks 1–6/8: targeted adapter tests plus `TestRunAgent` passed (0.740s); root `TestLunaRoutePiWiringMissingMetadata`
+  and `TestLunaRoutePiWiringFailures` passed (2.141s), covering refusal, failed turn, wrong definition and cleanup.
+  `go test -race -timeout 30m ./adapter/pi -run '^TestLunaRoutePi_(CancelDuringPreparation|CancelWithCleanExit|DeadlineCleansDirectory|ConcurrentDistinctDirs)$' -count=1` passed (1.528s).
+  `rg -n 'safeModelIdentity|prepareLunaRoutePiLaunchWithFS|CredentialEnv|BaseEnv|IsBaseName|probeOnce' adapter/pi adapter/procenv --glob '*.go'`
+  confirms allowlisted env construction and identity guards; check 7 remains G10, and removal-error injection exposes G15.
+  Recommend: no approval for single:5/review2 — G15 removal failures remain silent and G10 pi guard boundaries lack isolated tests.
 
 - **Area 5 / single:5/review1 — approved at refinement 9c8f26c.** All six wiring checks independently verified; no wiring gap found.
   Check 1: `cmd/arbitron/main.go:initDomainWithModelDependencies` loads real rules via `adapter/config/capabilities.go:LoadCapabilityRules`; `adapter/provider/factory.go:agentProviderFor` feeds them into pi. `cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiring` checks the subprocess-read file against distinctive table limits for three models.
@@ -201,6 +225,8 @@
   Failure-lens gaps G1 and G9 remain open: `domain/provider/lunaroute_connection.go:PrepareLunaRouteUpdate` still permits switching away while retaining a key; key-shape/query-error mutation coverage belongs to Review 2 and does not withhold this wiring approval.
 
 ## Closed
+
+- [x] **Area 5 cancellation boundaries:** `adapter/pi/lunaroute_cancellation_test.go` now proves rollback during reveal/mkdir/chmod/write, no mission after probe cancellation, no success after clean-exit cancellation, and cleanup on mission/default deadlines.
 
 - [x] **G14 (Area 5, review1): root pi test never ran a non-default effort to argv.** Closed:
   `cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringEffortReachesArgv` saves a profile with effort
