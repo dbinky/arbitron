@@ -1,21 +1,28 @@
 package provider
 
-import (
-	"strings"
-	"unicode"
-)
+import "regexp"
 
 const lunaRouteKeyPrefix = "lr_"
 
+// lunaRouteKeySuffixClass is the regexp character-class body of every byte that
+// may follow the lr_ prefix. It is the single source for both the write/reveal
+// validator and the fallback redaction pattern, so the set of accepted keys and
+// the set of fully redacted keys are equal by construction.
+const lunaRouteKeySuffixClass = `A-Za-z0-9._~+/=-`
+
+var (
+	lrKeyRE       = regexp.MustCompile(regexp.QuoteMeta(lunaRouteKeyPrefix) + `[` + lunaRouteKeySuffixClass + `]+`)
+	lrKeyAcceptRE = regexp.MustCompile(`^` + regexp.QuoteMeta(lunaRouteKeyPrefix) + `[` + lunaRouteKeySuffixClass + `]+$`)
+)
+
 // ValidLunaRouteKey reports whether key is shaped like a LunaRoute credential:
-// the lr_ prefix, a non-empty suffix, and no whitespace or control characters.
-// LunaRoute forwards any non-lr_ value upstream as a bring-your-own key, so a
-// mis-pasted foreign key must never reach it.
+// the lr_ prefix followed by a non-empty run of the characters redaction can
+// match completely (letters, digits and . _ ~ + / = -). LunaRoute forwards any
+// non-lr_ value upstream as a bring-your-own key, so a mis-pasted foreign key
+// must never reach it; anything outside the set is refused rather than stored
+// where a diagnostic could only partly redact it.
 func ValidLunaRouteKey(key string) bool {
-	if !strings.HasPrefix(key, lunaRouteKeyPrefix) || len(key) == len(lunaRouteKeyPrefix) {
-		return false
-	}
-	return strings.IndexFunc(key, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+	return lrKeyAcceptRE.MatchString(key)
 }
 
 func checkLunaRouteKey(key string) error {

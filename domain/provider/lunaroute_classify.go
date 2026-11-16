@@ -102,7 +102,6 @@ func (f *LunaRouteFailure) Unwrap() []error {
 }
 
 var (
-	lrKeyRE     = regexp.MustCompile(`lr_[A-Za-z0-9._~+/=-]+`)
 	bearerRE    = regexp.MustCompile(`(?i)(bearer\s+)[^\s"',]+`)
 	apiHeaderRE = regexp.MustCompile(`(?i)((?:x-api-key|lunaroute-api-key)\s*[:=]\s*)[^\s"',]+`)
 )

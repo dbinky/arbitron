@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/provider"
@@ -19,6 +20,9 @@ func ptr(s string) *string { return &s }
 func TestValidLunaRouteKey(t *testing.T) {
 	for _, k := range []string{"lr_a", "lr_live_abcDEF123", "lr_-_.~"} {
 		assert.True(t, provider.ValidLunaRouteKey(k), k)
+	}
+	for _, k := range []string{"lr_live_ab!cd#ef", "lr_ab,cd", "lr_ab\"cd", "lr_ab'cd", "lr_ab;cd", "lr_ab\u00e9c", "lr_a:b", "lr_a@b", "lr_a%b", "lr_a*b"} {
+		assert.False(t, provider.ValidLunaRouteKey(k), "punctuation outside the redactable set is refused: %q", k)
 	}
 	for _, k := range []string{"", "lr_", "LR_abc", "sk-abc", "sk-or-v1-abc", " lr_abc", "lr_abc ", "lr_ab cd", "lr_abc\n", "lr_ab\nc", "lr_ab\tc", "xlr_abc", "lr_ab\u00a0c", "lr_ab\u0085c", "lr_ab\x00c", "lr_ab\x7fc"} {
 		assert.False(t, provider.ValidLunaRouteKey(k), "%q", k)
@@ -158,4 +162,22 @@ func TestErrConnectionChangedConcurrently_Distinct(t *testing.T) {
 	assert.NotErrorIs(t, provider.ErrConnectionChangedConcurrently, provider.ErrConnectionNotFound)
 	assert.NotErrorIs(t, provider.ErrConnectionChangedConcurrently, provider.ErrConnectionExists)
 	assert.Contains(t, provider.ErrConnectionChangedConcurrently.Error(), "retry")
+}
+
+// Every key the validator accepts is redacted completely by the fallback
+// pattern, with no secret list to help. The accepted alphabet is exercised
+// character by character, at each position, and in context.
+func TestValidLunaRouteKey_AcceptedKeysFullyRedact(t *testing.T) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~+/=-"
+	keys := []string{"lr_a", "lr_live_abcDEF123", "lr_" + alphabet, "lr_" + alphabet + alphabet}
+	for _, c := range alphabet {
+		keys = append(keys, "lr_"+string(c), "lr_ab"+string(c)+"cd", "lr_live_"+string(c)+"tail")
+	}
+	for _, k := range keys {
+		require.True(t, provider.ValidLunaRouteKey(k), k)
+		for _, wrap := range []string{"%s", "auth failed for %s today", "key=%s", "(%s)", "\"%s\""} {
+			assert.Equal(t, fmt.Sprintf(wrap, "lr_[REDACTED]"), provider.RedactLunaRoute(fmt.Sprintf(wrap, k)), "%q in %q", k, wrap)
+		}
+		assert.Equal(t, "lr_[REDACTED]", provider.RedactLunaRoute(k), k)
+	}
 }
