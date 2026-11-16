@@ -9,7 +9,7 @@
 
 ## Open
 
-- **[ESCALATION] Area 5 / single:5/review2 — exact remaining approval conditions.**
+- **[RESOLVED at approval of d11128a] Area 5 / single:5/review2 — exact remaining approval conditions.**
   Per the approver at 868c0b0, the missing fixture was a direct boundary table for
   `adapter/pi/model_probe.go:safeModelIdentity`; this pass supplies `TestSafeModelIdentity_EachClause`.
   To tick this box, independent review must verify rejection cases and mutation failures for each nonredundant guard,
@@ -72,6 +72,14 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 5 / single:5/review2 — approver TICKED at d11128a (independent re-run).**
+  Own overlays on `adapter/pi/model_probe.go:safeModelIdentity`, `go test -count=1 ./adapter/pi`: dropping nonempty, space or
+  redaction clause, `return true ||`, or `<=`→`<` each exit 1 (killed by `lunaroute_identity_test.go:TestSafeModelIdentity_EachClause`).
+  Length-only and control-only removals exit 0 — accepted as equivalent: `domain/provider/lunaroute_classify.go:RedactLunaRoute`
+  maps controls to space and truncates at `lunaRouteSnippetMax`=256, so `RedactLunaRoute(s)==s` already rejects both.
+  Uncached `go test -count=1 ./adapter/pi ./cmd/arbitron ./domain/provider ./domain/engine ./adapter/procenv`: all ok.
+  Checks 1–6/8 undisputed since 868c0b0; check 7 now demonstrated. G15 stays open as a sibling (rule 5), not gating.
 
 - **Area 5 / single:5/review2 — direct identity boundaries and mutation evidence.**
   `adapter/pi/lunaroute_identity_test.go:TestSafeModelIdentity_EachClause` calls the real predicate, independent of exact-model matching.
