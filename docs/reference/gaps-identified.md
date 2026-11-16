@@ -9,13 +9,6 @@
 
 ## Open
 
-- **[ESCALATION] Area 8 / single:8/review2 — fourth-pass acceptance boundary.**
-  To tick this box, the independent approver must verify all four failure checks, including prompt rejection through `test/lunaroute/evidence_helpers_test.go:validateRegisterAt`.
-  Required fixture: `test/lunaroute/register_test.go:TestReleaseGateRejectsManualPromptPayloads` must reject reinsertion while the redacted real operator record remains accepted.
-  Required artifact: `observations/operator-manual-agent-tasks-2026-11-12.md:Operator manual agent tool tasks` must retain its genuine configuration/result rows and omit the task prompt.
-  Required negative controls: pending/escalated/deferred required items, broken evidence anchors, credentials, and contradictory guide/MCP support claims must fail.
-  This pass supplies the missing G18 fixture/redaction; independent failure-lens approval is the remaining acceptance step, with no operator decision, live key or new run required. G17 stays a sibling documentation gap.
-
 - [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
@@ -84,6 +77,13 @@
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
 
 ## Review evidence
+
+- **Area 8 / single:8/review2 — APPROVED at 7847169 (independent failure review).**
+  C3 now holds: `evidence_helpers_test.go:unsafeManualObservation` replaces the credential-only scan for the R7 note; redacted note keeps every result row.
+  Restoring the HEAD~1 note (with the prompt) fails `TestReleaseGate` (release mode) and always-on `TestProductionR7RegisterApplication` (LR-02/07/08 unsafe).
+  Swapping the guard back to `unsafeText` turns all 11 `TestReleaseGateRejectsManualPromptPayloads` subtests red. Sources restored.
+  C1/C2/C4 unchanged since the 6523e3c review; `go test ./test/lunaroute/`, release-gate run and MCP `LunaRoute|AuthoringGuidance|Initialize` all pass.
+  G17 remains an open sibling documentation gap.
 
 - **Area 8 / single:8/review2 — failure-lens verification after G18 repair.**
   C1 `evidence_helpers_test.go:releaseProblems`: required LR-01–04/07/08 remain verified-only; `TestRegisterDeferredScope` excludes only LR-05/06. Real LR-04 pending/escalated/deferred mutations each fail explicit release mode.
