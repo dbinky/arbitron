@@ -38,7 +38,6 @@ func TestFactory_AgentProviderFor_DeferredLunaRouteBackends(t *testing.T) {
 func TestFactory_AgentProviderFor_WrapsLunaRouteOnly(t *testing.T) {
 	probes := &countingSelector{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{Probes: probes})
-	assert.Same(t, probes, f.ProbeSelector())
 	ap, err := f.AgentProviderFor(provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "openrouter", Backend: "opencode", Model: "m"})
 	require.NoError(t, err)
 	assert.IsType(t, (*opencode.Provider)(nil), ap)

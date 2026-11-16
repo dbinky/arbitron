@@ -116,11 +116,9 @@ func TestLunaRouteDiscoveryWiring(t *testing.T) {
 	assert.Contains(t, text, "forbidden: admin only")
 	assert.Len(t, gw.Requests(), before, "authz precedes any gateway call")
 
-	// One serve-path factory feeds discovery AND the agent wrapper. P3-T3
-	// exercises the real diagnosis sink once a backend is enabled.
-	require.NotNil(t, ds.probeFactory)
-	require.NotNil(t, ds.providerFactory)
-	assert.Same(t, ds.probeFactory, ds.providerFactory.ProbeSelector())
+	// The agent wrapper's diagnosis sink is not asserted here: it is covered
+	// end to end, root trigger to persisted node error, by
+	// TestLunaRouteCodexWiringDiagnosisReadsProbeContract (lunaroute_diagnosis_probe_wiring_test.go).
 }
 
 func TestLunaRouteDiscoveryWiringEmbeddedDefaults(t *testing.T) {

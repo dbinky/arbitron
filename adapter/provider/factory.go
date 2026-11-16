@@ -159,9 +159,6 @@ func NewFactory(deps Deps) *Factory {
 	return &Factory{deps: deps}
 }
 
-// ProbeSelector returns the shared selector used for agent diagnosis.
-func (f *Factory) ProbeSelector() domprovider.ProbeSelector { return f.deps.Probes }
-
 // claudeChatConfigSupplied reports whether a usable claude chat Config was wired
 // (so the claude-cli chat arm builds per-binding adapters). A bare zero-value
 // Config is treated as "not supplied" so test factories that wire only

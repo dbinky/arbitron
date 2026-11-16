@@ -310,9 +310,6 @@ type domainStack struct {
 	profileSvc      *provider.ProfileService
 	connSvc         *provider.ConnectionService
 	capabilityRules provider.CapabilityRules
-	// One serve-path probe factory feeds discovery and agent failure diagnosis.
-	probeFactory    *adaptprobe.ProbeFactory
-	providerFactory *providersadapter.Factory
 	modelDiscovery  *provider.ModelDiscoveryService
 	tracingShutdown func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
@@ -1582,8 +1579,6 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		connStore:             connStore,
 		profileSvc:            profileSvc,
 		connSvc:               connSvc,
-		probeFactory:          probeFactory,
-		providerFactory:       providerFactory,
 		modelDiscovery:        modelDiscovery,
 		capabilityRules:       capabilityRules,
 		tracingShutdown:       tracingShutdown,
