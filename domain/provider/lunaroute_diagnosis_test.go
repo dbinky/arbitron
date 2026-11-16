@@ -27,7 +27,18 @@ func TestLunaRouteDiagnosis(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &provider.LunaRouteDiagnosis{Original: original, Observation: tc.observation, Checked: tc.checked, ModelListed: tc.listed}
 			assert.ErrorIs(t, d, original)
-			assert.ErrorIs(t, d, tc.want)
+			assert.ErrorIs(t, d, provider.ErrLunaRouteCauseUnknown)
+			if tc.want != provider.ErrLunaRouteCauseUnknown {
+				assert.NotErrorIs(t, d, tc.want, "a later observation is outside the mission's causal chain")
+				assert.True(t, d.ObservationIs(tc.want))
+			} else {
+				assert.False(t, d.ObservationIs(provider.ErrLunaRouteCredentialsRejected))
+			}
+			for _, sentinel := range []error{provider.ErrLunaRouteCredentialsRejected, provider.ErrLunaRouteBusy, provider.ErrLunaRouteModelUnavailable} {
+				if sentinel != tc.want {
+					assert.NotErrorIs(t, d, sentinel)
+				}
+			}
 			assert.Contains(t, d.Error(), tc.text)
 			assert.NotContains(t, d.Error(), "lr_live_SECRET")
 			if tc.checked {
@@ -58,7 +69,11 @@ func TestLunaRouteDiagnosis_NilOriginalAndObservationPrecedence(t *testing.T) {
 			assert.Contains(t, text, tc.text)
 			assert.NotContains(t, text, "lr_observation_SECRET")
 			assert.NotContains(t, text, "<nil>")
-			assert.ErrorIs(t, &tc.d, tc.want)
+			assert.ErrorIs(t, &tc.d, provider.ErrLunaRouteCauseUnknown)
+			if tc.want != provider.ErrLunaRouteCauseUnknown {
+				assert.NotErrorIs(t, &tc.d, tc.want)
+				assert.True(t, tc.d.ObservationIs(tc.want))
+			}
 			if tc.d.Observation != nil {
 				assert.NotContains(t, text, "credential was accepted")
 			}

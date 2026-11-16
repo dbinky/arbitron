@@ -156,10 +156,17 @@ func TestLunaRouteAgent_DiagnosisObservations(t *testing.T) {
 			inner := &diagnosisInner{err: original, result: result}
 			got, err := diagnosisAgent(t, inner, p).RunAgent(context.Background(), engine.AgentMission{})
 			require.ErrorIs(t, err, original)
-			require.ErrorIs(t, err, tc.want)
+			// The causal chain says only that the mission's cause is unknown. What
+			// the gateway reports now is reachable through the diagnosis object,
+			// never through the stable sentinels.
+			require.ErrorIs(t, err, domprovider.ErrLunaRouteCauseUnknown)
 			assert.Same(t, result, got)
 			var d *domprovider.LunaRouteDiagnosis
 			require.ErrorAs(t, err, &d)
+			if tc.want != domprovider.ErrLunaRouteCauseUnknown {
+				assert.True(t, d.ObservationIs(tc.want), "observation is exposed through the diagnosis")
+				assert.NotErrorIs(t, err, tc.want, "a later observation does not classify the failed mission")
+			}
 			assert.Equal(t, tc.checked, d.Checked)
 			assert.Equal(t, tc.listed, d.ModelListed)
 			assert.Same(t, original, d.Original)
@@ -169,7 +176,8 @@ func TestLunaRouteAgent_DiagnosisObservations(t *testing.T) {
 				assert.Same(t, tc.want, d.Observation)
 			case tc.checked && p.err != nil:
 				assert.Same(t, p.err, d.Observation)
-				assert.ErrorIs(t, d, p.err)
+				assert.True(t, d.ObservationIs(p.err))
+				assert.NotErrorIs(t, d, p.err)
 			default:
 				assert.Nil(t, d.Observation, "local probe faults are not gateway observations")
 			}
@@ -376,7 +384,10 @@ func TestLunaRouteAgent_StalledDiagnosisHonorsDeadline(t *testing.T) {
 			start := time.Now()
 			got, err := diagnosisAgent(t, inner, probes).RunAgent(ctx, engine.AgentMission{})
 			require.ErrorIs(t, err, original)
-			require.ErrorIs(t, err, context.DeadlineExceeded)
+			var d *domprovider.LunaRouteDiagnosis
+			require.ErrorAs(t, err, &d)
+			assert.True(t, d.ObservationIs(context.DeadlineExceeded), "the stalled check is the observation")
+			assert.NotErrorIs(t, err, context.DeadlineExceeded, "and not part of the mission's causal chain")
 			assert.Same(t, inner.result, got)
 			assert.Less(t, time.Since(start), limit+2*time.Second)
 			assert.Equal(t, 1, calls)
