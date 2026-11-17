@@ -74,17 +74,19 @@
   behaviour) and no invalid key is persisted; an operator must decide whether to narrow that. G13 (explicit `lr_` key on
   a foreign provider) is a sibling defect under rule 5 — fix it as its own gap, but it does not gate this box.
 
-- [ ] **G11 (Areas 3, 7): text survivors need a decision — Area 7 half pinned, Area 3 half open.**
+- [x] **G11 (Areas 3, 7): text survivors need a decision — Area 7 half pinned, Area 3 half open.**
   Area 7 done (single:7/review1): per-segment phrases pinned in `adapter/mcp/tools_connection_models_test.go:TestConnectionModels_DescriptionGuidesTheLLM`
   and `domain/provider/model_discovery_test.go:TestDiscover_LunaRouteView`. Still open: `harden:adapter/mcp/lunaroute_backend_hint.go`
   (Area 3: pin "codex or pi only", "pinned only", or record as equivalent). Area 7 independently verified at approval of 28da84b: all eight single-segment-removal overlays fail the named tests.
+  **CLOSED (operator, 2026-11-16): false alarm.** The three survivors flip the `+` joining the hint's sentences to `-`, which does not compile for strings, so no behavior exists to kill. The hint text is fully pinned by `TestLunaRouteBackendHint_RejectsMissingAndContradictorySurfaces`.
 
-- [ ] **G12 (Area 1): MCP accepts an explicit empty key on an existing LunaRoute connection.**
+- [x] **G12 (Area 1): MCP accepts an explicit empty key on an existing LunaRoute connection.**
   `adapter/mcp/tools_connection.go:connectionUpdateHandler` turns `api_key: ""` into nil; the repo preserves the old key
   and increments `ConfigRevision`, violating failure-lens check 1's empty-key refusal/no-row-change requirement.
   Reproduced through `cmd/arbitron/lunaroute_connection_wiring_test.go:lunaRouteMCP` in a temporary test overlay:
   create lunaroute with `lr_original`, update same provider with `api_key: ""` → success and revision 1 → 2.
   The temporary `TestArea1EmptyKeyRefused` failed (exit 1); no failing test or overlay remains in the worktree.
+  **CLOSED (operator, 2026-11-16): by design.** `api_key: ""` on a same-provider update keeps the stored key for every provider; the stored key was validated as `lr_` at write and is re-checked at launch, so nothing is weakened. Refusal stays enforced for create and switch-to-LunaRoute. The no-op ConfigRevision bump is provider-generic, not a LunaRoute gap.
 - [x] **G13 (Area 1, high): explicitly supplied LunaRoute keys can still be paired with a foreign provider.**
   `domain/provider/lunaroute_connection.go:PrepareLunaRouteCreate` / `PrepareLunaRouteUpdate` pass through foreign-provider
   keys unchecked. G1 now requires a nonempty replacement, but resubmitting `lr_original` on switch-away is accepted.
