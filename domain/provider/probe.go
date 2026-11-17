@@ -41,3 +41,39 @@ type ProbeSelector interface {
 // ErrNoProbeForProvider is returned by a ProbeSelector when a binding names a
 // provider that has no probe mapping.
 var ErrNoProbeForProvider = errors.New("provider: no probe for provider")
+
+// ProbeBindingFromConnection builds a lazy, guarded binding for discovery and
+// CLI validation. A post-decryption metadata read ensures the key belongs to
+// the captured route before returning it to a probe. Connection revisions are
+// monotonic, including across deletion/recreation, so an intervening edit cannot
+// pair a new credential with an old endpoint (even on a non-LunaRoute route).
+func ProbeBindingFromConnection(store ConnectionStore, name string, c Connection) ResolvedBinding {
+	return GuardLunaRouteReveal(ResolvedBinding{
+		Provider: c.Provider, BaseURL: c.BaseURL, Extras: c.Extras, ConnectionRef: name,
+		RevealKey: RevealBoundToRevision(store, name, c),
+	})
+}
+
+// RevealBoundToRevision returns a lazy reveal for the connection metadata c
+// captured earlier. After decryption it re-reads the connection and fails
+// closed with ErrConnectionChangedConcurrently unless ConfigRevision still
+// matches, so a key stored by a later edit (or a deleted-and-recreated row,
+// whose revision is monotonic) is never returned for the captured route. The
+// check applies to every provider, not only LunaRoute. Every binding producer
+// that captures a route and reveals later uses this one function.
+func RevealBoundToRevision(store ConnectionStore, name string, c Connection) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		key, err := store.Reveal(ctx, name)
+		if err != nil {
+			return "", SanitizeLunaRouteError(err, key)
+		}
+		current, err := store.Get(ctx, name)
+		if err != nil {
+			return "", SanitizeLunaRouteError(err, key)
+		}
+		if current.ConfigRevision != c.ConfigRevision {
+			return "", ErrConnectionChangedConcurrently
+		}
+		return key, nil
+	}
+}

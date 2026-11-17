@@ -79,7 +79,7 @@ func NormalizeSelection(p Profile) (Profile, error) {
 // ValidateSelection prepares a prospective selection outside the mutation
 // lease. A pinned selection is only version-checked; a following one is proved. The caller must revalidate the returned proof under that
 // lease and persist it through SelectionMutationStore, without rediscovery.
-func ValidateSelection(ctx context.Context, p Profile, versions VersionResolver, source EligibleCandidateSource) (PreparedSelection, error) {
+func ValidateSelection(ctx context.Context, p Profile, versions VersionResolver, source EligibleCandidateSource, caps LunaRouteCapabilities) (PreparedSelection, error) {
 	p, err := NormalizeSelection(p)
 	if err != nil {
 		return PreparedSelection{}, err
@@ -87,13 +87,25 @@ func ValidateSelection(ctx context.Context, p Profile, versions VersionResolver,
 	if p.SelectionMode != SelectionFollowing {
 		// Pinned writes need real routes even when no selection ports were
 		// injected. They need neither catalog membership nor usability probes.
-		if err := checkRouteVersions(ctx, p, versions, source); err != nil {
+		if err := checkRouteVersions(ctx, p, versions, source, caps); err != nil {
 			return PreparedSelection{}, err
 		}
 		return PreparedSelection{Profile: p}, nil
 	}
 	if source == nil {
 		return PreparedSelection{}, fmt.Errorf("%w: candidate source", ErrSelectionPortsMissing)
+	}
+	// Read connection metadata, not model-dependent routes, before discovery.
+	// Other providers retain their catalog-first selection/error ordering.
+	lunaRoute, err := profileUsesLunaRoute(ctx, source, p)
+	if err != nil {
+		return PreparedSelection{}, err
+	}
+	if lunaRoute {
+		if versions == nil {
+			return PreparedSelection{}, fmt.Errorf("%w: version resolver", ErrSelectionPortsMissing)
+		}
+		return PreparedSelection{}, checkLunaRouteProfile(caps, p, VersionRequest{Backend: p.Backend})
 	}
 	if p.Model == "" {
 		c, err := source.Newest(ctx, p.Clone())
@@ -105,7 +117,7 @@ func ValidateSelection(ctx context.Context, p Profile, versions VersionResolver,
 		}
 		p.Model = c.Model
 	}
-	if err := checkRouteVersions(ctx, p, versions, source); err != nil {
+	if err := checkRouteVersions(ctx, p, versions, source, caps); err != nil {
 		return PreparedSelection{}, err
 	}
 	candidate, err := source.ValidateStart(ctx, p.Clone())
@@ -124,7 +136,7 @@ func ValidateSelection(ctx context.Context, p Profile, versions VersionResolver,
 // ValidatePinRoutes checks one model against every actual route. Its nonempty
 // result is a D8 native routing exception, not immutable-version evidence.
 // Only pinned, wholly native Azure or Bedrock route sets may use an exception.
-func ValidatePinRoutes(ctx context.Context, p Profile, requests []VersionRequest, versions VersionResolver) (string, error) {
+func ValidatePinRoutes(ctx context.Context, p Profile, requests []VersionRequest, versions VersionResolver, caps LunaRouteCapabilities) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -150,10 +162,14 @@ func ValidatePinRoutes(ctx context.Context, p Profile, requests []VersionRequest
 		if request.Model != p.Model {
 			return "", fmt.Errorf("%w: route model differs from prospective model", ErrInvalidSelection)
 		}
-		// Codex agent dispatch authenticates via its subscription, ignoring the
-		// profile's connection. That connection cannot grant a D8 exception or
-		// impose its native provider's version grammar on the subscription.
-		if p.Kind == ProfileKindAgent && request.Backend == "codex" {
+		if IsLunaRoute(request.RouteProvider) {
+			if err := checkLunaRouteProfile(caps, p, request); err != nil {
+				return "", err
+			}
+		}
+		// Non-LunaRoute codex uses its subscription, ignoring the connection.
+		// Keyed LunaRoute routes keep their provider and fixed-id grammar.
+		if p.Kind == ProfileKindAgent && request.Backend == "codex" && !IsLunaRoute(request.RouteProvider) {
 			request.RouteProvider = ""
 			request.ConnectionRef = ""
 		}
@@ -186,7 +202,7 @@ func ValidatePinRoutes(ctx context.Context, p Profile, requests []VersionRequest
 
 // checkRouteVersions validates the prospective profile's full route set without
 // catalog reads, allowing only the native pinned-only D8 exception.
-func checkRouteVersions(ctx context.Context, p Profile, versions VersionResolver, source EligibleCandidateSource) error {
+func checkRouteVersions(ctx context.Context, p Profile, versions VersionResolver, source EligibleCandidateSource, caps LunaRouteCapabilities) error {
 	if versions == nil {
 		return fmt.Errorf("%w: version resolver", ErrSelectionPortsMissing)
 	}
@@ -197,8 +213,43 @@ func checkRouteVersions(ctx context.Context, p Profile, versions VersionResolver
 	if err != nil {
 		return err
 	}
-	_, err = ValidatePinRoutes(ctx, p, requests, versions)
+	_, err = ValidatePinRoutes(ctx, p, requests, versions, caps)
 	return err
+}
+
+// ProfileConnectionSource reads only the profile connection's stored provider.
+// It must work before a following model is selected, without catalog/probe I/O.
+// Production candidate sources implement it; older selection-only callers keep
+// their existing behavior without adding model-dependent route inspections.
+type ProfileConnectionSource interface {
+	ConnectionProvider(context.Context, Profile) (string, error)
+}
+
+func profileUsesLunaRoute(ctx context.Context, source EligibleCandidateSource, p Profile) (bool, error) {
+	metadata, ok := source.(ProfileConnectionSource)
+	if !ok {
+		return false, nil
+	}
+	routing, err := metadata.ConnectionProvider(ctx, p.Clone())
+	return IsLunaRoute(routing), err
+}
+
+// checkLunaRouteProfile checks the original route before subscription routing
+// can discard its provider. Backend intent belongs to the profile, not defaults.
+func checkLunaRouteProfile(caps LunaRouteCapabilities, p Profile, request VersionRequest) error {
+	if p.SelectionMode == SelectionFollowing {
+		return &LunaRouteRefusal{Reason: ErrLunaRoutePinnedOnly, Model: p.Model, Backend: request.Backend,
+			Detail: "set selection_mode to pinned with an explicit model; LunaRoute models are never auto-selected"}
+	}
+	route := LunaRouteRoute{Kind: p.Kind, Model: p.Model, ContextWindow: p.ContextWindow, Effort: p.Effort}
+	if p.Kind == ProfileKindAgent {
+		if strings.TrimSpace(p.Backend) == "" {
+			return &LunaRouteRefusal{Reason: ErrLunaRouteBackendRequired, Model: p.Model,
+				Detail: "set backend to codex or pi explicitly; deployment defaults never choose a LunaRoute backend"}
+		}
+		route.Backend = request.Backend
+	}
+	return CheckLunaRouteRoute(caps, route)
 }
 
 // selectionChanged reports whether an edit alters anything that decides which

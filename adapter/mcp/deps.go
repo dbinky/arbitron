@@ -130,6 +130,9 @@ type Deps struct {
 	// admin gate over the ConnectionStore (same authz rule as ProfileAdmin).
 	// Optional: when nil, the connection tools report the service as unavailable.
 	ConnectionAdmin *provider.ConnectionService
+	// ModelDiscovery powers the admin-only connection_models tool. Nil reports
+	// discovery as unavailable; known facts carry evidence and unknowns stay explicit.
+	ModelDiscovery *provider.ModelDiscoveryService
 	// Capabilities is the effective capability ruleset (allowed tiers + effort per
 	// backend/model). Injected for any surface that needs the rules directly;
 	// provider_capabilities also reaches them through ProfileAdmin.Capabilities.

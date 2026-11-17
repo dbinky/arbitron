@@ -67,6 +67,7 @@ func (a *AgentAdapter) spec(mission engine.AgentMission, env []string) RunSpec {
 			DefaultModel:    a.core.defaultModel,
 			SkipPermissions: true,
 			AllowedTools:    scope,
+			isolateSettings: provider.IsLunaRoute(a.binding.Provider),
 		}),
 		Stdin:            mission.Prompt,
 		Dir:              mission.WorkDir,
@@ -79,11 +80,19 @@ func (a *AgentAdapter) spec(mission engine.AgentMission, env []string) RunSpec {
 // intermediate transcript events into AgentResult.Steps and captures the
 // terminal result event's summary, token counts, and session id.
 func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission) (*engine.AgentResult, error) {
+	model, err := prepareLunaRouteModel(mission.Model, a.binding, a.core.rules)
+	if err != nil {
+		return nil, err
+	}
+	mission.Model = model
 	if err := a.core.validateWorkDir(mission.WorkDir); err != nil {
+		if provider.IsLunaRoute(a.binding.Provider) {
+			err = provider.LocalLunaRouteError("workspace", err)
+		}
 		return nil, err
 	}
 
-	wantModel, err := requiredExecutedModel(mission.Model, false, a.binding)
+	wantModel, err := requiredExecutedModel(mission.Model, provider.IsLunaRoute(a.binding.Provider), a.binding)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +114,7 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 	runCtx, cancel := procenv.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, events, err := collectResult(runCtx, a.core.runner, a.spec(mission, env), wantModel)
+	result, events, err := collectResultWithPolicy(runCtx, a.core.runner, a.spec(mission, env), wantModel, lunaRouteCollectPolicy(a.binding))
 	if err != nil {
 		return nil, err
 	}
@@ -119,13 +128,18 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 		steps = append(steps, step)
 	}
 
+	var evidence []engine.ModelEvidence
+	if provider.IsLunaRoute(a.binding.Provider) {
+		evidence = result.modelEvidence()
+	}
 	return &engine.AgentResult{
-		Summary:   result.Text,
-		Steps:     steps,
-		Model:     mission.Model,
-		TokensIn:  result.TokensIn,
-		TokensOut: result.TokensOut,
-		SessionID: result.SessionID,
+		ModelEvidence: evidence,
+		Summary:       result.Text,
+		Steps:         steps,
+		Model:         mission.Model,
+		TokensIn:      result.TokensIn,
+		TokensOut:     result.TokensOut,
+		SessionID:     result.SessionID,
 	}, nil
 }
 
@@ -136,11 +150,18 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 // returns the binding's model and the CLI's session id only when the CLI's own
 // modelUsage reports it executed; the error never carries CLI output.
 func (a *AgentAdapter) ProbeExecutedModel(ctx context.Context, prompt, workDir string) (string, string, error) {
-	wantModel, err := requiredExecutedModel(a.binding.Model, true, a.binding)
+	model, err := prepareLunaRouteModel(a.binding.Model, a.binding, a.core.rules)
+	if err != nil {
+		return "", "", err
+	}
+	wantModel, err := requiredExecutedModel(model, true, a.binding)
 	if err != nil {
 		return "", "", err
 	}
 	if err := a.core.validateWorkDir(workDir); err != nil {
+		if provider.IsLunaRoute(a.binding.Provider) {
+			err = provider.LocalLunaRouteError("workspace", err)
+		}
 		return "", "", err
 	}
 	env, err := agentEnvWithRules(ctx, a.binding, a.core.rules)
@@ -157,7 +178,7 @@ func (a *AgentAdapter) ProbeExecutedModel(ctx context.Context, prompt, workDir s
 		Env:              probeEnv(env),
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
-	result, _, err := collectResult(runCtx, a.core.runner, spec, wantModel)
+	result, _, err := collectResultWithPolicy(runCtx, a.core.runner, spec, wantModel, lunaRouteCollectPolicy(a.binding))
 	if err != nil {
 		return "", "", err
 	}

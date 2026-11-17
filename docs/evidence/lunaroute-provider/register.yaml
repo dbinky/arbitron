@@ -1,0 +1,86 @@
+items:
+  LR-01:
+    title: Hosted destination and dialect/auth contract
+    status: verified
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-01
+    evidence: [docs/evidence/lunaroute-provider/sources/lr01-gateway-docs.md, docs/evidence/lunaroute-provider/observations/lr01-gateway-20261111T155705.865199000Z.json]
+    escalation: ""
+    applied_to:
+      - domain/provider/lunaroute_endpoint.go:LunaRouteHostedRoot
+      - adapter/probe/lunaroute.go:Probe
+      - adapter/provider/factory.go:ChatProviderFor
+      - adapter/codex/lunaroute.go:prepareLunaRouteLaunch
+      - adapter/pi/lunaroute.go:prepareLunaRoutePiLaunch
+  LR-02:
+    title: Published per-model capability facts and completed task support
+    status: verified
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-02
+    evidence:
+      - docs/evidence/lunaroute-provider/model-capabilities.md
+      - docs/evidence/lunaroute-provider/sources/lr02-live-models-2026-11-11.json
+      - docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json
+      - docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md
+    escalation: ""
+    applied_to:
+      - adapter/config/capabilities.default.yaml:lunaroute_models
+      - adapter/config/capabilities.go:LoadCapabilityRules
+      - domain/provider/model_discovery.go:Discover
+      - domain/provider/lunaroute_validate.go:CheckLunaRouteRequest
+      - adapter/pi/lunaroute.go:lunaRouteModelsJSON
+  LR-03:
+    title: Reviewed executable identities and alias vendor evidence
+    status: verified
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-03
+    evidence: [docs/evidence/lunaroute-provider/model-identities.md]
+    escalation: ""
+    applied_to:
+      - domain/modelidentity/version.go:lunaRouteReviewedIDs
+      - domain/modelidentity/family.go:ClassifyFamily
+  LR-04:
+    title: Listing envelope and documented plus R4-observed gateway codes
+    status: verified
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-04
+    evidence: [docs/evidence/lunaroute-provider/gateway-contract.md, docs/evidence/lunaroute-provider/observations/lr04-discovery-chat.json]
+    escalation: ""
+    applied_to:
+      - domain/provider/lunaroute_classify.go:ClassifyLunaRoute
+      - adapter/probe/lunaroute.go:Probe
+      - adapter/provider/factory.go:ChatProviderFor
+  LR-05:
+    title: Claude Code selectors, isolation and helper routing (deferred by R7, 2026-11-12)
+    status: deferred
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-05
+    evidence: []
+    escalation: ""
+    applied_to: []
+  LR-06:
+    title: OpenCode overlay, limits and helper routing (deferred by R7, 2026-11-12)
+    status: deferred
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-06
+    evidence: []
+    escalation: ""
+    applied_to: []
+  LR-07:
+    title: Codex Responses overrides, private home and representative tool task (R7)
+    status: verified
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-07
+    evidence:
+      - docs/evidence/lunaroute-provider/observations/lr07-codex-config-controls.json
+      - docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md
+    escalation: ""
+    applied_to:
+      - adapter/codex/lunaroute.go:lunaRouteExecExtra
+      - adapter/codex/lunaroute.go:prepareLunaRouteLaunch
+      - adapter/provider/factory.go:AgentProviderFor
+  LR-08:
+    title: Pi provider metadata, relocation and representative tool task (R7)
+    status: verified
+    decision: docs/designs/2026-11-10-lunaroute-provider-decisions.md LR-08
+    evidence:
+      - docs/evidence/lunaroute-provider/observations/lr08-pi-model-controls.json
+      - docs/evidence/lunaroute-provider/observations/operator-manual-agent-tasks-2026-11-12.md
+    escalation: ""
+    applied_to:
+      - adapter/pi/lunaroute.go:lunaRouteModelsJSON
+      - adapter/pi/lunaroute.go:prepareLunaRoutePiLaunch
+      - adapter/provider/factory.go:AgentProviderFor

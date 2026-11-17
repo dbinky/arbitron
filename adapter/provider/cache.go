@@ -99,6 +99,43 @@ func (c *ProfileCache) Load(ctx context.Context) error {
 // Phase-4 Reloader interface structurally without this phase importing it.
 func (c *ProfileCache) Reload(ctx context.Context) error { return c.Load(ctx) }
 
+// PublishProfile installs one committed row without a full reload, so a write
+// takes effect even when Load fails on an unrelated row. It is serialized with
+// Load and never replaces a newer cached revision with an older row.
+func (c *ProfileCache) PublishProfile(p provider.Profile) {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cur, ok := c.byAlias[p.Alias]; ok && cur.Revision > p.Revision {
+		return
+	}
+	next := make(map[string]provider.Profile, len(c.byAlias)+1)
+	for a, q := range c.byAlias {
+		next[a] = q
+	}
+	next[p.Alias] = p.Clone()
+	c.byAlias = next
+}
+
+// ForgetProfile removes a deleted alias without a full reload.
+func (c *ProfileCache) ForgetProfile(alias string) {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.byAlias[alias]; !ok {
+		return
+	}
+	next := make(map[string]provider.Profile, len(c.byAlias))
+	for a, q := range c.byAlias {
+		if a != alias {
+			next[a] = q
+		}
+	}
+	c.byAlias = next
+}
+
 // get returns the cached profile for an alias under the read-lock. ok is false
 // when the alias is unknown.
 func (c *ProfileCache) get(alias string) (provider.Profile, bool) {
@@ -154,4 +191,7 @@ func (c *ProfileCache) PublishCommitted(ctx context.Context, advs []provider.Adv
 	return nil
 }
 
-var _ provider.AdvancementPublisher = (*ProfileCache)(nil)
+var (
+	_ provider.AdvancementPublisher = (*ProfileCache)(nil)
+	_ provider.ProfilePublisher     = (*ProfileCache)(nil)
+)

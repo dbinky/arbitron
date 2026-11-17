@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -15,15 +16,19 @@ const opencodeConfigSchema = "https://opencode.ai/config.json"
 var ErrNoEffectiveTools = fmt.Errorf("opencode: scoped allowlist maps to no opencode tools")
 
 type opencodeConfig struct {
-	Schema     string                   `json:"$schema"`
-	Provider   map[string]providerBlock `json:"provider,omitempty"`
-	Permission map[string]string        `json:"permission,omitempty"`
+	Schema           string                   `json:"$schema"`
+	Provider         map[string]providerBlock `json:"provider,omitempty"`
+	Permission       map[string]string        `json:"permission,omitempty"`
+	Model            string                   `json:"model,omitempty"`
+	SmallModel       string                   `json:"small_model,omitempty"`
+	EnabledProviders []string                 `json:"enabled_providers,omitempty"`
 }
 
 type providerBlock struct {
-	NPM     string         `json:"npm,omitempty"`
-	Name    string         `json:"name,omitempty"`
-	Options map[string]any `json:"options,omitempty"`
+	NPM     string                    `json:"npm,omitempty"`
+	Name    string                    `json:"name,omitempty"`
+	Options map[string]any            `json:"options,omitempty"`
+	Models  map[string]map[string]any `json:"models,omitempty"`
 }
 
 // buildConfig generates the OPENCODE_CONFIG_CONTENT JSON for one run: a
@@ -36,7 +41,7 @@ type providerBlock struct {
 // dropped is the set of requested tools with no opencode 1.17.x equivalent; it is
 // returned so RunAgent can surface the (security-relevant) trimming in the
 // AgentResult/trace, not only in server logs.
-func buildConfig(d providerDescriptor, binding provider.ResolvedBinding, post Posture) (cfg string, dropped []string, err error) {
+func buildConfig(d providerDescriptor, binding provider.ResolvedBinding, post Posture, rules provider.CapabilityRules) (cfg string, dropped []string, err error) {
 	doc := opencodeConfig{Schema: opencodeConfigSchema}
 
 	perm, dropped, err := buildPermissionBlock(post)
@@ -52,19 +57,26 @@ func buildConfig(d providerDescriptor, binding provider.ResolvedBinding, post Po
 	doc.Permission = perm
 
 	if needsProviderBlock(d, binding) {
-		// SSRF / credential-egress backstop: re-validate a custom BaseURL against
-		// the production policy before it becomes a config sink the credential is
-		// referenced from. The write-time guard already enforces this; this fails
-		// closed if a binding ever reaches here with an unvalidated URL. The local
-		// Ollama loopback carve-out is preserved.
-		if binding.BaseURL != "" {
-			if err := validateBaseURL(binding); err != nil {
+		baseURL := binding.BaseURL
+		lunaroute := provider.IsLunaRoute(binding.Provider)
+		if lunaroute {
+			baseURL, err = provider.LunaRouteOpenAIBaseURL(baseURL)
+			if err != nil {
+				return "", dropped, err
+			}
+		}
+		// Retain the general credential-egress backstop as well as the
+		// hosted-only LunaRoute guard above.
+		if baseURL != "" {
+			checked := binding
+			checked.BaseURL = baseURL
+			if err := validateBaseURL(checked); err != nil {
 				return "", dropped, err
 			}
 		}
 		opts := map[string]any{}
-		if binding.BaseURL != "" {
-			opts["baseURL"] = binding.BaseURL
+		if baseURL != "" {
+			opts["baseURL"] = baseURL
 		}
 		if d.credEnvVar != "" {
 			opts["apiKey"] = fmt.Sprintf("{env:%s}", d.credEnvVar)
@@ -77,9 +89,26 @@ func buildConfig(d providerDescriptor, binding provider.ResolvedBinding, post Po
 				opts["apiVersion"] = av
 			}
 		}
-		doc.Provider = map[string]providerBlock{
-			d.opencodeID: {NPM: d.npmPackage, Options: opts},
+		block := providerBlock{NPM: d.npmPackage, Options: opts}
+		if lunaroute {
+			leaf := modelLeaf(strings.TrimSpace(binding.Model), d.opencodeID)
+			if leaf == "" {
+				return "", dropped, ErrModelRequired
+			}
+			m, _ := rules.LunaRouteModel(leaf)
+			if !m.ContextTokens.Known() || !m.OutputTokens.Known() {
+				return "", dropped, &provider.LunaRouteRefusal{Reason: provider.ErrLunaRouteLimitsUnknown, Model: leaf, Backend: "opencode",
+					Detail: "opencode on LunaRoute needs known context and output limits for this model in the capability table (lunaroute_models)"}
+			}
+			block.Models = map[string]map[string]any{leaf: {
+				"name": leaf, "tool_call": true,
+				"limit": map[string]any{"context": m.ContextTokens.Tokens, "output": m.OutputTokens.Tokens},
+			}}
+			ref := d.opencodeID + "/" + leaf
+			doc.Model, doc.SmallModel = ref, ref
+			doc.EnabledProviders = []string{d.opencodeID}
 		}
+		doc.Provider = map[string]providerBlock{d.opencodeID: block}
 	}
 
 	out, err := json.Marshal(doc)

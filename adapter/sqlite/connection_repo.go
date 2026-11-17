@@ -19,6 +19,10 @@ type ConnectionRepo struct {
 	queries   *generated.Queries
 	crypto    provider.Crypto
 	urlPolicy provider.URLPolicy
+
+	// afterMetaRead is a test-only seam run between Update's existence read and
+	// its write, used to prove the guarded LunaRoute update. Nil in production.
+	afterMetaRead func()
 }
 
 // Compile-time assertion that ConnectionRepo satisfies the domain port.
@@ -66,6 +70,10 @@ func (r *ConnectionRepo) Create(ctx context.Context, c provider.Connection, apiK
 	if err := provider.ValidateConnection(c); err != nil {
 		return err
 	}
+	c, err := provider.PrepareLunaRouteCreate(c, apiKey)
+	if err != nil {
+		return err
+	}
 	// SECURITY (SSRF / credential exfiltration): the BaseURL drives outbound
 	// credentialed requests, so reject non-https or internal-host endpoints at
 	// the write path before any key is sealed.
@@ -107,15 +115,22 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 	if err := provider.ValidateConnection(c); err != nil {
 		return err
 	}
-	// Pre-check existence so a missing connection maps to the sentinel rather
-	// than silently affecting zero rows. The UPDATE also checks its affected-row
-	// count in case deletion wins after this read. This precedes the BaseURL check
-	// so an update to a non-existent connection still surfaces ErrConnectionNotFound.
-	if _, err := r.queries.GetConnectionMeta(ctx, c.Name); err != nil {
+	// Pre-check existence before key and URL validation. Keep the stored
+	// provider: it decides whether a LunaRoute update may retain the sealed key.
+	stored, err := r.queries.GetConnectionMeta(ctx, c.Name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
 		}
 		return fmt.Errorf("checking connection %q: %w", c.Name, err)
+	}
+
+	if r.afterMetaRead != nil {
+		r.afterMetaRead()
+	}
+	c, err = provider.PrepareLunaRouteUpdate(c, apiKey, stored.Provider)
+	if err != nil {
+		return err
 	}
 
 	// SECURITY (SSRF / credential exfiltration): re-validate the BaseURL on every
@@ -130,18 +145,21 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 	}
 
 	if apiKey == nil {
-		// nil key: leave the sealed key columns untouched.
-		rows, err := r.queries.UpdateConnectionMetadata(ctx, generated.UpdateConnectionMetadataParams{
-			Provider: c.Provider,
-			BaseURL:  c.BaseURL,
-			Extras:   extrasJSON,
-			Name:     c.Name,
+		// Every retained-key write depends on the provider read above. Guard
+		// foreign-provider edits too: a concurrent switch TO LunaRoute may have
+		// replaced the key since that read, and must not leak it on this write.
+		rows, err := r.queries.UpdateConnectionMetadataIfProvider(ctx, generated.UpdateConnectionMetadataIfProviderParams{
+			Provider:   c.Provider,
+			BaseURL:    c.BaseURL,
+			Extras:     extrasJSON,
+			Name:       c.Name,
+			Provider_2: stored.Provider,
 		})
 		if err != nil {
 			return fmt.Errorf("updating connection %q: %w", c.Name, err)
 		}
 		if rows == 0 {
-			return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
+			return r.missingOrChanged(ctx, c.Name)
 		}
 		return nil
 	}
@@ -166,6 +184,18 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 		return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
 	}
 	return nil
+}
+
+// missingOrChanged distinguishes a deletion from a concurrent provider change
+// when a guarded metadata update matches no row.
+func (r *ConnectionRepo) missingOrChanged(ctx context.Context, name string) error {
+	if _, err := r.queries.GetConnectionMeta(ctx, name); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("connection %q: %w", name, provider.ErrConnectionNotFound)
+		}
+		return fmt.Errorf("checking connection %q: %w", name, err)
+	}
+	return fmt.Errorf("connection %q: %w", name, provider.ErrConnectionChangedConcurrently)
 }
 
 func (r *ConnectionRepo) Delete(ctx context.Context, name string) error {

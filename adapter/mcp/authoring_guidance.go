@@ -26,7 +26,20 @@ pr_branch, then the last path segment of work_dir. Set gitVariable only when
 the branch lives under another name.
 
 Profiles: model/provider selection is pinned per node via config.model_profile.
-There is no convention for passing a profile as a workflow input.`
+There is no convention for passing a profile as a workflow input.
+
+Model discovery: call connection_models with a connection name to see the
+models it lists, each with its actual vendor family and capability facts (task
+kinds, compatible backends, context/output limits, supported efforts). A field
+marked "unknown" is not a guarantee, and a listed model is not thereby
+compatible with every task or backend. Choose the model and, for agent
+profiles, the backend (claude-code, codex, opencode or pi) explicitly;
+LunaRoute profiles are pinned-only and support chat or agents on codex or pi;
+LunaRoute claude-code and opencode are not yet supported. Family is the actual
+vendor even behind a gateway alias. LunaRoute Claude-shaped aliases are refused,
+never classified as Anthropic:
+pair doer and judge across different vendors, and do not select a model whose
+family is "unresolved".`
 
 // WorkflowManifestHint is appended to the workflow_create and workflow_update
 // tool descriptions: the variable conventions plus the parallel_group guide.

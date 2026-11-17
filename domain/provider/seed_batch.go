@@ -128,7 +128,8 @@ func (s *ProfileService) SeedBatch(ctx context.Context, seeds ProfileSeedStore, 
 		}
 		for _, selection := range accepted {
 			p := selection.Profile
-			_, err = s.storePrepared(ctx, selection, nil, func(ctx context.Context, p Profile) (Profile, error) {
+			var stored Profile
+			stored, err = s.storePrepared(ctx, selection, nil, func(ctx context.Context, p Profile) (Profile, error) {
 				if err := s.store.Create(ctx, p); err != nil {
 					return Profile{}, err
 				}
@@ -149,7 +150,7 @@ func (s *ProfileService) SeedBatch(ctx context.Context, seeds ProfileSeedStore, 
 				return err
 			}
 			seeded++
-			s.recache(ctx)
+			s.recache(ctx, stored)
 			if err := seeds.CompleteProfileSeed(ctx, p.Alias); err != nil {
 				return err
 			}
@@ -168,9 +169,9 @@ func (s *ProfileService) SeedBatch(ctx context.Context, seeds ProfileSeedStore, 
 // prepareSeed validates one seed's selection and capability axes outside the
 // mutation lease. A refusal is wrapped as a preparationError.
 func (s *ProfileService) prepareSeed(ctx context.Context, p Profile) (PreparedSelection, error) {
-	selection, invalid := ValidateSelection(ctx, p, s.versions, s.source)
+	selection, invalid := ValidateSelection(ctx, p, s.versions, s.source, s.rules)
 	if invalid == nil {
-		_, invalid = s.validateAxes(selection.Profile)
+		_, invalid = s.validateAxes(ctx, selection.Profile)
 	}
 	if invalid != nil {
 		return selection, &preparationError{invalid}

@@ -176,6 +176,24 @@ func TestModelProbeClaudeNonStreamingAcceptsRepeatedProof(t *testing.T) {
 	assert.Contains(t, fmt.Sprint(out), "later success")
 }
 
+// Each background-subagent wake reports its own usage, so a batch call bills the
+// SUM of every accepted result, as the streaming path already does, while the
+// answer still comes from the last result.
+func TestModelProbeClaudeNonStreamingSumsUsageAcrossWakes(t *testing.T) {
+	r := &modelEvidenceRunner{t: t}
+	r.lines = []string{
+		`{"type":"result","result":"first","usage":{"input_tokens":10,"output_tokens":1},"modelUsage":{"claude-sonnet-4-6":{}}}`,
+		`{"type":"result","result":"second","usage":{"input_tokens":20,"output_tokens":2},"modelUsage":{"claude-sonnet-4-6":{}}}`,
+		`{"type":"result","result":"final","usage":{"input_tokens":30,"output_tokens":3},"modelUsage":{"claude-sonnet-4-6":{}}}`,
+	}
+	out, err := NewChatAdapter(Config{BinaryPath: "claude", Runner: r}).Chat(context.Background(), engine.ChatRequest{Model: proofModel, Prompt: "prove this turn", WorkDir: "/tmp/proof-workspace", RequireExecutedModel: true})
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "final", out.Output)
+	assert.Equal(t, 60, out.TokensIn)
+	assert.Equal(t, 6, out.TokensOut)
+}
+
 func TestModelProbeClaudeNonStreamingRejectsLaterUnprovenResult(t *testing.T) {
 	proven := `{"type":"result","result":"first","modelUsage":{"claude-sonnet-4-6":{}}}`
 	for _, later := range []string{

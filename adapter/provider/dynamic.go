@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -79,15 +80,16 @@ func (r *DynamicProfileResolver) Resolve(ctx context.Context, alias string) (pro
 	// No-key subscription path: empty ConnectionRef -> claude-cli, no store call.
 	if p.ConnectionRef == "" {
 		return provider.ResolvedBinding{
-			Kind:          p.Kind,
-			Provider:      claudeCLIProvider,
-			BaseURL:       "",
-			Extras:        nil,
-			Model:         p.Model,
-			Backend:       p.Backend,
-			AllowedTools:  p.AllowedTools,
-			ContextWindow: p.ContextWindow,
-			Effort:        p.Effort,
+			Kind:            p.Kind,
+			Provider:        claudeCLIProvider,
+			BaseURL:         "",
+			Extras:          nil,
+			Model:           p.Model,
+			Backend:         p.Backend,
+			BackendExplicit: strings.TrimSpace(p.Backend) != "",
+			AllowedTools:    p.AllowedTools,
+			ContextWindow:   p.ContextWindow,
+			Effort:          p.Effort,
 			RevealKey: func(context.Context) (string, error) {
 				return "", nil
 			},
@@ -109,24 +111,25 @@ func (r *DynamicProfileResolver) Resolve(ctx context.Context, alias string) (pro
 			"provider: profile %q references connection %q: %w", alias, p.ConnectionRef, err)
 	}
 
-	connRef := p.ConnectionRef
-	store := r.store
-	return provider.ResolvedBinding{
-		Kind:          p.Kind,
-		ConnectionRef: p.ConnectionRef,
-		Provider:      conn.Provider,
-		BaseURL:       conn.BaseURL,
-		Extras:        conn.Extras,
-		Model:         p.Model,
-		Backend:       p.Backend,
-		AllowedTools:  p.AllowedTools,
-		ContextWindow: p.ContextWindow,
-		Effort:        p.Effort,
+	return provider.GuardLunaRouteReveal(provider.ResolvedBinding{
+		Kind:            p.Kind,
+		ConnectionRef:   p.ConnectionRef,
+		Provider:        conn.Provider,
+		BaseURL:         conn.BaseURL,
+		Extras:          conn.Extras,
+		Model:           p.Model,
+		Backend:         p.Backend,
+		BackendExplicit: strings.TrimSpace(p.Backend) != "",
+		AllowedTools:    p.AllowedTools,
+		ContextWindow:   p.ContextWindow,
+		Effort:          p.Effort,
 		// RevealKey is lazy: it decrypts the connection's key only when invoked,
 		// at call/launch time. SECURITY: the revealed key is returned to the
-		// caller and never logged here.
-		RevealKey: func(ctx context.Context) (string, error) {
-			return store.Reveal(ctx, connRef)
-		},
-	}, nil
+		// caller and never logged here. It is bound to the revision captured
+		// above, so a concurrent edit (e.g. a foreign provider switched to
+		// LunaRoute with a fresh lr_ key) fails closed instead of pairing the new
+		// key with the old endpoint. LunaRoute bindings additionally check the
+		// hosted endpoint and lr_ shape before any adapter sees the key.
+		RevealKey: provider.RevealBoundToRevision(r.store, p.ConnectionRef, conn),
+	}), nil
 }

@@ -138,6 +138,8 @@ A single local store (API keys **encrypted** at rest), referenced by profiles vi
 - Native chat adapters (Azure AI Foundry, OpenRouter, LiteLLM) read their connection's base-url, key, and extras directly.
 - Subprocess harnesses (`claude`, `opencode`) receive the connection's key and base-url **injected as environment variables at launch** — this is how `opencode run --model <provider/model>` reaches the right endpoint with the right key.
 
+LunaRoute (hosted gateway, `lr_` keys, chat + claude-code/opencode agents) uses the same connection/profile setup; see [docs/setup/lunaroute.md](docs/setup/lunaroute.md).
+
 A **local router** (e.g. LiteLLM) is just another connection. **Azure's two topologies** map on without special-casing: an Azure OpenAI resource is one connection serving many model **deployments** (one connection / many profiles, `api-version` in extras, `model-id` = deployment name); an Azure AI Foundry serverless deployment has its own endpoint + key (one connection / model). Keys never appear in `workflow.json` and are never logged.
 
 ---

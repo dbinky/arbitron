@@ -18,6 +18,7 @@ func TestProbeFactory_ProbeFor_DispatchesByProvider(t *testing.T) {
 	}{
 		{"openai", (*openAICompatProbe)(nil)},
 		{"openrouter", (*openAICompatProbe)(nil)},
+		{"lunaroute", (*lunaRouteProbe)(nil)},
 		{"litellm", (*openAICompatProbe)(nil)},
 		{"ollama", (*openAICompatProbe)(nil)},
 		{"ollama-cloud", (*openAICompatProbe)(nil)},

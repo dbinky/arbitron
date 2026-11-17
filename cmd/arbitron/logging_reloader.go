@@ -40,3 +40,18 @@ func (r *loggingReloader) Reload(ctx context.Context) error {
 	}
 	return nil
 }
+
+// PublishProfile forwards the targeted publish to the wrapped cache so the
+// decorator does not hide it from the ProfileService (G21).
+func (r *loggingReloader) PublishProfile(p provider.Profile) {
+	if pub, ok := r.inner.(provider.ProfilePublisher); ok {
+		pub.PublishProfile(p)
+	}
+}
+
+// ForgetProfile forwards a targeted delete to the wrapped cache.
+func (r *loggingReloader) ForgetProfile(alias string) {
+	if pub, ok := r.inner.(provider.ProfilePublisher); ok {
+		pub.ForgetProfile(alias)
+	}
+}

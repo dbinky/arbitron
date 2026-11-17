@@ -177,6 +177,36 @@ func (q *Queries) UpdateConnectionMetadata(ctx context.Context, arg UpdateConnec
 	return result.RowsAffected()
 }
 
+const updateConnectionMetadataIfProvider = `-- name: UpdateConnectionMetadataIfProvider :execrows
+UPDATE connections
+SET provider = ?, base_url = ?, extras = ?,
+    config_revision = config_revision + 1,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+WHERE name = ? AND provider = ?
+`
+
+type UpdateConnectionMetadataIfProviderParams struct {
+	Provider   string
+	BaseURL    string
+	Extras     string
+	Name       string
+	Provider_2 string
+}
+
+func (q *Queries) UpdateConnectionMetadataIfProvider(ctx context.Context, arg UpdateConnectionMetadataIfProviderParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateConnectionMetadataIfProvider,
+		arg.Provider,
+		arg.BaseURL,
+		arg.Extras,
+		arg.Name,
+		arg.Provider_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateConnectionWithKey = `-- name: UpdateConnectionWithKey :execrows
 UPDATE connections
 SET provider = ?, base_url = ?, extras = ?, api_key_cipher = ?, api_key_nonce = ?,

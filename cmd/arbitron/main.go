@@ -36,6 +36,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/observability"
 	adaptoidc "github.com/arbitron/arbitron/adapter/oidc"
 	"github.com/arbitron/arbitron/adapter/outbound"
+	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
@@ -309,6 +310,7 @@ type domainStack struct {
 	profileSvc      *provider.ProfileService
 	connSvc         *provider.ConnectionService
 	capabilityRules provider.CapabilityRules
+	modelDiscovery  *provider.ModelDiscoveryService
 	tracingShutdown func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler is nil in local mode; Start owns the org-only sweeps.
@@ -454,6 +456,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Connections:         ds.connStore,
 		ProfileAdmin:        ds.profileSvc,
 		ConnectionAdmin:     ds.connSvc,
+		ModelDiscovery:      ds.modelDiscovery,
 		Capabilities:        ds.capabilityRules,
 		Tokens:              ds.tokenSvc,
 		Users:               ds.userSvc,
@@ -1019,6 +1022,14 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		httpClient.Transport = modelDeps.ProviderTransport
 	}
 
+	// Share the outbound transport, timeout and response cap with discovery and
+	// LunaRoute agent diagnosis. The CLI validate command owns its own factory.
+	probeFactory := adaptprobe.NewProbeFactory(adaptprobe.Deps{
+		HTTPClient:       httpClient,
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		ClaudeBinaryPath: cfg.LLM.BinaryPath,
+	})
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
@@ -1033,10 +1044,11 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		// degrades to the local subscription env.
 		ClaudeAgentConfig: agentCfg,
 		HTTPClient:        httpClient,
+		Probes:            probeFactory,
 		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		Runner:            modelDeps.Runner,
 		OpencodeTimeout:   time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH
+		// Codex (keyed LunaRoute or subscription): binary auto-resolved from PATH
 		// (CodexBinaryPath left empty, mirroring opencode); the per-mission timeout
 		// reuses the shared LLM timeout floor. No allow-all knob: codex runs under
 		// the fixed v1 bypass posture (see adapter/codex args.go).
@@ -1060,6 +1072,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		// which carries CapabilityRules).
 		CapabilityRules: capabilityRules,
 	})
+	modelDiscovery := provider.NewModelDiscoveryService(connStore, probeFactory, capabilityRules)
 
 	// 9. Create all node executors and build the executor map.
 	modelConsumers := newRunModelConsumers(fileReader, providerFactory, pinningResolver, cfg.LLM.DefaultAgentBackend)
@@ -1417,7 +1430,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// proof commits before the validated seed batch writes and reloads the cache.
 	// Capture one profile generation and validate it on actual deployment/node
 	// routes under the engine's shared lease, before persistence or enqueue.
-	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, modelidentity.NewVersionResolver(), pathInventory))
+	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, modelidentity.NewVersionResolver(), pathInventory, capabilityRules))
 
 	// Register one interactive executor instance under BOTH interactive node
 	// types. Notification creation is handled by the engine when it processes the
@@ -1566,6 +1579,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		connStore:             connStore,
 		profileSvc:            profileSvc,
 		connSvc:               connSvc,
+		modelDiscovery:        modelDiscovery,
 		capabilityRules:       capabilityRules,
 		tracingShutdown:       tracingShutdown,
 		sessionRepo:           sessionRepo,

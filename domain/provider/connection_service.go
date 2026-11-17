@@ -83,8 +83,23 @@ func (s *ConnectionService) Get(ctx context.Context, name string) (Connection, e
 
 // Create persists a new connection (admin-only), forwarding the plaintext key to
 // the store, which seals it immediately. The key is never retained here.
+//
+// The pure create rules (provider-specific shape, LunaRoute key shape and hosted
+// endpoint normalization) are applied here, so the accepted data and the
+// canonical connection the store receives do not depend on which store is
+// injected. c is taken by value and only an error is returned: the canonical row
+// is read back from the store by the caller that needs it. The store re-applies
+// the same rules itself (SQLite does, ahead of sealing and the URL policy), so a
+// store used without this service stays protected.
 func (s *ConnectionService) Create(ctx context.Context, c Connection, apiKey string) error {
 	if err := requireAdmin(ctx); err != nil {
+		return err
+	}
+	if err := ValidateConnection(c); err != nil {
+		return err
+	}
+	c, err := PrepareLunaRouteCreate(c, apiKey)
+	if err != nil {
 		return err
 	}
 	return s.mutate(ctx, func(ctx context.Context) error { return s.store.Create(ctx, c, apiKey) })

@@ -31,23 +31,23 @@ func TestNativeFamilyAliasesAgreeAcrossCaptureAndVersionGrammar(t *testing.T) {
 					return []VersionRequest{{Model: model, RouteProvider: spelling, ConnectionRef: "route", Backend: backend}}
 				}
 				chat := Profile{Alias: "native", Kind: ProfileKindChat, ConnectionRef: "route", Model: "Configured/Deployment:ID"}
-				got, err := ValidatePinRoutes(ctx, chat, request(chat.Model, ""), versions)
+				got, err := ValidatePinRoutes(ctx, chat, request(chat.Model, ""), versions, nil)
 				require.NoError(t, err, "a configured ID is a valid D8 pin")
 				assert.Equal(t, family, got)
 
 				following := chat
 				following.SelectionMode = SelectionFollowing
 				following.FollowTarget = &FollowTarget{Provider: "anthropic", Tier: "sonnet"}
-				_, err = ValidatePinRoutes(ctx, following, request(chat.Model, ""), versions)
+				_, err = ValidatePinRoutes(ctx, following, request(chat.Model, ""), versions, nil)
 				assert.ErrorIs(t, err, ErrInvalidSelection, "native routes are pinned-only")
 
 				for _, backend := range []string{"pi", "opencode"} {
 					agent := Profile{Alias: "agent", Kind: ProfileKindAgent, Backend: backend, ConnectionRef: "route", Model: "Configured/Deployment:ID"}
-					_, err = ValidatePinRoutes(ctx, agent, request(agent.Model, backend), versions)
+					_, err = ValidatePinRoutes(ctx, agent, request(agent.Model, backend), versions, nil)
 					assert.ErrorIs(t, err, ErrSpecificVersionUnavailable, "an agent backend never inherits the D8 exception")
 
 					agent.Model = "anthropic.claude-sonnet-4-6-v1:0"
-					got, err = ValidatePinRoutes(ctx, agent, request(agent.Model, backend), versions)
+					got, err = ValidatePinRoutes(ctx, agent, request(agent.Model, backend), versions, nil)
 					if family == CanonicalBedrock {
 						require.NoError(t, err, "the version grammar must recognise every Bedrock alias")
 						assert.Empty(t, got, "a fixed Bedrock version is strict, not an exception")

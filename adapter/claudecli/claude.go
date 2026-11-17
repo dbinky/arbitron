@@ -20,6 +20,7 @@ type argsPolicy struct {
 	SkipPermissions bool // agent: emits --dangerously-skip-permissions
 	SuppressTools   bool // chat: emits --allowedTools "" (empty set)
 	AllowedTools    []string
+	isolateSettings bool // LunaRoute only: no user/project/local settings overrides
 }
 
 // buildArgs assembles the `claude` CLI arguments for one invocation.
@@ -87,6 +88,9 @@ func buildArgs(req engine.ChatRequest, policy argsPolicy) []string {
 	}
 	if req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
+	}
+	if policy.isolateSettings {
+		args = append(args, "--setting-sources", "")
 	}
 	return args
 }

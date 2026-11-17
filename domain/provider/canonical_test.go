@@ -4,7 +4,14 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/stretchr/testify/assert"
 )
+
+func TestCanonicalize_LunaRouteHasNoAliases(t *testing.T) {
+	assert.Equal(t, provider.CanonicalLunaRoute, provider.Canonicalize(" LUNAROUTE "))
+	assert.Equal(t, "lunaroute", provider.CanonicalLunaRoute)
+	assert.Equal(t, "luna-route", provider.Canonicalize("luna-route"), "no alias collapses into lunaroute")
+}
 
 // Canonicalize collapses the documented provider aliases to ONE canonical id so
 // every selector (chat/agent/probe factories, opencode) dispatches on the same

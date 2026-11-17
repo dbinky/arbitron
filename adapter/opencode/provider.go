@@ -30,6 +30,8 @@ type Config struct {
 	// Binding is the resolved backend selection: provider, base-url, model,
 	// and the lazy RevealKey used to inject the credential at launch.
 	Binding provider.ResolvedBinding
+	// CapabilityRules supplies reviewed model metadata for LunaRoute overlays.
+	CapabilityRules provider.CapabilityRules
 	// BinaryPath is the opencode binary; "" resolves from PATH / StandardBinDirs.
 	BinaryPath string
 	// Runner is the subprocess seam; nil uses the shared production os/exec
@@ -56,6 +58,7 @@ type Config struct {
 // env_providers.go, and version.go.
 type Provider struct {
 	binding          provider.ResolvedBinding
+	rules            provider.CapabilityRules
 	binPath          string
 	runner           claudecli.CommandRunner
 	timeout          time.Duration
@@ -81,6 +84,7 @@ func New(cfg Config) *Provider {
 	}
 	return &Provider{
 		binding:          cfg.Binding,
+		rules:            cfg.CapabilityRules,
 		binPath:          resolveBinary(cfg.BinaryPath),
 		runner:           runner,
 		timeout:          cfg.Timeout,
@@ -93,13 +97,22 @@ func New(cfg Config) *Provider {
 // AgentResult. SessionID is never threaded (one independent run per mission).
 //
 // Strict ordering guarantees a fail-closed launch with no partial state:
-// WorkDir guard → build args (fail-closed on unknown provider / empty model) →
-// build credential env (fail-closed on RevealKey/bedrock-config) → memoized
+// WorkDir guard → LunaRoute preflight → args/config → credential env → memoized
 // version probe → run. A RevealKey failure, unknown provider, or empty model
 // produces ZERO subprocess launches (not even the version probe).
 func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*engine.AgentResult, error) {
 	if mission.WorkDir == "" {
 		return nil, ErrWorkDirRequired
+	}
+
+	if provider.IsLunaRoute(p.binding.Provider) {
+		if mission.Model != "" && mission.Model != p.binding.Model {
+			return nil, provider.LocalLunaRouteError("model selection", ErrModelExecutionEvidence)
+		}
+		if err := provider.CheckLunaRouteAdapterLaunch(p.rules, p.binding, 0); err != nil {
+			return nil, provider.LocalLunaRouteError("preflight", err)
+		}
+		mission.Model = p.binding.Model
 	}
 
 	// Resolve the provider descriptor ONCE and thread it to the three builders
@@ -121,21 +134,19 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, fmt.Errorf("opencode agent (provider %q, model %q): %w", p.binding.Provider, mission.Model, err)
 	}
 
-	// Build the credential env BEFORE any subprocess so a RevealKey / config
-	// failure aborts before launch (no partial-env, no probe).
-	env, err := opencodeEnv(ctx, d, p.binding)
-	if err != nil {
-		return nil, fmt.Errorf("opencode: build env: %w", err)
-	}
-
 	// Generate the per-run opencode config (permission + provider routing) and
 	// inject it inline via OPENCODE_CONFIG_CONTENT — no file written, no
 	// collision with a target repo's own opencode.json. Fail-closed before launch.
 	// droppedTools (requested tools with no opencode equivalent) is surfaced in
 	// the AgentResult/trace below so the trimming is observable.
-	cfgJSON, droppedTools, err := buildConfig(d, p.binding, posture)
+	cfgJSON, droppedTools, err := buildConfig(d, p.binding, posture, p.rules)
 	if err != nil {
-		return nil, fmt.Errorf("opencode: build config: %w", err)
+		return nil, p.localError("config", fmt.Errorf("opencode: build config: %w", err))
+	}
+	// Config validation must finish before any credential reveal.
+	env, err := opencodeEnv(ctx, d, p.binding)
+	if err != nil {
+		return nil, p.localError("environment", fmt.Errorf("opencode: build env: %w", err))
 	}
 	env = append(env, "OPENCODE_CONFIG_CONTENT="+cfgJSON)
 
@@ -162,7 +173,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	lines, wait, err := p.runner.Run(runCtx, spec)
 	if err != nil {
-		if p.binding.Pinned {
+		if lunaRouteSanitize(p.binding) {
 			err = claudecli.SanitizeProcessError(err)
 		}
 		return nil, fmt.Errorf("opencode: run: %w", err)
@@ -179,7 +190,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		// summary alone is too terse. No-op unless waitErr carries a tail.
 		// A pinned run must not copy untrusted harness stderr into errors or
 		// logs; it can carry account credentials. errors.Is still classifies.
-		if p.binding.Pinned {
+		if lunaRouteSanitize(p.binding) {
 			waitErr = claudecli.SanitizeProcessError(waitErr)
 		} else {
 			claudecli.LogStderrTail("opencode", waitErr)
@@ -194,9 +205,16 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, fmt.Errorf("opencode: mission failed: %w", waitErr)
 	}
 
-	if p.binding.Pinned {
-		if _, err := p.checkModelExecution(ctx, spec, collected, d); err != nil {
+	var evidence []engine.ModelEvidence
+	var sessionID string
+	if lunaRouteSanitize(p.binding) {
+		proof, err := p.checkModelExecution(ctx, spec, collected, d)
+		if err != nil {
 			return nil, err
+		}
+		if provider.IsLunaRoute(p.binding.Provider) {
+			evidence = proof.evidence
+			sessionID = proof.sessionID
 		}
 	}
 
@@ -212,17 +230,24 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		})
 	}
 	for _, s := range steps {
-		engineSteps = append(engineSteps, engine.AgentStep{Kind: s.Kind, Summary: s.Summary})
+		kind := s.Kind
+		if provider.IsLunaRoute(p.binding.Provider) && kind == "tool" {
+			kind = "tool_call"
+		}
+		engineSteps = append(engineSteps, engine.AgentStep{Kind: kind, Summary: s.Summary})
 	}
 
 	return &engine.AgentResult{
-		Summary:      summary,
-		Steps:        engineSteps,
-		Model:        mission.Model,
-		DroppedTools: droppedTools,
-		TokensIn:     tokensIn,
-		TokensOut:    tokensOut,
-		// SessionID empty per the single-shot contract.
+		Summary:       summary,
+		Steps:         engineSteps,
+		Model:         mission.Model,
+		ModelEvidence: evidence,
+		DroppedTools:  droppedTools,
+		TokensIn:      tokensIn,
+		TokensOut:     tokensOut,
+		// LunaRoute evidence correlates the verified current run/export session;
+		// other providers retain the single-shot empty-session contract.
+		SessionID: sessionID,
 	}, nil
 }
 
@@ -232,7 +257,19 @@ func (p *Provider) ensureCompatible(ctx context.Context, workDir string) error {
 	p.probeOnce.Do(func() {
 		p.version, p.probeErr = probeVersionNumber(ctx, p.runner, p.binPath, procenv.BaseEnv(), workDir)
 	})
-	return p.probeErr
+	return p.localError("version", p.probeErr)
+}
+
+// LunaRoute errors can echo credentials even without a historical run pin.
+func lunaRouteSanitize(b provider.ResolvedBinding) bool {
+	return b.Pinned || provider.IsLunaRoute(b.Provider)
+}
+
+func (p *Provider) localError(stage string, err error) error {
+	if provider.IsLunaRoute(p.binding.Provider) {
+		return provider.LocalLunaRouteError(stage, err)
+	}
+	return err
 }
 
 // resolveBinary returns the opencode binary path. An explicit path is returned

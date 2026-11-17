@@ -33,6 +33,9 @@ var ErrBedrockConfig = errors.New("opencode: bedrock requires region and access-
 // base-name collision) NO env is produced (nil is returned alongside the error)
 // so the caller cannot launch with a partial env.
 func opencodeEnv(ctx context.Context, d providerDescriptor, binding provider.ResolvedBinding) ([]string, error) {
+	if provider.IsLunaRoute(binding.Provider) {
+		binding = provider.GuardLunaRouteReveal(binding)
+	}
 	// AWS-quartet providers (bedrock) take a dedicated builder.
 	if d.aws {
 		return bedrockEnv(ctx, binding)

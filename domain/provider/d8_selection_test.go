@@ -168,16 +168,16 @@ func TestValidatePinRoutesCodexUsesSubscription(t *testing.T) {
 				p.FollowTarget = &provider.FollowTarget{Provider: "openai", Tier: "sol"}
 			}
 			req := provider.VersionRequest{Model: p.Model, Backend: "codex", RouteProvider: "azure-openai", ConnectionRef: p.ConnectionRef}
-			family, err := provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{req}, modelidentity.NewVersionResolver())
+			family, err := provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{req}, modelidentity.NewVersionResolver(), nil)
 			require.NoError(t, err)
 			assert.Empty(t, family, "Codex must never inherit a connection's opaque exception")
 			versions := &fakeVersions{}
-			_, err = provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{req}, versions)
+			_, err = provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{req}, versions, nil)
 			require.NoError(t, err)
 			assert.Equal(t, []provider.VersionRequest{{Model: p.Model, Backend: "codex"}}, versions.seen, "only the actual subscription route may authorize the fixed version")
 			p.Model = "deployment"
 			req.Model = p.Model
-			_, err = provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{req}, modelidentity.NewVersionResolver())
+			_, err = provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{req}, modelidentity.NewVersionResolver(), nil)
 			require.ErrorIs(t, err, provider.ErrSpecificVersionUnavailable)
 		})
 	}
@@ -195,11 +195,11 @@ func (v emptyPinVersion) SpecificVersion(_ context.Context, request provider.Ver
 func TestValidatePinRoutesRejectsEmptyVersionEvidence(t *testing.T) {
 	p := provider.Profile{Model: "gpt-6.1-sol"}
 	request := provider.VersionRequest{Model: p.Model, RouteProvider: "openai", ConnectionRef: "route"}
-	_, err := provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{request}, emptyPinVersion{expected: request})
+	_, err := provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{request}, emptyPinVersion{expected: request}, nil)
 	require.ErrorIs(t, err, provider.ErrSpecificVersionUnavailable)
 	fault := errors.New("version source fault")
 	versions := &fakeVersions{err: fault}
-	_, err = provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{request}, versions)
+	_, err = provider.ValidatePinRoutes(context.Background(), p, []provider.VersionRequest{request}, versions, nil)
 	require.ErrorIs(t, err, fault)
 	assert.Equal(t, []provider.VersionRequest{request}, versions.seen)
 }
@@ -231,7 +231,7 @@ func TestValidatePinRoutes(t *testing.T) {
 		"fixed looking bedrock following": {provider.Profile{Model: "anthropic.claude-sonnet-4-5-20250929-v1:0", SelectionMode: provider.SelectionFollowing, FollowTarget: &provider.FollowTarget{Provider: "anthropic", Tier: "sonnet"}}, []provider.VersionRequest{{Model: "anthropic.claude-sonnet-4-5-20250929-v1:0", RouteProvider: "bedrock"}}, modelidentity.NewVersionResolver(), "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := provider.ValidatePinRoutes(context.Background(), tc.p, tc.requests, tc.versions)
+			got, err := provider.ValidatePinRoutes(context.Background(), tc.p, tc.requests, tc.versions, nil)
 			if tc.ok {
 				require.NoError(t, err)
 				assert.Equal(t, tc.family, got)
@@ -243,6 +243,6 @@ func TestValidatePinRoutes(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := provider.ValidatePinRoutes(ctx, p, []provider.VersionRequest{azure}, modelidentity.NewVersionResolver())
+	_, err := provider.ValidatePinRoutes(ctx, p, []provider.VersionRequest{azure}, modelidentity.NewVersionResolver(), nil)
 	require.ErrorIs(t, err, context.Canceled)
 }

@@ -53,6 +53,10 @@ func agentEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, 
 // pin the credential skeleton; this wrapper is what the adapter calls so a
 // profile's 200k/effort axes actually reach the subprocess.
 func agentEnvWithRules(ctx context.Context, binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+	if provider.IsLunaRoute(binding.Provider) {
+		env, err := lunaRouteAgentEnv(ctx, binding, rules)
+		return env, provider.LocalLunaRouteError("environment", err)
+	}
 	env, err := agentEnv(ctx, binding)
 	if err != nil {
 		return nil, err

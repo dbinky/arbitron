@@ -1,0 +1,20 @@
+{
+  "source": "docs/evidence/lunaroute-provider/sources/lr08-model-controls.md",
+  "metadata_source": "docs/evidence/lunaroute-provider/sources/lr02-live-models-2026-11-11.json",
+  "scope": "rpc_resolved_model_only",
+  "version": "1.5.2",
+  "model": "glm-5.3",
+  "provider": "lunaroute",
+  "api": "openai-completions",
+  "base_url": "https://gw.lunaroute.com/v1",
+  "session_id": "01a1d075-4469-7341-96ef-c4370ac9bba9",
+  "context_tokens": 524288,
+  "output_tokens": 131072,
+  "reasoning": true,
+  "protected_inputs_unchanged": true,
+  "private_cleaned": true,
+  "auth_case_sessions": {
+    "absent": "01a1d075-4693-71b6-9ace-03b5765f5e31",
+    "conflicting": "01a1d075-4469-7341-96ef-c4370ac9bba9"
+  }
+}

@@ -25,7 +25,7 @@ const providerOpenAICodex = "openai-codex"
 
 // providerDescriptor says how one provider authenticates.
 //
-// Exactly one of the two shapes applies: a key-based provider names the
+// A key-based provider names the
 // environment variable pi reads its secret from, and an OAuth provider names
 // nothing because pi resolves the credential from its own store. The
 // descriptor-table test enforces that a row never claims both.
@@ -36,6 +36,8 @@ type providerDescriptor struct {
 	// (~/.pi/agent/auth.json, written by `pi` → /login). arbitron holds no
 	// secret for these, injects nothing, and never calls RevealKey.
 	oauth bool
+	// custom rows require a private per-launch models.json, never piEnv alone.
+	custom bool
 }
 
 // providerDescriptors maps an arbitron canonical provider id onto how pi
@@ -65,6 +67,7 @@ var providerDescriptors = map[string]providerDescriptor{
 	"cerebras":                     {credEnvVar: "CEREBRAS_API_KEY"},
 	"mistral":                      {credEnvVar: "MISTRAL_API_KEY"},
 	providerOpenAICodex:            {oauth: true},
+	provider.CanonicalLunaRoute:    {credEnvVar: LunaRouteKeyVar, custom: true},
 }
 
 // noConnectionProvider is the provider a binding carries when its profile
@@ -127,6 +130,9 @@ func piEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, err
 	d, ok := resolveDescriptor(binding)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q (model %q)", ErrUnknownProvider, binding.Provider, binding.Model)
+	}
+	if d.custom {
+		return nil, fmt.Errorf("%w: %q needs a per-launch provider definition", ErrUnknownProvider, binding.Provider)
 	}
 	// OAuth/subscription providers carry no injectable secret: pi reads the
 	// token from its own auth.json, which its resolution order already ranks

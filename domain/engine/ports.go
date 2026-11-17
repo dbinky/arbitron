@@ -135,11 +135,43 @@ type AgentMission struct {
 	Timeout   time.Duration
 }
 
+// EvidenceKind says how strong a ModelEvidence record is. Consumers choose the
+// kind that satisfies their own contract; nothing is inferred from Source text.
+type EvidenceKind string
+
+const (
+	// EvidenceRoutingIntent is the model the harness recorded it intended to
+	// route to (for example a Codex turn_context, or an OpenCode session
+	// export whose response provenance is not established). It shows what was
+	// selected, not what the gateway executed.
+	EvidenceRoutingIntent EvidenceKind = "routing_intent"
+	// EvidenceReportedExecution is an identity the executed call itself
+	// reported in its own output (a pi message_end, a Claude modelUsage entry).
+	EvidenceReportedExecution EvidenceKind = "reported_execution"
+)
+
+// ModelEvidence is an identity recorded by an executed main or helper call, not
+// inferred from the configured model or pin. Kind states how strong the record
+// is: only EvidenceReportedExecution reports what actually ran. An empty or
+// unrecognized Kind (for example a record persisted before Kind existed) is
+// unknown strength and never counts as execution.
+type ModelEvidence struct {
+	Model    string       `json:"model"`
+	Provider string       `json:"provider,omitempty"`
+	Source   string       `json:"source"`
+	Kind     EvidenceKind `json:"kind,omitempty"`
+}
+
+// ReportsExecution reports whether the record is an identity the executed call
+// reported, as opposed to routing intent or unknown strength.
+func (e ModelEvidence) ReportsExecution() bool { return e.Kind == EvidenceReportedExecution }
+
 // AgentResult holds the outcome of an agentic mission.
 type AgentResult struct {
-	Summary string      // result/summary text
-	Steps   []AgentStep // step events (tool calls, edits) for the trace
-	Model   string
+	Summary       string      // result/summary text
+	Steps         []AgentStep // step events (tool calls, edits) for the trace
+	Model         string
+	ModelEvidence []ModelEvidence
 	// DroppedTools are requested tools the backend could not map to a native
 	// tool and silently trimmed from the effective allowlist. Surfaced so the
 	// (security-relevant) narrowing of the tool posture is observable in the

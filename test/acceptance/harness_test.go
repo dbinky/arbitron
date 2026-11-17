@@ -789,7 +789,7 @@ func newHarness(t *testing.T, b binding) *harness {
 		DefaultAgentBackend: "claude-code",
 	})
 	require.NoError(t, err)
-	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, fixtureVersions{}, inventory))
+	eng.SetModelSnapshotter(providersadapter.NewModelSnapshotter(profileCache, connStore, fixtureVersions{}, inventory, nil))
 	eng.SetModelPinGate(provider.NewExecutionGate())
 
 	// Real queue manager (GlobalCap=0 → unlimited) wired to the engine.

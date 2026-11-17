@@ -23,6 +23,7 @@ type streamState struct {
 	// wantModel, when set, is the pinned model every result's modelUsage must
 	// contain; a result without it fails the stream instead of completing.
 	wantModel string
+	policy    collectPolicy
 	sawResult bool
 }
 
@@ -39,6 +40,9 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 	}
 	ev, ok, parseErr := parseEvent([]byte(rawLine))
 	if parseErr != nil {
+		if s.policy.sanitize {
+			parseErr = SanitizeProcessError(parseErr)
+		}
 		if !sendChunk(engine.ChatChunk{Error: parseErr}) {
 			// consumer gone; still mark failed so Finalize knows
 		}
@@ -63,19 +67,27 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 		// session each time a background subagent finishes. A pinned turn needs
 		// EVERY result to prove the model, so one unproven or failed wake fails
 		// the whole turn (latched before Done; the caller still drains and reaps).
+		// A route-specific policy (LunaRoute) still allows exactly one result.
+		if s.wantModel != "" && s.sawResult && s.policy.singleResult() {
+			sendChunk(engine.ChatChunk{Error: errModelExecutionEvidence})
+			s.failed = true
+			return
+		}
 		s.sawResult = true
 		s.tokensIn += ev.TokensIn
 		s.tokensOut += ev.TokensOut
-		if !ev.IsError && s.wantModel != "" && !executedModelMatches(s.wantModel, ev.ModelUsage) {
-			sendChunk(engine.ChatChunk{
-				Error: fmt.Errorf("claudecli: pinned model %q absent from result modelUsage", s.wantModel),
-			})
+		if !ev.IsError && s.wantModel != "" && !s.policy.accepts(s.wantModel, ev.ModelUsage) {
+			err := errModelExecutionEvidence
+			if !s.policy.sanitize {
+				err = fmt.Errorf("claudecli: pinned model %q absent from result modelUsage", s.wantModel)
+			}
+			sendChunk(engine.ChatChunk{Error: err})
 			s.failed = true
 			return
 		}
 		if ev.IsError {
 			err := errModelExecutionEvidence
-			if s.wantModel == "" {
+			if s.wantModel == "" && !s.policy.sanitize {
 				err = fmt.Errorf("claudecli: claude reported an error: %s", ev.Text)
 			}
 			sendChunk(engine.ChatChunk{Error: err})
@@ -93,7 +105,7 @@ func (s *streamState) Finalize(waitErr error, sendChunk func(engine.ChatChunk) b
 		return
 	}
 	if waitErr != nil {
-		if s.wantModel != "" {
+		if s.wantModel != "" || s.policy.sanitize {
 			waitErr = SanitizeProcessError(waitErr)
 		}
 		sendChunk(engine.ChatChunk{

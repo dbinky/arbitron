@@ -123,14 +123,7 @@ func buildValidateDeps(ctx context.Context) (validateDeps, func(), error) {
 // probing, attaching the lazy RevealKey closure that shares the store's sole
 // decryption path. Model is empty (probing lists/reaches; it never calls a model).
 func bindingFromConnection(store provider.ConnectionStore, name string, c provider.Connection) provider.ResolvedBinding {
-	return provider.ResolvedBinding{
-		Provider: c.Provider,
-		BaseURL:  c.BaseURL,
-		Extras:   c.Extras,
-		RevealKey: func(ctx context.Context) (string, error) {
-			return store.Reveal(ctx, name)
-		},
-	}
+	return provider.ProbeBindingFromConnection(store, name, c)
 }
 
 // runConnectionValidate is the testable core: resolve name -> binding -> probe,

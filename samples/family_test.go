@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -16,18 +17,25 @@ func TestModelFamily(t *testing.T) {
 		family string
 		ok     bool
 	}{
-		{"claude-opus-5-5", "claude", true},
-		{"claude-sonnet-5-5", "claude", true},
-		{"openai-codex/gpt-6.1-sol", "gpt", true},
-		{"anthropic/claude-opus-5-5", "claude", true},
-		{"gpt-6-astra", "gpt", true},
-		{"gpt-6.1-sol", "gpt", true},
-		{"o3-mini", "gpt", true},
-		{"us.anthropic.claude-sonnet-5-5", "claude", true},
-		{"anthropic.claude-opus-5-5", "claude", true},
+		{"claude-opus-5-5", "anthropic", true},
+		{"claude-sonnet-5-5", "anthropic", true},
+		{"openai-codex/gpt-6.1-sol", "openai", true},
+		{"anthropic/claude-opus-5-5", "anthropic", true},
+		{"gpt-6-astra", "openai", true},
+		{"gpt-6.1-sol", "openai", true},
+		{"o3-mini", "openai", true},
+		{"us.anthropic.claude-sonnet-5-5", "anthropic", true},
+		{"anthropic.claude-opus-5-5", "anthropic", true},
 		{"deepseek-v4-pro", "deepseek", true},
-		{"ollama/glm-5.1", "glm", true},
-		{"Kimi-K3", "kimi", true},
+		{"ollama/glm-5.1", "zhipuai", true},
+		// LunaRoute reviewed fixed ids classify by vendor, not by routing provider.
+		{"glm-5.3", "zhipuai", true},
+		{"glm-5.3-flash", "zhipuai", true},
+		{"deepseek-4.1-flash", "deepseek", true},
+		{"Kimi-K3", "moonshotai", true},
+		// R3: claude-*-lrN gateway aliases are open-weight models under Claude names
+		// with unstable numbers, so they never classify as anthropic.
+		{"claude-sonnet-5-lr1", "", false},
 		{"", "", false},
 		{"  ", "", false},
 		{"openai-codex/", "", false},
@@ -38,9 +46,13 @@ func TestModelFamily(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.model, func(t *testing.T) {
-			got, ok := modelFamily(c.model)
+			f := modelidentity.ClassifyFamily("", c.model)
+			got, ok := string(f), f != modelidentity.FamilyUnresolved
+			if !ok {
+				got = ""
+			}
 			if got != c.family || ok != c.ok {
-				t.Errorf("modelFamily(%q) = (%q, %v), want (%q, %v)", c.model, got, ok, c.family, c.ok)
+				t.Errorf("ClassifyFamily(%q) = (%q, %v), want (%q, %v)", c.model, got, ok, c.family, c.ok)
 			}
 		})
 	}
@@ -77,11 +89,11 @@ func familyOfNode(wf *workflow.Workflow, profiles map[string]profileRow, id stri
 	if !ok {
 		return "", fmt.Errorf("node %q profile %q is not in %s PROFILES.md", id, alias, wf.Name)
 	}
-	fam, ok := modelFamily(row.Model)
-	if !ok {
+	fam := modelidentity.ClassifyFamily("", row.Model)
+	if fam == modelidentity.FamilyUnresolved {
 		return "", fmt.Errorf("node %q profile %q has an unclassifiable model %q", id, alias, row.Model)
 	}
-	return fam, nil
+	return string(fam), nil
 }
 
 // judgePairingProblems discovers every judge node in wfs and checks it against
@@ -158,10 +170,15 @@ func TestJudgePairingProblems(t *testing.T) {
 		return workflow.Node{ID: id, Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{ModelProfile: alias}}
 	}
 	profs := map[string]map[string]profileRow{"w": {
-		"claude-a": {Alias: "claude-a", Model: "claude-opus-5-5"},
-		"gpt-a":    {Alias: "gpt-a", Model: "openai-codex/gpt-6.1-sol"},
-		"gpt-b":    {Alias: "gpt-b", Model: "gpt-6-astra"},
-		"blank":    {Alias: "blank", Model: ""},
+		"claude-a":     {Alias: "claude-a", Model: "claude-opus-5-5"},
+		"gpt-a":        {Alias: "gpt-a", Model: "openai-codex/gpt-6.1-sol"},
+		"gpt-b":        {Alias: "gpt-b", Model: "gpt-6-astra"},
+		"blank":        {Alias: "blank", Model: ""},
+		"claude-alias": {Alias: "claude-alias", Model: "claude-sonnet-5-lr1"},
+		"opaque":       {Alias: "opaque", Model: "muse-spark-open"},
+		"lr-glm":       {Alias: "lr-glm", Model: "glm-5.3"},
+		"direct-glm":   {Alias: "direct-glm", Model: "ollama/glm-5.1"},
+		"lr-deepseek":  {Alias: "lr-deepseek", Model: "deepseek-4.1-flash"},
 	}}
 
 	tests := []struct {
@@ -179,6 +196,16 @@ func TestJudgePairingProblems(t *testing.T) {
 		{"conditional router is exempt", mk(workflow.Node{ID: "judge-pick", Type: workflow.NodeTypeConditional}), nil, 0},
 		{"transform router is exempt", mk(workflow.Node{ID: "judge-merge", Type: workflow.NodeTypeTransform}), nil, 0},
 		{"non-judge agent needs no row", mk(agent("doer", "claude-a"), agent("review", "gpt-a")), nil, 0},
+		{"claude-named gateway alias judge is unresolved and fails", mk(agent("doer", "claude-a"), agent("judge-x", "claude-alias")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
+		{"opaque alias judge is unresolved and fails", mk(agent("doer", "claude-a"), agent("judge-x", "opaque")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
+		{"claude-named gateway alias never passes as cross-family (R3)", mk(agent("doer", "gpt-a"), agent("judge-x", "claude-alias")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
+		{"LunaRoute glm doer judged by direct zhipuai fails (routing provider is not a vendor)", mk(agent("doer", "lr-glm"), agent("judge-x", "direct-glm")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
+		{"LunaRoute glm doer judged by LunaRoute deepseek passes", mk(agent("doer", "lr-glm"), agent("judge-x", "lr-deepseek")),
+			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 0},
 		{"same family fails", mk(agent("doer", "gpt-a"), agent("judge-x", "gpt-b")),
 			[]judgePairing{{"w", "judge-x", []string{"doer"}}}, 1},
 		{"unknown judge node fails", mk(agent("doer", "claude-a")),

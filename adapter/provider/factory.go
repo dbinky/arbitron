@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,6 +57,9 @@ const (
 // client and CommandRunner are injected into the per-binding adapters the
 // Factory builds on demand.
 type Deps struct {
+	// Probes is the shared serve-path selector for a single post-failure
+	// LunaRoute gateway observation. Nil leaves the cause explicitly unknown.
+	Probes domprovider.ProbeSelector
 	// ClaudeChat is the tool-suppressed claude-cli chat adapter used for the
 	// empty/claude-cli provider path as a back-compat fallback when
 	// ClaudeChatConfig is not supplied. Required when ClaudeChatConfig is absent.
@@ -139,8 +143,8 @@ type Deps struct {
 // (AgentProviderFor) dispatches on the BACKEND axis, NOT the provider
 // (org-readiness Phase 2): claude-code -> the claude-cli agent adapter (which
 // may now carry a non-claude connection; endpoint+key injected in the adapter),
-// opencode -> adapter/opencode, codex -> adapter/codex (subscription-only; no
-// key revealed, no AllowAllTools knob). There is no native-HTTP agent adapter,
+// opencode -> adapter/opencode, codex -> adapter/codex (keyed LunaRoute or
+// subscription; no AllowAllTools knob). There is no native-HTTP agent adapter,
 // so a provider's chat credentials/env flow through the HTTP adapter on the chat
 // path but through the subprocess env on the agent path — the two opencode paths
 // must agree on the provider vocabulary (see domprovider.Canonicalize), which is
@@ -183,7 +187,8 @@ var (
 // OpenAI-compatible openai/ollama (incl. the ollama-cloud alias) map to
 // adapter/openrouter; azure-openai/azure-foundry map to adapter/azurefoundry;
 // anthropic-api maps to adapter/anthropicapi; bedrock (incl. the amazon-bedrock
-// alias) maps to adapter/bedrock. Unknown providers return ErrUnknownProvider.
+// alias) maps to adapter/bedrock; lunaroute uses adapter/openrouter at the
+// hosted /v1 base. Unknown providers return ErrUnknownProvider.
 func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatProvider, error) {
 	if err := validatePinnedRoute(b, ""); err != nil {
 		return nil, err
@@ -234,12 +239,35 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 			Timeout:          f.deps.HTTPTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
+	case domprovider.CanonicalLunaRoute:
+		return f.lunaRouteChat(b), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, b.Provider)
 	}
 }
 
-// AgentProviderFor returns the concrete engine.AgentProvider for an agent-kind
+// AgentProviderFor adds launch policy and post-failure diagnosis only to
+// LunaRoute bindings; other providers retain their existing concrete adapters.
+func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
+	lunaroute := domprovider.IsLunaRoute(b.Provider)
+	if lunaroute {
+		backend := strings.TrimSpace(b.Backend)
+		if slices.Contains(domprovider.LunaRouteBackends, backend) && !domprovider.LunaRouteBackendEnabled(backend) {
+			if !b.BackendExplicit {
+				return nil, &domprovider.LunaRouteRefusal{Reason: domprovider.ErrLunaRouteBackendRequired, Model: b.Model, Backend: backend, Detail: "set backend to codex or pi explicitly; deployment defaults never choose a LunaRoute backend"}
+			}
+			return nil, &domprovider.LunaRouteRefusal{Reason: domprovider.ErrLunaRouteBackendUnsupported, Model: b.Model, Backend: backend, Detail: fmt.Sprintf("LunaRoute on %s not yet supported in this release; select a supported explicit backend", backend)}
+		}
+		b = domprovider.GuardLunaRouteReveal(b)
+	}
+	inner, err := f.agentProviderFor(b)
+	if err != nil || !lunaroute {
+		return inner, err
+	}
+	return wrapLunaRouteAgent(inner, b, f.deps.Probes, f.deps.CapabilityRules), nil
+}
+
+// agentProviderFor returns the concrete engine.AgentProvider for an agent-kind
 // binding, dispatching on the BACKEND axis (b.Backend), NOT the provider
 // (org-readiness Phase 2). The backend is INDEPENDENT of the provider: a
 // claude-code binding may carry any connection (endpoint+key injected in the
@@ -247,7 +275,7 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 //
 //   - claude-code -> the claude-cli AgentAdapter.
 //   - opencode    -> adapter/opencode, with the binding's per-provider env.
-//   - codex       -> adapter/codex (`codex exec`), subscription-only (NO key).
+//   - codex       -> adapter/codex (`codex exec`), keyed LunaRoute or subscription.
 //   - "" (unset) / any other value -> ErrUnknownBackend (fail-closed; never a
 //     silent fallback). The deployment default is owned by ONE place — the config
 //     floor (adapter/config loader) — and is applied by the AgentCallExecutor
@@ -255,7 +283,7 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 //     The factory deliberately does NOT re-default: a future non-executor caller
 //     gets a clear ErrUnknownBackend telling it to set a backend, rather than a
 //     second silent default to hunt down when the policy changes.
-func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
+func (f *Factory) agentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
 	// Trim whitespace only (NOT lowercase): the allowed vocabulary is exact-match
 	// lowercase, identical to the workflow validator. A near-miss case (e.g.
 	// "OPENCODE") was already rejected at load and must stay unknown here so the
@@ -292,13 +320,12 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			Timeout:          f.deps.OpencodeTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 			AllowAllTools:    f.deps.OpencodeAllowAllTools,
+			CapabilityRules:  f.deps.CapabilityRules,
 		}), nil
 	case workflow.BackendCodex:
-		// Subscription-only: codex authenticates via its on-disk ~/.codex/auth.json,
-		// so NO key is revealed and NO AllowAllTools knob exists — `codex exec` runs
-		// under the fixed v1 fully-open posture (--dangerously-bypass-approvals-and-
-		// sandbox, documented in the spec's risk section). The binding's provider is
-		// ignored on this arm; only its Model reaches the subprocess.
+		// LunaRoute uses guarded credentials and a private CODEX_HOME; all other
+		// routes keep subscription authentication and ignore the connection key.
+		// Both use the fixed v1 bypass posture, with no AllowAllTools knob.
 		return codex.New(codex.Config{
 			Binding:          b,
 			BinaryPath:       f.deps.CodexBinaryPath,
@@ -311,18 +338,19 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			CapabilityRules: f.deps.CapabilityRules,
 		}), nil
 	case workflow.BackendPi:
-		// Key-authenticated and multi-provider (unlike codex): the binding's
+		// Key-authenticated and multi-provider: the binding's
 		// provider selects which credential env var carries the revealed key, and
 		// an unknown provider fails the mission closed rather than letting pi fall
 		// back to a key from its own config or the ambient shell. Effort rides
-		// argv as --thinking; pi has no context knob, so CapabilityRules is not
-		// threaded here (see args.go on the follow-up).
+		// argv as --thinking. CapabilityRules supplies LunaRoute's per-run model
+		// definition and exact effort facts; other providers do not read it.
 		return pi.New(pi.Config{
 			Binding:          b,
 			BinaryPath:       f.deps.PiBinaryPath,
 			Runner:           f.deps.Runner,
 			Timeout:          f.deps.PiTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
+			CapabilityRules:  f.deps.CapabilityRules,
 		}), nil
 	default:
 		// Fail-closed: an unrecognized (or empty-with-empty-default) backend never

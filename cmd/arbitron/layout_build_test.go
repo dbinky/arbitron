@@ -38,8 +38,15 @@ func TestLayoutBuild_MakeAllRequiresFreshAssetsAndBrowser(t *testing.T) {
 
 	cmd = exec.Command("make", "--no-print-directory", "-n", "test")
 	cmd.Dir = filepath.Join("..", "..")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	// Compare stdout only: a sandboxed macOS make (the harden stage's Seatbelt
+	// run) warns on stderr that xcrun cannot write its cache under /var/folders,
+	// which is not part of the recipe.
+	out, err = cmd.Output()
+	var stderr []byte
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		stderr = exitErr.Stderr
+	}
+	require.NoError(t, err, "%s%s", out, stderr)
 	// cmd/arbitron alone runs ~7 minutes; beside the other packages it outlives
 	// go test's 10-minute default, so the targets set their own bound.
 	assert.Equal(t, "go test -timeout 30m ./...", strings.TrimSpace(string(out)), "make test is the Go-only inner loop")

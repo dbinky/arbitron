@@ -51,6 +51,11 @@ var ErrConnectionNotFound = errors.New("connection not found")
 // already taken.
 var ErrConnectionExists = errors.New("connection already exists")
 
+// ErrConnectionChangedConcurrently is returned when a guarded update finds the
+// stored connection changed between its read and its write (e.g. a concurrent
+// provider switch), so the update's credential decision no longer holds.
+var ErrConnectionChangedConcurrently = errors.New("connection changed concurrently; re-read it and retry the update")
+
 // ErrAzureAPIVersionRequired is returned by ValidateConnection when an Azure
 // provider connection lacks a non-empty "api-version" entry in Extras.
 var ErrAzureAPIVersionRequired = errors.New("azure connections require an api-version in extras")

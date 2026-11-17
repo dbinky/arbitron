@@ -31,7 +31,7 @@ func metaOf(c provider.Connection) connectionMeta {
 	}
 }
 
-// RegisterConnectionTools registers the connection-management CRUD tools. The
+// RegisterConnectionTools registers connection CRUD and model discovery. The
 // plaintext api_key is accepted only by connection_create / connection_update,
 // handed straight to the store (which seals it), and is never echoed in a
 // response or logged.
@@ -40,9 +40,9 @@ func RegisterConnectionTools(srv *Server) {
 		gomcp.NewTool("connection_create",
 			gomcp.WithDescription("Create a model-endpoint connection. The api_key is sealed immediately and never returned or logged."),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Unique connection name (referenced by profiles)")),
-			gomcp.WithString("provider", gomcp.Required(), gomcp.Description("Provider id (azure-openai, azure-foundry, openrouter, litellm, ...)")),
-			gomcp.WithString("base_url", gomcp.Required(), gomcp.Description("Endpoint base URL")),
-			gomcp.WithString("api_key", gomcp.Required(), gomcp.Description("Plaintext API key; sealed at rest, never returned or logged")),
+			gomcp.WithString("provider", gomcp.Required(), gomcp.Description("Provider id (azure-openai, azure-foundry, openrouter, litellm, lunaroute, ...)")),
+			gomcp.WithString("base_url", gomcp.Required(), gomcp.Description("Endpoint base URL (lunaroute: empty or https://gw.lunaroute.com; the hosted endpoint is the only allowed destination)")),
+			gomcp.WithString("api_key", gomcp.Required(), gomcp.Description("Plaintext API key; sealed at rest, never returned or logged (lunaroute: an lr_ key)")),
 			gomcp.WithObject("extras", gomcp.Description("Provider extras (e.g. api-version for Azure)")),
 		),
 		connectionCreateHandler(srv),
@@ -50,7 +50,7 @@ func RegisterConnectionTools(srv *Server) {
 
 	srv.AddTool(
 		gomcp.NewTool("connection_update",
-			gomcp.WithDescription("Update a connection's metadata. Omit api_key to preserve the stored key; supply it to re-seal a new one."),
+			gomcp.WithDescription("Update a connection's metadata. Omit api_key to preserve the stored key; supply it to re-seal a new one. Switching to or away from lunaroute requires a new key for the destination provider."),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Connection name")),
 			gomcp.WithString("provider", gomcp.Required(), gomcp.Description("Provider id")),
 			gomcp.WithString("base_url", gomcp.Required(), gomcp.Description("Endpoint base URL")),
@@ -82,6 +82,7 @@ func RegisterConnectionTools(srv *Server) {
 		),
 		connectionListHandler(srv),
 	)
+	registerConnectionModelsTool(srv)
 }
 
 // connLogger returns the server's logger or the process default. SECURITY: the
@@ -112,6 +113,16 @@ func connErrorResult(action, name string, err error) *gomcp.CallToolResult {
 		return gomcp.NewToolResultError(err.Error())
 	case errors.Is(err, provider.ErrAzureAPIVersionRequired):
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: azure connections require an api-version in extras", name))
+	case errors.Is(err, provider.ErrLunaRouteKeyPrefix):
+		return gomcp.NewToolResultError(fmt.Sprintf(`connection %q: LunaRoute keys start with "lr_"; keys from other providers are rejected, never forwarded through LunaRoute`, name))
+	case errors.Is(err, provider.ErrLunaRouteKeyRequired):
+		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: supply a LunaRoute lr_ api_key (required on create and when switching an existing connection to lunaroute)", name))
+	case errors.Is(err, provider.ErrLunaRouteDestinationKeyRequired):
+		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: switching away from LunaRoute requires a new api_key for the destination provider", name))
+	case errors.Is(err, provider.ErrLunaRouteEndpoint):
+		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: LunaRoute connections must use the hosted endpoint https://gw.lunaroute.com; leave base_url empty or set it to that root", name))
+	case errors.Is(err, provider.ErrConnectionChangedConcurrently):
+		return gomcp.NewToolResultError(fmt.Sprintf("connection %q changed concurrently; re-read it with connection_get and retry", name))
 	default:
 		return gomcp.NewToolResultError(fmt.Sprintf("failed to %s connection %q: %s", action, name, err))
 	}
@@ -167,6 +178,13 @@ func connectionCreateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		// SECURITY: log the connection NAME only, never the key.
 		connLogger(srv).Info("connection created", slog.String("connection", name), slog.String("provider", providerID))
+		// LunaRoute rows are normalized at write (canonical provider, hosted
+		// root); echo what was stored. Other providers echo the request as before.
+		if provider.IsLunaRoute(providerID) {
+			if stored, gerr := srv.deps.ConnectionAdmin.Get(ctx, name); gerr == nil {
+				conn = stored
+			}
+		}
 		return MarshalResult(map[string]any{"status": "created", "connection": metaOf(conn)})
 	}
 }

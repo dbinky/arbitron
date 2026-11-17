@@ -26,6 +26,18 @@ func BoundedHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
+// NoRedirectClient returns a shallow copy of c (a fresh client when c is nil)
+// that never follows redirects. The redirect response is returned to the caller
+// without replaying a credential-bearing request. c is not modified.
+func NoRedirectClient(c *http.Client) *http.Client {
+	var out http.Client
+	if c != nil {
+		out = *c
+	}
+	out.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &out
+}
+
 // ErrResponseTooLarge guards the bounded read: it is returned (instead of EOF)
 // when a response body exceeds the configured cap, so an over-large body is a
 // hard failure rather than a silent truncation. SECURITY: this bounds the OOM

@@ -27,8 +27,8 @@ func validatePinnedRoute(b provider.ResolvedBinding, backend string) error {
 		return errors.New("provider: pinned native route exception is incompatible with live route")
 	}
 	req := modelidentity.VersionRequest{Model: b.Model, RouteProvider: b.Provider, Backend: backend}
-	if backend == workflow.BackendCodex {
-		// Codex always uses its subscription account, ignoring the connection.
+	if backend == workflow.BackendCodex && !provider.IsLunaRoute(b.Provider) {
+		// Non-LunaRoute codex uses its subscription, ignoring the connection.
 		req.RouteProvider = ""
 	}
 	// The resolver is a pure grammar check: selectors have no request context,

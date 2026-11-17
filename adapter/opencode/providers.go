@@ -33,6 +33,7 @@ type providerDescriptor struct {
 // table lists canonical ids only. Note "ollama-cloud" is canonically DISTINCT
 // from "ollama" (url_policy loopback boundary) and is listed explicitly.
 var providerDescriptors = map[string]providerDescriptor{
+	provider.CanonicalLunaRoute:    {opencodeID: "lunaroute", credEnvVar: "LUNAROUTE_API_KEY", npmPackage: "@ai-sdk/openai-compatible", alwaysConfig: true},
 	provider.CanonicalAnthropicAPI: {opencodeID: "anthropic", credEnvVar: "ANTHROPIC_API_KEY", npmPackage: "@ai-sdk/anthropic"},
 	"openai":                       {opencodeID: "openai", credEnvVar: "OPENAI_API_KEY", npmPackage: "@ai-sdk/openai"},
 	"litellm":                      {opencodeID: "litellm", credEnvVar: "OPENAI_API_KEY", npmPackage: "@ai-sdk/openai-compatible", alwaysConfig: true},

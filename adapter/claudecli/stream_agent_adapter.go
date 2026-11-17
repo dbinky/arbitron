@@ -75,6 +75,7 @@ func (a *StreamAgentAdapter) spec(req engine.ChatRequest, env []string) RunSpec 
 			DefaultModel:    a.core.defaultModel,
 			SkipPermissions: true,
 			AllowedTools:    scope,
+			isolateSettings: provider.IsLunaRoute(a.binding.Provider),
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
@@ -85,7 +86,15 @@ func (a *StreamAgentAdapter) spec(req engine.ChatRequest, env []string) RunSpec 
 
 // Chat runs claude to completion and returns the terminal result event.
 func (a *StreamAgentAdapter) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+	model, err := prepareLunaRouteModel(req.Model, a.binding, a.core.rules)
+	if err != nil {
+		return nil, err
+	}
+	req.Model = model
 	if err := a.core.validateWorkDir(req.WorkDir); err != nil {
+		if provider.IsLunaRoute(a.binding.Provider) {
+			err = provider.LocalLunaRouteError("workspace", err)
+		}
 		return nil, err
 	}
 
@@ -96,11 +105,11 @@ func (a *StreamAgentAdapter) Chat(ctx context.Context, req engine.ChatRequest) (
 	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 	defer cancel()
 
-	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, a.binding)
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel || provider.IsLunaRoute(a.binding.Provider), a.binding)
 	if err != nil {
 		return nil, err
 	}
-	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req, env), wantModel)
+	result, _, err := collectResultWithPolicy(runCtx, a.core.runner, a.spec(req, env), wantModel, lunaRouteCollectPolicy(a.binding))
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +134,15 @@ func (a *StreamAgentAdapter) Chat(ctx context.Context, req engine.ChatRequest) (
 // user/tool-result events as no-ops in the switch, so text accumulation and
 // the Done chunk are unaffected by tool round-trips.
 func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	model, err := prepareLunaRouteModel(req.Model, a.binding, a.core.rules)
+	if err != nil {
+		return nil, err
+	}
+	req.Model = model
 	if err := a.core.validateWorkDir(req.WorkDir); err != nil {
+		if provider.IsLunaRoute(a.binding.Provider) {
+			err = provider.LocalLunaRouteError("workspace", err)
+		}
 		return nil, err
 	}
 
@@ -135,7 +152,7 @@ func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequ
 	}
 	// A pinned binding demands harness evidence whatever the request says, and
 	// the request may not name another model (D14); refuse before any launch.
-	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel, a.binding)
+	wantModel, err := requiredExecutedModel(req.Model, req.RequireExecutedModel || provider.IsLunaRoute(a.binding.Provider), a.binding)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +161,7 @@ func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequ
 	lines, wait, err := a.core.runner.Run(runCtx, a.spec(req, env))
 	if err != nil {
 		cancel()
-		if wantModel != "" {
+		if wantModel != "" || provider.IsLunaRoute(a.binding.Provider) {
 			err = SanitizeProcessError(err)
 		}
 		return nil, fmt.Errorf("claudecli: stream call: %w", err)
@@ -157,7 +174,7 @@ func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequ
 
 		sendChunk := makeSendChunk(runCtx, out)
 
-		st := streamState{wantModel: wantModel}
+		st := streamState{wantModel: wantModel, policy: lunaRouteCollectPolicy(a.binding)}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}

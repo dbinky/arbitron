@@ -1,0 +1,451 @@
+{
+  "summary": "mutation score 85.68% (gate 80%) after 0 rounds; 61 survivors in 23 files; gate passed",
+  "score": 85.68,
+  "threshold": 80,
+  "gate_passed": true,
+  "focus_items": [
+    {
+      "id": "harden:domain/provider/lunaroute_classify.go",
+      "file": "domain/provider/lunaroute_classify.go",
+      "mutants": [
+        {
+          "line": 118,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:41"
+        },
+        {
+          "line": 137,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:12"
+        },
+        {
+          "line": 141,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:10"
+        },
+        {
+          "line": 189,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:19"
+        },
+        {
+          "line": 217,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:19"
+        },
+        {
+          "line": 225,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:19"
+        },
+        {
+          "line": 229,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:14"
+        },
+        {
+          "line": 229,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:67"
+        },
+        {
+          "line": 232,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:16"
+        },
+        {
+          "line": 234,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:16"
+        },
+        {
+          "line": 236,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:16"
+        },
+        {
+          "line": 236,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:16"
+        },
+        {
+          "line": 236,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:35"
+        },
+        {
+          "line": 236,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:35"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/openrouter/provider.go",
+      "file": "adapter/openrouter/provider.go",
+      "mutants": [
+        {
+          "line": 209,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:36"
+        },
+        {
+          "line": 209,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:48"
+        },
+        {
+          "line": 239,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:48"
+        },
+        {
+          "line": 240,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:18"
+        },
+        {
+          "line": 240,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:47"
+        },
+        {
+          "line": 240,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:67"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/codex/lunaroute.go",
+      "file": "adapter/codex/lunaroute.go",
+      "mutants": [
+        {
+          "line": 97,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:166"
+        },
+        {
+          "line": 97,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:166"
+        },
+        {
+          "line": 97,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:201"
+        },
+        {
+          "line": 97,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:27"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/mcp/tools_connection_models.go",
+      "file": "adapter/mcp/tools_connection_models.go",
+      "mutants": [
+        {
+          "line": 14,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:155"
+        },
+        {
+          "line": 15,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:143"
+        },
+        {
+          "line": 16,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:206"
+        },
+        {
+          "line": 17,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:166"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/config/capabilities.go",
+      "file": "adapter/config/capabilities.go",
+      "mutants": [
+        {
+          "line": 186,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:19"
+        },
+        {
+          "line": 200,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:22"
+        },
+        {
+          "line": 220,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:21"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/mcp/lunaroute_backend_hint.go",
+      "file": "adapter/mcp/lunaroute_backend_hint.go",
+      "mutants": [
+        {
+          "line": 5,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:343"
+        },
+        {
+          "line": 6,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:202"
+        },
+        {
+          "line": 7,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:296"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/provider/lunaroute_agent.go",
+      "file": "adapter/provider/lunaroute_agent.go",
+      "mutants": [
+        {
+          "line": 15,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:38"
+        },
+        {
+          "line": 83,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:11"
+        },
+        {
+          "line": 85,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:11"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/modelidentity/family.go",
+      "file": "domain/modelidentity/family.go",
+      "mutants": [
+        {
+          "line": 89,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:28"
+        },
+        {
+          "line": 98,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:38"
+        },
+        {
+          "line": 110,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:25"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/claudecli/streamjson.go",
+      "file": "adapter/claudecli/streamjson.go",
+      "mutants": [
+        {
+          "line": 225,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:24"
+        },
+        {
+          "line": 227,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:37"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/pi/model_probe.go",
+      "file": "adapter/pi/model_probe.go",
+      "mutants": [
+        {
+          "line": 60,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:27"
+        },
+        {
+          "line": 62,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:36"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/provider/dynamic.go",
+      "file": "adapter/provider/dynamic.go",
+      "mutants": [
+        {
+          "line": 89,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:50"
+        },
+        {
+          "line": 124,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:49"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/provider/lunaroute_connection.go",
+      "file": "domain/provider/lunaroute_connection.go",
+      "mutants": [
+        {
+          "line": 18,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:105"
+        },
+        {
+          "line": 18,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:105"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/provider/lunaroute_diagnosis.go",
+      "file": "domain/provider/lunaroute_diagnosis.go",
+      "mutants": [
+        {
+          "line": 17,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:16"
+        },
+        {
+          "line": 23,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:21"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/provider/model_discovery.go",
+      "file": "domain/provider/model_discovery.go",
+      "mutants": [
+        {
+          "line": 13,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:164"
+        },
+        {
+          "line": 14,
+          "mutator": "ARITHMETIC_BASE",
+          "replacement": "col:162"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/claudecli/stream_agent_adapter.go",
+      "file": "adapter/claudecli/stream_agent_adapter.go",
+      "mutants": [
+        {
+          "line": 164,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:16"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/opencode/config.go",
+      "file": "adapter/opencode/config.go",
+      "mutants": [
+        {
+          "line": 70,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:14"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/opencode/model_probe.go",
+      "file": "adapter/opencode/model_probe.go",
+      "mutants": [
+        {
+          "line": 194,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:29"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/probe/lunaroute.go",
+      "file": "adapter/probe/lunaroute.go",
+      "mutants": [
+        {
+          "line": 76,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:46"
+        }
+      ]
+    },
+    {
+      "id": "harden:adapter/sqlite/generated/connections.sql.go",
+      "file": "adapter/sqlite/generated/connections.sql.go",
+      "mutants": [
+        {
+          "line": 204,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:9"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/modelidentity/version.go",
+      "file": "domain/modelidentity/version.go",
+      "mutants": [
+        {
+          "line": 192,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:16"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/provider/lunaroute_capability.go",
+      "file": "domain/provider/lunaroute_capability.go",
+      "mutants": [
+        {
+          "line": 109,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:57"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/provider/lunaroute_validate.go",
+      "file": "domain/provider/lunaroute_validate.go",
+      "mutants": [
+        {
+          "line": 135,
+          "mutator": "CONDITIONALS_BOUNDARY",
+          "replacement": "col:23"
+        }
+      ]
+    },
+    {
+      "id": "harden:domain/provider/profile_service.go",
+      "file": "domain/provider/profile_service.go",
+      "mutants": [
+        {
+          "line": 316,
+          "mutator": "CONDITIONALS_NEGATION",
+          "replacement": "col:15"
+        }
+      ]
+    }
+  ]
+}

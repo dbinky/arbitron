@@ -49,3 +49,13 @@ func requireAdmin(ctx context.Context) error {
 type Reloader interface {
 	Reload(ctx context.Context) error
 }
+
+// ProfilePublisher is the optional targeted half of the recache hook. After
+// every committed write the ProfileService publishes exactly the committed row
+// (or forgets a deleted alias) so the resolver never runs a stale binding when
+// the full Reload fails — e.g. an unrelated corrupt row makes List error. An
+// implementation must never replace a newer cached revision with an older row.
+type ProfilePublisher interface {
+	PublishProfile(p Profile)
+	ForgetProfile(alias string)
+}

@@ -1,0 +1,95 @@
+{
+  "recorded_at": "2026-11-11T15:59:45Z",
+  "root": "https://gw.lunaroute.com",
+  "listing_model_ids": [
+    "clef-flash",
+    "cohere-transcribe-03-2026",
+    "deepseek-4.1-flash",
+    "deepseek-4.1-flash-background",
+    "djev",
+    "glm-5.3",
+    "glm-5.3-background",
+    "glm-5.3-flash",
+    "glm-5.3-flash-background",
+    "glm-5.3-vision",
+    "glm-5.3-vision-background",
+    "muse-spark-open",
+    "muse-spark-open-background",
+    "parakeet-tdt-0.6b-v3",
+    "whisper-large-v3"
+  ],
+  "listing_shape": {
+    "data": "array",
+    "object": "string"
+  },
+  "chat": {
+    "model": "glm-5.3",
+    "response_model": "glm-5.3",
+    "completed": true,
+    "tokens_in": 18,
+    "tokens_out": 171,
+    "latency_ms": 1988,
+    "scope": "one completed chat task only; proves no static limits or agent backend"
+  },
+  "error_bodies": [
+    {
+      "content_type": "application/json",
+      "auth_header_names": [
+        "Authorization"
+      ],
+      "auth_matches_selected": false,
+      "case": "invalid key",
+      "path": "/v1/models",
+      "status": 401,
+      "body_shape": {
+        "error": "object"
+      },
+      "codes": {
+        "error.code": "INVALID_API_KEY"
+      },
+      "classified_as": "credentials_rejected"
+    },
+    {
+      "content_type": "application/json",
+      "model": "claude-sonnet-5-lr1",
+      "auth_header_names": [
+        "Authorization"
+      ],
+      "auth_matches_selected": true,
+      "case": "unavailable model",
+      "path": "/v1/chat/completions",
+      "status": 404,
+      "body_shape": {
+        "error": "object"
+      },
+      "codes": {
+        "error.code": "INFERENCE_MODEL_NOT_FOUND"
+      },
+      "classified_as": "cause_unknown"
+    }
+  ],
+  "inference": [
+    {
+      "run_id": "discovery-20261111T155945.155654000Z",
+      "backend": "chat",
+      "connection": "selected-connection",
+      "category": "main",
+      "request_id": "request-2",
+      "method": "POST",
+      "host": "gw.lunaroute.com",
+      "path": "/v1/chat/completions",
+      "requested_model": "glm-5.3",
+      "reported_models": [
+        "glm-5.3"
+      ],
+      "auth_matches_selected": true,
+      "auth_header_names": [
+        "Authorization"
+      ],
+      "completed": true,
+      "started_at": "2026-11-11T15:59:45.337182Z",
+      "finished_at": "2026-11-11T15:59:47.325322Z"
+    }
+  ],
+  "unavailable_case": "reviewed id absent from fresh listing; actual non-success inference observed"
+}

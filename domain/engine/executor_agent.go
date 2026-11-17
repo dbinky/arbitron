@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/provider"
@@ -78,8 +79,9 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 	// Compute the EFFECTIVE agent backend with precedence node > profile >
 	// deployment default (org-readiness Phase 2). The backend axis is INDEPENDENT
 	// of binding.Provider; set it on the binding so the selector dispatches on it.
-	// An all-empty chain leaves Backend "" — the factory then applies its own
-	// deployment default (single fallback seam).
+	// Preserve explicit intent before applying the deployment floor. A default
+	// never authorizes a LunaRoute backend on behalf of the author.
+	binding.BackendExplicit = binding.BackendExplicit || strings.TrimSpace(node.Config.Backend) != ""
 	binding.Backend = firstNonEmpty(node.Config.Backend, binding.Backend, e.defaultAgentBackend)
 
 	// Select the concrete agent backend for this node from binding.Backend
@@ -122,19 +124,20 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 	}
 
 	output := processAgentOutput(res)
+	conversation := map[string]any{"steps": res.Steps, "summary": res.Summary}
+	if len(res.ModelEvidence) != 0 {
+		conversation["model_evidence"] = res.ModelEvidence
+	}
 
 	return &NodeResult{
 		Output: output,
 		// Record the agent trace (steps + summary) on LLMConversation, keeping
 		// the executor adapter-free; NodeResult is not widened for the agent
 		// trace in P1.
-		LLMConversation: map[string]any{
-			"steps":   res.Steps,
-			"summary": res.Summary,
-		},
-		LLMModel:     res.Model,
-		LLMTokensIn:  res.TokensIn,
-		LLMTokensOut: res.TokensOut,
+		LLMConversation: conversation,
+		LLMModel:        res.Model,
+		LLMTokensIn:     res.TokensIn,
+		LLMTokensOut:    res.TokensOut,
 	}, nil
 }
 

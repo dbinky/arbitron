@@ -110,4 +110,9 @@ func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan s
 // compatibleProbe is the canned `codex --version` reply that passes the probe.
 func compatibleProbe() runScript { return runScript{lines: []string{"codex-cli 0.163.0"}} }
 
+// lunaRouteCompatibleProbe reports the oldest release a LunaRoute launch accepts.
+func lunaRouteCompatibleProbe() runScript {
+	return runScript{lines: []string{"codex-cli " + minLunaRouteCodexVersion}}
+}
+
 func emptyMCPProbe() runScript { return runScript{lines: []string{`[]`}} }

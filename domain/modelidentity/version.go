@@ -80,6 +80,38 @@ const (
 	acceptNone               = "none: this route cannot run pinned workflows in this release (LiteLLM, local Ollama and unrecognized providers have no fixed-version identity)"
 )
 
+type lunaRouteFixedID struct {
+	Vendor, FixedTarget, Evidence string
+}
+
+var lunaRouteReviewedIDs = map[string]lunaRouteFixedID{
+	// docs/evidence/lunaroute-provider/model-identities.md#glm-5.3
+	"glm-5.3": {Vendor: "zhipuai", FixedTarget: "glm-5.3", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#glm-5.3"},
+	// docs/evidence/lunaroute-provider/model-identities.md#glm-5.3-flash (operator ruling R3)
+	"glm-5.3-flash": {Vendor: "zhipuai", FixedTarget: "glm-5.3-flash", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#glm-5.3-flash"},
+	// docs/evidence/lunaroute-provider/model-identities.md#deepseek-4.1-flash (operator ruling R3)
+	"deepseek-4.1-flash": {Vendor: "deepseek", FixedTarget: "deepseek-4.1-flash", Evidence: "docs/evidence/lunaroute-provider/model-identities.md#deepseek-4.1-flash"},
+}
+
+func lunaRouteFixed(model string) bool {
+	entry, ok := lunaRouteReviewedIDs[model]
+	return model != "" && !lunaRouteClaudeAlias(model) && ok && entry.Vendor != "" && entry.FixedTarget != "" && entry.Evidence != ""
+}
+
+// LunaRouteExecutedModelAccepted checks reported execution evidence against a
+// reviewed selection. Fixed ids require exact equality; reviewed aliases allow
+// drift only within their reviewed vendor family.
+func LunaRouteExecutedModelAccepted(selected, reported string) bool {
+	if !lunaRouteFixed(selected) {
+		return false
+	}
+	entry := lunaRouteReviewedIDs[selected]
+	if strings.HasPrefix(entry.FixedTarget, "alias:") {
+		return reported != "" && ClassifyFamily("lunaroute", reported) == Family(entry.Vendor)
+	}
+	return reported == selected
+}
+
 func unavailable(req VersionRequest, why string) error {
 	return fmt.Errorf("%w: model %q (%s) %s; set the profile to a fixed model version", ErrSpecificVersionUnavailable, req.Model, routeLabel(req), why)
 }
@@ -157,6 +189,8 @@ func explicitVersion(req VersionRequest) (string, error) {
 		fixed, accepted = openaiFixedRE.MatchString(strings.TrimPrefix(model, "openai/")), acceptOpenAI
 	case provider == "deepseek":
 		fixed, accepted = deepseekFixedRE.MatchString(strings.TrimPrefix(model, "deepseek/")), acceptDeepSeek
+	case provider == "lunaroute":
+		fixed, accepted = lunaRouteFixed(model), "use a reviewed fixed LunaRoute id from connection_models and the reviewed-id table"
 	case provider == "openrouter":
 		fixed, accepted = openrouterFixed(model), acceptOpenRouter
 	case provider == "zhipuai":

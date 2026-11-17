@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -125,6 +126,23 @@ func (i *ExecutionPathInventory) PathsForProfile(ctx context.Context, p provider
 	}
 	snap.Paths = own
 	return snap, nil
+}
+
+// ConnectionProvider reads only connection metadata, even before a following
+// profile has a model. Unrelated workflow, run and catalog faults cannot change
+// whether the stricter LunaRoute profile policy applies.
+func (i *ExecutionPathInventory) ConnectionProvider(ctx context.Context, p provider.Profile) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if p.ConnectionRef == "" {
+		return "", nil
+	}
+	conn, err := i.d.Connections.Get(ctx, p.ConnectionRef)
+	if err != nil {
+		return "", fmt.Errorf("%w: connection metadata: %w", modelcatalog.ErrInventoryIncomplete, err)
+	}
+	return conn.Provider, nil
 }
 
 // VersionRequests uses the supplied coherent profile, not another profile read.
@@ -560,10 +578,12 @@ func (b *pathBuilder) add(p provider.Profile, backend, mode string, kind provide
 }
 
 // routeBinding retains actual connection metadata, never the follow target.
-// Codex authenticates independently and must never reveal a connection key.
+// Subscription codex never reveals a connection key; LunaRoute bindings,
+// including codex, reveal only through the credential guard.
 func routeBinding(p provider.Profile, backend string, conn provider.Connection, store provider.ConnectionStore) provider.ResolvedBinding {
 	b := provider.ResolvedBinding{
 		Kind: p.Kind, Provider: ProviderClaudeCLI, Model: p.Model, Backend: backend,
+		ConnectionRef: p.ConnectionRef, BackendExplicit: strings.TrimSpace(p.Backend) != "",
 		AllowedTools: slices.Clone(p.AllowedTools), ContextWindow: p.ContextWindow, Effort: p.Effort,
 		RevealKey: func(context.Context) (string, error) { return "", nil },
 	}
@@ -573,13 +593,13 @@ func routeBinding(p provider.Profile, backend string, conn provider.Connection, 
 		for k, v := range conn.Extras {
 			b.Extras[k] = v
 		}
-		if backend != workflow.BackendCodex {
-			b.RevealKey = func(ctx context.Context) (string, error) { return store.Reveal(ctx, p.ConnectionRef) }
+		if backend != workflow.BackendCodex || provider.IsLunaRoute(conn.Provider) {
+			b.RevealKey = provider.RevealBoundToRevision(store, p.ConnectionRef, conn)
 		}
 	} else if backend == workflow.BackendCodex {
 		b.Provider = ""
 	}
-	return b
+	return provider.GuardLunaRouteReveal(b)
 }
 
 // harnessBackend names the harness binary a route runs: the agent backend, or

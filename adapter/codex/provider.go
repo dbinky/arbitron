@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,13 +31,12 @@ var ErrWorkDirRequired = fmt.Errorf("codex: WorkDir is required")
 //
 // Unlike opencode.Config there is NO AllowAllTools knob: `codex exec` runs under
 // the fixed v1 fully-open posture (--dangerously-bypass-approvals-and-sandbox,
-// see args.go), documented in the spec's risk section. And unlike opencode there
-// is no per-provider credential to inject — codex is subscription-only (env.go),
-// so Binding.RevealKey is never consulted.
+// see args.go), documented in the spec's risk section.
+// LunaRoute uses an isolated keyed Responses provider; every other route keeps
+// the existing subscription environment without consulting Binding.RevealKey.
 type Config struct {
-	// Binding is the resolved backend selection. Only Binding.Model is consumed
-	// (the codex model id); the codex path is subscription-only, so RevealKey /
-	// BaseURL / provider-keyed env are deliberately NOT used (env.go).
+	// Binding selects the model and, for LunaRoute only, the guarded credential
+	// and hosted endpoint. Other providers retain subscription-only behavior.
 	Binding provider.ResolvedBinding
 	// BinaryPath is the codex binary; "" resolves from PATH / StandardBinDirs.
 	BinaryPath string
@@ -115,10 +115,9 @@ func (c *core) ensureCompatible(ctx context.Context) error {
 
 // Provider implements engine.AgentProvider by driving `codex exec
 // --dangerously-bypass-approvals-and-sandbox -m <model> --cd <WorkDir> --json`
-// on the ChatGPT subscription: the mission prompt is delivered via stdin (never
-// argv/logs), there is NO API key (the subscription auth.json under HOME /
-// CODEX_HOME is codex's only credential surface), and a one-time version probe
-// rejects an incompatible binary. Each mission is one independent `exec`
+// on a subscription or an isolated keyed LunaRoute Responses route. The mission
+// prompt is delivered via stdin (never argv/logs), and a one-time compatibility
+// probe rejects an incompatible binary. Each mission is one independent `exec`
 // invocation (no session resume), so AgentMission.SessionID is unused. See
 // args.go, env.go, parse.go, and version.go.
 type Provider struct {
@@ -139,15 +138,26 @@ func New(cfg Config) *Provider {
 // mission); the codex thread id is surfaced OUT on the result for the trace.
 //
 // Strict ordering guarantees a fail-closed launch with no partial state:
-// WorkDir guard → build args (fail-closed on empty model) → build subscription
-// env → memoized version probe → run. An empty WorkDir or empty model produces
-// ZERO subprocess launches (not even the version probe).
-//
-// SECURITY: the prompt is delivered via RunSpec.Stdin, never argv; the env
-// carries NO OPENAI_API_KEY (env.go) — codex authenticates via its on-disk
-// subscription credential.
-func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*engine.AgentResult, error) {
+// LunaRoute preflight → WorkDir guard → args → env/private home → memoized
+// version probe → run → correlated rollout verification → cleanup. Non-LunaRoute
+// launches preserve the subscription path. Empty WorkDir/model launches nothing.
+// The inference key is never passed to the version subprocess or in argv.
+func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (result *engine.AgentResult, err error) {
+	lunaroute := provider.IsLunaRoute(p.binding.Provider)
+	if lunaroute {
+		defer func() { err = provider.SanitizeLunaRouteError(err) }()
+		if mission.Model != "" && mission.Model != p.binding.Model {
+			return nil, provider.LocalLunaRouteError("model selection", ErrModelEvidence)
+		}
+		if err := provider.CheckLunaRouteAdapterLaunch(p.rules, p.binding, 0); err != nil {
+			return nil, provider.LocalLunaRouteError("preflight", err)
+		}
+	}
 	if mission.WorkDir == "" {
+		if lunaroute {
+			// Local, so the agent wrapper does not probe the gateway for it.
+			return nil, provider.LocalLunaRouteError("workdir", ErrWorkDirRequired)
+		}
 		return nil, ErrWorkDirRequired
 	}
 
@@ -163,20 +173,45 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	// model context here. The binding's resolved Effort rides argv as `-c
 	// model_reasoning_effort=<v>` (profile-editing Phase 3); a default/empty effort
 	// or an Empty ruleset appends nothing.
-	args, err := buildArgsWithRules(mission, p.binding, p.rules)
-	if err != nil {
-		return nil, fmt.Errorf("codex agent (model %q): %w", model, err)
-	}
-
-	// Build the subscription env BEFORE any subprocess. There is no key to reveal
-	// (codex is subscription-only), so this cannot fail — but it is still built
-	// before the probe so the launch ordering matches the other CLI adapters.
-	env := codexEnv()
-
-	// Version probe (memoized): an incompatible/missing binary fails closed here,
-	// before the run launches.
-	if err := p.ensureCompatible(ctx); err != nil {
-		return nil, err
+	var args, env []string
+	if lunaroute {
+		extra, xerr := lunaRouteExecExtra(p.binding)
+		if xerr != nil {
+			return nil, provider.LocalLunaRouteError("arguments", xerr)
+		}
+		args, err = buildExecArgs(model, mission.WorkDir, extra)
+		if err != nil {
+			return nil, provider.LocalLunaRouteError("arguments", err)
+		}
+		launch, lerr := prepareLunaRouteLaunch(ctx, p.binding)
+		if lerr != nil {
+			return nil, lerr
+		}
+		// Rollout evidence below is read before this private home is removed.
+		// A removal failure is logged and never changes the run's outcome: a
+		// finished run keeps its result, and an opaque launch failure must stay
+		// diagnosable rather than be marked local by the cleanup error. The home
+		// holds no credential (the key travels only in the process env).
+		defer func() {
+			if cleanupErr := launch.cleanup(); cleanupErr != nil {
+				slog.Warn("codex: lunaroute private home cleanup failed; leaving it behind",
+					"home", provider.RedactLunaRoute(launch.home), "error", provider.SanitizeLunaRouteError(cleanupErr).Error())
+			}
+		}()
+		env = launch.env
+		if err := p.ensureLunaRouteCompatible(ctx, env); err != nil {
+			return nil, err
+		}
+	} else {
+		args, err = buildArgsWithRules(mission, p.binding, p.rules)
+		if err != nil {
+			return nil, fmt.Errorf("codex agent (model %q): %w", model, err)
+		}
+		// Subscription mode has no per-provider reveal and preserves CODEX_HOME.
+		env = codexEnv()
+		if err := p.ensureCompatible(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	timeout := mission.Timeout
@@ -197,7 +232,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	lines, wait, err := p.runner.Run(runCtx, spec)
 	if err != nil {
-		if p.binding.Pinned {
+		if p.binding.Pinned || lunaroute {
 			err = claudecli.SanitizeProcessError(err)
 		}
 		return nil, fmt.Errorf("codex: run (model %q): %w", model, err)
@@ -209,7 +244,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		collected = append(collected, line)
 	}
 	if waitErr := wait(); waitErr != nil {
-		if p.binding.Pinned {
+		if p.binding.Pinned || lunaroute {
 			waitErr = claudecli.SanitizeProcessError(waitErr)
 		} else {
 			claudecli.LogStderrTail("codex", waitErr)
@@ -229,7 +264,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		// waitErr stays wrapped either way so callers keep unwrapping it.
 		// A pinned run must not copy untrusted harness messages into errors;
 		// they can include account credentials or tool output.
-		if p.binding.Pinned {
+		if p.binding.Pinned || lunaroute {
 			return nil, fmt.Errorf("codex: mission failed (model %q): %w", model, waitErr)
 		}
 		if cause := failureCause(collected); cause != "" {
@@ -242,15 +277,27 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	if err != nil {
 		return nil, fmt.Errorf("codex: parse output (model %q): %w", model, err)
 	}
-	if p.binding.Pinned {
-		if res.failed || !res.completed {
+	var evidence []engine.ModelEvidence
+	if p.binding.Pinned || lunaroute {
+		if res.failed || !res.completed || lunaroute && !res.finalTurnCompleted {
 			return nil, fmt.Errorf("%w: batch turn did not complete successfully", ErrModelEvidence)
 		}
 		verifier, err := newRolloutVerifier(env)
 		if err != nil {
+			if lunaroute {
+				return nil, provider.LocalLunaRouteError("rollout evidence", err)
+			}
 			return nil, err
 		}
-		if err := verifier.afterTurn(res.sessionID, model, 0); err != nil {
+		if lunaroute {
+			// The final turn completed on the gateway; a private rollout that
+			// cannot prove the route is a local harness fault, so it carries the
+			// local marker and the diagnosis wrapper does not probe.
+			evidence, err = verifier.lunaRouteAfterTurn(res.sessionID, model)
+			if err != nil {
+				return nil, provider.LocalLunaRouteError("rollout evidence", err)
+			}
+		} else if err := verifier.afterTurn(res.sessionID, model, 0); err != nil {
 			return nil, err
 		}
 	}
@@ -260,12 +307,13 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	}
 
 	return &engine.AgentResult{
-		Summary:   res.summary,
-		Steps:     engineSteps,
-		Model:     model,
-		TokensIn:  res.tokensIn,
-		TokensOut: res.tokensOut,
-		SessionID: res.sessionID, // codex thread id (surfaced for the trace)
+		ModelEvidence: evidence,
+		Summary:       res.summary,
+		Steps:         engineSteps,
+		Model:         model,
+		TokensIn:      res.tokensIn,
+		TokensOut:     res.tokensOut,
+		SessionID:     res.sessionID, // codex thread id (surfaced for the trace)
 	}, nil
 }
 
@@ -285,6 +333,9 @@ func (p *Provider) ProbeExecutedModel(ctx context.Context, _ string, workDir str
 	}
 	if workDir == "" {
 		return "", "", ErrWorkDirRequired
+	}
+	if provider.IsLunaRoute(p.binding.Provider) {
+		return "", "", fmt.Errorf("%w: LunaRoute codex routes are pinned-only and have no usability probe", ErrModelEvidence)
 	}
 	model := p.binding.Model
 	args, err := buildProbeArgs(p.binding, p.rules, workDir)
