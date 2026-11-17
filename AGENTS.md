@@ -6,7 +6,7 @@ Arbitron is a Go workflow orchestration service for directed graphs of LLM calls
 
 The project was previously Claude-oriented, but the current codebase is not Claude-only. The active direction is vendor abstraction: workflow nodes declare intent, while model/profile/connection resolution selects the concrete provider or harness.
 
-Important current-state distinction: `README.md` is written as a target MVP end-state. Some parts are already implemented; some are spec-driven or in-flight. Verify against code before treating README claims as shipped behavior.
+`README.md` describes current, shipped behavior. Specs and designs under `docs/` record intent at the time they were written and can lag the code; verify against code before relying on them.
 
 ## Architecture
 
@@ -41,6 +41,7 @@ Core workflow node type constants live in `domain/workflow/workflow.go`. The cod
 - `interactive_llm`
 - `interactive_agent`
 - `spawn_workflow`
+- `parallel_group`
 
 `spawn_workflow` starts a CHILD workflow instance from within a parent workflow.
 It is ONE node type with two modes (`spawnMode`): `fire_and_forget` (the parent
@@ -181,13 +182,3 @@ npx tsc --noEmit
 npx vitest run
 npm run build
 ```
-
-## Current Branch Context
-
-At orientation time, the working branch was `dev-predeploy-testing`, clean, and ahead of `origin/dev-predeploy-testing` by two commits. Recent commits included:
-
-- `docs(spec): loop-back edge side-routing design`
-- `fix(graph): stop node-click blanking the workflow review screen`
-- `docs(spec): note the service layer is the catalog authorization boundary`
-
-Re-check `git status --short --branch` and recent history before assuming this is still true.
