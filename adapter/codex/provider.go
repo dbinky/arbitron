@@ -2,8 +2,8 @@ package codex
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +154,10 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 		}
 	}
 	if mission.WorkDir == "" {
+		if lunaroute {
+			// Local, so the agent wrapper does not probe the gateway for it.
+			return nil, provider.LocalLunaRouteError("workdir", ErrWorkDirRequired)
+		}
 		return nil, ErrWorkDirRequired
 	}
 
@@ -184,10 +188,14 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 			return nil, lerr
 		}
 		// Rollout evidence below is read before this private home is removed.
+		// A removal failure is logged and never changes the run's outcome: a
+		// finished run keeps its result, and an opaque launch failure must stay
+		// diagnosable rather than be marked local by the cleanup error. The home
+		// holds no credential (the key travels only in the process env).
 		defer func() {
 			if cleanupErr := launch.cleanup(); cleanupErr != nil {
-				result = nil
-				err = errors.Join(err, provider.LocalLunaRouteError("private home cleanup", cleanupErr))
+				slog.Warn("codex: lunaroute private home cleanup failed; leaving it behind",
+					"home", launch.home, "error", provider.SanitizeLunaRouteError(cleanupErr).Error())
 			}
 		}()
 		env = launch.env

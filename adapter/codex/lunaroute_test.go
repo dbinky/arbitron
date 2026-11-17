@@ -502,3 +502,48 @@ func TestLunaRouteCodex_VersionFloorIsLunaRouteOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, revealed)
 }
+
+// lockTempParent makes the private home's parent read-only, so both of
+// removeLunaRouteHome's attempts fail for real. Restored before t.TempDir's own
+// cleanup (t.Cleanup is LIFO), which then removes the leftover home.
+func lockTempParent(t *testing.T, tmp string) {
+	t.Helper()
+	require.NoError(t, os.Chmod(tmp, 0500))
+	t.Cleanup(func() { _ = os.Chmod(tmp, 0700) })
+}
+
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	return &logs
+}
+
+// G22: an opaque launch failure stays diagnosable when cleanup also fails;
+// the cleanup error must not mark it local.
+func TestLunaRouteCodex_CleanupFailureKeepsOpaqueFailureDiagnosable(t *testing.T) {
+	logs := captureLogs(t)
+	tmp := isolateTemp(t)
+	r := &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), {waitErr: errors.New("exit status 1"), onWait: func() { lockTempParent(t, tmp) }}}}
+	res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.NotErrorIs(t, err, provider.ErrLunaRouteLocalFailure, "cleanup must not hide a gateway failure from diagnosis")
+	assert.Contains(t, logs.String(), "private home cleanup")
+}
+
+// G23: an empty WorkDir is a local failure on the LunaRoute arm, so the agent
+// wrapper does not probe the gateway for it. Nothing is launched.
+func TestLunaRouteCodex_EmptyWorkDirIsLocal(t *testing.T) {
+	tmp := isolateTemp(t)
+	m := lrMission()
+	m.WorkDir = ""
+	r := &multiRunner{}
+	_, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), m)
+	require.ErrorIs(t, err, ErrWorkDirRequired)
+	require.ErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+	assert.Empty(t, r.calls)
+	lrNoLeftovers(t, tmp)
+}

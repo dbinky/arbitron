@@ -77,9 +77,13 @@ func TestLunaRouteCodex_ReadOnlyHomeCleanup(t *testing.T) {
 
 // A parent directory outside the private home cannot be repaired by this
 // adapter. Cleanup failure must invalidate success while retaining prior errors.
-func TestLunaRouteCodex_CleanupFailureIsLocalAndPreservesCause(t *testing.T) {
+// A retained private home is logged and left behind; it never changes the
+// run's outcome (G22). The home holds no credential, the original cause
+// survives, and permissions outside the home are never widened.
+func TestLunaRouteCodex_CleanupFailureIsLoggedAndPreservesOutcome(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "process error"}[failed], func(t *testing.T) {
+			logs := captureLogs(t)
 			tmp := isolateTemp(t)
 			t.Cleanup(func() { _ = os.Chmod(tmp, 0700) })
 			r := &lrSinkRunner{t: t}
@@ -91,13 +95,18 @@ func TestLunaRouteCodex_CleanupFailureIsLocalAndPreservesCause(t *testing.T) {
 			s.onWait = func() { onWait(); require.NoError(t, os.Chmod(tmp, 0500)) }
 			r.inner.scripts = []runScript{lunaRouteCompatibleProbe(), s}
 			res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
-			require.Error(t, err, "a retained home cannot be reported as success")
-			assert.Nil(t, res)
-			assert.ErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
-			assert.NotContains(t, err.Error(), lrKey)
 			if failed {
+				require.Error(t, err)
+				assert.Nil(t, res)
 				assert.True(t, errors.Is(err, context.Canceled))
+				assert.NotErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+				assert.NotContains(t, err.Error(), lrKey)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
 			}
+			assert.Contains(t, logs.String(), "private home cleanup")
+			assert.NotContains(t, logs.String(), lrKey)
 			st, statErr := os.Stat(tmp)
 			require.NoError(t, statErr)
 			assert.Equal(t, os.FileMode(0500), st.Mode().Perm(), "do not widen permissions outside the home")

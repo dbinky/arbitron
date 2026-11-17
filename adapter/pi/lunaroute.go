@@ -3,6 +3,7 @@ package pi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,14 @@ func prepareLunaRoutePiLaunchWithFS(ctx context.Context, b provider.ResolvedBind
 	if err != nil {
 		return local("private agent dir", err)
 	}
-	cleanup := func() { _ = fs.removeAll(dir) }
+	// A removal failure is logged and the run moves on: the directory holds the
+	// provider definition but never the key (it travels only in the env).
+	cleanup := func() {
+		if err := fs.removeAll(dir); err != nil {
+			slog.Warn("pi: lunaroute private agent dir cleanup failed; leaving it behind",
+				"dir", dir, "error", provider.SanitizeLunaRouteError(err).Error())
+		}
+	}
 	complete := false
 	defer func() {
 		if !complete {

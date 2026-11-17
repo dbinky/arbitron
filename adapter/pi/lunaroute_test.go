@@ -56,6 +56,7 @@ type capturingRunner struct {
 	dirInfo, fileInfo os.FileInfo
 	modelsJSON        []byte
 	panicOnRun        bool
+	onRun             func()
 }
 
 func (c *capturingRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -66,6 +67,9 @@ func (c *capturingRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-ch
 		c.modelsJSON, _ = os.ReadFile(filepath.Join(c.dir, "models.json"))
 		if c.panicOnRun {
 			panic("fixture panic")
+		}
+		if c.onRun != nil {
+			c.onRun()
 		}
 	}
 	return c.inner.Run(ctx, spec)
@@ -457,4 +461,55 @@ func TestLunaRoutePi_VersionFloorIsLunaRouteOnly(t *testing.T) {
 			assert.Empty(t, piLeftovers(t, tmp))
 		})
 	}
+}
+
+func capturePiLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	return &logs
+}
+
+// G15: a private-dir removal failure is logged (secret-free) and the run moves
+// on. Preparation rollback keeps returning the original local error.
+func TestLunaRoutePi_CleanupFailuresAreLogged(t *testing.T) {
+	removeFails := func(string) error { return errors.New("remove failed " + lrPiKey) }
+	t.Run("rollback", func(t *testing.T) {
+		logs := capturePiLogs(t)
+		isolatePiTemp(t)
+		fs := piFileSystem{mkdirTemp: os.MkdirTemp, chmod: func(string, os.FileMode) error { return errors.New("chmod failed") }, writeFile: os.WriteFile, removeAll: removeFails}
+		_, err := prepareLunaRoutePiLaunchWithFS(context.Background(), lrPiBinding(), lrRules(), fs)
+		require.ErrorIs(t, err, provider.ErrLunaRouteLocalFailure)
+		assert.Contains(t, err.Error(), "secure private agent dir")
+		assert.Contains(t, logs.String(), "private agent dir cleanup")
+		assert.NotContains(t, logs.String(), lrPiKey)
+	})
+	t.Run("after launch", func(t *testing.T) {
+		logs := capturePiLogs(t)
+		isolatePiTemp(t)
+		fs := piFileSystem{mkdirTemp: os.MkdirTemp, chmod: os.Chmod, writeFile: os.WriteFile, removeAll: removeFails}
+		launch, err := prepareLunaRoutePiLaunchWithFS(context.Background(), lrPiBinding(), lrRules(), fs)
+		require.NoError(t, err)
+		launch.cleanup()
+		assert.Contains(t, logs.String(), "private agent dir cleanup")
+		assert.NotContains(t, logs.String(), lrPiKey)
+		require.NoError(t, os.RemoveAll(launch.dir))
+	})
+	t.Run("successful run keeps its result", func(t *testing.T) {
+		logs := capturePiLogs(t)
+		tmp := isolatePiTemp(t)
+		r := lrPiRunner(lrAssistant)
+		r.onRun = func() {
+			// A read-only parent makes the real removal fail after the run.
+			require.NoError(t, os.Chmod(tmp, 0500))
+			t.Cleanup(func() { _ = os.Chmod(tmp, 0700) })
+		}
+		res, err := lrPiProvider(r, lrPiBinding(), lrRules()).RunAgent(context.Background(), piMission())
+		require.NoError(t, err)
+		assert.Equal(t, "done", res.Summary)
+		assert.Contains(t, logs.String(), "private agent dir cleanup")
+		assert.NotContains(t, logs.String(), lrPiKey)
+	})
 }

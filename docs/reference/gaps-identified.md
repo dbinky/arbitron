@@ -9,20 +9,23 @@
 
 ## Open
 
-- [ ] **G22 (paired:4, Areas 2/4): a private-home cleanup failure marks an opaque codex failure local.**
+- [x] **G22 (paired:4, Areas 2/4): a private-home cleanup failure marks an opaque codex failure local.**
   `adapter/codex/provider.go:RunAgent` deferred cleanup does `errors.Join(err, LocalLunaRouteError("private home cleanup", …))`
   even when `err` is already an opaque post-launch failure; `lunaRouteDiagnosable` then sees `ErrLunaRouteLocalFailure`
   and never probes (BREAK direction 2). Fix: add the local marker to the cleanup error only when it is the sole failure.
   Needs a removal-failure seam (no injection exists in RunAgent; `prepareLunaRouteLaunch` hardwires `os`).
-- [ ] **G23 (paired:4, Areas 2/4): an empty codex WorkDir is unmarked, so it probes the gateway.**
+  **FIXED (operator, 2026-11-16):** cleanup failures are now logged (sanitized) and never change the run's outcome — no local marker, result kept. `TestLunaRouteCodex_CleanupFailureKeepsOpaqueFailureDiagnosable`, `TestLunaRouteCodex_CleanupFailureIsLoggedAndPreservesOutcome` (real removal failure via a read-only parent; no seam needed).
+- [x] **G23 (paired:4, Areas 2/4): an empty codex WorkDir is unmarked, so it probes the gateway.**
   `adapter/codex/provider.go:RunAgent` returns bare `ErrWorkDirRequired` for LunaRoute; it is not in
   `adapter/provider/lunaroute_agent.go:lunaRouteLocalErrors`. Reachable when `{{workspace}}` is unseeded
   (`domain/engine/executor_agent.go` comment at line 94). Mark it with `LocalLunaRouteError("workdir", …)` on the LunaRoute arm.
+  **FIXED (operator, 2026-11-16):** the LunaRoute arm returns `LocalLunaRouteError("workdir", ErrWorkDirRequired)`, matching pi. `TestLunaRouteCodex_EmptyWorkDirIsLocal`.
 
-- [ ] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
+- [x] **G17 (Area 8, sibling documentation): evidence README retains obsolete blockers.**
   `docs/evidence/lunaroute-provider/README.md:Released scope` says the legacy MCP-matrix assertion remains and deferred harness tests are red.
   `test/lunaroute/register_test.go:TestReleaseGate` has no matrix assertion; its explicit release-mode run passed, as did the ordinary evidence suite.
   Update both the introduction and `README.md:Release enforcement` to match the current gate and R7. This does not fail Review 1 checks 1–6.
+  **FIXED (operator, 2026-11-16):** introduction, Released scope and Release enforcement updated; the release-gate command and evidence suite both pass.
 
 - **single:8/review1 — wiring-lens evidence (recommend approve).**
   C1 `register.yaml` LR-01..08, LR-05/06 `deferred` empty applied_to; `TestRegisterDeferredScope`. C2 all 20 `applied_to` pointers grepped as real
@@ -49,7 +52,7 @@
   To tick this box, independent review must verify rejection cases and mutation failures for each nonredundant guard,
   and accept a reason for each equivalent removal. No external credential, dependency or operator decision is required.
   G15 remains a separate cleanup-error defect, explicitly ruled non-blocking for this review by that approver.
-- [ ] **G15 (Area 5): private-directory removal errors are discarded.**
+- [x] **G15 (Area 5): private-directory removal errors are discarded.**
   `adapter/pi/lunaroute.go:prepareLunaRoutePiLaunchWithFS` defines `cleanup := func() { _ = fs.removeAll(dir) }`;
   both preparation rollback and `adapter/pi/provider.go:RunAgent`'s deferred cleanup lose failures.
   Temporary overlay `TestArea5RemovalFailureSurfaced` injected chmod plus removal failures: exit 1, removal error absent
@@ -57,6 +60,7 @@
   Preserve secret-free cleanup failure alongside the primary error and cover removal failure after otherwise successful runs.
   paired:5 constraint: when fixing, do NOT repeat G22 — add the local marker only when cleanup is the sole failure, or a
   failed turn/non-zero exit stops being diagnosed (`cmd/arbitron/lunaroute_pi_wiring_test.go:TestLunaRoutePiWiringFailures/failed-turn`).
+  **FIXED (operator, 2026-11-16):** per operator ruling, removal errors are logged (sanitized) and the run moves on; no local marker is added, so G22 is not repeated. `TestLunaRoutePi_CleanupFailuresAreLogged` (rollback, after launch, successful run).
 
 - [x] **G14 (Area 1): closed by approver at 142dcc5.** `go test -count=1 -timeout 40m ./cmd/arbitron` → `ok` (315s,
   exit 0), including `TestLunaRouteProfileScopeWiring` with the corrected Azure destination key.
@@ -81,12 +85,13 @@
   Reproduced through `cmd/arbitron/lunaroute_connection_wiring_test.go:lunaRouteMCP` in a temporary test overlay:
   create lunaroute with `lr_original`, update same provider with `api_key: ""` → success and revision 1 → 2.
   The temporary `TestArea1EmptyKeyRefused` failed (exit 1); no failing test or overlay remains in the worktree.
-- [ ] **G13 (Area 1, high): explicitly supplied LunaRoute keys can still be paired with a foreign provider.**
+- [x] **G13 (Area 1, high): explicitly supplied LunaRoute keys can still be paired with a foreign provider.**
   `domain/provider/lunaroute_connection.go:PrepareLunaRouteCreate` / `PrepareLunaRouteUpdate` pass through foreign-provider
   keys unchecked. G1 now requires a nonempty replacement, but resubmitting `lr_original` on switch-away is accepted.
   Real-root temporary `TestArea1ForeignProviderRejectsLunaRouteKey` failed (exit 1) for both openrouter create with
   `lr_mispaired` and lunaroute → openrouter update with `lr_original`; persisted provider became openrouter.
   Refuse `lr_` keys at foreign-provider writes with static secret-free guidance; test create, update and switch-away sinks.
+  **WON'T FIX (operator ruling, 2026-11-16).**
 
 ## Review evidence
 
