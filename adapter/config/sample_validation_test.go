@@ -134,7 +134,7 @@ func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 // verify the remaining recovery-table columns or provision runtime profiles.
 
 // documentedProfileRow matches a PROFILES.md table row: | alias | kind | ...
-var documentedProfileRow = regexp.MustCompile(`^\|\s*([a-z0-9][a-z0-9-]*)\s*\|\s*(agent|chat)\s*\|`)
+var documentedProfileRow = regexp.MustCompile(`^\|\s*([A-Za-z0-9][A-Za-z0-9-]*)\s*\|\s*(agent|chat)\s*\|`)
 
 // documentedProfiles returns the alias→kind rows from a sample's PROFILES.md.
 // A sample without PROFILES.md, or whose PROFILES.md has no `| alias |` table
