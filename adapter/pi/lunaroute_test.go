@@ -498,8 +498,14 @@ func TestLunaRoutePi_CleanupFailuresAreLogged(t *testing.T) {
 		require.NoError(t, os.RemoveAll(launch.dir))
 	})
 	t.Run("successful run keeps its result", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses directory permissions; cannot force a removal failure")
+		}
 		logs := capturePiLogs(t)
-		tmp := isolatePiTemp(t)
+		// A key-shaped TMPDIR must not reach the log through the dir path.
+		tmp := filepath.Join(t.TempDir(), lrPiKey)
+		require.NoError(t, os.Mkdir(tmp, 0700))
+		t.Setenv("TMPDIR", tmp)
 		r := lrPiRunner(lrAssistant)
 		r.onRun = func() {
 			// A read-only parent makes the real removal fail after the run.

@@ -117,7 +117,7 @@ func prepareLunaRoutePiLaunchWithFS(ctx context.Context, b provider.ResolvedBind
 	cleanup := func() {
 		if err := fs.removeAll(dir); err != nil {
 			slog.Warn("pi: lunaroute private agent dir cleanup failed; leaving it behind",
-				"dir", dir, "error", provider.SanitizeLunaRouteError(err).Error())
+				"dir", provider.RedactLunaRoute(dir), "error", provider.SanitizeLunaRouteError(err).Error())
 		}
 	}
 	complete := false

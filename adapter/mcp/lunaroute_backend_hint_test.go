@@ -27,7 +27,7 @@ func validateProfileBackendHints(tools []profileHintTool) error {
 		}
 		seen[tool.Name] = true
 		for _, want := range []string{
-			"connection_models", "backend explicitly (codex or pi)", "pinned", "claude-code and opencode are not yet supported",
+			"connection_models", "backend explicitly (codex or pi)", "selections are pinned only", "claude-code and opencode are not yet supported",
 			"codex", "private CODEX_HOME", "backend-health login", "does not gate",
 			"pi", "known context and output limits", "known reasoning metadata",
 			"independent evidence-backed reasoning fact", "unknown", "refused",
@@ -37,7 +37,7 @@ func validateProfileBackendHints(tools []profileHintTool) error {
 				return fmt.Errorf("%s missing guidance: %s", tool.Name, want)
 			}
 		}
-		for _, forbidden := range []string{"recommend", "not yet enabled", "automatically select", "backend explicitly (claude-code, opencode, codex or pi)"} {
+		for _, forbidden := range []string{"recommend", "not yet enabled", "automatically select", "backend explicitly (claude-code, opencode, codex or pi)", "following"} {
 			if strings.Contains(tool.Description, forbidden) {
 				return fmt.Errorf("contradictory profile guidance")
 			}
@@ -94,6 +94,10 @@ func TestLunaRouteBackendHint_RejectsMissingAndContradictorySurfaces(t *testing.
 		"recommendation":      func(in []profileHintTool) []profileHintTool { in[0].Description += " recommended model"; return in },
 		"obsolete scope": func(in []profileHintTool) []profileHintTool {
 			in[0].Description = strings.ReplaceAll(in[0].Description, "backend explicitly (codex or pi)", "backend explicitly (claude-code, opencode, codex or pi)")
+			return in
+		},
+		"following allowed": func(in []profileHintTool) []profileHintTool {
+			in[0].Description = strings.ReplaceAll(in[0].Description, "pinned only", "pinned or following")
 			return in
 		},
 		"missing effort exception": func(in []profileHintTool) []profileHintTool {

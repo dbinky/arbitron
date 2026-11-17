@@ -78,7 +78,7 @@
   Area 7 done (single:7/review1): per-segment phrases pinned in `adapter/mcp/tools_connection_models_test.go:TestConnectionModels_DescriptionGuidesTheLLM`
   and `domain/provider/model_discovery_test.go:TestDiscover_LunaRouteView`. Still open: `harden:adapter/mcp/lunaroute_backend_hint.go`
   (Area 3: pin "codex or pi only", "pinned only", or record as equivalent). Area 7 independently verified at approval of 28da84b: all eight single-segment-removal overlays fail the named tests.
-  **CLOSED (operator, 2026-11-16): false alarm.** The three survivors flip the `+` joining the hint's sentences to `-`, which does not compile for strings, so no behavior exists to kill. The hint text is fully pinned by `TestLunaRouteBackendHint_RejectsMissingAndContradictorySurfaces`.
+  **CLOSED (operator, 2026-11-16): false alarm.** The three survivors flip the `+` joining the hint's sentences to `-`, which does not compile for strings, so no behavior exists to kill. The hint's guidance phrases, including pinned-only (a "pinned or following" rewrite is rejected), are pinned by `TestLunaRouteBackendHint_RejectsMissingAndContradictorySurfaces`.
 
 - [x] **G12 (Area 1): MCP accepts an explicit empty key on an existing LunaRoute connection.**
   `adapter/mcp/tools_connection.go:connectionUpdateHandler` turns `api_key: ""` into nil; the repo preserves the old key

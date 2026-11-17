@@ -187,6 +187,12 @@ func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec Run
 				parseErr = errModelExecutionEvidence
 				continue
 			}
+			// The last result carries the answer; usage is per wake, so sum it
+			// (as streamState does) rather than keep only the final wake's.
+			if haveResult {
+				ev.TokensIn += result.TokensIn
+				ev.TokensOut += result.TokensOut
+			}
 			result, haveResult = ev, true
 			continue
 		}

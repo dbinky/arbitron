@@ -512,6 +512,15 @@ func lockTempParent(t *testing.T, tmp string) {
 	t.Cleanup(func() { _ = os.Chmod(tmp, 0700) })
 }
 
+// skipIfRoot: the cleanup-failure tests make a directory read-only to force a
+// real removal failure, which root ignores.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions; cannot force a removal failure")
+	}
+}
+
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var logs bytes.Buffer
@@ -524,14 +533,19 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 // G22: an opaque launch failure stays diagnosable when cleanup also fails;
 // the cleanup error must not mark it local.
 func TestLunaRouteCodex_CleanupFailureKeepsOpaqueFailureDiagnosable(t *testing.T) {
+	skipIfRoot(t)
 	logs := captureLogs(t)
-	tmp := isolateTemp(t)
+	// A key-shaped TMPDIR must not reach the log through the home path.
+	tmp := filepath.Join(t.TempDir(), lrKey)
+	require.NoError(t, os.Mkdir(tmp, 0700))
+	t.Setenv("TMPDIR", tmp)
 	r := &multiRunner{scripts: []runScript{lunaRouteCompatibleProbe(), {waitErr: errors.New("exit status 1"), onWait: func() { lockTempParent(t, tmp) }}}}
 	res, err := New(Config{Binding: lrCodexBinding(), Runner: r, CapabilityRules: lrCodexRules()}).RunAgent(context.Background(), lrMission())
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.NotErrorIs(t, err, provider.ErrLunaRouteLocalFailure, "cleanup must not hide a gateway failure from diagnosis")
 	assert.Contains(t, logs.String(), "private home cleanup")
+	assert.NotContains(t, logs.String(), lrKey)
 }
 
 // G23: an empty WorkDir is a local failure on the LunaRoute arm, so the agent

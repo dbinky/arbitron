@@ -81,6 +81,7 @@ func TestLunaRouteCodex_ReadOnlyHomeCleanup(t *testing.T) {
 // run's outcome (G22). The home holds no credential, the original cause
 // survives, and permissions outside the home are never widened.
 func TestLunaRouteCodex_CleanupFailureIsLoggedAndPreservesOutcome(t *testing.T) {
+	skipIfRoot(t)
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "process error"}[failed], func(t *testing.T) {
 			logs := captureLogs(t)

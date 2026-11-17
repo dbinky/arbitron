@@ -195,7 +195,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 		defer func() {
 			if cleanupErr := launch.cleanup(); cleanupErr != nil {
 				slog.Warn("codex: lunaroute private home cleanup failed; leaving it behind",
-					"home", launch.home, "error", provider.SanitizeLunaRouteError(cleanupErr).Error())
+					"home", provider.RedactLunaRoute(launch.home), "error", provider.SanitizeLunaRouteError(cleanupErr).Error())
 			}
 		}()
 		env = launch.env
