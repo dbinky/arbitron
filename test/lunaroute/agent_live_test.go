@@ -196,10 +196,19 @@ func safeAgentField(s, key string) bool {
 	}
 	return true
 }
+
+// fsClockSlack absorbs filesystem timestamp granularity. Linux stamps file times
+// from a coarse kernel clock that can trail time.Now() by a tick, so a proof
+// written just after the run started can carry an mtime slightly before it
+// (CI failed every evidence test this way; macOS/APFS times are exact). A stale
+// proof from an earlier run is seconds to minutes old, so one second still
+// rejects it.
+const fsClockSlack = time.Second
+
 func workspaceProof(ws, name string, limit int64, started, finished time.Time) ([]byte, error) {
 	path := filepath.Join(ws, name)
 	st, err := os.Lstat(path)
-	if err != nil || !st.Mode().IsRegular() || st.Size() > limit || st.ModTime().Before(started) || st.ModTime().After(finished) {
+	if err != nil || !st.Mode().IsRegular() || st.Size() > limit || st.ModTime().Before(started.Add(-fsClockSlack)) || st.ModTime().After(finished.Add(fsClockSlack)) {
 		return nil, errAgentEvidence
 	}
 	f, err := os.Open(path)
