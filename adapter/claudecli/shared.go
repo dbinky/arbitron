@@ -129,10 +129,18 @@ type collectPolicy struct {
 
 // collectResult retains the existing non-LunaRoute protocol: drain and reap,
 // surface failures, and (when required) prove the main model while permitting
-// helper models. Route-specific callers use collectResultWithPolicy instead.
+// helper models. Several results occur when background subagents re-wake the
+// session; each must pass and the last one carries the final answer.
+// Route-specific callers use collectResultWithPolicy instead.
 func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec, wantModel string) (streamEvent, []streamEvent, error) {
 	return collectResultWithPolicy(ctx, runner, spec, wantModel, collectPolicy{})
 }
+
+// singleResult reports whether the route requires exactly one terminal result.
+// Ordinary pinned turns accept one result per background-subagent wake (the
+// last wins); a route-specific identity policy (LunaRoute) stays fail-closed on
+// any second result, because its proof must come from one unambiguous event.
+func (p collectPolicy) singleResult() bool { return p.acceptModels != nil }
 
 func (p collectPolicy) accepts(want string, used []string) bool {
 	if p.acceptModels != nil {
@@ -172,7 +180,10 @@ func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec Run
 			continue
 		}
 		if ev.Kind == eventResult {
-			if verified && (haveResult || ev.IsError || !policy.accepts(wantModel, ev.ModelUsage)) {
+			// Background-subagent wakes emit one result each; every one must
+			// prove the pinned model, and the last (the final answer) wins.
+			// A route-specific policy still rejects any second result.
+			if verified && ((haveResult && policy.singleResult()) || ev.IsError || !policy.accepts(wantModel, ev.ModelUsage)) {
 				parseErr = errModelExecutionEvidence
 				continue
 			}

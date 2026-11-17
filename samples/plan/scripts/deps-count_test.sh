@@ -109,5 +109,18 @@ check "F: has_unresolved with nothing counted is raised to 1" "$(printf '%s' "$O
 OUT="$(run '{"deps-assess":{"gaps":["NON-BLOCKING: a"],"has_unresolved":false,"unresolved_count":0}}')"
 check "F: a consistent clean assessment proceeds" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "0"
 
+# --- G: the backstop must not fire on a claim the NON-BLOCKING lines explain ---
+# WHY (run a349951a, 2026-11-11): deps-assess-2 listed one NON-BLOCKING gap and
+# counted it in has_unresolved/unresolved_count. The backstop raised
+# needs_resolution to 1, so a fully resolved plan recorded itself blocked.
+OUT="$(run_id deps-assess-2 '{"deps-assess-2":{"blocking_count":0,"gaps":["NON-BLOCKING: live verification remains gated; it runs after implementation"],"has_blocking":false,"has_unresolved":true,"unresolved_count":1}}')"
+check "G: an unresolved claim explained by NON-BLOCKING lines proceeds" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "0"
+OUT="$(run '{"deps-assess":{"gaps":["NON-BLOCKING: a","NON-BLOCKING: b"],"has_unresolved":true}}')"
+check "G: has_unresolved without a count, with NON-BLOCKING lines, proceeds" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "0"
+OUT="$(run '{"deps-assess":{"gaps":["NON-BLOCKING: a"],"has_unresolved":true,"unresolved_count":3}}')"
+check "G: a claimed count above the NON-BLOCKING lines still blocks" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "1"
+OUT="$(run '{"deps-assess":{"gaps":["NON-BLOCKING: a"],"unresolved_count":2}}')"
+check "G: unresolved_count alone above the NON-BLOCKING lines still blocks" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "1"
+
 echo "---"
 if [ "$fails" -eq 0 ]; then echo "PASS"; else echo "$fails check(s) FAILED"; exit 1; fi

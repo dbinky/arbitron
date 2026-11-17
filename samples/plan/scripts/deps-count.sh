@@ -31,8 +31,10 @@
 # with no recognised prefix is treated as BLOCKING, never dropped: a model that
 # breaks the prefix must not read as "resolved". A non-string entry makes
 # parse_ok false and counts as blocking. If the assessment itself says something
-# is unresolved (has_unresolved true, or unresolved_count > 0) but no gap counted,
-# needs_resolution is raised to 1. Unreadable gaps report needs_resolution=1, so a
+# is unresolved but no gap counted, needs_resolution is raised to 1 -- unless its
+# NON-BLOCKING lines explain the claim: unresolved_count must exceed them, or
+# has_unresolved must come with none. (Run a349951a, 2026-11-11: a lone
+# NON-BLOCKING gap counted as "unresolved" blocked a fully resolved plan.) Unreadable gaps report needs_resolution=1, so a
 # person looks at the plans rather than the run proceeding on missing evidence.
 set -eu
 ID="${1:-deps-assess}"
@@ -56,7 +58,8 @@ printf '%s' "$IN" | jq --arg id "$ID" '
   | (($g | length) - $b - $d - $n) as $u
   | ($b + $u + ($bad | length)) as $blocking
   | ($blocking + $d) as $need
-  | (($a.has_unresolved == true) or (($a.unresolved_count | type) == "number" and $a.unresolved_count > 0)) as $claims
+  | ((($a.unresolved_count | type) == "number" and $a.unresolved_count > $n)
+     or ($a.has_unresolved == true and $n == 0)) as $claims
   | {blocking:$blocking, decisions:$d, non_blocking:$n, unclassified:$u, malformed:($bad | length),
      needs_resolution:(if $need == 0 and $claims then 1 else $need end),
      parse_ok:(($bad | length) == 0)}'
