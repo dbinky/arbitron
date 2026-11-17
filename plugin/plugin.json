@@ -4,5 +4,6 @@
   "description": "Build, run, and manage Arbitron workflows from Claude Code",
   "version": "0.1.0",
   "author": "dbinky",
-  "repository": "https://github.com/dbinky/arbitron"
+  "repository": "https://github.com/dbinky/arbitron",
+  "license": "Apache-2.0"
 }

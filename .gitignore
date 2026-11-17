@@ -8,6 +8,9 @@ node_modules/
 dashboard/.vite/
 .worktrees/
 .claude/worktrees/
+# Per-user Claude Code state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 # SQLite runtime database (created by `arbitron serve`)
 arbitron.db
 arbitron.db-shm
