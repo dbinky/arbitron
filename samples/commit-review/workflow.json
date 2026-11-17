@@ -1,0 +1,278 @@
+{
+  "id": "727e06e2-44ff-44e2-b724-b276273fb21a",
+  "name": "commit-review",
+  "description": "Oppositional review of a single commit and the seams it touches, by a model you choose (reviewer: gpt-sol, opus, sonnet, glm, deepseek). Works only through gh: no checkout, nothing posted to GitHub. The review comes back as collect.review (with collect.verdict), readable by whoever triggered or spawned the run.",
+  "author": "arbitron",
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 1,
+    "retryDelaySeconds": 30
+  },
+  "inputs": [
+    {
+      "name": "repo",
+      "type": "string",
+      "description": "GitHub repo in owner/name format (e.g. dbinky/arbitron).",
+      "required": true
+    },
+    {
+      "name": "commit",
+      "type": "string",
+      "description": "Commit id to review (7-40 hex characters).",
+      "required": true
+    },
+    {
+      "name": "reviewer",
+      "type": "string",
+      "description": "Which model reviews: gpt-sol, opus, sonnet, glm or deepseek. Pick a different family from the commit's author for an oppositional read.",
+      "default": "gpt-sol",
+      "required": true
+    },
+    {
+      "name": "focus",
+      "type": "string",
+      "description": "Optional extra focus for the reviewer (e.g. 'merge resolution in adapter/claudecli').",
+      "default": "",
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "check-commit",
+      "type": "script",
+      "entrypoint": true,
+      "config": {
+        "scriptFile": "scripts/check-commit.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Check commit",
+      "description": "Resolve the commit through gh and fail fast if repo or commit is wrong. Emits the full sha, title and parents.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "route",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "reviewer",
+            "operator": "eq",
+            "value": "gpt-sol",
+            "output": "gpt-sol"
+          },
+          {
+            "field": "reviewer",
+            "operator": "eq",
+            "value": "opus",
+            "output": "opus"
+          },
+          {
+            "field": "reviewer",
+            "operator": "eq",
+            "value": "sonnet",
+            "output": "sonnet"
+          },
+          {
+            "field": "reviewer",
+            "operator": "eq",
+            "value": "glm",
+            "output": "glm"
+          },
+          {
+            "field": "reviewer",
+            "operator": "eq",
+            "value": "deepseek",
+            "output": "deepseek"
+          }
+        ],
+        "defaultOutput": "unknown"
+      },
+      "label": "Pick reviewer",
+      "description": "Branch on the reviewer input. Each branch runs the same template on a different model profile.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 140
+      }
+    },
+    {
+      "id": "review-gpt-sol",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "commit-review.md",
+        "model_profile": "reviewer-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Review: GPT Sol (gpt-6.1-sol, codex, high)",
+      "description": "Oppositional review of one commit and the seams it touches, read-only through gh. Final message is the review.",
+      "errorBehavior": {},
+      "position": {
+        "x": -560.0,
+        "y": 280
+      }
+    },
+    {
+      "id": "review-opus",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "commit-review.md",
+        "model_profile": "reviewer-opus-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Review: Claude Opus (claude-code, high)",
+      "description": "Oppositional review of one commit and the seams it touches, read-only through gh. Final message is the review.",
+      "errorBehavior": {},
+      "position": {
+        "x": -280.0,
+        "y": 280
+      }
+    },
+    {
+      "id": "review-sonnet",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "commit-review.md",
+        "model_profile": "reviewer-sonnet5-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Review: Claude Sonnet (claude-code, high)",
+      "description": "Oppositional review of one commit and the seams it touches, read-only through gh. Final message is the review.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0.0,
+        "y": 280
+      }
+    },
+    {
+      "id": "review-glm",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "commit-review.md",
+        "model_profile": "reviewer-GLM",
+        "timeoutSeconds": 3600
+      },
+      "label": "Review: GLM 5.2 (Ollama Cloud, opencode)",
+      "description": "Oppositional review of one commit and the seams it touches, read-only through gh. Final message is the review.",
+      "errorBehavior": {},
+      "position": {
+        "x": 280.0,
+        "y": 280
+      }
+    },
+    {
+      "id": "review-deepseek",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "commit-review.md",
+        "model_profile": "reviewer-ds4-pro",
+        "timeoutSeconds": 3600
+      },
+      "label": "Review: DeepSeek V4 Pro (Ollama Cloud, opencode)",
+      "description": "Oppositional review of one commit and the seams it touches, read-only through gh. Final message is the review.",
+      "errorBehavior": {},
+      "position": {
+        "x": 560.0,
+        "y": 280
+      }
+    },
+    {
+      "id": "unknown-reviewer",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/unknown-reviewer.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 30
+      },
+      "label": "Unknown reviewer",
+      "description": "Fail with the accepted reviewer values instead of guessing a model.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 840.0,
+        "y": 280
+      }
+    },
+    {
+      "id": "collect",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/collect.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 30
+      },
+      "label": "Collect review",
+      "description": "Join the branches: lift the one review that ran into collect.review, with its reviewer and parsed verdict.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "check-commit",
+      "target": "route"
+    },
+    {
+      "source": "route",
+      "target": "review-gpt-sol",
+      "output": "gpt-sol"
+    },
+    {
+      "source": "review-gpt-sol",
+      "target": "collect"
+    },
+    {
+      "source": "route",
+      "target": "review-opus",
+      "output": "opus"
+    },
+    {
+      "source": "review-opus",
+      "target": "collect"
+    },
+    {
+      "source": "route",
+      "target": "review-sonnet",
+      "output": "sonnet"
+    },
+    {
+      "source": "review-sonnet",
+      "target": "collect"
+    },
+    {
+      "source": "route",
+      "target": "review-glm",
+      "output": "glm"
+    },
+    {
+      "source": "review-glm",
+      "target": "collect"
+    },
+    {
+      "source": "route",
+      "target": "review-deepseek",
+      "output": "deepseek"
+    },
+    {
+      "source": "review-deepseek",
+      "target": "collect"
+    },
+    {
+      "source": "route",
+      "target": "unknown-reviewer",
+      "output": "unknown"
+    }
+  ]
+}
