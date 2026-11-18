@@ -157,11 +157,9 @@ func TestRetryResumeRerunAndSpawnPins(t *testing.T) {
 				require.NoError(t, ds.eng.Resume(ctx, id))
 				require.Equal(t, instance.StateCompleted, waitTerminal(t, ds, id).State)
 			}
+			// pause and Resume: ask1 finishes during the pause and is not
+			// re-executed; Resume continues at ask2. Every mode makes two calls.
 			expected := []string{lifecycleModelX, lifecycleModelX}
-			if mode == "pause and Resume" {
-				// Resume re-executes the persisted current node, then runs ask2.
-				expected = append(expected, lifecycleModelX)
-			}
 			assert.Equal(t, expected, sink.seen())
 			assertLifecyclePins(t, ds, id, lifecycleModelX)
 			if mode == "explicit Retry and Rerun" {
