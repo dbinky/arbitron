@@ -1106,9 +1106,11 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	// Find start node.
 	var currentNodeID string
+	resuming := false
 	if inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
 		// Resuming from a specific node.
 		currentNodeID = *inst.CurrentNodeID
+		resuming = true
 	} else {
 		// Find the entrypoint.
 		for _, n := range wf.Nodes {
@@ -1140,6 +1142,28 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	// A finalization failure is recorded against the last node executed.
 	var lastNodeID string
+
+	// A run woken from a finished wait restarts at the wait node itself. Complete
+	// that node and move on; executing it again would arm a fresh wait forever.
+	if resuming {
+		if node, ok := nodeMap[currentNodeID]; ok {
+			result, done, werr := e.consumeFinishedWait(ctx, inst, node)
+			if werr != nil {
+				slog.Error("failed to complete finished wait", "instanceID", instanceID, "nodeID", currentNodeID, "error", werr)
+				e.failInstance(ctx, instanceID, currentNodeID)
+				return
+			}
+			if done {
+				lastNodeID = currentNodeID
+				nextNodeID, halt := e.handleNodeSuccess(ctx, instanceID, workflowName, currentNodeID, node, result, vars, adj, &capacityFreed)
+				if halt {
+					return
+				}
+				currentNodeID = nextNodeID
+			}
+		}
+	}
+
 	for currentNodeID != "" {
 		// TODO(race): There is a TOCTOU race between Pause() writing StatePaused
 		// and this loop reading the fresh state. If the pause arrives between Get()
@@ -1823,11 +1847,10 @@ func (e *Engine) resumeFromTimerWait(ctx context.Context, instanceID uuid.UUID, 
 	// Timer expired while paused -> go to queued.
 	if time.Now().After(*inst.WaitingUntil) {
 		now := time.Now()
+		// Keep waiting_until: the run reads it to complete the timer node
+		// (consumeFinishedWait) instead of arming a new timer.
 		if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
 			return fmt.Errorf("failed to set queued: %w", err)
-		}
-		if err := e.instances.SetWaiting(ctx, instanceID, nil); err != nil {
-			return fmt.Errorf("failed to clear waiting_until: %w", err)
 		}
 		e.publishResumedEvent(instanceID)
 		e.queueManager.NotifyCapacityFreed(context.Background())

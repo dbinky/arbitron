@@ -78,7 +78,7 @@ UPDATE instances SET state = 'waiting', waiting_until = ?, updated_at = ? WHERE 
 UPDATE instances SET waiting_until = NULL, updated_at = ? WHERE id = ?;
 
 -- name: SetWebhookFields :exec
-UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, updated_at = ? WHERE id = ?;
+UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, webhook_received_at = NULL, updated_at = ? WHERE id = ?;
 
 -- name: SetWebhookReceived :exec
 UPDATE instances SET webhook_received_at = ?, updated_at = ? WHERE id = ?;

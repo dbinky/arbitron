@@ -35,6 +35,10 @@ type InstanceRepository interface {
 	ListRunning(ctx context.Context) ([]Instance, error)
 	UpdatePriority(ctx context.Context, id uuid.UUID, priority Priority) error
 	SetWaiting(ctx context.Context, id uuid.UUID, waitingUntil *time.Time) error
+	// SetWebhookFields binds (or, with nil, clears) the instance's webhook
+	// token and secret hash. It always clears webhook_received_at: a receipt
+	// belongs to the binding it was delivered to, so arming a new wait or
+	// consuming a delivered one must not leave a stale receipt behind.
 	SetWebhookFields(ctx context.Context, id uuid.UUID, token *string, secretHash *string) error
 	SetWebhookReceived(ctx context.Context, id uuid.UUID, receivedAt time.Time) error
 	Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*WorkflowStats, error)

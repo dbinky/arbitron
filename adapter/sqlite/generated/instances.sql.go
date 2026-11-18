@@ -576,7 +576,7 @@ func (q *Queries) SetWaitingWithTimer(ctx context.Context, arg SetWaitingWithTim
 }
 
 const setWebhookFields = `-- name: SetWebhookFields :exec
-UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, updated_at = ? WHERE id = ?
+UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, webhook_received_at = NULL, updated_at = ? WHERE id = ?
 `
 
 type SetWebhookFieldsParams struct {

@@ -350,6 +350,7 @@ func (r *mockInstanceRepo) SetWebhookFields(_ context.Context, id uuid.UUID, tok
 	}
 	inst.WebhookToken = token
 	inst.WebhookSecretHash = secretHash
+	inst.WebhookReceivedAt = nil
 	inst.UpdatedAt = time.Now()
 	return nil
 }
@@ -2672,7 +2673,7 @@ func TestEngine_ResumeFromWaiting_TimerExpired_Enqueues(t *testing.T) {
 	inst := f.instanceRepo.get(id)
 	assert.Equal(t, instance.StateQueued, inst.State)
 	assert.NotNil(t, inst.QueuedAt, "QueuedAt should be set when re-enqueuing after timer expiry")
-	assert.Nil(t, inst.WaitingUntil, "WaitingUntil should be cleared after timer expiry resume")
+	assert.NotNil(t, inst.WaitingUntil, "WaitingUntil must survive the re-queue: the run uses it to complete the timer node")
 }
 
 func TestEngine_ResumeFromWaiting_TimerNotExpired_RestoresWaiting(t *testing.T) {
