@@ -220,6 +220,11 @@ func (e *Engine) finishGroupTaskStart(ctx context.Context, req GroupTaskStartReq
 		err = ctx.Err()
 	}
 	if err == nil {
+		// The pause cascade has the same window Cancel does: a task created
+		// after it walked the parent's children would run unsupervised.
+		if startErr == nil {
+			e.pauseIfParentPaused(cleanupCtx, req.ParentInstanceID, req.TaskInstanceID)
+		}
 		return startErr
 	}
 	startErr = errors.Join(startErr, fmt.Errorf("group task %q: parent no longer active: %w", req.TaskKey, err))
