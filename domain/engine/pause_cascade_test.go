@@ -276,6 +276,50 @@ func TestResume_ChildAlreadyResumedDirectly_NoOp(t *testing.T) {
 	assert.Equal(t, instance.StateCompleted, c.stateOf(t, child))
 }
 
+// Resuming a child directly must honour where the cascade took it from: a
+// child paused out of the queue goes back to the queue at its old position,
+// not straight to running ahead of the queue and outside the capacity caps.
+func TestResume_DirectResumeOfQueuedOriginChild_ReturnsToQueue(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	queuedAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	child := c.runWith(t, instance.StateQueued, func(i *instance.Instance) { i.QueuedAt = &queuedAt })
+	c.links.link(parent, child)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, child))
+
+	got, err := c.f.instanceRepo.Get(context.Background(), child)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateQueued, got.State)
+	require.NotNil(t, got.QueuedAt)
+	assert.True(t, queuedAt.Equal(*got.QueuedAt))
+	assert.Nil(t, c.pausedBy(t, child))
+}
+
+// Resuming one run in the middle of a cascade-paused tree resumes that run's
+// own subtree too: an operator resuming a stage during a global pause expects
+// the stage to run, not to wait forever on a grandchild still held paused.
+func TestResume_MidTreeResume_ResumesItsCascadePausedSubtree(t *testing.T) {
+	c := newCascadeFixture(t)
+	root := c.timerRun(t)
+	mid := c.timerRun(t)
+	leaf := c.timerRun(t)
+	other := c.timerRun(t)
+	c.links.link(root, mid)
+	c.links.link(mid, leaf)
+	c.links.link(root, other)
+	require.NoError(t, c.f.engine.Pause(c.ctx, root))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, mid))
+
+	assert.Equal(t, instance.StateWaiting, c.stateOf(t, mid))
+	assert.Equal(t, instance.StateWaiting, c.stateOf(t, leaf), "the resumed run's subtree runs too")
+	assert.Nil(t, c.pausedBy(t, leaf))
+	assert.Equal(t, instance.StatePaused, c.stateOf(t, other), "siblings outside the resumed subtree stay paused")
+	assert.Equal(t, instance.StatePaused, c.stateOf(t, root))
+}
+
 func TestResume_DirectResumeOfCascadePausedChild_ClearsMarker(t *testing.T) {
 	c := newCascadeFixture(t)
 	parent := c.timerRun(t)

@@ -1846,16 +1846,51 @@ func (e *Engine) Resume(ctx context.Context, instanceID uuid.UUID) error {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
 
-	// A direct resume ends any cascade claim on this run: a later resume of the
-	// ancestor that paused it must not act on it again.
-	if err := e.spawnLinks.ClearCascadePause(ctx, instanceID); err != nil {
-		return fmt.Errorf("clearing cascade pause of %s: %w", instanceID, err)
+	// A run an ancestor's cascade paused carries that ancestor's marker. A
+	// direct resume claims it (a later resume of the ancestor must not act on
+	// this run again), restores the run to where the cascade took it from, and
+	// resumes the run's own subtree that the same ancestor's pause holds.
+	// Otherwise the run's own pause is being lifted: resume what IT stopped.
+	cascadeBy := instanceID
+	from := instance.State("")
+	by, err := e.spawnLinks.CascadePausedBy(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("reading cascade pause of %s: %w", instanceID, err)
 	}
-	if err := e.resumePaused(ctx, inst); err != nil {
+	if by != nil {
+		claimedFrom, claimed, err := e.spawnLinks.ClaimCascadePause(ctx, instanceID, *by)
+		if err != nil {
+			return fmt.Errorf("claiming cascade pause of %s: %w", instanceID, err)
+		}
+		if claimed {
+			from, cascadeBy = claimedFrom, *by
+		}
+	}
+	if err := e.restoreFromPause(ctx, inst, from); err != nil {
 		return err
 	}
 	e.recordIntervention(ctx, inst, instance.ActionResume, nil)
-	e.cascadeResume(context.WithoutCancel(ctx), instanceID, instanceID, map[uuid.UUID]bool{instanceID: true})
+	e.cascadeResume(context.WithoutCancel(ctx), instanceID, cascadeBy, map[uuid.UUID]bool{instanceID: true})
+	return nil
+}
+
+// restoreFromPause returns a paused run to where its pause took it from. A run
+// a cascade paused out of the queue goes back to the queue at its original
+// position rather than starting out of turn; everything else resumes by its
+// wait (resumePaused). from is "" when the paused-from state is unknown.
+func (e *Engine) restoreFromPause(ctx context.Context, inst *instance.Instance, from instance.State) error {
+	if from != instance.StateQueued {
+		return e.resumePaused(ctx, inst)
+	}
+	queuedAt := time.Now()
+	if inst.QueuedAt != nil {
+		queuedAt = *inst.QueuedAt
+	}
+	if err := e.queueRepo.SetQueued(ctx, inst.ID, queuedAt); err != nil {
+		return fmt.Errorf("re-queueing %s: %w", inst.ID, err)
+	}
+	e.publishResumedEvent(inst.ID)
+	e.queueManager.NotifyCapacityFreed(context.Background())
 	return nil
 }
 

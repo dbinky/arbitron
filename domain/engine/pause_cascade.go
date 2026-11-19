@@ -99,17 +99,7 @@ func (e *Engine) resumeDescendant(ctx context.Context, id, by uuid.UUID) (bool, 
 	if !claimed {
 		return false, nil
 	}
-	if from == instance.StateQueued {
-		queuedAt := time.Now()
-		if inst.QueuedAt != nil {
-			queuedAt = *inst.QueuedAt
-		}
-		if err := e.queueRepo.SetQueued(ctx, id, queuedAt); err != nil {
-			return false, fmt.Errorf("re-queueing %s: %w", id, err)
-		}
-		e.publishResumedEvent(id)
-		e.queueManager.NotifyCapacityFreed(context.Background())
-	} else if err := e.resumePaused(ctx, inst); err != nil {
+	if err := e.restoreFromPause(ctx, inst, from); err != nil {
 		return false, err
 	}
 	e.recordIntervention(ctx, inst, instance.ActionResume, nil)
