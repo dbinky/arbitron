@@ -190,6 +190,10 @@ type ChildVisibility struct {
 type ChildRef struct {
 	ID    uuid.UUID
 	State State
+	// PausedBy is the ancestor whose cascading pause stopped this run, nil when
+	// the run is not cascade-paused (including a pause an operator placed on
+	// it directly).
+	PausedBy *uuid.UUID
 }
 
 // SpawnLinkRepository answers link-shaped questions without any caller knowing
@@ -235,4 +239,23 @@ type SpawnLinkRepository interface {
 	// completed roots retain legitimate independent work. An empty result is
 	// normal, not an error. This sweep finishes interrupted cancel cascades.
 	ListOrphanedActiveChildren(ctx context.Context) ([]uuid.UUID, error)
+
+	// MarkCascadePaused atomically moves id to paused, recording by as the
+	// ancestor whose pause stopped it and the state it was in, ONLY IF id is
+	// running, waiting or queued. false means the run was not in a pausable
+	// state (it finished or was already paused) — the normal outcome of a
+	// race, not an error.
+	MarkCascadePaused(ctx context.Context, id, by uuid.UUID) (bool, error)
+
+	// ClaimCascadePause clears id's cascade-pause marker ONLY IF id is paused
+	// and was cascade-paused by by, returning the state it was paused from.
+	// claimed is false when that predicate does not hold.
+	ClaimCascadePause(ctx context.Context, id, by uuid.UUID) (from State, claimed bool, err error)
+
+	// ClearCascadePause unconditionally clears id's cascade-pause marker.
+	ClearCascadePause(ctx context.Context, id uuid.UUID) error
+
+	// CascadePausedBy returns the ancestor whose cascading pause stopped id,
+	// or nil when id is not cascade-paused.
+	CascadePausedBy(ctx context.Context, id uuid.UUID) (*uuid.UUID, error)
 }
