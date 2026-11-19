@@ -1510,7 +1510,9 @@ func TestEngine_ResumeFromPaused(t *testing.T) {
 	}
 	f.workflowRepo.add(wf)
 
-	// Block on node B; use a counter to handle multiple invocations (initial + resume)
+	// Block on node B. B finishes during the pause and must NOT run again on
+	// resume (see TestEngine_PauseDuringNode_ResumeDoesNotRerunFinishedNode);
+	// the counter just keeps a regression from deadlocking this test.
 	var bCallCount int
 	var bMu sync.Mutex
 	bStarted := make(chan struct{}, 1)
@@ -1530,7 +1532,7 @@ func TestEngine_ResumeFromPaused(t *testing.T) {
 				return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 			}
 		}
-		// On resume, just succeed immediately
+		// A regression re-runs B on resume; succeed so the other test reports it.
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 

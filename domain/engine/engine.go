@@ -1182,6 +1182,15 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			// The instance was paused/cancelled externally. Stop execution.
 			// The caller already called NotifyCapacityFreed.
 			capacityFreed = true
+			// Pause lets the in-flight node finish, so currentNodeID is now the
+			// NEXT node. Record it: Resume restarts at current_node_id, and a
+			// stale value would run the finished node a second time.
+			if freshInst.State == instance.StatePaused &&
+				(freshInst.CurrentNodeID == nil || *freshInst.CurrentNodeID != currentNodeID) {
+				if err := e.instances.UpdateCurrentNode(ctx, instanceID, currentNodeID); err != nil {
+					slog.Error("failed to record next node for paused instance", "instanceID", instanceID, "nodeID", currentNodeID, "error", err)
+				}
+			}
 			return
 		}
 
