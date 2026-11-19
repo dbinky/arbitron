@@ -1739,15 +1739,52 @@ func (e *Engine) findNextNode(currentNodeID string, outputPort string, adj map[s
 	return targets[0].nodeID
 }
 
-// Pause sets a running or waiting instance to paused state. The graph walker will
+// Pause sets a running or waiting instance to paused state, then pauses every
+// active descendant it spawned (see pause_cascade.go). The graph walker will
 // detect this on its next iteration and stop. For waiting instances, the timer
 // keeps counting (do NOT cancel the scheduler entry).
+//
+// An instance that is already paused is not an error when the call has an
+// effect: if a parent's cascade paused it, the operator now owns the pause
+// (the marker is cleared so resuming the parent leaves it paused); otherwise
+// its still-active descendants are swept. With neither, ErrNotRunning stands.
 func (e *Engine) Pause(ctx context.Context, instanceID uuid.UUID) error {
 	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
 		return err
 	}
+	if inst.State == instance.StatePaused {
+		return e.repause(ctx, inst)
+	}
+	if err := e.pauseOwn(ctx, inst); err != nil {
+		return err
+	}
+	e.cascadePause(context.WithoutCancel(ctx), instanceID, instanceID, map[uuid.UUID]bool{instanceID: true})
+	return nil
+}
 
+// repause handles Pause on an already-paused run.
+func (e *Engine) repause(ctx context.Context, inst *instance.Instance) error {
+	by, err := e.spawnLinks.CascadePausedBy(ctx, inst.ID)
+	if err != nil {
+		return fmt.Errorf("reading cascade pause of %s: %w", inst.ID, err)
+	}
+	if by != nil {
+		if err := e.spawnLinks.ClearCascadePause(ctx, inst.ID); err != nil {
+			return fmt.Errorf("claiming pause of %s: %w", inst.ID, err)
+		}
+		e.recordIntervention(ctx, inst, instance.ActionPause, nil)
+		return nil
+	}
+	if e.cascadePause(context.WithoutCancel(ctx), inst.ID, inst.ID, map[uuid.UUID]bool{inst.ID: true}) == 0 {
+		return fmt.Errorf("instance %s is not running (state: %s): %w", inst.ID, inst.State, instance.ErrNotRunning)
+	}
+	return nil
+}
+
+// pauseOwn pauses the named run itself.
+func (e *Engine) pauseOwn(ctx context.Context, inst *instance.Instance) error {
+	instanceID := inst.ID
 	switch inst.State {
 	case instance.StateRunning:
 		if err := e.instances.UpdateState(ctx, instanceID, instance.StatePaused); err != nil {
