@@ -121,6 +121,9 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 		return nil, fmt.Errorf("spawn_workflow %q: look up awaited child: %w", node.ID, err)
 	}
 	if link != nil {
+		if !link.ChildState.IsTerminal() {
+			return e.resuspend(ctx, node, link, instanceID)
+		}
 		return e.resumeFromLink(ctx, node, link)
 	}
 
@@ -206,6 +209,34 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
 	return &NodeResult{IsWait: true, Output: output}, nil
+}
+
+// resuspend handles re-entry while the awaited child is still active.
+//
+// A parent that was paused while waiting is resumed through the run loop, so
+// it arrives here `running`. Returning a bare wait result would end the walk
+// with the parent stranded in `running`, where the child's terminal wake —
+// which only acts on a WAITING parent — can never reach it. So a running parent
+// is moved back to `waiting` (conditionally: a parent paused or cancelled in the
+// meantime must not be revived), and the same lost-wake re-read as the first
+// execution then catches a child that finished in between.
+func (e *SpawnWorkflowExecutor) resuspend(ctx context.Context, node workflow.Node, link *instance.ChildLink, instanceID uuid.UUID) (*NodeResult, error) {
+	res, err := e.resumeFromLink(ctx, node, link)
+	if err != nil {
+		return nil, err
+	}
+	parked, err := e.spawnWaits.SuspendRunning(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("spawn_workflow %q: return to waiting: %w", node.ID, err)
+	}
+	if !parked {
+		return res, nil // not running (already waiting, paused or cancelled): halt as before
+	}
+	if routed, claimed := e.recoverLostWake(ctx, node, instanceID); claimed {
+		return routed, nil
+	}
+	e.queueMgr.NotifyCapacityFreed(ctx)
+	return res, nil
 }
 
 // recoverLostWake re-reads the awaited child after the parent's `waiting`
