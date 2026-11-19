@@ -53,6 +53,69 @@ func (e *Engine) cascadePause(ctx context.Context, parentID, by uuid.UUID, visit
 	return paused
 }
 
+// cascadeResume resumes parentID's descendants that by's pause stopped and
+// returns how many it resumed. Every child is traversed: a descendant paused
+// by someone else (or not paused at all) is left as it is, but a
+// cascade-paused run below it is still resumed.
+func (e *Engine) cascadeResume(ctx context.Context, parentID, by uuid.UUID, visited map[uuid.UUID]bool) int {
+	children, err := e.spawnLinks.ListChildren(ctx, parentID)
+	if err != nil {
+		slog.Error("resume cascade: failed to list children", "parentID", parentID, "error", err)
+		return 0
+	}
+	resumed := 0
+	for _, child := range children {
+		if visited[child.ID] {
+			continue
+		}
+		visited[child.ID] = true
+
+		ok, rerr := e.resumeDescendant(ctx, child.ID, by)
+		if rerr != nil {
+			slog.Warn("resume cascade: failed to resume child, branch not descended",
+				"parentID", parentID, "childID", child.ID, "listedState", child.State, "error", rerr)
+			continue
+		}
+		if ok {
+			resumed++
+		}
+		resumed += e.cascadeResume(ctx, child.ID, by, visited)
+	}
+	return resumed
+}
+
+// resumeDescendant authorizes id and, if by's cascade paused it, claims the
+// marker and resumes it. A run paused from the queue goes back to the queue at
+// its original position rather than starting out of turn.
+func (e *Engine) resumeDescendant(ctx context.Context, id, by uuid.UUID) (bool, error) {
+	inst, err := e.authorizeIntervention(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	from, claimed, err := e.spawnLinks.ClaimCascadePause(ctx, id, by)
+	if err != nil {
+		return false, fmt.Errorf("claiming cascade pause of %s: %w", id, err)
+	}
+	if !claimed {
+		return false, nil
+	}
+	if from == instance.StateQueued {
+		queuedAt := time.Now()
+		if inst.QueuedAt != nil {
+			queuedAt = *inst.QueuedAt
+		}
+		if err := e.queueRepo.SetQueued(ctx, id, queuedAt); err != nil {
+			return false, fmt.Errorf("re-queueing %s: %w", id, err)
+		}
+		e.publishResumedEvent(id)
+		e.queueManager.NotifyCapacityFreed(context.Background())
+	} else if err := e.resumePaused(ctx, inst); err != nil {
+		return false, err
+	}
+	e.recordIntervention(ctx, inst, instance.ActionResume, nil)
+	return true, nil
+}
+
 // pauseDescendant authorizes id and, if it is running, waiting or queued,
 // moves it to paused with by's cascade marker. It reports whether it paused
 // the run; a run that is not pausable (terminal, already paused, or one that

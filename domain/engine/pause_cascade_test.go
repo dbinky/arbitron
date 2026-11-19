@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -172,4 +173,117 @@ func TestPause_DirectPauseOfQueuedRun_StillRejected(t *testing.T) {
 
 	require.ErrorIs(t, err, instance.ErrNotRunning)
 	assert.Equal(t, instance.StateQueued, c.stateOf(t, queued))
+}
+
+// ---------- Resume ----------
+
+// runWith creates a fixture-owned instance after applying mutate.
+func (c *cascadeFixture) runWith(t *testing.T, state instance.State, mutate func(*instance.Instance)) uuid.UUID {
+	t.Helper()
+	inst := &instance.Instance{
+		ID: uuid.New(), OwnerID: c.owner, WorkflowName: "wf",
+		State: state, Priority: instance.PriorityNormal,
+	}
+	mutate(inst)
+	require.NoError(t, c.f.instanceRepo.Create(context.Background(), inst))
+	return inst.ID
+}
+
+// timerRun is a run waiting on an unexpired timer: Resume returns it to
+// waiting without starting a graph walk, so its state is deterministic.
+func (c *cascadeFixture) timerRun(t *testing.T) uuid.UUID {
+	t.Helper()
+	future := time.Now().Add(time.Hour)
+	return c.runWith(t, instance.StateWaiting, func(i *instance.Instance) { i.WaitingUntil = &future })
+}
+
+func TestResume_ResumesCascadePausedChildren(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	timer := c.timerRun(t)
+	running := c.run(t, instance.StateRunning)
+	c.links.link(parent, timer)
+	c.links.link(parent, running)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+	require.Equal(t, instance.StatePaused, c.stateOf(t, timer))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, parent))
+
+	assert.Equal(t, instance.StateWaiting, c.stateOf(t, timer), "an unexpired timer child goes back to waiting")
+	assert.NotEqual(t, instance.StatePaused, c.stateOf(t, running), "a running-origin child is restarted")
+	assert.Nil(t, c.pausedBy(t, timer))
+	assert.Nil(t, c.pausedBy(t, running))
+}
+
+func TestResume_QueuedOriginChild_ReturnsToQueueWithOriginalQueuedAt(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	queuedAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	child := c.runWith(t, instance.StateQueued, func(i *instance.Instance) { i.QueuedAt = &queuedAt })
+	c.links.link(parent, child)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+	require.Equal(t, instance.StatePaused, c.stateOf(t, child))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, parent))
+
+	got, err := c.f.instanceRepo.Get(context.Background(), child)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateQueued, got.State, "a queued child must not jump the queue on resume")
+	require.NotNil(t, got.QueuedAt)
+	assert.True(t, queuedAt.Equal(*got.QueuedAt), "the child keeps its place in the queue")
+}
+
+func TestResume_ManuallyPausedChild_StaysPaused(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	manual := c.run(t, instance.StatePaused)
+	grand := c.timerRun(t)
+	c.links.link(parent, manual)
+	c.links.link(manual, grand)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, parent))
+
+	assert.Equal(t, instance.StatePaused, c.stateOf(t, manual))
+	assert.Equal(t, instance.StateWaiting, c.stateOf(t, grand),
+		"a cascade-paused grandchild below a manually paused child is still resumed")
+}
+
+func TestResume_ClaimedChild_StaysPaused(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	child := c.timerRun(t)
+	c.links.link(parent, child)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+	require.NoError(t, c.f.engine.Pause(c.ctx, child))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, parent))
+
+	assert.Equal(t, instance.StatePaused, c.stateOf(t, child))
+}
+
+func TestResume_ChildAlreadyResumedDirectly_NoOp(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	child := c.timerRun(t)
+	c.links.link(parent, child)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+	require.NoError(t, c.f.engine.Resume(c.ctx, child))
+	require.NoError(t, c.f.instanceRepo.UpdateState(context.Background(), child, instance.StateCompleted))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, parent))
+
+	assert.Equal(t, instance.StateCompleted, c.stateOf(t, child))
+}
+
+func TestResume_DirectResumeOfCascadePausedChild_ClearsMarker(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.timerRun(t)
+	child := c.timerRun(t)
+	c.links.link(parent, child)
+	require.NoError(t, c.f.engine.Pause(c.ctx, parent))
+
+	require.NoError(t, c.f.engine.Resume(c.ctx, child))
+
+	assert.Nil(t, c.pausedBy(t, child))
 }

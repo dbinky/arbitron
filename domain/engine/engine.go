@@ -1829,20 +1829,30 @@ func (e *Engine) Resume(ctx context.Context, instanceID uuid.UUID) error {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
 
-	var resumeErr error
-	switch {
-	case inst.WebhookToken != nil:
-		resumeErr = e.resumeFromWebhookWait(ctx, instanceID, inst)
-	case inst.WaitingUntil != nil:
-		resumeErr = e.resumeFromTimerWait(ctx, instanceID, inst)
-	default:
-		resumeErr = e.resumeFromRunning(ctx, instanceID)
+	// A direct resume ends any cascade claim on this run: a later resume of the
+	// ancestor that paused it must not act on it again.
+	if err := e.spawnLinks.ClearCascadePause(ctx, instanceID); err != nil {
+		return fmt.Errorf("clearing cascade pause of %s: %w", instanceID, err)
 	}
-	if resumeErr != nil {
-		return resumeErr
+	if err := e.resumePaused(ctx, inst); err != nil {
+		return err
 	}
 	e.recordIntervention(ctx, inst, instance.ActionResume, nil)
+	e.cascadeResume(context.WithoutCancel(ctx), instanceID, instanceID, map[uuid.UUID]bool{instanceID: true})
 	return nil
+}
+
+// resumePaused moves a paused run back to the state its wait implies. It does
+// no authorization and records no intervention; callers do both.
+func (e *Engine) resumePaused(ctx context.Context, inst *instance.Instance) error {
+	switch {
+	case inst.WebhookToken != nil:
+		return e.resumeFromWebhookWait(ctx, inst.ID, inst)
+	case inst.WaitingUntil != nil:
+		return e.resumeFromTimerWait(ctx, inst.ID, inst)
+	default:
+		return e.resumeFromRunning(ctx, inst.ID)
+	}
 }
 
 // resumeFromWebhookWait handles resume for instances paused during a webhook wait.
