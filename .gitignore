@@ -28,3 +28,6 @@ workspaces/instances/
 
 # Release build output (make dist / make release)
 /dist/
+
+# Throwaway UI mockups from ideation sessions
+docs/temp-mockups/
