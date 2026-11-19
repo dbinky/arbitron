@@ -1067,7 +1067,14 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			e.queueManager.NotifyCapacityFreed(context.Background())
 		}
 	}()
+	// parked is set when the walker deregistered itself in the pause handoff
+	// (parkWalker). Its exit must then NOT delete the registration again: by
+	// that time a Resume may have registered a fresh walker under the same id.
+	parked := false
 	defer func() {
+		if parked {
+			return
+		}
 		e.mu.Lock()
 		delete(e.contexts, instanceID)
 		e.mu.Unlock()
@@ -1190,6 +1197,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				if err := e.instances.UpdateCurrentNode(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to record next node for paused instance", "instanceID", instanceID, "nodeID", currentNodeID, "error", err)
 				}
+			}
+			if freshInst.State == instance.StatePaused {
+				if !e.parkWalker(ctx, instanceID) {
+					// Resumed while this walker was finishing its node: keep
+					// walking. Resume handed the run back to us instead of
+					// starting a second walker.
+					capacityFreed = false
+					continue
+				}
+				parked = true
 			}
 			return
 		}
@@ -1922,13 +1939,27 @@ func (e *Engine) resumeFromTimerWait(ctx context.Context, instanceID uuid.UUID, 
 }
 
 // resumeFromRunning handles resume for instances that were running when paused.
+//
+// THE WALKER HANDOFF. Pause does not stop the node in flight; the walker only
+// notices `paused` at its next loop iteration. So when Resume arrives, the
+// paused run's walker may still be alive inside a node. Starting a second
+// walker then would run that node again and walk one graph with two goroutines.
+// Instead, the state write and the "is a walker still registered?" check happen
+// under e.mu, the same lock parkWalker takes to re-check the state and
+// deregister. Exactly one of two outcomes follows: the live walker sees
+// `running` and carries on, or it has already parked and a fresh walker starts.
 func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) error {
+	e.mu.Lock()
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("failed to update state: %w", err)
 	}
-
+	if _, live := e.contexts[instanceID]; live {
+		e.mu.Unlock()
+		e.publishResumedEvent(instanceID)
+		return nil
+	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	e.mu.Lock()
 	e.contexts[instanceID] = cancel
 	e.mu.Unlock()
 
@@ -1937,6 +1968,21 @@ func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) er
 	e.wg.Add(1)
 	go e.run(runCtx, instanceID)
 	return nil
+}
+
+// parkWalker is the walker's half of the resume handoff (see
+// resumeFromRunning). Under e.mu it re-reads the run's state: still paused, it
+// deregisters the walker and reports true (the walker exits); resumed in the
+// meantime, it reports false and the walker continues. A read failure parks:
+// a later Resume then starts a fresh walker.
+func (e *Engine) parkWalker(ctx context.Context, instanceID uuid.UUID) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if fresh, err := e.instances.Get(ctx, instanceID); err == nil && fresh.State == instance.StateRunning {
+		return false
+	}
+	delete(e.contexts, instanceID)
+	return true
 }
 
 // publishResumedEvent emits a standard instance.resumed event.
