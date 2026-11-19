@@ -119,7 +119,7 @@ func TestEngine_ResumeWhileNodeInFlight_DoesNotStartSecondWalker(t *testing.T) {
 
 	require.NoError(t, f.engine.Pause(bgAdmin(), id))
 	require.NoError(t, f.engine.Resume(bgAdmin(), id)) // B is still running
-	time.Sleep(50 * time.Millisecond)                   // give a wrongly started second walker time to re-run B
+	time.Sleep(50 * time.Millisecond)                  // give a wrongly started second walker time to re-run B
 	close(release)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted, instance.StateFailed)
