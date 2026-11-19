@@ -32,6 +32,9 @@ type fakeSpawnWaits struct {
 	instances *mockInstanceRepo
 	claimErr  error
 	claimed   []string
+	// loseClaims makes every ClaimWaitingParent lose, modelling the wake
+	// having already moved the parent out of `waiting`.
+	loseClaims bool
 	// findCalls counts FindChildBySpawnNode calls; onFind runs BEFORE each
 	// answer, so a test can simulate the child reaching a terminal state at an
 	// exact point in the executor's sequence (e.g. during the suspend).
@@ -86,12 +89,13 @@ func (f *fakeSpawnWaits) ClaimWaitingParent(ctx context.Context, parentID uuid.U
 	f.mu.Lock()
 	claimErr := f.claimErr
 	repo := f.instances
+	lose := f.loseClaims
 	f.claimErr = nil
 	f.mu.Unlock()
 	if claimErr != nil {
 		return false, claimErr
 	}
-	if repo == nil {
+	if repo == nil || lose {
 		return false, nil
 	}
 	inst, err := repo.Get(ctx, parentID)
@@ -107,7 +111,8 @@ func (f *fakeSpawnWaits) ClaimWaitingParent(ctx context.Context, parentID uuid.U
 	return true, nil
 }
 
-// SuspendRunning is unused by the spawn executor; it models the real predicate.
+// SuspendRunning models the real running->waiting predicate the spawn
+// executor's waiting writes use.
 func (f *fakeSpawnWaits) SuspendRunning(ctx context.Context, id uuid.UUID) (bool, error) {
 	f.mu.Lock()
 	repo := f.instances
@@ -252,6 +257,26 @@ func TestSpawnWait_FirstExecution_SuspendsWithLinkedChild(t *testing.T) {
 	got, err := f.instances.Get(context.Background(), f.parentID)
 	require.NoError(t, err)
 	assert.Equal(t, instance.StateWaiting, got.State)
+}
+
+// A Pause that lands while the node is creating its child must survive: the
+// waiting write is conditional on the parent still running. An unconditional
+// write would flip the paused parent back to waiting, leaving it unresumable
+// (Resume requires paused) while the pause cascade holds its child paused.
+func TestSpawnWait_ParentPausedDuringSpawn_StaysPaused(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	f.spawner.onSpawn = func() {
+		_ = f.instances.UpdateState(context.Background(), f.parentID, instance.StatePaused)
+	}
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	assert.True(t, res.IsWait, "the walk halts; resume re-enters and finds the link")
+	require.Len(t, f.spawner.spawned, 1)
+
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StatePaused, got.State)
 }
 
 // ---------------------------------------------------------------------------
@@ -525,9 +550,9 @@ func TestSpawnWait_ActiveChildAtReRead_StillSuspends(t *testing.T) {
 func TestSpawnWait_LosingTheClaimFallsBackToWaiting(t *testing.T) {
 	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
 	terminalDuringSuspend(f, instance.StateCompleted)
-	// No repository behind the fake claim => every claim loses, modelling the
-	// wake having already moved the parent out of `waiting`.
-	f.spawnWaits.instances = nil
+	// Every claim loses, modelling the wake having already moved the parent
+	// out of `waiting`.
+	f.spawnWaits.loseClaims = true
 
 	res, err := f.run(t)
 	require.NoError(t, err)

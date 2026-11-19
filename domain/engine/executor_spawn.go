@@ -177,12 +177,21 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	// waiting_until stays NULL: this wait has no deadline, so the timer recovery
 	// sweep (which filters on a non-null waiting_until) must not pick it up. Same
 	// choice the webhook executor makes for an untimed wait.
-	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+	//
+	// The write is CONDITIONAL on the parent still running: a Pause (or Cancel)
+	// that landed while the child was being created must not be overwritten.
+	// A parent that is no longer running halts here with a wait result; a later
+	// Resume re-enters, finds the link, and suspends through resuspend.
+	parked, err := e.spawnWaits.SuspendRunning(ctx, instanceID)
+	if err != nil {
 		// The child is already enqueued and is deliberately NOT rolled back: it may
 		// already be executing side effects, and cancelling it from a failing
 		// parent would layer a second failure on the first. It stays visible in the
 		// hierarchy as an orphaned-but-linked run.
 		return nil, fmt.Errorf("spawn_workflow %q: set waiting state: %w", node.ID, err)
+	}
+	if !parked {
+		return &NodeResult{IsWait: true, Output: output}, nil
 	}
 
 	// THE LOST-WAKE GUARD.
