@@ -1073,18 +1073,57 @@ func (r *InstanceRepo) SuspendRunning(ctx context.Context, id uuid.UUID) (bool, 
 // plus "the child is already terminal". Any one of the three conjuncts dropped
 // would resume a parent by an unrelated event.
 func (r *InstanceRepo) ListWaitingOnTerminalChild(ctx context.Context) ([]instance.SpawnWaitCandidate, error) {
+	cands, err := r.listParentsOnTerminalChild(ctx, instance.StateWaiting)
+	if err != nil {
+		return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+	}
+	return cands, nil
+}
+
+// ListRunningOnTerminalChild implements instance.SpawnWaitRepository: the same
+// three-part match as ListWaitingOnTerminalChild, for a parent left in
+// `running` at the spawn node. Whether such a parent is genuinely stranded (no
+// walker driving it) is the engine's call, not this query's.
+func (r *InstanceRepo) ListRunningOnTerminalChild(ctx context.Context) ([]instance.SpawnWaitCandidate, error) {
+	cands, err := r.listParentsOnTerminalChild(ctx, instance.StateRunning)
+	if err != nil {
+		return nil, fmt.Errorf("listing running parents on a terminal child: %w", err)
+	}
+	return cands, nil
+}
+
+// SuspendStrandedAt implements instance.SpawnLinkRepository: running -> waiting,
+// only while the run is still running AT nodeID.
+func (r *InstanceRepo) SuspendStrandedAt(ctx context.Context, id uuid.UUID, nodeID string) (bool, error) {
+	const q = `UPDATE instances
+  SET state = 'waiting', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+  WHERE id = ? AND state = 'running' AND current_node_id = ?`
+	res, err := r.db.ExecContext(ctx, q, uuidToString(id), nodeID)
+	if err != nil {
+		return false, fmt.Errorf("suspending stranded instance %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("suspending stranded instance %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// listParentsOnTerminalChild returns parents in parentState whose awaited
+// wait_for_child child at the parent's current node is terminal.
+func (r *InstanceRepo) listParentsOnTerminalChild(ctx context.Context, parentState instance.State) ([]instance.SpawnWaitCandidate, error) {
 	const q = `SELECT p.id, p.current_node_id, c.id, c.state
   FROM instances p
   JOIN instances c ON c.parent_instance_id = p.id
-  WHERE p.state = 'waiting'
+  WHERE p.state = ?
     AND p.current_node_id IS NOT NULL
     AND c.parent_node_id = p.current_node_id
     AND c.spawn_mode = 'wait_for_child'
     AND c.state IN ('completed','failed','cancelled')`
 
-	rows, err := r.db.QueryContext(ctx, q)
+	rows, err := r.db.QueryContext(ctx, q, string(parentState))
 	if err != nil {
-		return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -1092,15 +1131,15 @@ func (r *InstanceRepo) ListWaitingOnTerminalChild(ctx context.Context) ([]instan
 	for rows.Next() {
 		var parentRaw, nodeID, childRaw, state string
 		if err := rows.Scan(&parentRaw, &nodeID, &childRaw, &state); err != nil {
-			return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+			return nil, err
 		}
 		parentID, err := parseUUID(parentRaw)
 		if err != nil {
-			return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+			return nil, err
 		}
 		childID, err := parseUUID(childRaw)
 		if err != nil {
-			return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+			return nil, err
 		}
 		out = append(out, instance.SpawnWaitCandidate{
 			ParentID:     parentID,
@@ -1110,7 +1149,7 @@ func (r *InstanceRepo) ListWaitingOnTerminalChild(ctx context.Context) ([]instan
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+		return nil, err
 	}
 	return out, nil
 }

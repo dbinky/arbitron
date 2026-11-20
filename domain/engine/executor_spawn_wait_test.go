@@ -26,6 +26,11 @@ type fakeSpawnWaits struct {
 	findErr    error
 	candidates []instance.SpawnWaitCandidate
 	listErr    error
+	// runningCandidates and runningListErr serve ListRunningOnTerminalChild;
+	// runningListCalls counts calls so a test can assert the pass was skipped.
+	runningCandidates []instance.SpawnWaitCandidate
+	runningListErr    error
+	runningListCalls  int
 	// instances, when set, makes ClaimWaitingParent a REAL compare-and-set over
 	// the mock repository — the same waiting->running transition the SQL
 	// performs — so a test can assert the parent's resulting state.
@@ -71,6 +76,16 @@ func (f *fakeSpawnWaits) FindChildBySpawnNode(_ context.Context, parentID uuid.U
 		return nil, f.findErr
 	}
 	return f.byKey[spawnKey(parentID, nodeID, mode)], nil
+}
+
+func (f *fakeSpawnWaits) ListRunningOnTerminalChild(context.Context) ([]instance.SpawnWaitCandidate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runningListCalls++
+	if f.runningListErr != nil {
+		return nil, f.runningListErr
+	}
+	return f.runningCandidates, nil
 }
 
 func (f *fakeSpawnWaits) ListWaitingOnTerminalChild(context.Context) ([]instance.SpawnWaitCandidate, error) {

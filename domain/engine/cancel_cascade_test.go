@@ -81,6 +81,19 @@ func (f *fakeSpawnLinks) ClearCascadePause(_ context.Context, id uuid.UUID) erro
 	return nil
 }
 
+// SuspendStrandedAt moves a running id to waiting through setState. The fake
+// has no view of current nodes, so it honours only the state predicate; the
+// node predicate is pinned by the SQLite tests.
+func (f *fakeSpawnLinks) SuspendStrandedAt(_ context.Context, id uuid.UUID, _ string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.states(id) != instance.StateRunning || f.setState == nil {
+		return false, nil
+	}
+	f.setState(id, instance.StateWaiting)
+	return true, nil
+}
+
 func (f *fakeSpawnLinks) CascadePausedBy(_ context.Context, id uuid.UUID) (*uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

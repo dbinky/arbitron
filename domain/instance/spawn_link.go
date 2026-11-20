@@ -258,4 +258,10 @@ type SpawnLinkRepository interface {
 	// CascadePausedBy returns the ancestor whose cascading pause stopped id,
 	// or nil when id is not cascade-paused.
 	CascadePausedBy(ctx context.Context, id uuid.UUID) (*uuid.UUID, error)
+
+	// SuspendStrandedAt atomically moves id from `running` AT nodeID to
+	// `waiting`, reporting whether the transition happened. It is the write
+	// behind adopting a parent stranded at an awaited spawn node; the node
+	// predicate keeps a parent that moved on from being parked at the old node.
+	SuspendStrandedAt(ctx context.Context, id uuid.UUID, nodeID string) (bool, error)
 }

@@ -47,6 +47,12 @@ type SpawnWaitRepository interface {
 	// mode = wait_for_child) is already terminal. An empty result is not an error.
 	ListWaitingOnTerminalChild(ctx context.Context) ([]SpawnWaitCandidate, error)
 
+	// ListRunningOnTerminalChild is ListWaitingOnTerminalChild for a parent in
+	// the RUNNING state: the shape a parent is left in when some path strands it
+	// at the spawn node with no walker. Whether a candidate is really stranded
+	// (no live walker) is decided by the engine, never by this query.
+	ListRunningOnTerminalChild(ctx context.Context) ([]SpawnWaitCandidate, error)
+
 	// ClaimWaitingParent atomically moves parentID from `waiting` at nodeID to
 	// `running`, reporting whether THIS caller won the claim.
 	//
