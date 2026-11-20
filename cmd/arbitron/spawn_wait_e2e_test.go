@@ -42,6 +42,26 @@ func bootWaitStack(t *testing.T, childOutcome string) *domainStack {
 // a single transform that finishes almost immediately.
 func bootWaitStackWith(t *testing.T, childOutcome string, perUserCap int, holdSeconds string) *domainStack {
 	t.Helper()
+	ds, err := initDomain(context.Background(), writeWaitStackConfig(t, childOutcome, perUserCap, holdSeconds))
+	require.NoError(t, err)
+	t.Cleanup(func() { ds.Close(context.Background()) })
+	return ds
+}
+
+// bootStartedWaitStack is bootWaitStackWith with the runtime STARTED, so the
+// periodic spawn sweep (sweepSpawnReconcilers) runs.
+func bootStartedWaitStack(t *testing.T, childOutcome string, perUserCap int, holdSeconds string) *domainStack {
+	t.Helper()
+	ds, err := initStartedDomain(context.Background(), writeWaitStackConfig(t, childOutcome, perUserCap, holdSeconds))
+	require.NoError(t, err)
+	t.Cleanup(func() { ds.Close(context.Background()) })
+	return ds
+}
+
+// writeWaitStackConfig writes the awaited parent + child workflows and the
+// config, returning the config path.
+func writeWaitStackConfig(t *testing.T, childOutcome string, perUserCap int, holdSeconds string) string {
+	t.Helper()
 	root := t.TempDir()
 	workspaceDir := filepath.Join(root, "workspaces")
 	require.NoError(t, os.MkdirAll(workspaceDir, 0o700))
@@ -121,11 +141,7 @@ func bootWaitStackWith(t *testing.T, childOutcome string, perUserCap int, holdSe
 		"logging:\n  level: \"error\"\n  file: " + yamlQuote(filepath.Join(root, "arbitron.log")) + "\n" +
 		"queue:\n  globalcap: 5\n  perusercap: " + strconv.Itoa(perUserCap) + "\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
-
-	ds, err := initDomain(context.Background(), configPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { ds.Close(context.Background()) })
-	return ds
+	return configPath
 }
 
 func waitForState(t *testing.T, ds *domainStack, id uuid.UUID, want instance.State) {

@@ -1179,6 +1179,9 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// down its spawned children recursively, and so the list enricher can resolve
 	// a page's child counts in one batched call.
 	eng.SetSpawnLinks(instanceRepo)
+	// Stranded-parent adoption suspends through the spawn-wait port; the
+	// reconciler's WithStrandedAdoption(eng) below is inert without it.
+	eng.SetSpawnWaits(instanceRepo)
 	// node.started describes the model the node will run on, so it resolves
 	// through the pinning decorator inside the run context. The list enricher
 	// below keeps the live resolver (no per-row run context; see gaps G23).
@@ -1632,7 +1635,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		seedWorkflows(ctx)
 		reportPinPreflight(ctx, profileSvc, notifRepo, externalNotifier, &ds.background, logger)
 		return ds.startRuntime(ctx, authMode,
-			engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr),
+			engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr).WithStrandedAdoption(eng),
 			engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng))
 	}
 	return ds, nil
