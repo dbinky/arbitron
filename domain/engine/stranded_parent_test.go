@@ -14,31 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// strandLinks is a SpawnLinkRepository whose SuspendStrandedAt is a real
-// conditional write over the mock instance repo: running -> waiting, and only
-// at nodeID when the row records a current node.
-type strandLinks struct {
-	engine.NoopSpawnLinks
-	repo *mockInstanceRepo
-}
-
-func (s strandLinks) SuspendStrandedAt(_ context.Context, id uuid.UUID, nodeID string) (bool, error) {
-	s.repo.mu.Lock()
-	defer s.repo.mu.Unlock()
-	inst, ok := s.repo.instances[id]
-	if !ok || inst.State != instance.StateRunning {
-		return false, nil
-	}
-	if inst.CurrentNodeID != nil && *inst.CurrentNodeID != nodeID {
-		return false, nil
-	}
-	inst.State = instance.StateWaiting
-	return true, nil
-}
-
 func newStrandFixtures() *testFixtures {
 	f := newTestFixtures()
-	f.engine.SetSpawnLinks(strandLinks{repo: f.instanceRepo})
+	sw := newFakeSpawnWaits()
+	sw.instances = f.instanceRepo
+	f.engine.SetSpawnWaits(sw)
 	return f
 }
 
@@ -111,8 +91,14 @@ func TestAdoptStrandedParent_LiveWalker_NoOp(t *testing.T) {
 }
 
 // StartInstance writes `running` and registers the walker. If those two steps
-// are not atomic under the engine lock, a sweep landing between them sees a
+// are not atomic under the walker lock, a sweep landing between them sees a
 // running run with no walker and adopts a run that is merely starting.
+//
+// The hazard is every WOKEN parent: one re-queued from `waiting` at its spawn
+// node goes through StartInstance with current_node_id = that node and a
+// terminal child, which is exactly what ListRunningOnTerminalChild returns. The
+// run is therefore seeded as a queued parent at a real spawn node ("A"); the
+// SQL-faithful fake would never let a nil-node row be adopted.
 func TestStartInstance_RegistersWalkerBeforeRunningIsVisible(t *testing.T) {
 	f := newStrandFixtures()
 	f.workflowRepo.add(&workflow.Workflow{
@@ -124,6 +110,16 @@ func TestStartInstance_RegistersWalkerBeforeRunningIsVisible(t *testing.T) {
 		<-release
 		return &engine.NodeResult{Output: map[string]any{}}, nil
 	})
+
+	// Trigger without starting: the run stays queued, then is moved to the
+	// awaited spawn node exactly as a woken parent is.
+	f.queueManager.mu.Lock()
+	f.queueManager.enqueueFn = func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil }
+	f.queueManager.mu.Unlock()
+	id, _, err := f.engine.Trigger(context.Background(), "strand-start-wf", nil, "normal")
+	require.NoError(t, err)
+	require.NoError(t, f.instanceRepo.UpdateCurrentNode(context.Background(), id, "A"))
+	require.Equal(t, instance.StateQueued, stateNow(t, f, id))
 
 	adopted := make(chan bool, 1)
 	var fired bool
@@ -140,8 +136,7 @@ func TestStartInstance_RegistersWalkerBeforeRunningIsVisible(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	id, _, err := f.engine.Trigger(context.Background(), "strand-start-wf", nil, "normal")
-	require.NoError(t, err)
+	require.NoError(t, f.engine.StartInstance(context.Background(), id))
 
 	select {
 	case ok := <-adopted:
@@ -152,6 +147,49 @@ func TestStartInstance_RegistersWalkerBeforeRunningIsVisible(t *testing.T) {
 	close(release)
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted, instance.StateFailed)
 	assert.Equal(t, instance.StateCompleted, inst.State)
+}
+
+// Adoption needs the spawn-wait port; an engine without it must say so rather
+// than silently adopt nothing.
+func TestAdoptStrandedParent_WithoutSpawnWaits_Errors(t *testing.T) {
+	f := newTestFixtures()
+	id := seedRunAt(t, f, instance.StateRunning, "spawn-1")
+
+	ok, err := f.engine.AdoptStrandedParent(context.Background(), id, "spawn-1")
+	require.Error(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, instance.StateRunning, stateNow(t, f, id))
+}
+
+func TestSetSpawnWaits_PanicsOnNil(t *testing.T) {
+	f := newTestFixtures()
+	assert.Panics(t, func() { f.engine.SetSpawnWaits(nil) })
+}
+
+// A nil current node never matches the SQL predicate, so the fake the adoption
+// tests rely on must not match it either.
+func TestAdoptStrandedParent_NilCurrentNode_NoOp(t *testing.T) {
+	f := newStrandFixtures()
+	inst := &instance.Instance{
+		ID: uuid.New(), OwnerID: uuid.New(), WorkflowName: "parent",
+		State: instance.StateRunning, Priority: instance.PriorityNormal,
+	}
+	require.NoError(t, f.instanceRepo.Create(context.Background(), inst))
+
+	ok, err := f.engine.AdoptStrandedParent(context.Background(), inst.ID, "spawn-1")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, instance.StateRunning, stateNow(t, f, inst.ID))
+}
+
+func TestAdoptStrandedParent_MismatchedCurrentNode_NoOp(t *testing.T) {
+	f := newStrandFixtures()
+	id := seedRunAt(t, f, instance.StateRunning, "spawn-2")
+
+	ok, err := f.engine.AdoptStrandedParent(context.Background(), id, "spawn-1")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, instance.StateRunning, stateNow(t, f, id))
 }
 
 // A finishing walker's exit must remove only ITS OWN registration. Here the run
@@ -189,7 +227,10 @@ func TestWalkerExit_DoesNotDeregisterSuccessor(t *testing.T) {
 	id, _, err := f.engine.Trigger(context.Background(), "strand-successor-wf", nil, "normal")
 	require.NoError(t, err)
 	<-retryStarted
-	time.Sleep(50 * time.Millisecond) // let the failed walker finish exiting
+	// Best-effort settle so the failed walker's exit has usually run. The
+	// ownership invariant itself is pinned deterministically, without any
+	// scheduling dependence, by TestWalkerRegistration_* (internal package).
+	time.Sleep(50 * time.Millisecond)
 
 	ok, err := f.engine.AdoptStrandedParent(context.Background(), id, "A")
 	require.NoError(t, err)

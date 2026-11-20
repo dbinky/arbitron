@@ -76,4 +76,10 @@ type SpawnWaitRepository interface {
 	// would revive a cancelled run. A false return means the run already left
 	// `running` (cancelled, paused) and the executor must halt, not wait.
 	SuspendRunning(ctx context.Context, id uuid.UUID) (bool, error)
+
+	// SuspendStrandedAt atomically moves id from `running` AT nodeID to
+	// `waiting`, reporting whether the transition happened. It is the write
+	// behind adopting a parent stranded at an awaited spawn node; the node
+	// predicate keeps a parent that moved on from being parked at the old node.
+	SuspendStrandedAt(ctx context.Context, id uuid.UUID, nodeID string) (bool, error)
 }

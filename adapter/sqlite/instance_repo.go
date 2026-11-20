@@ -1092,7 +1092,7 @@ func (r *InstanceRepo) ListRunningOnTerminalChild(ctx context.Context) ([]instan
 	return cands, nil
 }
 
-// SuspendStrandedAt implements instance.SpawnLinkRepository: running -> waiting,
+// SuspendStrandedAt implements instance.SpawnWaitRepository: running -> waiting,
 // only while the run is still running AT nodeID.
 func (r *InstanceRepo) SuspendStrandedAt(ctx context.Context, id uuid.UUID, nodeID string) (bool, error) {
 	const q = `UPDATE instances

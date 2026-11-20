@@ -74,9 +74,21 @@ type Engine struct {
 	// through mu, and freezing makes a post-startup registration a loud panic
 	// rather than a data race — see RegisterExecutor.
 	executorsFrozen bool
-	mu              sync.Mutex
-	contexts        map[uuid.UUID]*walkerReg
-	wg              sync.WaitGroup
+	// mu guards executor and group configuration (executors, executorsFrozen,
+	// groupHandler, groupSupport). Every node dispatch reads executors through
+	// it, so nothing that touches storage may hold it.
+	mu sync.Mutex
+	// walkersMu guards the walker registry (contexts) and every state write that
+	// must be atomic with a registration change: start, retry, resume, park,
+	// cancel and stranded-parent adoption. It is deliberately NOT mu, so a slow
+	// storage write in a lifecycle transition cannot stall unrelated node
+	// dispatch. Never acquire mu while holding walkersMu, or the reverse.
+	walkersMu sync.Mutex
+	contexts  map[uuid.UUID]*walkerReg
+	// spawnWaits is the repository AdoptStrandedParent suspends through. Guarded
+	// by walkersMu; set once by the composition root via SetSpawnWaits.
+	spawnWaits instance.SpawnWaitRepository
+	wg         sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -1067,9 +1079,9 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// Retry may have registered a successor under the same id, and deleting
 	// that would make the live successor look stranded (AdoptStrandedParent).
 	defer func() {
-		e.mu.Lock()
+		e.walkersMu.Lock()
 		e.deregisterWalkerLocked(ctx, instanceID)
-		e.mu.Unlock()
+		e.walkersMu.Unlock()
 	}()
 
 	inst, err := e.instances.Get(ctx, instanceID)
@@ -1971,22 +1983,22 @@ func (e *Engine) resumeFromTimerWait(ctx context.Context, instanceID uuid.UUID, 
 // paused run's walker may still be alive inside a node. Starting a second
 // walker then would run that node again and walk one graph with two goroutines.
 // Instead, the state write and the "is a walker still registered?" check happen
-// under e.mu, the same lock parkWalker takes to re-check the state and
+// under e.walkersMu, the same lock parkWalker takes to re-check the state and
 // deregister. Exactly one of two outcomes follows: the live walker sees
 // `running` and carries on, or it has already parked and a fresh walker starts.
 func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) error {
-	e.mu.Lock()
+	e.walkersMu.Lock()
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
-		e.mu.Unlock()
+		e.walkersMu.Unlock()
 		return fmt.Errorf("failed to update state: %w", err)
 	}
 	if _, live := e.contexts[instanceID]; live {
-		e.mu.Unlock()
+		e.walkersMu.Unlock()
 		e.publishResumedEvent(instanceID)
 		return nil
 	}
 	runCtx := e.registerWalkerLocked(instanceID)
-	e.mu.Unlock()
+	e.walkersMu.Unlock()
 
 	e.publishResumedEvent(instanceID)
 
@@ -1996,13 +2008,13 @@ func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) er
 }
 
 // parkWalker is the walker's half of the resume handoff (see
-// resumeFromRunning). Under e.mu it re-reads the run's state: still paused, it
+// resumeFromRunning). Under e.walkersMu it re-reads the run's state: still paused, it
 // deregisters the walker and reports true (the walker exits); resumed in the
 // meantime, it reports false and the walker continues. A read failure parks:
 // a later Resume then starts a fresh walker.
 func (e *Engine) parkWalker(ctx context.Context, instanceID uuid.UUID) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.walkersMu.Lock()
+	defer e.walkersMu.Unlock()
 	if fresh, err := e.instances.Get(ctx, instanceID); err == nil && fresh.State == instance.StateRunning {
 		return false
 	}
@@ -2094,11 +2106,11 @@ func (e *Engine) cancelAuthorized(ctx context.Context, instanceID uuid.UUID) err
 		if err := e.setCancelledState(ctx, instanceID); err != nil {
 			return err
 		}
-		e.mu.Lock()
+		e.walkersMu.Lock()
 		if reg, ok := e.contexts[instanceID]; ok {
 			reg.cancel()
 		}
-		e.mu.Unlock()
+		e.walkersMu.Unlock()
 		e.publishCancelledEvent(instanceID)
 		e.queueManager.NotifyCapacityFreed(context.Background())
 

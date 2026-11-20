@@ -69,12 +69,6 @@ func (NoopSpawnLinks) CascadePausedBy(context.Context, uuid.UUID) (*uuid.UUID, e
 	return nil, nil
 }
 
-// SuspendStrandedAt suspends nothing: with no link store there are no spawn
-// links, so no parent can be stranded at a spawn node.
-func (NoopSpawnLinks) SuspendStrandedAt(context.Context, uuid.UUID, string) (bool, error) {
-	return false, nil
-}
-
 // SetSpawnLinks wires the link-addressed read surface used by the cancel
 // cascade and the list enricher's child counts.
 //

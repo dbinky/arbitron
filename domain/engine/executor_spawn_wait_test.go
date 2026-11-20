@@ -142,6 +142,28 @@ func (f *fakeSpawnWaits) SuspendRunning(ctx context.Context, id uuid.UUID) (bool
 	return true, repo.UpdateState(ctx, id, instance.StateWaiting)
 }
 
+// SuspendStrandedAt models the real predicate
+// (state = 'running' AND current_node_id = ?) atomically over the mock
+// repository. A nil current node never matches, exactly as NULL never equals a
+// bound parameter in SQL: a fake looser than that would let a test pin a race
+// on a row shape production can never adopt.
+func (f *fakeSpawnWaits) SuspendStrandedAt(_ context.Context, id uuid.UUID, nodeID string) (bool, error) {
+	f.mu.Lock()
+	repo := f.instances
+	f.mu.Unlock()
+	if repo == nil {
+		return false, nil
+	}
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	inst, ok := repo.instances[id]
+	if !ok || inst.State != instance.StateRunning || inst.CurrentNodeID == nil || *inst.CurrentNodeID != nodeID {
+		return false, nil
+	}
+	inst.State = instance.StateWaiting
+	return true, nil
+}
+
 var _ instance.SpawnWaitRepository = (*fakeSpawnWaits)(nil)
 
 // ---------------------------------------------------------------------------

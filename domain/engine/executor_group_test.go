@@ -43,6 +43,10 @@ func (c *nodeClaims) ListRunningOnTerminalChild(context.Context) ([]instance.Spa
 	return nil, errors.New("unexpected spawn sweep in group executor")
 }
 
+func (c *nodeClaims) SuspendStrandedAt(context.Context, uuid.UUID, string) (bool, error) {
+	return false, errors.New("unexpected stranded suspend in group executor")
+}
+
 func (c *nodeClaims) ClaimWaitingParent(_ context.Context, parentID uuid.UUID, nodeID string) (bool, error) {
 	c.mu.Lock()
 	c.attempts = append(c.attempts, parentID.String()+"|"+nodeID)
