@@ -7,11 +7,11 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
 
 **Architecture:**
 - A new storage query finds `running` parents at an awaited spawn node whose child is terminal.
-- `Engine.AdoptStrandedParent` checks under `e.mu` that the parent has no live walker, then conditionally
+- `Engine.AdoptStrandedParent` checks under `e.walkersMu` that the parent has no live walker, then conditionally
   flips it `running → waiting` at that node.
 - `SpawnWaitReconciler` runs that adoption pass before its existing `waiting` pass. The existing re-queue then
   wakes the parent, which re-enters the spawn node, short-circuits on the terminal link, and routes.
-- Every write that puts a run into `running` and registers its walker is made atomic under `e.mu`, so a run
+- Every write that puts a run into `running` and registers its walker is made atomic under `e.walkersMu`, so a run
   being started can never look stranded.
 
 **Tech Stack:** Go 1.25.5, SQLite (hand-written SQL in `adapter/sqlite/instance_repo.go`; never run a blanket
@@ -25,8 +25,11 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
   interface declared in `domain/engine`.
 - Never touch a parent that has a live walker (`e.contexts` holds its ID). Never move a parent that is not
   `running`, or that is not at the candidate node.
-- Every adoption logs at WARN: `"spawn-wait reconciler: adopted parent stranded in running"` with `parentID`,
-  `childID`, `nodeID`, `childState`.
+- Every adoption logs at WARN, once, from the reconciler: `"spawn-wait reconciler: adopted parent stranded in
+  running"` with `parentID`, `childID`, `nodeID`, `childState`. The engine does not log a second line.
+- Every reconciler re-queue is node-addressed (`SetQueuedIfWaitingAtNode`).
+- `e.walkersMu` guards the walker registry and the state writes atomic with it; `e.mu` stays on executor/group
+  configuration. Never hold both.
 - Scope is `wait_for_child` only. Fire-and-forget children and parallel-group tasks (`spawn_mode =
   'group_task'`) are excluded.
 - `gofmt` every edited Go file. The gate is `go test ./...`.
@@ -52,12 +55,12 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
 **Files:**
 - Modify: `domain/instance/spawn_wait.go`. Add to `SpawnWaitRepository`:
   `ListRunningOnTerminalChild(ctx) ([]SpawnWaitCandidate, error)`.
-- Modify: `domain/instance/spawn_link.go`. Add to `SpawnLinkRepository`:
+- Modify: `domain/instance/spawn_wait.go`. Add to `SpawnWaitRepository` (not `SpawnLinkRepository`, which the
+  read-side enricher also requires):
   `SuspendStrandedAt(ctx, id uuid.UUID, nodeID string) (bool, error)`.
 - Modify: `adapter/sqlite/instance_repo.go`, which implements both.
-- Modify the fakes so everything compiles:
-  - `NoopSpawnLinks` (`domain/engine/cancel_cascade.go`): return `false, nil`.
-  - `fakeSpawnLinks` (`cancel_cascade_test.go`).
+- Modify the `SpawnWaitRepository` fakes so everything compiles (`fakeSpawnWaits`, `nodeClaims`). The link
+  fakes and `NoopSpawnLinks` are untouched.
   - `countingSpawnLinks`.
   - `fakeSpawnWaits` (`executor_spawn_wait_test.go`): add a `runningCandidates` field.
   - `nodeClaims` (`executor_group_test.go`).
@@ -69,7 +72,7 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
   - `instance.SpawnWaitRepository.ListRunningOnTerminalChild`: the same SELECT as `ListWaitingOnTerminalChild`,
     but with `p.state = 'running'`. It keeps the node-match, `c.spawn_mode = 'wait_for_child'` and terminal-child
     conjuncts.
-  - `instance.SpawnLinkRepository.SuspendStrandedAt`: `UPDATE instances SET state='waiting', updated_at=… WHERE
+  - `instance.SpawnWaitRepository.SuspendStrandedAt`: `UPDATE instances SET state='waiting', updated_at=… WHERE
     id=? AND state='running' AND current_node_id=?`. It returns whether a row changed.
 
 - [ ] **Step 1: Write failing tests** in `adapter/sqlite/instance_stranded_parent_test.go`. Use the seeding
@@ -100,7 +103,7 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
 - Test: `domain/engine/stranded_parent_test.go` (new). Use the fixtures in `pause_resume_rerun_test.go`.
 
 **Interfaces:**
-- Consumes: `SpawnLinkRepository.SuspendStrandedAt` (Task 1).
+- Consumes: `SpawnWaitRepository.SuspendStrandedAt` (Task 1), wired into the engine with `SetSpawnWaits`.
 - Produces: `func (e *Engine) AdoptStrandedParent(ctx context.Context, parentID uuid.UUID, nodeID string) (bool, error)`.
   It returns `true` only when it moved the parent to `waiting`.
 
@@ -116,18 +119,18 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
   - `TestStartInstance_RegistersWalkerBeforeRunningIsVisible`:
     - Use an `instanceRepo` hook that, during the `UpdateState(running)` write, calls `AdoptStrandedParent` on
       another goroutine and waits for it.
-    - Expect `false`: the adopter blocks on `e.mu` until registration completes, then sees the walker.
+    - Expect `false`: the adopter blocks on `e.walkersMu` until registration completes, then sees the walker.
     - This fails today, because `UpdateState` runs before the lock.
 - [ ] **Step 2: Run** `go test ./domain/engine/ -run 'AdoptStrandedParent|RegistersWalkerBeforeRunning' -race`.
   Expected: a compile failure, then a FAIL on the registration test.
 - [ ] **Step 3: Implement:**
-  - In `StartInstance` and `Retry`, hold `e.mu` across `UpdateState(running)` and `e.contexts[id] = cancel`, the
+  - In `StartInstance` and `Retry`, hold `e.walkersMu` across `UpdateState(running)` and `e.contexts[id] = cancel`, the
     same pattern `resumeFromRunning` uses. On an `UpdateState` error, unlock and do not register.
   - `AdoptStrandedParent`:
-    - Lock `e.mu`.
+    - Lock `e.walkersMu`.
     - If `e.contexts[parentID]` exists, return `false`.
-    - Otherwise call `e.spawnLinks.SuspendStrandedAt(ctx, parentID, nodeID)` and unlock.
-    - On success, log at WARN and publish nothing.
+    - Otherwise call `e.spawnWaits.SuspendStrandedAt(ctx, parentID, nodeID)` and unlock.
+    - Publish nothing and log nothing; the reconciler logs the adoption.
 - [ ] **Step 4: Run** the step 2 command, then `go test ./domain/engine/ -race -count=3 -run
   'Pause|Resume|Retry|Start'`. Expected: PASS.
 - [ ] **Step 5: Commit** with the message `feat(engine): adopt parents stranded in running with no walker`.
@@ -156,7 +159,7 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
   - `TestSpawnWaitReconciler_AdoptsStrandedParent_CompletedChild`: the same, with a `completed` child.
   - `TestSpawnWaitReconciler_AdoptedParentIsRequeuedSameTick`:
     - The adopted parent is not in the fake's `waiting` candidates list.
-    - The reconciler must still re-queue it, by calling `SetQueuedIfWaiting` for each adopted parent.
+    - The reconciler must still re-queue it, by calling `SetQueuedIfWaitingAtNode` (with the candidate's node) for each adopted parent.
     - Expect `queued` after one `Reconcile`.
   - `TestSpawnWaitReconciler_AdopterDeclines_ParentUntouched`: the adopter returns `false`, so the parent stays
     `running` and is never re-queued.
@@ -166,7 +169,7 @@ is driving, is found by the periodic spawn reconciler and routed through its nor
   the tests fail.
 - [ ] **Step 3: Implement** the adoption pass at the top of `Reconcile`:
   - List the candidates. A listing error is logged, and the existing pass still runs.
-  - Adopt each candidate. On success, call `SetQueuedIfWaiting` and count it.
+  - Adopt each candidate. On success, call `SetQueuedIfWaitingAtNode` and count it.
   - Use one `NotifyCapacityFreed` for both passes.
   - Wire it with `engine.NewSpawnWaitReconciler(...).WithStrandedAdoption(eng)` in `main.go`.
 - [ ] **Step 4: Write the e2e** in `cmd/arbitron/spawn_stranded_e2e_test.go`:

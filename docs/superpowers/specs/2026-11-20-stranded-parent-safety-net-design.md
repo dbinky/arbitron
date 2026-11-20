@@ -66,17 +66,26 @@ PR #4 (`resuspend`) fixes this cause. This design adds the safety net for the cl
 - A new candidate query, the `running` twin of `ListWaitingOnTerminalChild`: a parent in `running` whose
   `current_node_id` equals the `parent_node_id` of a `wait_for_child` child in a terminal state.
 - An engine method, for example `Engine.AdoptStrandedParent(ctx, parentID, nodeID) (bool, error)`. Under
-  `e.mu` it:
+  `e.walkersMu` (the walker-registry lock, separate from the `e.mu` that guards executor and group
+  configuration) it:
   - skips the parent if `e.contexts` holds a walker for it;
-  - otherwise moves the parent `running → waiting` with the existing conditional `SuspendRunning`.
+  - otherwise moves the parent `running → waiting` with `SpawnWaitRepository.SuspendStrandedAt`, conditional on
+    state AND node. The engine receives that repository explicitly through `SetSpawnWaits`.
 
-  Holding `e.mu` serialises it against `resumeFromRunning` and the walker's park and registration, so a walker
-  cannot appear between the check and the write.
+  Holding `e.walkersMu` serialises it against start, retry, `resumeFromRunning`, the walker's park and
+  deregistration, and cancel, so a walker cannot appear between the check and the write.
+- Every re-queue the reconciler performs, in both the adoption pass and the waiting pass, is node-addressed
+  (`NodeAddressedWaker.SetQueuedIfWaitingAtNode`, fed the real `QueueRepo`). A parent that moves on to a later
+  wait between adoption and the write is left untouched.
 - `SpawnWaitReconciler.Reconcile` adopts these candidates first and then runs its existing `waiting` pass in
   the same tick, so an adopted parent is re-queued immediately. The reconciler reaches the engine through a
   narrow port or function, keeping the hexagonal boundary.
-- The startup ordering stays as it is: `RecoverCrashedInstances` still fails `running` rows at boot, and there
-  are no walkers at boot, so adoption at startup only matters for rows the crash sweep did not touch.
+- The startup ordering stays as it is: `RecoverCrashedInstances` fails persisted `running` rows at boot, before
+  the first reconciliation, so crash-era `running` parents are failed there and never reach adoption. This path
+  rescues parents stranded while the server is serving, through the periodic sweep.
+- Walker ownership is process-local. Adoption is only sound with a single serving runtime per database (HTTP
+  `serve` or standalone MCP); a second runtime on the same database would see the first's live parents as
+  walkerless. Enforcing that with a database-scoped lock is a separate, backlogged hardening item.
 
 ## Left to the builder
 
