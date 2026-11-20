@@ -32,7 +32,7 @@ Out of scope: guaranteed preservation of hidden reasoning across accounts (spec 
 | End and abandon | `conversation.go:EndSession` (:384), `AbandonSession` (:434) | Take the durable lease. |
 | Overlap guard | `conversation.go` `turnInProgress sync.Map` (:86, acquired :242) | Replaced by the durable turn lease. `ErrInteractiveTurnInProgress` semantics are kept. |
 | Conversation record | `instance.NodeExecution.LLMConversation` (`{sessionId, nonce, messages}`; keys in `conventions.go:21–23`), `instance.NodeExecutionRepository` | Gains the checkpoint reference, pinned runner, session generation and move history. Messages stay the source of truth. |
-| Group sessions | `instance.OpenSessionRecordUpdater` (`ports.go:98`), group staging dir in `HandleMessage`; resolution sessions started by `group_resolution.go:GroupResolutionBridge.StartResolution` | Sessions in a server-local staging directory (including group-resolution sessions) stay pinned to the built-in runner. |
+| Group sessions | `instance.OpenSessionRecordUpdater` (`ports.go:98`), group staging dir in `HandleMessage`; resolution sessions started by `group_resolution.go:GroupResolutionBridge.StartResolution` | Group-resolution staging becomes a named checkpointed resource keyed by `GroupResolutionIdentity`; first-turn startup, later turns, End/Abandon and recovery share the lease and mover. Existing staging path and identity producers exist, but their portability adapter remains **UNRESOLVED DEPENDENCY RR-11**. |
 | Interactive events | `interactive.token`, `interactive.message`, `interactive.ended`, `interactive.error`, `interactive.history` on the event bus | Remote output is re-emitted as `interactive.token`. A new turn-restarted event and a lossy-move notice are added. |
 | Claude session files | Harness `~/.claude/projects/<encoded-cwd>/<id>.jsonl` plus `<id>/` folder | Export source and import target on runners. |
 | Codex rollout | `adapter/codex/rollout.go:resolveCodexHome` (:43), `findRollout` (:73) | Export source; import writes a rollout that Codex re-indexes itself. |
@@ -47,49 +47,51 @@ Out of scope: guaranteed preservation of hidden reasoning across accounts (spec 
     - Claude: the session `.jsonl` plus its `<session-id>/` folder.
     - Codex: the rollout file.
   - **Import:** on the target runner, install a bundle and return the session ID to resume.
-    - **Claude:** bytes are never edited (an edited history can cause a 400). Identical workspace paths (D2) keep embedded paths valid.
+    - **Claude:** bytes are never edited (an edited history can cause a 400). Identical workspace paths (D2) preserve workspace references; absolute harness-home/sidecar references still require the verified mapping in RR-13.
     - **Codex:** reasoning items are **always** stripped (see §5). A bundle containing compaction items refuses import, which leads to the rebuild fallback.
 - **Executed on runners:** remote runners carry export and import as protocol message kinds; the built-in runner calls the adapters in-process.
 
 ### 3.2 Session checkpoint store (port in `domain/engine`; server filesystem adapter)
-- **Job:** hold bundles keyed by (run, step, turn index). Only the bundle for the latest successful turn is kept per session (plus the one being written).
+- **Job:** hold bundles keyed by (run, durable session/invocation identity, turn index), including the group-resolution attempt identity. Node ID alone can recur and must not alias a previous session. Only the bundle for the latest successful turn is kept per session (plus the one being written).
 - **Bundle bytes:** travel through the Phase 3 transfer endpoints, scoped to the job and generation.
 - **Reference:** recorded in `LLMConversation` together with the session's pinned runner and session generation.
 
 ### 3.3 Durable turn lease (port in `domain/engine`; SQLite adapter)
 - **Job:** at most one in-flight interactive operation per session, across processes and runners. It replaces `turnInProgress`.
-  - Acquired by `HandleMessage`, `EndSession`, `AbandonSession` and the session mover.
+  - Acquired by first-turn `InteractiveExecutor`/group-resolution startup, `HandleMessage`, `EndSession`, `AbandonSession` and the session mover.
   - Carries a session generation. A turn result, export or completion with a stale generation is discarded through the Phase 1 fence.
   - A concurrent submission is rejected with `ErrInteractiveTurnInProgress` (unchanged contract).
-  - A crashed holder's lease expires, so a restart never leaves a session locked.
+  - Renew the lease while running; expiry alone cannot permit an overlapping turn on a still-running runner. Recovery first adopts the matching remote job or fences the old owner and increments the session generation before a new dispatch. A mover called within a turn reuses that lease token rather than acquiring it recursively.
+  - Persist a **turn intent** before dispatch or acknowledging the submission: request ID, original rendered prompt/system prompt and nonce for first turns, or exact user message for later turns, resolved model constraints, prior checkpoint reference, session/job generations and operation ID. First turns, group-resolution startup, End/Abandon and moves all participate. The intent survives server restart even though the instance may be `waiting`, and is completed only with the turn commit. Existing `HandleMessage` keeps the pending message only in memory; it is not a durable resend source (**UNRESOLVED DEPENDENCY RR-12**).
 
 ### 3.4 Interactive placement (extends Phase 1 decorators and Phase 3 placement)
 - **Job:** pin each session to its runner.
-  - **First turn:** placed like a workspace step (`interactive_agent`) or a chat step (`interactive_llm`, which is not hermetic because the harness session lives in its working directory). That runner becomes the pin.
+  - **First turn:** placed like a workspace step (`interactive_agent`) or a session-capable chat step (`interactive_llm`). Both require a stable working directory and a recoverable session resource; `interactive_llm` cannot inherit Phase 2's disposable hermetic scratch policy. That runner becomes the pin.
   - **Later turns:** go to the pin while it is eligible.
   - **Allowed moves:** only for source exhaustion, logout, the runner draining, or runner loss. **Never for load.**
-  - **Group-staging sessions:** pinned to the built-in runner, because their working directory is server-local.
+  - A full slot limit, cordon, suspect status or transient congestion does not authorize a session move. Wait on the pin (queued · slot or an explicit availability/capacity reason); a brief connection gap waits through Phase 2's grace. Exhaustion/logout/loss recovery proceeds automatically even between user turns; it cannot depend on the next user submission.
+  - **Group-staging sessions:** use the same permitted move triggers and single-owner rules, with the staging resource in place of the normal instance workspace. Do not mutate parent/task directories or let gather proceed until the staged checkpoint has committed (RR-11).
 
 ### 3.5 Session mover (`domain/runner` service, called from `ConversationHandler`, `InteractiveExecutor`, drain and recovery)
 - **Job:** move a session safely while holding the turn lease.
-  1. Choose a target runner with the same model group (never another family).
-  2. Move the workspace using Phase 3: a pull from the server checkpoint, which is clean after a remote turn and holds the partial edits after a built-in turn (D11).
+  1. Choose a target satisfying the exact accepted model/route/backend/tool requirements within the same model group (never another family).
+  2. Fence the old owner and reserve the next session/resource generation under the held lease before target import/resume. Restore/pull the last committed turn checkpoint through Phase 3, discarding interrupted edits on built-in and remote runners alike.
   3. Import the latest bundle and resume. If that fails, **rebuild**: start a fresh session from the original first prompt with the same completion nonce, plus Arbitron's recorded transcript, and mark the move lossy with a visible notice ("tool details and reasoning may be lost").
-  4. Bump the session generation and record the move (from, to, reason, lossy flag) in `LLMConversation` and the pool event log.
-- **Between turns:** the next message's placement finds the pin ineligible, so the mover runs and the message is sent on the new runner.
+  4. Record the committed move (from, to, reason, lossy flag) in `LLMConversation` and the pool event log.
+- **Between turns:** source-health, loss and drain events enqueue an idempotent move under the lease even while the run waits for human input. The next message uses the recovered pin, or waits visibly for the pending move/capacity.
 - **Mid-turn** (classified exhaustion or logout, or runner lost):
   1. The partial turn is discarded. Arbitron's DB is already at a clean boundary because only successful turns are persisted.
   2. A turn-restarted event tells clients to clear partial tokens.
   3. The mover runs and the **same user message is resent automatically**.
-  4. A notice states whether the workspace kept the interrupted turn's partial edits (built-in) or not (remote).
+  4. Restore the last successful workspace and bundle on both runner types; never retain the interrupted turn's partial edits. Notify about context loss when applicable, not a different rollback policy for built-in runs.
 - **First turn:** exhaustion or loss in `InteractiveExecutor` re-runs the step on another runner with a fresh session. There is no bundle yet, so the step repeats as a whole.
 
 ### 3.6 Session checkpoint after each turn
-- **Job:** a turn counts as successful only after its bundle is exported and stored, and, for `interactive_agent`, after the workspace push (Phase 3) has landed. Only then is the turn persisted (`persistTurn` / `UpdateIfSessionOpen`).
+- **Job:** a turn counts as successful only after its bundle is exported and stored, and, for `interactive_agent`, after a new workspace checkpoint (Phase 3) is staged. Commit the workspace reference, session bundle reference, messages/session metadata, completed turn intent and result together under the job/resource/session fence. A crash between artifact upload and metadata commit retains the previous pair; orphan staged artifacts are reclaimed. A terminal sentinel also commits before ending/advancing the session. This applies to first turns and group-resolution turns, including their self-written `NodeExecution` records.
 - This satisfies the spec's rule that successful turns preserve both workspace progress and recoverable context.
 
 ### 3.7 Token streaming
-- **Job:** the remote runner streams output frames (Phase 2 sequence-numbered and replayed). The server re-emits them as the existing `interactive.token` events, so dashboard and MCP clients are unchanged.
+- **Job:** the remote runner streams output frames (Phase 2 sequence-numbered and replayed). The server re-emits them as the existing `interactive.token` events, using the existing client transport; clients also handle turn-restarted and persisted loss notices and discard superseded-generation tokens.
 
 ### 3.8 Drain integration (extends Phase 3 drain)
 - **Job:** drain waits for each pinned session's current turn to end, then calls the mover. A session with no eligible target appears in drain progress as blocked, with the missing group.
@@ -98,35 +100,42 @@ Out of scope: guaranteed preservation of hidden reasoning across accounts (spec 
 
 **A normal turn:**
 1. `HandleMessage` acquires the lease (generation s).
-2. The decorated stream selector sends the turn to the dispatcher, which places it on the pin.
+2. Persist the accepted turn intent, then the decorated stream selector sends the turn to the dispatcher, which places it on the pin.
 3. The runner resumes the session; tokens flow to `interactive.token`.
-4. On success: export the bundle, push the workspace (agent), store the bundle reference, persist the turn, and release the lease.
+4. On success: stage the bundle and workspace (agent/staging resource), atomically commit their matching references with messages/result/intent, then release the lease and publish completion.
 
 **An exhausted turn** (mid-turn on runner A):
 1. The classified outcome reaches the dispatcher, which marks the source and hands over to the mover. The lease is still held.
 2. A turn-restarted event goes out.
-3. The mover picks runner B. B pulls the workspace from the server checkpoint and imports the bundle (or rebuilds and adds a notice).
-4. The session generation becomes s + 1.
+3. The mover picks runner B, fences A and reserves session generation s + 1. B pulls the last committed workspace and imports the matching bundle (or rebuilds and adds a notice).
+4. The move record commits the new pin and generation; session execution resumes only under this ownership.
 5. The same message is resent on B, and the turn completes as normal.
 6. Late output from A is fenced.
 
-**Runner lost between turns:** the next message's placement finds the pin lost, so the mover runs and then the message is sent.
+**Runner lost between turns:** the loss event schedules the mover immediately; with no target, publish capacity wait even though the session is waiting for a human. Server startup scans pending turn intents and session moves in addition to running instances, adopts matching live remote turns, and automatically resends the durable message only after fencing an interrupted attempt.
 
 ## 5. Data Provenance
 
-| Input | Consumer | Producer |
+Repository verification distinguishes existing producers from required implementation. **UNRESOLVED DEPENDENCY** means the named value/capability has no implemented producer or verified source yet; a proposed component, earlier phase or research observation does not resolve it. The RR identifiers group cross-phase plan tasks; every occurrence remains open until implementation/source verification. Upstream unresolved inputs propagate to their consumers.
+
+| Leaf input | Consumer | Verified producer or explicit dependency |
 |---|---|---|
-| Session ID, nonce, messages | Mover, rebuild fallback | `instance.NodeExecution.LLMConversation`, written by `executor_interactive.go` (:257) and `conversation.go:persistTurn` |
-| Original first prompt | Rebuild fallback | First user message in `LLMConversation.messages` (written by `InteractiveExecutor`) |
-| Claude session files | Export | Claude Code harness on the runner (`~/.claude/projects/...`), located by session ID and working directory |
-| Codex rollout file | Export | Codex harness on the runner; located by `adapter/codex/rollout.go:findRollout` |
-| Harness version for a bundle | Import compatibility | Phase 2 runner harness version probe |
-| Exhausted or logged-out classification mid-turn | Mover trigger | Phase 1 classifiers in `adapter/claudecli` and `adapter/codex` |
-| Runner lost or draining | Mover trigger | Phase 2 hub liveness; Phase 3 drain |
-| Workspace state for the target | Mover | Phase 3 server checkpoint copy and pull |
-| Same-account check (to skip Codex reasoning stripping) | Import | **UNRESOLVED DEPENDENCY:** no per-source account fingerprint producer exists. The design strips Codex reasoning on **every** move (safe, slightly lossy) until one exists. |
-| Whether Codex checks its stored account ID on resume; how much Claude context is lost across accounts | Import behaviour | **UNRESOLVED DEPENDENCY:** unverified (the research had one account per vendor). The plan must include a two-account verification. The rebuild fallback covers a refusal meanwhile. |
-| Turn lease and session generation | Lease, fence | **New** durable lease store (this phase) |
+| Completed session ID, nonce and text messages | Rebuild/checkpoint identity | `domain/engine/executor_interactive.go:InteractiveExecutor.Execute` writes `NodeExecution.LLMConversation`; later persistence `domain/engine/conversation.go:conversationHandler.persistTurn`; keys in `domain/engine/conventions.go:ConversationKeySessionID`, `ConversationKeyNonce`, `ConversationKeyMessages`. These records contain text, not full tool/reasoning context. |
+| Original rendered first prompt | Rebuild fallback | First successful turn's `messages[0].content`, produced by `domain/engine/executor_interactive.go:InteractiveExecutor.Execute`. **UNRESOLVED DEPENDENCY RR-12:** before first success, persist the rendered prompt, system prompt, nonce, tool scope and exact resolved model requirements in a turn intent. Re-rendering after a restart could change the prompt/nonce. |
+| Exact interrupted later user message, request ID and prior checkpoint | Automatic resend | `domain/engine/conversation.go:conversationHandler.HandleMessage` receives `content` but appends it only in memory until success. **UNRESOLVED DEPENDENCY RR-12:** add durable pending-turn intent before dispatch/ack; the successful transcript cannot supply an interrupted message. |
+| Per-turn live resolved constraints | Same-model execution and restrictions | `domain/provider/provider.go:ResolvedBinding`; `domain/engine/conversation.go:conversationHandler.HandleMessage` re-resolves profiles and uses binding tools/model. Preserve authorized live edits on new turns; freeze the accepted turn's request for automatic resend, subject to revocation/access checks. |
+| Claude session JSONL and sidecars, full available context | Native export/import | **UNRESOLVED DEPENDENCY RR-13:** no Claude session locator/export/import producer exists. Implement a version-fixtured adapter; layout and absolute tool-result references are observed in `docs/evidence/remote-runners/research-session-migration.md` §2.1. Identical workspace paths do not guarantee identical HOME/session-store paths; prove a safe mapping without rewriting signed message text, else visibly rebuild. |
+| Codex session file and account home | Native export/import | `adapter/codex/rollout.go:resolveCodexHome` / `findRollout` locate existing rollouts for a given launch env and thread ID. **UNRESOLVED DEPENDENCY RR-13:** export/import, reasoning stripping and compaction detection are absent; add fixture-backed bounded readers/writers, preserving all supported available history. |
+| Harness version, bundle metadata/checksum, target compatibility | Native import | **UNRESOLVED DEPENDENCY RR-03/RR-13:** Phase 2 probes and SessionPortability metadata/bundle verification are unimplemented; existing execution floors do not certify imported bundle fidelity. |
+| Exhaustion/logout/loss/drain event, same-model target, source pin | Move triggers | **UNRESOLVED DEPENDENCY RR-01/RR-02/RR-03/RR-05:** implement upstream health/registry/hub and Phase 3 drain producers; automatic moves cannot be inferred from a generic stream error. |
+| Matching workspace/session checkpoints and group staging identity | Session mover | Normal path `domain/engine/conventions.go:WorkDirFromVars`; group identity `domain/engine/group_resolution.go:GroupResolutionIdentityOf`, staging passed by `GroupResolutionBridge.StartResolution` and selected by `conversationHandler.HandleMessage`. **UNRESOLVED DEPENDENCY RR-08/RR-11:** implement resource-aware checkpoints and staging mobility; existing server-local staging is not remotely recoverable. |
+| Turn lease/renewal, session generation and durable pending operations | Overlap guard and restart adoption | **UNRESOLVED DEPENDENCY RR-12:** implement the SQLite lease/intent store and fencing; `domain/engine/conversation.go:conversationHandler.turnInProgress` is process-local only. Include first turns, End/Abandon, startup scans of waiting instances, mover token reuse and adoption before lease reclaim. |
+| Atomic workspace/bundle/messages/intent/result commit and engine continuation | Successful turn completion | **UNRESOLVED DEPENDENCY RR-10/RR-12:** independent current node/session writes cannot publish a coherent checkpoint pair; implement crash-safe staged-artifact commit/replay for normal, first and terminal/group turns. |
+| Optional same-account fingerprint to avoid unnecessary stripping | Import policy | **UNRESOLVED DEPENDENCY RR-14:** no per-source account fingerprint producer exists. Keep unconditional Codex reasoning stripping and a visible loss notice until an explicitly verified alternative exists; never assume accounts match. |
+| Actual Codex stored-account enforcement; Claude context retained across accounts | Import behavior/fidelity | **UNRESOLVED DEPENDENCY RR-14:** the research used one account per vendor. Plans must verify on two real accounts and test refusal/hidden-context loss; native resume success alone does not prove full context. Visible rebuild fallback covers refusal. |
+| Bundle bytes/reference and transfer authorization | Checkpoint store/mover | **UNRESOLVED DEPENDENCY RR-08/RR-13:** Phase 3 transfer service and new session checkpoint store must be implemented, scoped to operation/job/resource/session generations; persist references only after checksum validation. |
+| Token sequences, restarted-turn/session-move/loss notices and history | Clients, Phase 5 | Existing event sink `domain/engine/ports.go:EventBus` and emission in `domain/engine/conversation.go:conversationHandler.HandleMessage`; **UNRESOLVED DEPENDENCY RR-05/RR-16:** add replay-safe frame generations, durable move/loss metadata, filtered read DTOs and client decoders; do not accept stale tokens after a move. |
+| Lease TTL/renewal, bundle retention and bounded fallback retries | Recovery policy | **UNRESOLVED DEPENDENCY RR-04:** implement validated config; inability to rebuild is an error unless actual capacity is missing. |
 
 ### Deferred to plans
 - **Composition-root wiring:**
@@ -146,18 +155,20 @@ Out of scope: guaranteed preservation of hidden reasoning across accounts (spec 
 
 ## 7. Error handling
 - **Export failure:** the turn is not recorded as successful, and the user sees a turn error. Nothing is persisted that couldn't be recovered.
-- **Import or resume failure:** leads to the rebuild fallback plus a notice. If the rebuild also fails, the session **waits for capacity** with its reason. It never fails silently.
-- **No eligible target** (same model group): the session waits · capacity, naming the group and the next reset.
+- **Import or resume failure:** leads to the rebuild fallback plus a notice. If the rebuild also fails, report a visible restoration error with bounded retry/operator recovery; classify as **waiting for capacity** only when there is genuinely no eligible same-model capacity. Deterministic import/prompt failures must not masquerade as exhausted subscriptions.
+- **No eligible target** (full same-model execution requirements): the session waits · capacity, naming the group and the next reset.
 - **A concurrent submission** is rejected (`ErrInteractiveTurnInProgress`).
 - **A stale-generation result** from the old runner is discarded.
-- **A move requested during an in-flight turn** waits for the lease. Moves never run concurrently with a turn.
+- **A drain/external move requested during an in-flight turn** waits for its safe boundary and lease. Mid-turn recovery reuses the active holder's lease (or fences a lost holder); it must not deadlock trying to reacquire its own lease. Moves never execute beside an unfenced turn.
 - **Version skew** between the bundle and the target harness refuses import and leads to the rebuild.
+- **Loss notices:** every transcript rebuild, Codex reasoning-stripping move, and Claude move with unverified cross-account context retention emits a persisted notice that tool details/reasoning may be lost. Successful native import alone does not prove full fidelity. Preserve all available recorded turns; never silently summarize/truncate to fit a target. An oversized rebuild is a visible restoration error.
+- **Claude sidecars:** identical workspace paths do not equal identical home/session-store paths. Absolute tool-result references must resolve on the target without editing signed message content. The compatible layout/mapping is **UNRESOLVED DEPENDENCY RR-13**; use the visible rebuild fallback when native restoration cannot satisfy it.
 
 ## 8. Testing — STRICT TDD (all five categories required)
-Tests are written first for every component.
+For every component and category below: write a failing test, run it to prove the intended failure, implement the minimum change, rerun to green, then refactor while green. Use fake clocks and fault injection at ownership/commit boundaries; do not substitute post-hoc tests for STRICT TDD.
 - **Happy path:** a multi-turn `interactive_agent` session stays pinned to one runner, with a checkpoint after every turn.
 - **Success:**
-  - Exhaustion between turns moves the session, and the next turn continues with full context.
+  - Exhaustion between turns moves the session, and the next turn continues with all supported available context and a loss notice whenever fidelity is reduced or unverified.
   - Mid-turn exhaustion resends the same message automatically, and the client gets a turn-restarted event.
   - Drain moves a session at its turn boundary.
 - **Failure:**
@@ -172,6 +183,8 @@ Tests are written first for every component.
   - First-turn exhaustion re-runs the step with a fresh session.
   - Codex reasoning is stripped, checked against fixture rollouts.
   - A Codex compaction item forces the fallback.
-  - A group-staging session never moves.
-  - The workspace notice differs for built-in and remote interrupted turns.
+  - A group-staging session moves only under the allowed recovery/drain triggers, preserving the gather staging identity and checkpoint.
+  - Built-in and remote interrupted turns both restore the prior committed workspace; context-loss notices remain visible where applicable.
   - An expired lease from a crashed holder is reclaimable.
+
+- **Durable-session regressions:** a server restart with a waiting instance and pending turn intent adopts a live remote turn or resends the exact message after fencing; first-turn recovery reuses the rendered prompt and nonce; lease renewal/expiry never overlaps turns; workspace/bundle/turn commit crashes preserve the prior matching pair; cordon/suspect/slot pressure never moves pins; idle loss triggers recovery without a new user message; group-resolution sessions recover/drain without touching parent/task directories; differing Claude home paths take a verified native path or visible fallback; successful Codex import after stripping still shows the loss notice.

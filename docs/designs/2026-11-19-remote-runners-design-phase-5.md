@@ -2,7 +2,7 @@
 
 **Spec:** `docs/specs/2026-11-19-remote-runners-spec.md` (Administration and visibility)
 **Idea doc (context only):** `docs/ideas/remote-runners.md` §13
-**Depends on:** Phases 1–4 (every data source rendered here is produced there).
+**Depends on:** Phases 1–4 (every data source rendered here must be implemented there; see unresolved provenance in §5).
 **Cross-phase decisions:** see Phase 1 §0, especially D6 (execution status) and D12 (read and admin boundary).
 
 ## 1. Purpose and scope
@@ -38,10 +38,10 @@ Out of scope:
 
 ### 3.1 Pool view (`routes/Pool*`)
 - **Alerts:**
-  - A logged-out source, which is the only state that needs a human.
+  - A logged-out source, plus incompatible software, disk/transfer errors and blocked recovery/drain items that require operator attention.
   - Runs waiting · capacity, each with its reason.
   - Runners that are offline, suspect or incompatible, each with its explanation.
-- **Model-group cards:** Anthropic, OpenAI, LunaRoute and server connections.
+- **Model-group cards:** group by credential kind AND actual model family, with individual connection sources below them. LunaRoute is a route/credential kind, not a model family; preserve exact requested models in capacity-wait details.
   - Each shows the healthy source count, in flight, queued, a next-reset countdown, and a spread bar per runner.
   - LunaRoute busy (429s) renders as pressure, never as exhaustion.
 - **Runner cards:**
@@ -51,7 +51,7 @@ Out of scope:
   - Count of homed workspaces.
   - Drain progress, when draining.
 - **Recent pool events:** each with its cause (actor or classified outcome).
-- **Runner keys (admin only):** the list (name, runner or "unclaimed", created, last used), plus the Add-runner and Revoke modals (§3.4).
+- **Runner keys (admin only):** the list (name, runner or "unclaimed", created, last used), plus the Add-runner and Revoke modals (§3.4). The secret response is never retained in shared data-hook caches, browser storage, URLs, logs or events.
 - **Local mode:** the same page with a single built-in card, which still shows auth and capacity status (spec: "pool remains useful with only the local machine").
 
 ### 3.2 Runner detail (`routes/RunnerDetail*`)
@@ -61,14 +61,14 @@ Out of scope:
 
 ### 3.3 Queue and run-graph additions
 - **Queue:**
-  - A **Runner** column (the workspace's home or the active job's runner).
+  - A **Runner** column showing the active operation's assigned runner first; show workspace home and interactive pin separately. A hermetic chat may execute away from its workspace home, and simultaneous branch assignments need distinct rows/details.
   - An **execution-status** badge: queued · slot; waiting · capacity with reason and countdown; moving workspace with progress; recovering.
   - Interactive rows show their pin.
   - Parallel groups show each branch's runner.
 - **Run graph:**
   - Nodes are coloured by the runner they ran on; server-side pure nodes are grey.
   - Move badges sit on the edges where the workspace moved.
-  - The node panel shows the placement reason, the source, the workspace's history of homes, and any lossy session-move notice.
+  - The node panel shows the placement reason, the source, the workspace's history of homes, any lossy session-move notice, and the durable recovery disclosure that interrupted work may repeat external effects.
 
 ### 3.4 Runner-key modals (`components/RunnerKey*`)
 - **Add runner:**
@@ -85,25 +85,29 @@ Out of scope:
 1. A route mounts and the hook fetches REST snapshots: `runner_list` / `runner_get` (Phase 1), keys (Phase 2), the pool event log (Phase 1), and the enriched instance list (Phase 1 execution status).
 2. The hook subscribes to `/api/v1/ws` and merges events: `runner.*` and `source.*` (Phases 1–2), `execution.status` (Phases 1 and 3), `workspace.moved` (Phase 3), and session moves (Phase 4).
 3. Countdowns are computed client-side from reset timestamps.
-4. The run graph reads the trace placement fields (Phase 1), the home history (Phase 3) and session moves (Phase 4) through the existing trace and instance APIs.
+4. The run graph reads the trace placement fields (Phase 1), the home history (Phase 3) and session moves (Phase 4) through the extended trace and instance APIs. Their runner fields do not exist today; Phase 1/3/4 read-model extensions are prerequisites, not data the UI can infer.
 
 ## 5. Data Provenance
 
-| Rendered input | Producer |
+Repository verification distinguishes existing producers from required implementation. **UNRESOLVED DEPENDENCY** means the named value/capability has no implemented producer or verified source yet; a proposed component, earlier phase or research observation does not resolve it. The RR identifiers group cross-phase plan tasks; every occurrence remains open until implementation/source verification. Upstream unresolved inputs propagate to their consumers.
+
+| Rendered leaf input | Verified producer or explicit dependency |
 |---|---|
-| Runners, sources, health, slots, step limit, labels, cordon or drain state, compatibility reason | Phase 1 registry and runner service (`runner_list`/`runner_get` REST); Phase 2 hub liveness and compatibility; Phase 3 drain |
-| Live telemetry and sparklines | Phase 2 hub telemetry window (latest plus recent samples), surfaced through `runner_get` and heartbeat events |
-| Thermal state, memory pressure | Phase 2 darwin adapter. Its OS source is a Phase 2 **UNRESOLVED DEPENDENCY**; the UI shows "unavailable" when absent. |
-| Reset countdowns | Phase 1 source health (reset time from the classifiers and Codex rate-limit reads) |
-| Logged-out alert | Phase 1 health monitor; the notification is also delivered through `domain/notification` |
-| Recent events with causes | Phase 1 pool event log, extended by Phases 2–4 |
-| Keys list (claimed, runner, created, last used) | Phase 2 key service REST |
-| Key secret (once) | Phase 2 `runner_key_create` REST response |
-| Execution status per run | Phase 1 projection via `domain/engine/enricher.go:InstanceEnricher`; Phase 3 adds moving and recovering |
-| Runner per node and placement reason | Phase 1 `NodeExecution` placement fields via the trace endpoints |
-| Workspace moves and home history | Phase 3 home-history records |
-| Interactive pin and lossy-move notice | Phase 4 `LLMConversation` additions and events |
-| Admin flag (to hide key controls) | Existing identity exposure to the dashboard; server-side enforcement in the Phase 2 key service |
+| Runner identity/labels/limits, availability/compatibility and reason | **UNRESOLVED DEPENDENCY RR-01/RR-05/RR-16:** Phase 1 registry/service and Phase 2 admission/hub REST snapshots/events must be implemented. No existing `runner_list`/`runner_get` endpoint supplies these fields. |
+| Per-model-family sources, exact-model capacity reasons, auth/exhaustion/headroom/reset windows and last health check | **UNRESOLVED DEPENDENCY RR-02/RR-03/RR-16:** upstream inventory/classifier/prober and read DTOs. Browser countdown uses the server's normalized absolute reset timestamp; elapsed time alone does not turn a source green. |
+| Active/queued operations, slot usage, per-machine distribution | **UNRESOLVED DEPENDENCY RR-01/RR-16:** derive from queued intents and offered/running assignments (not workflow counts); preserve separate active chat runner, workspace home, session pin and parallel branches. |
+| CPU/memory/pressure/load/disk/thermal/uptime/cores/RAM, version and timestamp samples | **UNRESOLVED DEPENDENCY RR-05/RR-06/RR-16:** Phase 2 OS probes, hub recent-sample window and read/events. All OS metrics currently lack producers, including the Linux built-in equivalents. Unknown/stale/unsupported values render explicitly. |
+| Logged-out alerts and actionable compatibility/disk/drain/recovery failures | **UNRESOLVED DEPENDENCY RR-03/RR-08/RR-16:** upstream monitor/mobility event producers and persisted reasons; no client inference from missing measurements or a dropped socket. |
+| Recent events/causes, actor names and run/workspace/session links | **UNRESOLVED DEPENDENCY RR-01/RR-16:** bounded pool event log, service authorization and filtered REST/WebSocket DTOs. Hidden run IDs/names/prompts must not enter browser payloads; actor identity originates in `domain/identity/identity.go:FromContext`. |
+| Key metadata (name, claimed machine/runner, created and last use), one-time secret/create and revoke results | **UNRESOLVED DEPENDENCY RR-05/RR-16:** Phase 2 key service/admin-auth REST DTOs are absent. Read secret only from the create response, discard on close; no event or key-list recovery of it. |
+| Revocation confirmation and setup snippet | Spec-backed UI copy plus **UNRESOLVED DEPENDENCY RR-05/RR-07:** validated installer config fields and workspace-root instructions. Confirmation must explain immediate disconnect, repeated effects and drain recommendation and send the required service acknowledgment. |
+| Run state and current-node baseline | `domain/instance/instance.go:Instance`; `domain/engine/enricher.go:InstanceEnricher`; `dashboard/src/api/types.ts:InstanceState`. Capacity/slot/move/recovery are separate execution projections, not additional InstanceState values. |
+| Per-operation wait/move/recovery state/reason/reset/progress | **UNRESOLVED DEPENDENCY RR-01/RR-08/RR-12/RR-16:** Phase 1 queued intents, Phase 3 progress/recovery, Phase 4 pending turns and extended instance read models. Idle interactive capacity recovery must also render while InstanceState is waiting. |
+| Per-node runner/source/reason and attempt history | Existing record `domain/instance/instance.go:NodeExecution`; **UNRESOLVED DEPENDENCY RR-16:** Phase 1 trace placement fields/HTTP DTOs and live assignment events are absent today, including failed attempts and self-persisted interactive first turns. |
+| Home history, branch assignments and drain progress/blockers | **UNRESOLVED DEPENDENCY RR-08/RR-11/RR-16:** Phase 3 resource/history/drain projections. Independent branches originate in `domain/engine/group_launcher.go:GroupLauncher`, not a single parent runner field. |
+| Session pin, restart/loss notice and restoration error | **UNRESOLVED DEPENDENCY RR-12/RR-13/RR-16:** Phase 4 conversation/move fields, durable notices and events; reasoning stripping and uncertain Claude context emit notices even if import succeeds. |
+| Current viewer's admin flag | `adapter/http/me_handler.go:MeHandler.Me` emits `meView.IsAdmin` from `domain/identity/identity.go:Identity.IsAdmin`; `dashboard/src/api/types.ts:Me` supplies the client shape. The server enforces key authorization regardless of UI flags. |
+| Event delivery and polling fallback | Existing transport `dashboard/src/hooks/useSystemWebSocket.ts:useSystemWebSocket` and `adapter/http/system_stream_handler.go:SystemStreamHandler.HandleWebSocket`; polling precedent `dashboard/src/hooks/useGraphState.ts:GRAPH_STATE_POLL_MS`. **UNRESOLVED DEPENDENCY RR-16:** runner event schemas/snapshot reconciliation need server and client producers, including version/cursor handling to avoid replaying stale updates after REST reload. |
 
 ### Deferred to plans
 - **Read endpoints consumed:** `runner_events` (Phase 1 §3.14) for the pool event log and the home history on instance and trace reads (Phase 3 §3.1). This phase adds no server endpoints.
@@ -123,7 +127,7 @@ Out of scope:
 - **Unknown event kinds** are ignored, never crashed on.
 
 ## 8. Testing — STRICT TDD (all five categories required)
-Tests are written first in Vitest, with the `npx tsc --noEmit` gate.
+Write and run each Vitest test to fail first, implement the minimum change, rerun to green, then refactor while green. Run `npx tsc --noEmit`, focused Vitest coverage and `make ui`; verify the regenerated embedded dashboard. All five categories below are required.
 - **Happy path:** the pool renders a one-runner local pool with healthy sources.
 - **Success:**
   - Create a key: it is shown once, Copy works, and closing discards it.
@@ -145,3 +149,5 @@ Tests are written first in Vitest, with the `npx tsc --noEmit` gate.
   - Telemetry "unavailable" renders gracefully.
   - LunaRoute busy renders as pressure, not exhaustion.
   - Server-side pure nodes render grey.
+
+- **Read-model regressions:** hidden-run links/events never render; active chat runner differs visibly from workspace home; simultaneous branch assignments remain distinct; logged-out plus exhausted capacity is not falsely healthy after auth returns; built-in rollback, session loss notices, recovery errors and blocked drain/capacity render from durable server fields; the secret never enters persistent browser storage.
