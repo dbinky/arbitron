@@ -27,6 +27,23 @@
       "finished_at": "2026-11-20T02:31:00Z",
       "instance_id": "a7156292-7c6e-49af-a00f-1e609588e0af",
       "workflow": "spec"
+    },
+    {
+      "stage": "design",
+      "status": "done",
+      "outputs": {
+        "design_paths": [
+          "docs/designs/2026-11-19-remote-runners-design-phase-1.md",
+          "docs/designs/2026-11-19-remote-runners-design-phase-2.md",
+          "docs/designs/2026-11-19-remote-runners-design-phase-3.md",
+          "docs/designs/2026-11-19-remote-runners-design-phase-4.md",
+          "docs/designs/2026-11-19-remote-runners-design-phase-5.md"
+        ]
+      },
+      "commit": "1ab9c94b61ac47fcbcc66e66e638eadaeb30b8e3",
+      "finished_at": "2026-11-20T15:00:51Z",
+      "instance_id": "fbac6a0d-e9f4-4501-ae78-08ebc34b7e22",
+      "workflow": "design"
     }
   ]
 }
