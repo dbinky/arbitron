@@ -1,0 +1,21 @@
+{
+  "slug": "remote-runners",
+  "base_branch": "main",
+  "branch": "dev-remote-runners-2026-11-19-57bc840c",
+  "stages": [
+    {
+      "stage": "ideate",
+      "status": "done",
+      "outputs": {
+        "slug": "remote-runners",
+        "branch": "dev-remote-runners-2026-11-19-57bc840c",
+        "idea_path": "docs/ideas/remote-runners.md",
+        "provided": true
+      },
+      "commit": "320a75e419ec025e1396b31dc3fd4a20e2ea8c2c",
+      "finished_at": "2026-11-20T02:06:06Z",
+      "instance_id": "57bc840c-497a-46c0-893d-9c44bf5495f1",
+      "workflow": "feature-pipeline"
+    }
+  ]
+}
