@@ -1014,14 +1014,10 @@ func (e *Engine) GetInterventions(ctx context.Context, id uuid.UUID) ([]instance
 // StartInstance transitions a queued instance to running and launches the
 // graph walker goroutine. It implements queue.InstanceStarter.
 func (e *Engine) StartInstance(ctx context.Context, id uuid.UUID) error {
-	if err := e.instances.UpdateState(ctx, id, instance.StateRunning); err != nil {
+	runCtx, err := e.enterRunning(ctx, id)
+	if err != nil {
 		return fmt.Errorf("failed to transition to running: %w", err)
 	}
-
-	runCtx, cancel := context.WithCancel(context.Background())
-	e.mu.Lock()
-	e.contexts[id] = cancel
-	e.mu.Unlock()
 
 	e.eventBus.Publish(id, Event{
 		Type:      "instance.started",
@@ -2205,14 +2201,10 @@ func (e *Engine) Retry(ctx context.Context, instanceID uuid.UUID, variableEdits 
 		}
 	}
 
-	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
+	runCtx, err := e.enterRunning(ctx, instanceID)
+	if err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
-
-	runCtx, cancel := context.WithCancel(context.Background())
-	e.mu.Lock()
-	e.contexts[instanceID] = cancel
-	e.mu.Unlock()
 
 	e.eventBus.Publish(instanceID, Event{
 		Type:      "instance.retrying",
