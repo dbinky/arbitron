@@ -117,3 +117,45 @@ func TestSpawnWaitReconciler_StrandedListFailure_WaitingPassStillRuns(t *testing
 
 	assert.Equal(t, instance.StateQueued, r.stateOf(t, waiting))
 }
+
+// moveParentOn puts the parent at a different waiting node, as another wake or
+// resume driving it past the spawn would between the reconciler's validation
+// (or adoption) and its queue write.
+func (r *reconcilerFixture) moveParentOn(id uuid.UUID, node string) {
+	r.f.instanceRepo.mu.Lock()
+	defer r.f.instanceRepo.mu.Unlock()
+	n := node
+	inst := r.f.instanceRepo.instances[id]
+	inst.CurrentNodeID = &n
+	inst.State = instance.StateWaiting
+}
+
+// The adoption re-queue must stay node-addressed: a parent adopted at spawn-1
+// that then moves to a LATER wait at spawn-2 must not be queued on behalf of
+// the old child.
+func TestSpawnWaitReconciler_AdoptedParentMovedToAnotherNode_IsNotRequeued(t *testing.T) {
+	r := newReconcilerFixture(t)
+	r.rec.WithStrandedAdoption(&fakeAdopter{repo: r.f.instanceRepo})
+	parent := r.seedRunningParent(t, "spawn-1")
+	r.spawnWaits.runningCandidates = []instance.SpawnWaitCandidate{strandedCandidate(parent, "spawn-1", instance.StateFailed)}
+	r.queueRepo.beforeNodeWake = func(id uuid.UUID) { r.moveParentOn(id, "spawn-2") }
+
+	require.NoError(t, r.rec.Reconcile(context.Background()))
+
+	assert.Equal(t, instance.StateWaiting, r.stateOf(t, parent), "the later wait must be left untouched")
+	assert.Equal(t, 0, r.f.queueManager.notifyCount(), "nothing was re-queued, so no capacity was freed")
+}
+
+// The same hazard on the waiting pass: the parent is validated at spawn-1 by
+// the fresh Get, then moves to spawn-2 before the write.
+func TestSpawnWaitReconciler_WaitingParentMovedToAnotherNode_IsNotRequeued(t *testing.T) {
+	r := newReconcilerFixture(t)
+	parent := r.seedWaitingParent(t, "spawn-1")
+	r.spawnWaits.candidates = []instance.SpawnWaitCandidate{strandedCandidate(parent, "spawn-1", instance.StateCompleted)}
+	r.queueRepo.beforeNodeWake = func(id uuid.UUID) { r.moveParentOn(id, "spawn-2") }
+
+	require.NoError(t, r.rec.Reconcile(context.Background()))
+
+	assert.Equal(t, instance.StateWaiting, r.stateOf(t, parent), "the later wait must be left untouched")
+	assert.Equal(t, 0, r.f.queueManager.notifyCount())
+}

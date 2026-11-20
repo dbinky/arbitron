@@ -28,7 +28,7 @@ import (
 type SpawnWaitReconciler struct {
 	spawnWaits instance.SpawnWaitRepository
 	instances  instance.InstanceRepository
-	queueRepo  instance.QueueRepository
+	waker      instance.NodeAddressedWaker
 	queueMgr   QueueManager
 	adopter    StrandedParentAdopter
 }
@@ -75,7 +75,10 @@ func (r *SpawnWaitReconciler) adoptStranded(ctx context.Context) int {
 		}
 		slog.Warn("spawn-wait reconciler: adopted parent stranded in running",
 			"parentID", c.ParentID, "childID", c.ChildID, "nodeID", c.ParentNodeID, "childState", c.ChildState)
-		ok, qerr := r.queueRepo.SetQueuedIfWaiting(ctx, c.ParentID, time.Now())
+		// Node-addressed: between the adoption and this write another wake or
+		// resume can drive the parent past this spawn into a LATER wait, and a
+		// state-only write would queue that later wait on behalf of this child.
+		ok, qerr := r.waker.SetQueuedIfWaitingAtNode(ctx, c.ParentID, c.ParentNodeID, time.Now())
 		if qerr != nil {
 			// Left waiting on a terminal child: the waiting pass retries it.
 			slog.Error("spawn-wait reconciler: failed to re-queue adopted parent",
@@ -89,17 +92,22 @@ func (r *SpawnWaitReconciler) adoptStranded(ctx context.Context) int {
 	return requeued
 }
 
-// NewSpawnWaitReconciler constructs the reconciler.
+// NewSpawnWaitReconciler constructs the reconciler. waker is required: every
+// re-queue is node-addressed (SetQueuedIfWaitingAtNode), so there is no
+// state-only fallback to be wired by mistake.
 func NewSpawnWaitReconciler(
 	spawnWaits instance.SpawnWaitRepository,
 	instances instance.InstanceRepository,
-	queueRepo instance.QueueRepository,
+	waker instance.NodeAddressedWaker,
 	queueMgr QueueManager,
 ) *SpawnWaitReconciler {
+	if waker == nil {
+		panic("engine: NewSpawnWaitReconciler requires a non-nil NodeAddressedWaker")
+	}
 	return &SpawnWaitReconciler{
 		spawnWaits: spawnWaits,
 		instances:  instances,
-		queueRepo:  queueRepo,
+		waker:      waker,
 		queueMgr:   queueMgr,
 	}
 }
@@ -142,10 +150,11 @@ func (r *SpawnWaitReconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		// Conditional, for the same reason the in-process wake is: the executor
-		// may be claiming this very parent back to `running` right now. Losing
-		// the race is success, not failure — the parent is resuming either way.
-		ok, serr := r.queueRepo.SetQueuedIfWaiting(ctx, c.ParentID, time.Now())
+		// Conditional on state AND node, for the same reason the in-process wake
+		// is: the executor may be claiming this very parent back to `running`
+		// right now, or it may have moved on to a later wait since the Get above.
+		// Losing the race is success, not failure — the parent is resuming either way.
+		ok, serr := r.waker.SetQueuedIfWaitingAtNode(ctx, c.ParentID, c.ParentNodeID, time.Now())
 		if serr != nil {
 			slog.Error("spawn-wait reconciler: failed to re-queue parent",
 				"parentID", c.ParentID, "childID", c.ChildID, "error", serr)
