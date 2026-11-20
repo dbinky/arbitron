@@ -16,6 +16,17 @@
       "finished_at": "2026-11-20T02:06:06Z",
       "instance_id": "57bc840c-497a-46c0-893d-9c44bf5495f1",
       "workflow": "feature-pipeline"
+    },
+    {
+      "stage": "spec",
+      "status": "done",
+      "outputs": {
+        "spec_path": "docs/specs/2026-11-19-remote-runners-spec.md"
+      },
+      "commit": "874d4d11f1123fec781d7170b59a7f303445153a",
+      "finished_at": "2026-11-20T02:31:00Z",
+      "instance_id": "a7156292-7c6e-49af-a00f-1e609588e0af",
+      "workflow": "spec"
     }
   ]
 }
