@@ -44,3 +44,31 @@ func TestSpawnStrandedE2E_ParentStrandedInRunning_FailedChildRoutesParentToFailu
 	assert.Equal(t, "failure", branchVariable(t, ds, parentID),
 		"the adopted parent must take its failure path, not be failed as a crash")
 }
+
+// The same rescue with a COMPLETED child: the adopted parent must take its
+// SUCCESS branch (reading the child's output), not the failure path or a crash
+// failure. Pins that adoption is outcome-agnostic on real wiring.
+//
+// Not parallel: it shortens the package-level sweep interval.
+func TestSpawnStrandedE2E_ParentStrandedInRunning_CompletedChildRoutesParentToSuccessPath(t *testing.T) {
+	prev := spawnSweepInterval
+	spawnSweepInterval = 200 * time.Millisecond
+	t.Cleanup(func() { spawnSweepInterval = prev })
+
+	ds := bootStartedWaitStack(t, "complete", 1, "3")
+	ctx := context.Background()
+
+	parentID, _, err := ds.eng.Trigger(ctx, "wait-parent", map[string]any{}, "normal")
+	require.NoError(t, err)
+	waitForState(t, ds, parentID, instance.StateWaiting)
+	children := childrenOf(t, ds, parentID)
+	require.Len(t, children, 1)
+
+	// Strand it: running at spawn-1, no walker.
+	require.NoError(t, ds.instanceRepo.UpdateState(ctx, parentID, instance.StateRunning))
+
+	waitForState(t, ds, children[0].ID, instance.StateCompleted)
+	waitForState(t, ds, parentID, instance.StateCompleted)
+	assert.Equal(t, "success", branchVariable(t, ds, parentID),
+		"the adopted parent must take its success branch")
+}
