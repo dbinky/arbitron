@@ -1067,7 +1067,14 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			e.queueManager.NotifyCapacityFreed(context.Background())
 		}
 	}()
+	// parked is set when the walker deregistered itself in the pause handoff
+	// (parkWalker). Its exit must then NOT delete the registration again: by
+	// that time a Resume may have registered a fresh walker under the same id.
+	parked := false
 	defer func() {
+		if parked {
+			return
+		}
 		e.mu.Lock()
 		delete(e.contexts, instanceID)
 		e.mu.Unlock()
@@ -1190,6 +1197,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				if err := e.instances.UpdateCurrentNode(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to record next node for paused instance", "instanceID", instanceID, "nodeID", currentNodeID, "error", err)
 				}
+			}
+			if freshInst.State == instance.StatePaused {
+				if !e.parkWalker(ctx, instanceID) {
+					// Resumed while this walker was finishing its node: keep
+					// walking. Resume handed the run back to us instead of
+					// starting a second walker.
+					capacityFreed = false
+					continue
+				}
+				parked = true
 			}
 			return
 		}
@@ -1739,15 +1756,52 @@ func (e *Engine) findNextNode(currentNodeID string, outputPort string, adj map[s
 	return targets[0].nodeID
 }
 
-// Pause sets a running or waiting instance to paused state. The graph walker will
+// Pause sets a running or waiting instance to paused state, then pauses every
+// active descendant it spawned (see pause_cascade.go). The graph walker will
 // detect this on its next iteration and stop. For waiting instances, the timer
 // keeps counting (do NOT cancel the scheduler entry).
+//
+// An instance that is already paused is not an error when the call has an
+// effect: if a parent's cascade paused it, the operator now owns the pause
+// (the marker is cleared so resuming the parent leaves it paused); otherwise
+// its still-active descendants are swept. With neither, ErrNotRunning stands.
 func (e *Engine) Pause(ctx context.Context, instanceID uuid.UUID) error {
 	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
 		return err
 	}
+	if inst.State == instance.StatePaused {
+		return e.repause(ctx, inst)
+	}
+	if err := e.pauseOwn(ctx, inst); err != nil {
+		return err
+	}
+	e.cascadePause(context.WithoutCancel(ctx), instanceID, instanceID, map[uuid.UUID]bool{instanceID: true})
+	return nil
+}
 
+// repause handles Pause on an already-paused run.
+func (e *Engine) repause(ctx context.Context, inst *instance.Instance) error {
+	by, err := e.spawnLinks.CascadePausedBy(ctx, inst.ID)
+	if err != nil {
+		return fmt.Errorf("reading cascade pause of %s: %w", inst.ID, err)
+	}
+	if by != nil {
+		if err := e.spawnLinks.ClearCascadePause(ctx, inst.ID); err != nil {
+			return fmt.Errorf("claiming pause of %s: %w", inst.ID, err)
+		}
+		e.recordIntervention(ctx, inst, instance.ActionPause, nil)
+		return nil
+	}
+	if e.cascadePause(context.WithoutCancel(ctx), inst.ID, inst.ID, map[uuid.UUID]bool{inst.ID: true}) == 0 {
+		return fmt.Errorf("instance %s is not running (state: %s): %w", inst.ID, inst.State, instance.ErrNotRunning)
+	}
+	return nil
+}
+
+// pauseOwn pauses the named run itself.
+func (e *Engine) pauseOwn(ctx context.Context, inst *instance.Instance) error {
+	instanceID := inst.ID
 	switch inst.State {
 	case instance.StateRunning:
 		if err := e.instances.UpdateState(ctx, instanceID, instance.StatePaused); err != nil {
@@ -1792,20 +1846,65 @@ func (e *Engine) Resume(ctx context.Context, instanceID uuid.UUID) error {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
 
-	var resumeErr error
-	switch {
-	case inst.WebhookToken != nil:
-		resumeErr = e.resumeFromWebhookWait(ctx, instanceID, inst)
-	case inst.WaitingUntil != nil:
-		resumeErr = e.resumeFromTimerWait(ctx, instanceID, inst)
-	default:
-		resumeErr = e.resumeFromRunning(ctx, instanceID)
+	// A run an ancestor's cascade paused carries that ancestor's marker. A
+	// direct resume claims it (a later resume of the ancestor must not act on
+	// this run again), restores the run to where the cascade took it from, and
+	// resumes the run's own subtree that the same ancestor's pause holds.
+	// Otherwise the run's own pause is being lifted: resume what IT stopped.
+	cascadeBy := instanceID
+	from := instance.State("")
+	by, err := e.spawnLinks.CascadePausedBy(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("reading cascade pause of %s: %w", instanceID, err)
 	}
-	if resumeErr != nil {
-		return resumeErr
+	if by != nil {
+		claimedFrom, claimed, err := e.spawnLinks.ClaimCascadePause(ctx, instanceID, *by)
+		if err != nil {
+			return fmt.Errorf("claiming cascade pause of %s: %w", instanceID, err)
+		}
+		if claimed {
+			from, cascadeBy = claimedFrom, *by
+		}
+	}
+	if err := e.restoreFromPause(ctx, inst, from); err != nil {
+		return err
 	}
 	e.recordIntervention(ctx, inst, instance.ActionResume, nil)
+	e.cascadeResume(context.WithoutCancel(ctx), instanceID, cascadeBy, map[uuid.UUID]bool{instanceID: true})
 	return nil
+}
+
+// restoreFromPause returns a paused run to where its pause took it from. A run
+// a cascade paused out of the queue goes back to the queue at its original
+// position rather than starting out of turn; everything else resumes by its
+// wait (resumePaused). from is "" when the paused-from state is unknown.
+func (e *Engine) restoreFromPause(ctx context.Context, inst *instance.Instance, from instance.State) error {
+	if from != instance.StateQueued {
+		return e.resumePaused(ctx, inst)
+	}
+	queuedAt := time.Now()
+	if inst.QueuedAt != nil {
+		queuedAt = *inst.QueuedAt
+	}
+	if err := e.queueRepo.SetQueued(ctx, inst.ID, queuedAt); err != nil {
+		return fmt.Errorf("re-queueing %s: %w", inst.ID, err)
+	}
+	e.publishResumedEvent(inst.ID)
+	e.queueManager.NotifyCapacityFreed(context.Background())
+	return nil
+}
+
+// resumePaused moves a paused run back to the state its wait implies. It does
+// no authorization and records no intervention; callers do both.
+func (e *Engine) resumePaused(ctx context.Context, inst *instance.Instance) error {
+	switch {
+	case inst.WebhookToken != nil:
+		return e.resumeFromWebhookWait(ctx, inst.ID, inst)
+	case inst.WaitingUntil != nil:
+		return e.resumeFromTimerWait(ctx, inst.ID, inst)
+	default:
+		return e.resumeFromRunning(ctx, inst.ID)
+	}
 }
 
 // resumeFromWebhookWait handles resume for instances paused during a webhook wait.
@@ -1875,13 +1974,27 @@ func (e *Engine) resumeFromTimerWait(ctx context.Context, instanceID uuid.UUID, 
 }
 
 // resumeFromRunning handles resume for instances that were running when paused.
+//
+// THE WALKER HANDOFF. Pause does not stop the node in flight; the walker only
+// notices `paused` at its next loop iteration. So when Resume arrives, the
+// paused run's walker may still be alive inside a node. Starting a second
+// walker then would run that node again and walk one graph with two goroutines.
+// Instead, the state write and the "is a walker still registered?" check happen
+// under e.mu, the same lock parkWalker takes to re-check the state and
+// deregister. Exactly one of two outcomes follows: the live walker sees
+// `running` and carries on, or it has already parked and a fresh walker starts.
 func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) error {
+	e.mu.Lock()
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
+		e.mu.Unlock()
 		return fmt.Errorf("failed to update state: %w", err)
 	}
-
+	if _, live := e.contexts[instanceID]; live {
+		e.mu.Unlock()
+		e.publishResumedEvent(instanceID)
+		return nil
+	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	e.mu.Lock()
 	e.contexts[instanceID] = cancel
 	e.mu.Unlock()
 
@@ -1890,6 +2003,21 @@ func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) er
 	e.wg.Add(1)
 	go e.run(runCtx, instanceID)
 	return nil
+}
+
+// parkWalker is the walker's half of the resume handoff (see
+// resumeFromRunning). Under e.mu it re-reads the run's state: still paused, it
+// deregisters the walker and reports true (the walker exits); resumed in the
+// meantime, it reports false and the walker continues. A read failure parks:
+// a later Resume then starts a fresh walker.
+func (e *Engine) parkWalker(ctx context.Context, instanceID uuid.UUID) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if fresh, err := e.instances.Get(ctx, instanceID); err == nil && fresh.State == instance.StateRunning {
+		return false
+	}
+	delete(e.contexts, instanceID)
+	return true
 }
 
 // publishResumedEvent emits a standard instance.resumed event.

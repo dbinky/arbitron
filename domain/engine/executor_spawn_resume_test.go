@@ -279,3 +279,66 @@ func TestSpawnResume_ActiveChildCarriesNoChildOutput(t *testing.T) {
 	out := res.Output.(map[string]any)
 	assert.NotContains(t, out, "childOutput")
 }
+
+// ---------- re-entry of a RUNNING parent (resume after pause) ----------
+
+// A parent paused while waiting on its child is resumed through the run loop,
+// so it re-enters the spawn node in state `running`. With the child still
+// active it must go back to `waiting`: returning a bare wait result would halt
+// the walk with the parent stuck in `running`, where the child's terminal wake
+// (which only acts on a WAITING parent) can never reach it.
+func TestSpawnResume_ActiveChild_RunningParentReturnsToWaiting(t *testing.T) {
+	f, res, err := resumeWith(t, instance.StateRunning)
+	require.NoError(t, err)
+	require.True(t, res.IsWait)
+
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateWaiting, got.State)
+	assert.Contains(t, *f.order, "notify", "suspending again releases the parent's capacity")
+	assert.Empty(t, f.spawner.spawned)
+}
+
+// The child can finish between the re-entry's link read and the parent's
+// return to `waiting`; that wake is lost, so the re-entry must route it.
+func TestSpawnResume_ActiveChild_FinishingDuringResuspend_Routes(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	childID := seedChild(t, f, instance.StateCompleted, map[string]any{"done": true})
+	f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+		&instance.ChildLink{ChildID: childID, ChildState: instance.StateRunning})
+	f.spawnWaits.onFind = func(call int) {
+		if call >= 2 {
+			f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+				&instance.ChildLink{ChildID: childID, ChildState: instance.StateCompleted})
+		}
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), f.parentID)
+	res, err := f.exec.Execute(ctx, waitNode(), variable.NewStore(), "parent")
+	require.NoError(t, err)
+
+	assert.False(t, res.IsWait)
+	assert.Equal(t, workflow.SpawnPortSuccess, res.OutputPort)
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateRunning, got.State)
+}
+
+// A parent that is no longer running at re-entry (paused or cancelled in the
+// meantime) is not moved to `waiting`: that would revive it.
+func TestSpawnResume_ActiveChild_NonRunningParentIsNotRevived(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	require.NoError(t, f.instances.UpdateState(context.Background(), f.parentID, instance.StatePaused))
+	childID := seedChild(t, f, instance.StateRunning, map[string]any{})
+	f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+		&instance.ChildLink{ChildID: childID, ChildState: instance.StateRunning})
+
+	ctx := engine.ContextWithInstanceID(context.Background(), f.parentID)
+	res, err := f.exec.Execute(ctx, waitNode(), variable.NewStore(), "parent")
+	require.NoError(t, err)
+
+	assert.True(t, res.IsWait)
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StatePaused, got.State)
+}

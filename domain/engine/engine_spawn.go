@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/instance"
@@ -97,7 +98,33 @@ func (e *Engine) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("spawn child workflow %q: %w", req.ChildWorkflow, err)
 	}
+	e.pauseIfParentPaused(context.WithoutCancel(ctx), req.Link.ParentInstanceID, childID)
 	return childID, nil
+}
+
+// pauseIfParentPaused closes the window in which a parent is paused while its
+// spawn node is mid-flight: the pause cascade has already walked the parent's
+// children, so a child created now would run unsupervised. The child is
+// cascade-paused on behalf of whichever pause holds the parent (the parent's
+// own cascade marker if an ancestor paused it, else the parent). Best-effort:
+// a failure is logged and never fails the spawn.
+func (e *Engine) pauseIfParentPaused(ctx context.Context, parentID, childID uuid.UUID) {
+	parent, err := e.instances.Get(ctx, parentID)
+	if err != nil || parent.State != instance.StatePaused {
+		return
+	}
+	by, err := e.spawnLinks.CascadePausedBy(ctx, parentID)
+	if err != nil {
+		slog.Warn("spawn: failed to read parent's cascade pause", "parentID", parentID, "error", err)
+		return
+	}
+	pauser := parentID
+	if by != nil {
+		pauser = *by
+	}
+	if _, err := e.pauseDescendant(ctx, childID, pauser); err != nil {
+		slog.Warn("spawn: failed to pause child of paused parent", "parentID", parentID, "childID", childID, "error", err)
+	}
 }
 
 // preflightSpawnChildren refuses to start a workflow whose spawn_workflow nodes

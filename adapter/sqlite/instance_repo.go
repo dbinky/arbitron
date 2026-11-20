@@ -792,7 +792,7 @@ func (r *InstanceRepo) ListActiveChildren(ctx context.Context, parentID uuid.UUI
 // ListChildren returns every child, including terminal intermediates that may
 // still own active descendants. rowid breaks created_at's one-second ties.
 func (r *InstanceRepo) ListChildren(ctx context.Context, parentID uuid.UUID) ([]instance.ChildRef, error) {
-	const q = `SELECT id, state FROM instances
+	const q = `SELECT id, state, paused_by_instance_id FROM instances
   WHERE parent_instance_id = ?
   ORDER BY created_at ASC, rowid ASC`
 	rows, err := r.db.QueryContext(ctx, q, uuidToString(parentID))
@@ -803,14 +803,19 @@ func (r *InstanceRepo) ListChildren(ctx context.Context, parentID uuid.UUID) ([]
 	out := []instance.ChildRef{}
 	for rows.Next() {
 		var raw, state string
-		if err := rows.Scan(&raw, &state); err != nil {
+		var pausedBy sql.NullString
+		if err := rows.Scan(&raw, &state, &pausedBy); err != nil {
 			return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
 		}
 		id, err := parseUUID(raw)
 		if err != nil {
 			return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
 		}
-		out = append(out, instance.ChildRef{ID: id, State: instance.State(state)})
+		ref := instance.ChildRef{ID: id, State: instance.State(state)}
+		if ref.PausedBy, err = nullableUUID(pausedBy); err != nil {
+			return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
+		}
+		out = append(out, ref)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
@@ -831,6 +836,93 @@ func (r *InstanceRepo) MarkSubtreeCancelRequested(ctx context.Context, id uuid.U
 		return fmt.Errorf("recording subtree cancellation request for %s: %w", id, err)
 	}
 	return nil
+}
+
+// MarkCascadePaused moves id to paused for an ancestor's cascading pause in ONE
+// conditional write: the state predicate turns a run that finished (or was
+// paused) after the cascade listed it into a no-op rather than a resurrection.
+func (r *InstanceRepo) MarkCascadePaused(ctx context.Context, id, by uuid.UUID) (bool, error) {
+	const q = `UPDATE instances
+   SET paused_from_state = state,
+       state = 'paused',
+       paused_by_instance_id = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+ WHERE id = ? AND state IN ('running','waiting','queued')`
+	res, err := r.db.ExecContext(ctx, q, uuidToString(by), uuidToString(id))
+	if err != nil {
+		return false, fmt.Errorf("cascade-pausing %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cascade-pausing %s: %w", id, err)
+	}
+	return n == 1, nil
+}
+
+// ClaimCascadePause reads and clears id's marker in one transaction, so two
+// concurrent resumes cannot both claim the same child.
+func (r *InstanceRepo) ClaimCascadePause(ctx context.Context, id, by uuid.UUID) (instance.State, bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, fmt.Errorf("claiming cascade pause of %s: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var from sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT paused_from_state FROM instances
+ WHERE id = ? AND state = 'paused' AND paused_by_instance_id = ?`,
+		uuidToString(id), uuidToString(by)).Scan(&from)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("claiming cascade pause of %s: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE instances
+   SET paused_by_instance_id = NULL, paused_from_state = NULL
+ WHERE id = ?`, uuidToString(id)); err != nil {
+		return "", false, fmt.Errorf("claiming cascade pause of %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, fmt.Errorf("claiming cascade pause of %s: %w", id, err)
+	}
+	return instance.State(from.String), true, nil
+}
+
+// ClearCascadePause drops id's cascade-pause marker.
+func (r *InstanceRepo) ClearCascadePause(ctx context.Context, id uuid.UUID) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE instances
+   SET paused_by_instance_id = NULL, paused_from_state = NULL
+ WHERE id = ?`, uuidToString(id)); err != nil {
+		return fmt.Errorf("clearing cascade pause of %s: %w", id, err)
+	}
+	return nil
+}
+
+// CascadePausedBy returns the ancestor whose cascading pause stopped id.
+func (r *InstanceRepo) CascadePausedBy(ctx context.Context, id uuid.UUID) (*uuid.UUID, error) {
+	var by sql.NullString
+	err := r.db.QueryRowContext(ctx,
+		`SELECT paused_by_instance_id FROM instances WHERE id = ?`, uuidToString(id)).Scan(&by)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading cascade pause of %s: %w", id, err)
+	}
+	return nullableUUID(by)
+}
+
+// nullableUUID parses a nullable TEXT uuid column; NULL or empty is nil.
+func nullableUUID(v sql.NullString) (*uuid.UUID, error) {
+	if !v.Valid || v.String == "" {
+		return nil, nil
+	}
+	id, err := parseUUID(v.String)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
 }
 
 // orphanAncestorWalkLimit exceeds MaxSpawnDepth and bounds corrupt cycles.

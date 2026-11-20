@@ -54,6 +54,23 @@ func NewInteractiveExecutor(
 	}
 }
 
+// awaitOpenSession parks a run whose interactive session is still open back in
+// waiting, without replaying the opening turn. Only a RUNNING run is moved: one
+// paused or cancelled in the meantime must not be revived.
+func (e *InteractiveExecutor) awaitOpenSession(ctx context.Context, instanceID uuid.UUID) (*NodeResult, error) {
+	inst, err := e.instances.Get(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("interactive: reload instance: %w", err)
+	}
+	if inst.State == instance.StateRunning {
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+			return nil, fmt.Errorf("interactive: return to waiting: %w", err)
+		}
+		e.queueMgr.NotifyCapacityFreed(ctx)
+	}
+	return &NodeResult{IsWait: true}, nil
+}
+
 // Execute reads the orchestration and template files, resolves variable
 // substitutions, streams the first LLM response, writes the node execution
 // record, transitions the instance to waiting, and returns a wait result.
@@ -68,9 +85,18 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// After an interactive session ends, the queue re-starts the instance with
 	// CurrentNodeID still pointing at this node. Returning the stored output here
 	// lets the engine advance to the next node without starting a new conversation.
+	//
+	// A session that has NOT ended has a succeeded record too (written by the
+	// opening turn, step 10) but no output: ending a session always stores one,
+	// an empty map at minimum. Re-entry in that state means the run was paused
+	// while it waited for the human and has been resumed through the run loop;
+	// it goes back to waiting for input instead of advancing with no output.
 	if existing, err := e.nodeExecs.GetByInstanceAndNode(ctx, instanceID, node.ID); err == nil &&
 		existing.Status == instance.NodeStatusSucceeded &&
 		!isGroupResolutionConversation(existing.LLMConversation) {
+		if existing.Output == nil {
+			return e.awaitOpenSession(ctx, instanceID)
+		}
 		return &NodeResult{Output: existing.Output}, nil
 	}
 

@@ -17,6 +17,9 @@ import (
 // contract can be asserted, and HONOURS the visibility argument — a fake that
 // ignored it would make the non-disclosure test unfailable.
 type countingSpawnLinks struct {
+	// The cascade-pause methods are irrelevant to child counts.
+	engine.NoopSpawnLinks
+
 	counts    map[uuid.UUID]int
 	visible   func(instance.ChildVisibility) bool
 	err       error

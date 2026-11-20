@@ -33,6 +33,63 @@ type fakeSpawnLinks struct {
 	unfiltered bool
 	marked     map[uuid.UUID]bool
 	markErr    error
+
+	// Cascade-pause marker store. setState writes through to the fixture's
+	// instance repo so MarkCascadePaused changes the state Engine reads, as the
+	// production single-row UPDATE does. refusePause makes MarkCascadePaused
+	// report "no longer pausable" for an id (a run that finished mid-walk).
+	setState    func(uuid.UUID, instance.State)
+	pauseMarks  map[uuid.UUID]pauseMark
+	refusePause map[uuid.UUID]bool
+}
+
+type pauseMark struct {
+	by   uuid.UUID
+	from instance.State
+}
+
+func (f *fakeSpawnLinks) MarkCascadePaused(_ context.Context, id, by uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.states(id)
+	if f.refusePause[id] || (st != instance.StateRunning && st != instance.StateWaiting && st != instance.StateQueued) {
+		return false, nil
+	}
+	if f.pauseMarks == nil {
+		f.pauseMarks = map[uuid.UUID]pauseMark{}
+	}
+	f.pauseMarks[id] = pauseMark{by: by, from: st}
+	f.setState(id, instance.StatePaused)
+	return true, nil
+}
+
+func (f *fakeSpawnLinks) ClaimCascadePause(_ context.Context, id, by uuid.UUID) (instance.State, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.pauseMarks[id]
+	if !ok || m.by != by || f.states(id) != instance.StatePaused {
+		return "", false, nil
+	}
+	delete(f.pauseMarks, id)
+	return m.from, true, nil
+}
+
+func (f *fakeSpawnLinks) ClearCascadePause(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.pauseMarks, id)
+	return nil
+}
+
+func (f *fakeSpawnLinks) CascadePausedBy(_ context.Context, id uuid.UUID) (*uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.pauseMarks[id]
+	if !ok {
+		return nil, nil
+	}
+	by := m.by
+	return &by, nil
 }
 
 func newFakeSpawnLinks(states func(uuid.UUID) instance.State) *fakeSpawnLinks {
@@ -108,7 +165,12 @@ func (f *fakeSpawnLinks) ListChildren(_ context.Context, parentID uuid.UUID) ([]
 	}
 	out := []instance.ChildRef{}
 	for _, c := range f.children[parentID] {
-		out = append(out, instance.ChildRef{ID: c, State: f.states(c)})
+		ref := instance.ChildRef{ID: c, State: f.states(c)}
+		if m, ok := f.pauseMarks[c]; ok {
+			by := m.by
+			ref.PausedBy = &by
+		}
+		out = append(out, ref)
 	}
 	return out, nil
 }
@@ -172,6 +234,9 @@ func newCascadeFixture(t *testing.T) *cascadeFixture {
 		}
 		return inst.State
 	})
+	links.setState = func(id uuid.UUID, st instance.State) {
+		_ = f.instanceRepo.UpdateState(context.Background(), id, st)
+	}
 	f.engine.SetSpawnLinks(links)
 	// The test HOLDS the intervention mock so it can assert the audit trail
 	// directly. Do NOT add a test-only accessor to *Engine for this: an

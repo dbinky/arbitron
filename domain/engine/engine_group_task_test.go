@@ -661,3 +661,34 @@ func TestStartGroupTask_BranchKind_LegacyParentCapturesFreshPins(t *testing.T) {
 	assert.Equal(t, instance.ModelPinsVersionSnapshot, child.ModelPinsVersion)
 	assert.NotNil(t, child.ModelPins, "a v1 snapshot is a non-nil map even with no aliases")
 }
+
+// A group task created while its parent is paused (the launch was in flight
+// when the pause cascade walked the parent's children) starts cascade-paused
+// on behalf of the pause holding the parent, as a spawned child does.
+func TestStartGroupTask_ParentPaused_TaskStartsCascadePaused(t *testing.T) {
+	h := newGroupTaskHarness(t)
+	links := newFakeSpawnLinks(func(id uuid.UUID) instance.State {
+		inst, err := h.instances.Get(context.Background(), id)
+		if err != nil {
+			return instance.StateFailed
+		}
+		return inst.State
+	})
+	links.setState = func(id uuid.UUID, st instance.State) {
+		_ = h.instances.UpdateState(context.Background(), id, st)
+	}
+	h.engine.SetSpawnLinks(links)
+	owner := uuid.New()
+	parent := h.seedParent(t, owner, 0, func(p *instance.Instance) { p.State = instance.StatePaused })
+	req := gtBranchReq(parent)
+
+	require.NoError(t, h.engine.StartGroupTask(ctxAs(owner), req))
+
+	got, err := h.instances.Get(context.Background(), req.TaskInstanceID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StatePaused, got.State)
+	by, err := links.CascadePausedBy(context.Background(), req.TaskInstanceID)
+	require.NoError(t, err)
+	require.NotNil(t, by)
+	assert.Equal(t, parent.ID, *by)
+}

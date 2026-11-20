@@ -49,6 +49,26 @@ func (NoopSpawnLinks) ListOrphanedActiveChildren(context.Context) ([]uuid.UUID, 
 	return []uuid.UUID{}, nil
 }
 
+// MarkCascadePaused never pauses: with no links there is no cascade to mark.
+func (NoopSpawnLinks) MarkCascadePaused(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+// ClaimCascadePause never claims.
+func (NoopSpawnLinks) ClaimCascadePause(context.Context, uuid.UUID, uuid.UUID) (instance.State, bool, error) {
+	return "", false, nil
+}
+
+// ClearCascadePause records nothing.
+func (NoopSpawnLinks) ClearCascadePause(context.Context, uuid.UUID) error {
+	return nil
+}
+
+// CascadePausedBy always reports no cascade pause.
+func (NoopSpawnLinks) CascadePausedBy(context.Context, uuid.UUID) (*uuid.UUID, error) {
+	return nil, nil
+}
+
 // SetSpawnLinks wires the link-addressed read surface used by the cancel
 // cascade and the list enricher's child counts.
 //

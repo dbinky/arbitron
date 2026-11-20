@@ -121,6 +121,9 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 		return nil, fmt.Errorf("spawn_workflow %q: look up awaited child: %w", node.ID, err)
 	}
 	if link != nil {
+		if !link.ChildState.IsTerminal() {
+			return e.resuspend(ctx, node, link, instanceID)
+		}
 		return e.resumeFromLink(ctx, node, link)
 	}
 
@@ -174,12 +177,21 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	// waiting_until stays NULL: this wait has no deadline, so the timer recovery
 	// sweep (which filters on a non-null waiting_until) must not pick it up. Same
 	// choice the webhook executor makes for an untimed wait.
-	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+	//
+	// The write is CONDITIONAL on the parent still running: a Pause (or Cancel)
+	// that landed while the child was being created must not be overwritten.
+	// A parent that is no longer running halts here with a wait result; a later
+	// Resume re-enters, finds the link, and suspends through resuspend.
+	parked, err := e.spawnWaits.SuspendRunning(ctx, instanceID)
+	if err != nil {
 		// The child is already enqueued and is deliberately NOT rolled back: it may
 		// already be executing side effects, and cancelling it from a failing
 		// parent would layer a second failure on the first. It stays visible in the
 		// hierarchy as an orphaned-but-linked run.
 		return nil, fmt.Errorf("spawn_workflow %q: set waiting state: %w", node.ID, err)
+	}
+	if !parked {
+		return &NodeResult{IsWait: true, Output: output}, nil
 	}
 
 	// THE LOST-WAKE GUARD.
@@ -206,6 +218,34 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
 	return &NodeResult{IsWait: true, Output: output}, nil
+}
+
+// resuspend handles re-entry while the awaited child is still active.
+//
+// A parent that was paused while waiting is resumed through the run loop, so
+// it arrives here `running`. Returning a bare wait result would end the walk
+// with the parent stranded in `running`, where the child's terminal wake —
+// which only acts on a WAITING parent — can never reach it. So a running parent
+// is moved back to `waiting` (conditionally: a parent paused or cancelled in the
+// meantime must not be revived), and the same lost-wake re-read as the first
+// execution then catches a child that finished in between.
+func (e *SpawnWorkflowExecutor) resuspend(ctx context.Context, node workflow.Node, link *instance.ChildLink, instanceID uuid.UUID) (*NodeResult, error) {
+	res, err := e.resumeFromLink(ctx, node, link)
+	if err != nil {
+		return nil, err
+	}
+	parked, err := e.spawnWaits.SuspendRunning(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("spawn_workflow %q: return to waiting: %w", node.ID, err)
+	}
+	if !parked {
+		return res, nil // not running (already waiting, paused or cancelled): halt as before
+	}
+	if routed, claimed := e.recoverLostWake(ctx, node, instanceID); claimed {
+		return routed, nil
+	}
+	e.queueMgr.NotifyCapacityFreed(ctx)
+	return res, nil
 }
 
 // recoverLostWake re-reads the awaited child after the parent's `waiting`
