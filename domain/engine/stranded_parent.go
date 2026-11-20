@@ -33,9 +33,34 @@ func (e *Engine) enterRunning(ctx context.Context, id uuid.UUID) (context.Contex
 	if err := e.instances.UpdateState(ctx, id, instance.StateRunning); err != nil {
 		return nil, err
 	}
+	return e.registerWalkerLocked(id), nil
+}
+
+// walkerReg is one walker's registration in e.contexts. Its pointer identity
+// is what lets a walker remove only its OWN entry: a successor registered under
+// the same instance id (Resume, Retry) is a different *walkerReg.
+type walkerReg struct {
+	cancel context.CancelFunc
+}
+
+type walkerRegKey struct{}
+
+// registerWalkerLocked registers a fresh walker for id and returns its run
+// context, which carries the registration. Callers hold e.mu.
+func (e *Engine) registerWalkerLocked(id uuid.UUID) context.Context {
 	runCtx, cancel := context.WithCancel(context.Background())
-	e.contexts[id] = cancel
-	return runCtx, nil
+	reg := &walkerReg{cancel: cancel}
+	e.contexts[id] = reg
+	return context.WithValue(runCtx, walkerRegKey{}, reg)
+}
+
+// deregisterWalkerLocked removes id's registration only if it is the one
+// carried by runCtx (the calling walker's own). Callers hold e.mu.
+func (e *Engine) deregisterWalkerLocked(runCtx context.Context, id uuid.UUID) {
+	mine, _ := runCtx.Value(walkerRegKey{}).(*walkerReg)
+	if mine != nil && e.contexts[id] == mine {
+		delete(e.contexts, id)
+	}
 }
 
 func (e *Engine) AdoptStrandedParent(ctx context.Context, parentID uuid.UUID, nodeID string) (bool, error) {

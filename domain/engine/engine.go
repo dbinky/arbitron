@@ -75,7 +75,7 @@ type Engine struct {
 	// rather than a data race — see RegisterExecutor.
 	executorsFrozen bool
 	mu              sync.Mutex
-	contexts        map[uuid.UUID]context.CancelFunc
+	contexts        map[uuid.UUID]*walkerReg
 	wg              sync.WaitGroup
 }
 
@@ -103,7 +103,7 @@ func NewEngine(
 		queueManager:        queueManager,
 		queueRepo:           queueRepo,
 		defaultAgentBackend: defaultAgentBackend,
-		contexts:            make(map[uuid.UUID]context.CancelFunc),
+		contexts:            make(map[uuid.UUID]*walkerReg),
 		// Non-nil from birth so cascadeCancel never has to nil-check a
 		// containment control. The composition root overwrites this with the real
 		// repository via SetSpawnLinks.
@@ -1063,16 +1063,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			e.queueManager.NotifyCapacityFreed(context.Background())
 		}
 	}()
-	// parked is set when the walker deregistered itself in the pause handoff
-	// (parkWalker). Its exit must then NOT delete the registration again: by
-	// that time a Resume may have registered a fresh walker under the same id.
-	parked := false
+	// The walker removes only its OWN registration on exit: by then a Resume or
+	// Retry may have registered a successor under the same id, and deleting
+	// that would make the live successor look stranded (AdoptStrandedParent).
 	defer func() {
-		if parked {
-			return
-		}
 		e.mu.Lock()
-		delete(e.contexts, instanceID)
+		e.deregisterWalkerLocked(ctx, instanceID)
 		e.mu.Unlock()
 	}()
 
@@ -1202,7 +1198,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					capacityFreed = false
 					continue
 				}
-				parked = true
 			}
 			return
 		}
@@ -1990,8 +1985,7 @@ func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) er
 		e.publishResumedEvent(instanceID)
 		return nil
 	}
-	runCtx, cancel := context.WithCancel(context.Background())
-	e.contexts[instanceID] = cancel
+	runCtx := e.registerWalkerLocked(instanceID)
 	e.mu.Unlock()
 
 	e.publishResumedEvent(instanceID)
@@ -2012,7 +2006,7 @@ func (e *Engine) parkWalker(ctx context.Context, instanceID uuid.UUID) bool {
 	if fresh, err := e.instances.Get(ctx, instanceID); err == nil && fresh.State == instance.StateRunning {
 		return false
 	}
-	delete(e.contexts, instanceID)
+	e.deregisterWalkerLocked(ctx, instanceID)
 	return true
 }
 
@@ -2101,8 +2095,8 @@ func (e *Engine) cancelAuthorized(ctx context.Context, instanceID uuid.UUID) err
 			return err
 		}
 		e.mu.Lock()
-		if cancelFn, ok := e.contexts[instanceID]; ok {
-			cancelFn()
+		if reg, ok := e.contexts[instanceID]; ok {
+			reg.cancel()
 		}
 		e.mu.Unlock()
 		e.publishCancelledEvent(instanceID)

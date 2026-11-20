@@ -153,3 +153,49 @@ func TestStartInstance_RegistersWalkerBeforeRunningIsVisible(t *testing.T) {
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted, instance.StateFailed)
 	assert.Equal(t, instance.StateCompleted, inst.State)
 }
+
+// A finishing walker's exit must remove only ITS OWN registration. Here the run
+// fails and is retried before the failed walker's exit defers run: the retry
+// registers a fresh walker, and the old walker's unconditional delete then
+// removed it, so the live retry looked stranded and could be adopted (handed to
+// a second walker).
+func TestWalkerExit_DoesNotDeregisterSuccessor(t *testing.T) {
+	f := newStrandFixtures()
+	f.workflowRepo.add(&workflow.Workflow{
+		Name:  "strand-successor-wf",
+		Nodes: []workflow.Node{{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true}},
+	})
+	var calls int
+	retryStarted := make(chan struct{})
+	release := make(chan struct{})
+	f.executor.onNode("A", func(context.Context, workflow.Node, *variable.VariableStore) (*engine.NodeResult, error) {
+		calls++
+		if calls == 1 {
+			return nil, assert.AnError
+		}
+		close(retryStarted)
+		<-release
+		return &engine.NodeResult{Output: map[string]any{}}, nil
+	})
+	var retried bool
+	f.instanceRepo.onSetFailed = func(id uuid.UUID) {
+		if retried {
+			return
+		}
+		retried = true
+		require.NoError(t, f.engine.Retry(bgAdmin(), id, nil))
+	}
+
+	id, _, err := f.engine.Trigger(context.Background(), "strand-successor-wf", nil, "normal")
+	require.NoError(t, err)
+	<-retryStarted
+	time.Sleep(50 * time.Millisecond) // let the failed walker finish exiting
+
+	ok, err := f.engine.AdoptStrandedParent(context.Background(), id, "A")
+	require.NoError(t, err)
+	assert.False(t, ok, "the retry's live walker must still be registered")
+
+	close(release)
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted, instance.StateFailed)
+	assert.Equal(t, instance.StateCompleted, inst.State)
+}
