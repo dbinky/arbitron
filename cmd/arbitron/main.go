@@ -1632,7 +1632,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		seedWorkflows(ctx)
 		reportPinPreflight(ctx, profileSvc, notifRepo, externalNotifier, &ds.background, logger)
 		return ds.startRuntime(ctx, authMode,
-			engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr),
+			engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr).WithStrandedAdoption(eng),
 			engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng))
 	}
 	return ds, nil
