@@ -42,9 +42,9 @@ Out of scope: interactive session moves (Phase 4; interactive steps stay pinned 
 
 ### 3.1 Workspace homes (`domain/runner`, ledger extension)
 - **Job:** record, per run, the runner that currently holds a working copy of the workspace (its **home**) and a home generation. With no home, only the committed server checkpoint exists. The built-in runner has a mutable working copy and a separate immutable committed checkpoint, like remote runners.
-- **Lifecycle:** each handoff bumps the generation and records a move entry (from, to, reason, bytes, time), which is the workspace's history of homes. It appends `workspace.moved` to the pool event log.
+- **Lifecycle:** each handoff bumps the generation and records a move entry (from, to, reason, bytes, time), which is the workspace's history of homes. Moves persist the exact target job/invocation/operation and from/to generation when an execution exists, so trace consumers never infer an edge by timestamps. It appends `workspace.moved` to the pool event log.
 - **Read surface:** the home history is exposed on the instance and trace reads (MCP `trace_get` and the HTTP instance endpoints), so Phase 5 can render it.
-- **Exactly one writer:** acquire a durable resource lease before executing, moving, restoring, gathering or deleting a workspace. Handoff fences the old writer before the target executes; job, workspace and session generations are checked together. A suspect runner is quarantined from new work but retains ownership until loss; no early handoff during the liveness grace.
+- **Exactly one writer:** acquire a durable resource lease before executing, moving, restoring, gathering or deleting a workspace. A home row records location; a distinct token/generation/operation holder is required even for concurrent work on one runner. Claims do not expire into takeover during suspect/restart grace. Handoff fences the old writer before the target executes; job, workspace and session generations are checked together. A suspect runner is quarantined from new work but retains ownership until loss; no early handoff during the liveness grace.
 
 ### 3.2 Stay-versus-move placement (extends Phase 1 placement)
 - **Job:** for workspace steps, choose between the current home and the alternatives using the approved tiers (D10):
@@ -57,19 +57,20 @@ Out of scope: interactive session moves (Phase 4; interactive steps stay pinned 
 
 ### 3.3 Workspace sync (`domain/runner` service, `adapter/http` transfer endpoints, runner adapter)
 - **Job:** keep the committed server checkpoint authoritative and move bytes off the control channel.
-  - **Manifest:** a path, size and hash listing of a workspace, computed from the immutable committed snapshot and keyed by checkpoint content/version, not merely home generation (several successful steps may share a home). Include deletions, file modes, symlinks and required Git metadata; reject unsupported file types explicitly. External linked-worktree metadata must become self-contained, never copied as dangling server paths (RR-08).
+  - **Manifest:** a path, size and hash listing of a workspace, computed from the immutable committed snapshot and keyed by checkpoint content/version, not merely home generation (several successful steps may share a home). Include deletions, file modes, symlinks and required Git metadata; reject unsupported file types explicitly. External linked-worktree metadata must become self-contained, never copied as dangling server paths (RR-08). P3 T2 materializes alternate/index/ref/merge objects into a private checkpoint copy without changing the user repository; required promisor objects missing locally fail visibly without implicit network fetch.
   - **Pull:** before a workspace step on a remote runner, the runner compares its copy (if any) with the server manifest and fetches only the differing files. It reuses its copy only when home generation AND committed checkpoint version match and no interrupted/failed attempt dirtied it; otherwise restore the committed snapshot first.
   - **Push:**
     - After a workspace-changing step, the runner sends changed files and deletions.
-    - The server stages and hash-verifies a full next checkpoint, then publishes its immutable reference under the resource/job fence. Only the committed reference changes atomically; a multi-file in-place copy is not atomic. Server consumers restore/read the published version at safe boundaries.
-    - **Only then** does the dispatcher mark the step complete.
+    - The server stages and hash-verifies a full next checkpoint, then publishes its immutable reference under the resource/job fence. A prepared catalog row does not change committed progress. The engine/turn/resource transaction validates exact job/resource/session fences and atomically promotes the exact candidate with result/variables/continuation and the committed home pointer; a multi-file in-place copy is not atomic. Server consumers restore/read the published version at safe boundaries.
+    - **Only the validated engine/turn/resource commit** marks the step complete; the dispatcher supplies the exact prepared receipt.
   - **Transport:**
     - Chunked parts of about 64 MB, resumable. Each part is hash-verified.
     - Separate HTTP requests under `/api/v1/runners/transfers/*`, authenticated by the runner key plus a short-lived transfer token scoped to the job and generation.
     - Per-request read deadlines. Coordination messages ride the Phase 2 WebSocket.
   - **Progress:** published as the moving-workspace execution status.
+- **Initial baseline:** `Engine.prepareWorkspace` invokes the P3 T6 baseline initializer after directory/branch setup and before any dispatcher intent/reservation/resource claim. The bootstrap-only store path captures the initial files; attempts and recovery reuse that committed baseline and cannot snapshot dirty in-flight files.
 - **Built-in runner:** executes at the existing path but snapshots into the separate checkpoint store after success. On interruption, stop/fence the old process tree and restore the last committed checkpoint before recovery. Built-in partial edits cannot mutate the checkpoint of record. The same rule applies to failed pushes and exhaustion on a remote home.
-- **Completion boundary:** retain the previous checkpoint until a durable commit links the result, checkpoint reference, execution identity and next engine continuation/variables. Restart consumes a committed result without executing again; an uncommitted attempt restores its prior checkpoint. The cross-store commit/replay protocol is **UNRESOLVED DEPENDENCY RR-10**, not supplied by today's `NodeExecution` writes.
+- **Completion boundary:** retain the previous checkpoint until a durable commit links the result, checkpoint reference, execution identity and next engine continuation/variables. Restart consumes a committed result without executing again; an uncommitted attempt restores its prior checkpoint. Implementation owners are P3 T1/T2 schema and prepared immutable artifacts, T3 exclusive resource claims, T5 exact completion receipts/validated commit and suspension replay, T6 attempt producers, and T13 real-root crash/sink tests. Today's `NodeExecution` writes do not supply this protocol. Waiting nodes commit successful suboperations at suspension and release execution slots while retaining their durable invocation/child-link identity.
 
 ### 3.4 Script bundles and remote process steps
 - **Job:** ship what a remote process step needs, and nothing more.
@@ -87,7 +88,7 @@ Out of scope: interactive session moves (Phase 4; interactive steps stay pinned 
   - Remote job leases are extended by a configurable restart grace.
   - Every `running` run re-enters its current step through `StartInstance`, which leads to one of three outcomes:
     - **Remote job:** adopted when its runner reconnects within the grace. Otherwise the runner is lost and the step is re-placed.
-    - **Built-in job:** if uncommitted, stop/fence any surviving subprocess, restore the last committed checkpoint and repeat the interrupted operation (D7). Never repeat a committed operation just because engine continuation had not yet been persisted.
+    - **Built-in job:** if uncommitted, stop/fence any surviving subprocess, stop and confirm exit of the exact old process group through the supervisor, restore the last committed checkpoint and repeat the interrupted operation (D7). A cancel send alone does not authorize same-directory reuse; the runner local resource gate waits for exit before restore/new launch. Never repeat a committed operation just because engine continuation had not yet been persisted.
     - **No live job:** replay any committed result/continuation before creating an invocation; otherwise continue the uncommitted operation. `CurrentNodeID` alone cannot distinguish these cases.
 - **Execution status:** recovering is shown while a step waits for re-attach or re-placement. Events `job.recovered` and `job.adopted` are appended to the pool event log.
 
@@ -100,8 +101,8 @@ Out of scope: interactive session moves (Phase 4; interactive steps stay pinned 
 - **Drain (new; admin only, audited `runner.drain`):**
   1. Stop new placements.
   2. Let active steps finish.
-  3. **Move/release** homed workspaces at committed boundaries. Persist a fenced handoff to an eligible target and its pull, then delete the drained copy. If no target is eligible, retain a visible blocked drain item naming missing capacity; merely releasing to server storage must not report a successful drain while affected work cannot continue.
-  4. **Wait** for interactive sessions; Phase 4 moves them at turn boundaries.
+  3. **Move/release** homed workspaces at committed boundaries. Use a durable pull-only maintenance operation to transfer the exact committed ref to an eligible target; verify its manifest/resource receipt, then finalize handoff and delete the drained copy. An unrelated future workflow step is not the drain completion producer. If no target is eligible, retain a visible blocked drain item naming missing capacity; merely releasing to server storage must not report a successful drain while affected work cannot continue.
+  4. **Wait** for interactive sessions, including existing built-in interactive runs/resolutions counted by the engine session inventory; Phase 4 moves them at turn boundaries.
 - **Progress:** remaining active steps, homed workspaces and sessions, plus any capacity preventing completion (for example, no other runner for the model group of a pending session).
 - **Interfaces:** `runner_drain` over MCP and REST. `runner_get` includes drain progress.
 - **Key revocation (Phase 2):** now also releases homes and recovers workspace steps through §3.5.
@@ -130,7 +131,7 @@ Out of scope: interactive session moves (Phase 4; interactive steps stay pinned 
 
 ## 5. Data Provenance
 
-Repository verification distinguishes existing producers from required implementation. **UNRESOLVED DEPENDENCY** means the named value/capability has no implemented producer or verified source yet; a proposed component, earlier phase or research observation does not resolve it. The RR identifiers group cross-phase plan tasks; every occurrence remains open until implementation/source verification. Upstream unresolved inputs propagate to their consumers.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Leaf input | Consumer | Verified producer or explicit dependency |
 |---|---|---|
@@ -149,7 +150,7 @@ Repository verification distinguishes existing producers from required implement
 | Live/terminal remote job reports and leases at boot | Adoption/fencing | **UNRESOLVED DEPENDENCY RR-01/RR-05:** Phase 1 ledger plus Phase 2 held/terminal-job reconciliation, retained results and output cursors, with startup grace. |
 | Parallel branch/child workspace identity, gather/server mutations | Independent placement and safe boundaries | `domain/engine/group_launcher.go:GroupLauncher` and `domain/engine/group_workspace.go:GroupWorkspace`; `domain/engine/working_area.go:WorkingArea`. **UNRESOLVED DEPENDENCY RR-08/RR-11:** integrate their actual mutation/finalization call sites into checkpoint/resource ownership, including group staging for Phase 4. |
 | Transfer/session tokens, content-addressed bundles/cache, progress and deletion inventory | Transfer endpoints/drain/cleanup | **UNRESOLVED DEPENDENCY RR-08/RR-09:** issuer, scoped authenticated handlers, resumable transfer state and runner-copy/tombstone inventory do not exist. Deletion needs a resource-generation fence and must not delete a newer copy. |
-| Archive compression | Transfers | **UNRESOLVED DEPENDENCY RR-15:** no zstd dependency exists in `go.mod`; plans must vet/add one or explicitly select standard-library gzip, with round-trip fixtures. This previously unresolved choice remains open. |
+| Archive compression | Transfers | **PLANNED RR-15:** P3 T2/T8/T9 select standard-library tar+gzip and require round-trip/integrity fixtures; no zstd dependency is added. See shared contracts §§16/19. |
 | Drain state, blockers and run-visible home history | Operator APIs, Phase 5 | **UNRESOLVED DEPENDENCY RR-08/RR-16:** implement audited admin service and persistent progress/history/read projections; no current producer exists. |
 
 ### Deferred to plans

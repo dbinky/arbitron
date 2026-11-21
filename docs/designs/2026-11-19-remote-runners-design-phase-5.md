@@ -79,35 +79,36 @@ Out of scope:
 - **Revoke:** a confirmation stating that the runner disconnects immediately and that affected work recovers automatically, possibly repeating interrupted steps. It recommends draining first.
 
 ### 3.5 Pool data hooks (`hooks/usePool*`, `hooks/useRunner*`)
-- **Job:** load REST snapshots, then apply live events from the system WebSocket. When the socket is disconnected, show a stale-data banner and poll.
+- **Job:** load REST snapshots, then invalidate and reload authoritative snapshots on relevant system WebSocket events. When the socket is disconnected, show a stale-data banner and poll.
 
 ## 4. Data flow
 1. A route mounts and the hook fetches REST snapshots: `runner_list` / `runner_get` (Phase 1), keys (Phase 2), the pool event log (Phase 1), and the enriched instance list (Phase 1 execution status).
-2. The hook subscribes to `/api/v1/ws` and merges events: `runner.*` and `source.*` (Phases 1–2), `execution.status` (Phases 1 and 3), `workspace.moved` (Phase 3), and session moves (Phase 4).
+2. The hook subscribes to `/api/v1/ws` and invalidates snapshots on events: `runner.*` and `source.*` (Phases 1–2), `execution.status` (Phases 1 and 3), `workspace.moved` (Phase 3), and session moves (Phase 4).
 3. Countdowns are computed client-side from reset timestamps.
-4. The run graph reads the trace placement fields (Phase 1), the home history (Phase 3) and session moves (Phase 4) through the extended trace and instance APIs. Their runner fields do not exist today; Phase 1/3/4 read-model extensions are prerequisites, not data the UI can infer.
+4. The run graph reads each visible owner's trace placement fields (Phase 1), the home history (Phase 3) and session moves (Phase 4) through the extended trace and instance APIs. Phase 1/3/4 extensions and P5 T7 per-owner trace loads are required producers, not values inferred by the UI.
 
 ## 5. Data Provenance
 
-Repository verification distinguishes existing producers from required implementation. **UNRESOLVED DEPENDENCY** means the named value/capability has no implemented producer or verified source yet; a proposed component, earlier phase or research observation does not resolve it. The RR identifiers group cross-phase plan tasks; every occurrence remains open until implementation/source verification. Upstream unresolved inputs propagate to their consumers.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
-| Rendered leaf input | Verified producer or explicit dependency |
-|---|---|
-| Runner identity/labels/limits, availability/compatibility and reason | **UNRESOLVED DEPENDENCY RR-01/RR-05/RR-16:** Phase 1 registry/service and Phase 2 admission/hub REST snapshots/events must be implemented. No existing `runner_list`/`runner_get` endpoint supplies these fields. |
-| Per-model-family sources, exact-model capacity reasons, auth/exhaustion/headroom/reset windows and last health check | **UNRESOLVED DEPENDENCY RR-02/RR-03/RR-16:** upstream inventory/classifier/prober and read DTOs. Browser countdown uses the server's normalized absolute reset timestamp; elapsed time alone does not turn a source green. |
-| Active/queued operations, slot usage, per-machine distribution | **UNRESOLVED DEPENDENCY RR-01/RR-16:** derive from queued intents and offered/running assignments (not workflow counts); preserve separate active chat runner, workspace home, session pin and parallel branches. |
-| CPU/memory/pressure/load/disk/thermal/uptime/cores/RAM, version and timestamp samples | **UNRESOLVED DEPENDENCY RR-05/RR-06/RR-16:** Phase 2 OS probes, hub recent-sample window and read/events. All OS metrics currently lack producers, including the Linux built-in equivalents. Unknown/stale/unsupported values render explicitly. |
-| Logged-out alerts and actionable compatibility/disk/drain/recovery failures | **UNRESOLVED DEPENDENCY RR-03/RR-08/RR-16:** upstream monitor/mobility event producers and persisted reasons; no client inference from missing measurements or a dropped socket. |
-| Recent events/causes, actor names and run/workspace/session links | **UNRESOLVED DEPENDENCY RR-01/RR-16:** bounded pool event log, service authorization and filtered REST/WebSocket DTOs. Hidden run IDs/names/prompts must not enter browser payloads; actor identity originates in `domain/identity/identity.go:FromContext`. |
-| Key metadata (name, claimed machine/runner, created and last use), one-time secret/create and revoke results | **UNRESOLVED DEPENDENCY RR-05/RR-16:** Phase 2 key service/admin-auth REST DTOs are absent. Read secret only from the create response, discard on close; no event or key-list recovery of it. |
-| Revocation confirmation and setup snippet | Spec-backed UI copy plus **UNRESOLVED DEPENDENCY RR-05/RR-07:** validated installer config fields and workspace-root instructions. Confirmation must explain immediate disconnect, repeated effects and drain recommendation and send the required service acknowledgment. |
-| Run state and current-node baseline | `domain/instance/instance.go:Instance`; `domain/engine/enricher.go:InstanceEnricher`; `dashboard/src/api/types.ts:InstanceState`. Capacity/slot/move/recovery are separate execution projections, not additional InstanceState values. |
-| Per-operation wait/move/recovery state/reason/reset/progress | **UNRESOLVED DEPENDENCY RR-01/RR-08/RR-12/RR-16:** Phase 1 queued intents, Phase 3 progress/recovery, Phase 4 pending turns and extended instance read models. Idle interactive capacity recovery must also render while InstanceState is waiting. |
-| Per-node runner/source/reason and attempt history | Existing record `domain/instance/instance.go:NodeExecution`; **UNRESOLVED DEPENDENCY RR-16:** Phase 1 trace placement fields/HTTP DTOs and live assignment events are absent today, including failed attempts and self-persisted interactive first turns. |
-| Home history, branch assignments and drain progress/blockers | **UNRESOLVED DEPENDENCY RR-08/RR-11/RR-16:** Phase 3 resource/history/drain projections. Independent branches originate in `domain/engine/group_launcher.go:GroupLauncher`, not a single parent runner field. |
-| Session pin, restart/loss notice and restoration error | **UNRESOLVED DEPENDENCY RR-12/RR-13/RR-16:** Phase 4 conversation/move fields, durable notices and events; reasoning stripping and uncertain Claude context emit notices even if import succeeds. |
-| Current viewer's admin flag | `adapter/http/me_handler.go:MeHandler.Me` emits `meView.IsAdmin` from `domain/identity/identity.go:Identity.IsAdmin`; `dashboard/src/api/types.ts:Me` supplies the client shape. The server enforces key authorization regardless of UI flags. |
-| Event delivery and polling fallback | Existing transport `dashboard/src/hooks/useSystemWebSocket.ts:useSystemWebSocket` and `adapter/http/system_stream_handler.go:SystemStreamHandler.HandleWebSocket`; polling precedent `dashboard/src/hooks/useGraphState.ts:GRAPH_STATE_POLL_MS`. **UNRESOLVED DEPENDENCY RR-16:** runner event schemas/snapshot reconciliation need server and client producers, including version/cursor handling to avoid replaying stale updates after REST reload. |
+| Rendered leaf input | Required production producer | Client/root consumer and sink proof |
+|---|---|---|
+| Runner identity/labels/limits/liveness/compatibility/reason | P1 registry/service/DTO, P2 hub/admission, roots P1 T16/P2 T10 | P5 T1 decoder → T2 authoritative snapshots → T3/T5 views → T8 App/real-root browser |
+| Sources/model families/exact-model wait/auth/exhaustion/reset/headroom/probe time | P1 inventory/classifiers/HealthMonitor and service DTO; remote P2 sources/heartbeats | T1/T3/T5; reset countdown never mutates health; unavailableReason is hard unavailable cause, distinct from logout |
+| Operation assignments/slots/queued/distribution | P1 durable ledger/ExecutionStatusProjector and enricher; P3 resource moves; P4 pending turn/move | T2/T6 authorized list snapshots; active chat runner, workspace home, session pin and parallel jobs stay distinct |
+| CPU/memory/pressure/load/disk/thermal/uptime/cores/RAM/current timestamp and recent window | P2 OS telemetry adapters, Hub.Latest/Window and built-in loop; P2 T12 DTO/window | T1 decode → T3/T5 shared timestamp freshness helper; stale/zero/future/unsupported samples are unavailable even with connected socket |
+| Alerts and persisted disk/transfer/blocked recovery/drain causes | P1 pool event log/monitor, P3 mobility/recovery/drain projections, P4 session recovery | T3 poolModel and detail view display actual server reasons; no client inference from empty measurements |
+| Events/actor and visible run/resource/session links | P1 EventRecorder/Service.Events, `identity.FromContext`, HTTP filtered system stream | T1/T2 event-log display; server visibility filtering authoritative; browser never receives hidden identity |
+| Key metadata/create plaintext/revoke result/setup | P2 KeyService and REST/admin audit; installer/system config setup fields | T4 modals keep secret in lifetime-bound component state only; T8 real server create/list/stream canary proof |
+| Current viewer admin flag | Existing MeHandler.Me → meView.IsAdmin | T4 controls; server rechecks every mutation |
+| Run state/current node baseline | Existing Instance/InstanceEnricher/InstanceState | T6 preserves existing state vocabulary; execution states remain separate projection |
+| Trace placement and failed attempts | P1 dispatcher placement sink → execution record/trace DTO; P3 completion receipts | T7 root AND visible branch/child traces loaded through existing getTrace/get; keyed by owner+definition node |
+| Home/move history and exact move-to-operation linkage | P3 HomeStore.History/WorkspaceHistorySource; targetJobId/invocationId/operationId and generations in P3 T3/T6/T12 | T7 joins exact placement job; drain-only moves remain history without invented execution edge |
+| Runner detail homes/drain progress/pinned sessions | P3 T12/T14 service projections; P4 T14 exact active session index | T5 getRunner response, no nil-index release workaround |
+| Interactive pin/context loss/restart/current generation | P4 T1/T6/T8 durable fields; P4 T9/T12 full-identity events/history | T7 actual useInteractiveSession clears partial output/discards superseded frames; InteractivePanel persists notices after reload; T8 browser sink |
+| REST/event reconciliation/polling | Existing system socket; P1–P4 authorized list/detail snapshots | T2 events invalidate serialized/coalesced loads. No cross-endpoint atomic cursor is inferred from timestamp or event-log ID; epoch guards discard stale HTTP responses |
+
+All rows have named planned producers, root wiring and final consumers. They remain mandatory implementation scope. Missing/nil/empty production input must fail the relevant root sink or render unavailable, never masquerade as healthy/default data. Optional RR-13/RR-14 native-fidelity research does not block supported visible recovery.
 
 ### Deferred to plans
 - **Read endpoints consumed:** `runner_events` (Phase 1 §3.14) for the pool event log and the home history on instance and trace reads (Phase 3 §3.1). This phase adds no server endpoints.
@@ -120,7 +121,7 @@ Repository verification distinguishes existing producers from required implement
 - The key modals are the only writing UI, and they call the Phase 2 REST endpoints.
 
 ## 7. Error handling
-- **A WebSocket disconnect** shows a stale-data banner and falls back to polling.
+- **A WebSocket disconnect or failed REST freshness read** shows a stale-data banner; disconnected sockets fall back to polling.
 - **A failed REST load** shows an inline error with a retry.
 - **A key create failure** shows the error and does not open the secret panel. If copying fails, the modal says so and keeps the secret visible until it is dismissed.
 - **A revoke failure** shows the error and leaves the key listed.

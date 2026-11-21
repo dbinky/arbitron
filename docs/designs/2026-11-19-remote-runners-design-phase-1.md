@@ -235,7 +235,7 @@ The health monitor runs alongside: probes, then registry transitions, then event
 
 ## 5. Data Provenance
 
-Repository verification distinguishes existing producers from required implementation. **UNRESOLVED DEPENDENCY** means the named value/capability has no implemented producer or verified source yet; a proposed component, earlier phase or research observation does not resolve it. The RR identifiers group cross-phase plan tasks; every occurrence remains open until implementation/source verification. Upstream unresolved inputs propagate to their consumers.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Leaf input | Consumer | Verified producer or explicit dependency |
 |---|---|---|
@@ -263,7 +263,7 @@ Repository verification distinguishes existing producers from required implement
 
 ### Open dependency register (for produce-plans)
 
-All items below remain **UNRESOLVED DEPENDENCY**; upstream references in later phases do not mark them resolved.
+This is the original producer checklist. Use the reviewed task-level ownership and remaining escalations in the shared contracts §§19–23 to determine planning closure; merely citing an earlier phase does not close an item.
 
 | ID | Owning phase(s) | Required producer or verification |
 |---|---|---|
@@ -291,7 +291,7 @@ All items below remain **UNRESOLVED DEPENDENCY**; upstream references in later p
   - Hand the inner selectors to the built-in runner and to probe/validation paths.
   - Pass the routed `ProcessRunner` to `NewScriptExecutor` / `NewToolCallExecutor` (:1082–1083).
   - Start the health monitor in `domainStack.startRuntime`.
-- **SQLite schema and migrations** (determine the current migration head in the plan) for runners, sources, the job ledger, workspace-home records and the pool event log, plus `NodeExecution` placement columns. sqlc queries included.
+- **SQLite schema and migrations** (determine the current migration head in the plan) for runners, sources, the job ledger, workspace-home records and the pool event log, plus `NodeExecution` placement columns. Use the existing hand-written SQL repository pattern.
 - **Built-in runner registration and source population** at boot from the binary checks and the connection store.
 - **Config:** the step-limit default, probe interval, transient backoff bounds, and the event-log retention bound.
 - **Execution-status fields** on enriched instance summaries, MCP/REST instance reads and the dashboard API types. Phase 5 renders them.

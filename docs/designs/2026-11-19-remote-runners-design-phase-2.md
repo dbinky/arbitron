@@ -58,7 +58,7 @@ Out of scope:
 - **Invariants:**
   - Every message is idempotent, keyed by (runner, job, generation, sequence number).
   - Output is numbered per (job, generation). The runner keeps a bounded buffer of unacked output and resends it after a reconnect from the server's last-acked sequence.
-  - A full output buffer applies backpressure or spools locally; it must not silently discard unacked frames. Persist server acknowledgments with accepted output, and retain terminal result/checkpoint references on the runner until durable server acknowledgment. Reconnect may replay terminal results, not just running jobs. The protocol and local spool producers are **UNRESOLVED DEPENDENCY RR-05**.
+  - A full output buffer applies backpressure or spools locally; it must not silently discard unacked frames. Persist server acknowledgments with accepted output, and retain terminal result/checkpoint references on the runner until durable server acknowledgment. Reconnect may replay terminal results, not just running jobs. Implementation owners: P2 T1 protocol, T8/T9 durable runner spool, T2/T4 durable server inbox/cursor, T10 root restart sink tests. Acknowledgment occurs only after server durable receipt; retained results remain replayable through validated completion. These are required planned producers, not claims that code already exists.
   - Protocol version negotiation happens in `hello`.
 
 ### 3.2 Runner endpoint (`adapter/http`)
@@ -82,14 +82,15 @@ Out of scope:
   - **Liveness from heartbeats, not the socket:**
     - About 30 seconds without contact: **suspect**, meaning no new placements and nothing moves.
     - After a configurable grace, initially about 2 minutes: **lost**, meaning its jobs are failed over to the dispatcher.
-  - **Compatibility on `hello`:** OS (remote execution requires Darwin), the protocol and runner version compatibility ranges, then harness/capability versions against the Phase 1 fixture-backed table, then the workspace root against the server's root.
+  - **Compatibility on `hello`:** OS (remote execution requires Darwin), the protocol and runner version compatibility ranges, then harness/capability versions against the Phase 1 fixture-backed table, then the workspace root against the server's root. Released runner range is the current server release through the end of its minor line (minimum current patch, exclusive next minor), with protocol/capability epoch validation. Unstamped builds are visible incompatible for remote execution while built-in execution remains usable.
     - Protocol, runner or harness version mismatch, or a non-macOS remote machine: the authenticated, machine-bound runner is **visible as incompatible, with its reason** and gets no work. Keep a minimal admission envelope readable across versions so protocol refusal can still be explained; do not depend on decoding unsupported execution frames.
     - Root mismatch: the runner is **chat-only, with its reason**.
   - **Reconcile `hello` against the ledger:** each held job is adopted (still leased to this runner), fenced (reassigned or cancelled) or killed (unknown).
   - **Leases:** heartbeats extend the leases of reported jobs. An offer not accepted within its TTL is re-offered with generation + 1.
   - **Runner-originated writes:** all go through the Phase 1 ledger fence.
+  - **Eligibility evidence:** source inventory carries unavailable reasons plus structured operation/backend/provider/endpoint fingerprint/model/axis/tool/model-evidence capabilities. P2 T9 produces them from actual local binary versions/rules/route configuration; T5 translates and T4 persists them; placement and atomic Reserve apply the exact predicate. A connection alias/family alone never proves a compatible remote route. LunaRoute remains hosted-only under existing endpoint validation.
   - **Health:** source health and headroom from heartbeats update the registry and run through the same health-transition rules as Phase 1, including logged-out alerts.
-  - **Telemetry:** the latest telemetry plus a **short in-memory window of recent samples** per runner. This feeds Phase 5 sparklines and the Phase 3 load tiers. It is not persisted history (spec non-goal).
+  - **Telemetry:** freshness uses server receipt minus runner monotonic sample age; placement discards zero/future/older-than-three-heartbeat samples. Disk is sampled on the canonical workspace volume. The latest telemetry plus a **short in-memory window of recent samples** per runner. This feeds Phase 5 sparklines and the Phase 3 load tiers. It is not persisted history (spec non-goal).
   - **Grace:** job TTLs and reconnect processing must not reassign accepted work before the liveness loss deadline. Temporary socket breaks retain assignment ownership; explicit revocation bypasses grace.
   - **Events:** publishes `runner.connected`, `runner.suspect`, `runner.lost`, `runner.reconnected` and `runner.incompatible`, and appends each to the pool event log.
 
@@ -134,7 +135,7 @@ Out of scope:
 
 ## 5. Data Provenance
 
-Repository verification distinguishes existing producers from required implementation. **UNRESOLVED DEPENDENCY** means the named value/capability has no implemented producer or verified source yet; a proposed component, earlier phase or research observation does not resolve it. The RR identifiers group cross-phase plan tasks; every occurrence remains open until implementation/source verification. Upstream unresolved inputs propagate to their consumers.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Leaf input | Consumer | Verified producer or explicit dependency |
 |---|---|---|

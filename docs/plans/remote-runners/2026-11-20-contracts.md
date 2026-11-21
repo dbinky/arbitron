@@ -1,7 +1,9 @@
 # Remote Runners — Shared Plan Contracts (source of truth for names)
 
 Every task file under `docs/plans/remote-runners/` uses the names, signatures,
-file paths, migration numbers and event/audit vocabulary below. A task that needs
+file paths, migration numbers and event/audit vocabulary below. Sections 19–23
+record the reviewed producer graph, execution gates and cross-phase completion
+contract; read them before implementing any task. A task that needs
 a symbol defined by another task copies the signature into its own
 **Interfaces → Consumes** block (tasks must stand alone), but it never renames it.
 
@@ -39,11 +41,11 @@ Spec: `docs/specs/2026-11-19-remote-runners-spec.md`. Designs:
 | # | File stem | Owner task | Content |
 |---|---|---|---|
 | 040 | `040_node_invocations` | P1 T2 | `node_invocations` |
-| 041 | `041_runner_pool` | P1 T5 | `runners`, `runner_sources`, `runner_jobs`, `runner_job_attempts`, `workspace_homes`, `pool_events` |
+| 041 | `041_runner_pool` | P1 T5 | `runners`, `runner_sources`, `runner_jobs`, `runner_job_attempts`, `workspace_homes`, `pool_events`; source inventory availability, confirmation model and persisted job requirements |
 | 042 | `042_node_execution_placement` | P1 T14 | `node_executions` columns `runner_id`, `source_id`, `placement_reason`, `placement_history` (JSON text) |
-| 043 | `043_runner_keys` | P2 T2 | `runner_keys`; `runners` columns for liveness/compat/telemetry versions |
-| 044 | `044_workspace_mobility` | P3 T1 | `workspace_checkpoints`, `home_moves`, `transfer_sessions`, `step_commits`, `drain_items`, `runner_copies` |
-| 045 | `045_interactive_sessions` | P4 T1 | `turn_leases`, `turn_intents`, `session_moves`; `node_executions` columns `session_checkpoint_ref`, `session_pin_runner`, `session_generation` |
+| 043 | `043_runner_keys` | P2 T2 | `runner_keys`, `runner_inbox`, `runner_inbox_cursors`; `runner_sources.capabilities` (runner metadata already belongs to 041) |
+| 044 | `044_workspace_mobility` | P3 T1 | `workspace_checkpoints` (prepared/committed), `workspace_leases`, `home_moves`, `transfer_sessions`, `step_commits`, `step_commit_operations`, suspension records, maintenance operations, `builtin_processes`, `drain_items`, `runner_copies` |
+| 045 | `045_interactive_sessions` | P4 T1 | `turn_leases`, `turn_intents` (accepted binding and request ID), `session_moves`, resolution resources/materialization state; `node_executions` columns `session_checkpoint_ref`, `session_pin_runner`, `session_generation`, `session_invocation_id` |
 
 ## 2. Config (`domain/config/config.go`, loader keys in `adapter/config/loader.go`)
 
@@ -214,15 +216,18 @@ type SourceHealth struct {
 	Auth AuthState; Capacity CapacityState
 	ResetAt *time.Time         // nil = unknown reset (only meaningful when exhausted)
 	Headroom *float64          // 0..1 remaining; nil = unknown (NEVER treated as 0 or 1)
+	ConfirmationModel string  // exact last exhausted request model, stamped by dispatcher outcome
 	Windows []LimitWindow
 	Congested bool; CongestedUntil *time.Time // transient pressure, never exhaustion
 	LastProbeAt *time.Time; LastOutcome OutcomeClass; Detail string // detail is class/reset only, never provider prose
 }
 type Source struct {
 	ID SourceID; RunnerID RunnerID; Kind CredentialKind; CredentialRef string
+	UnavailableReason string // inventory evidence: non-empty => visible but ineligible; independent of auth health
 	Families []modelidentity.Family // advertised served families; empty = none proven
 	Backends []string               // e.g. "claude-code","codex"; chat paths use ""
 	Models []string                 // optional exact-model allowlist; empty = any model of the family
+	Capabilities []ExecutionCapability // populated by P2 inventory; remote empty means ineligible
 	Health SourceHealth
 }
 type ModelGroup struct { Kind CredentialKind; ConnectionRef string; Family modelidentity.Family }
@@ -237,9 +242,20 @@ const (
 )
 type ExecRequirements struct {
 	Group ModelGroup; Model string; Backend string; Op OpType
+	Provider string; ContextWindow provider.ContextWindow; Effort provider.Effort; EndpointFingerprint string
 	Affinity Affinity; RunID uuid.UUID; WorkspaceBytes int64
 	PinnedRunner RunnerID // Phase 4 session pin; "" = none
 	RequireExecutedModel bool; Tools []string
+}
+type ExecutionCapability struct {
+    Op OpType
+    Backend, Provider, EndpointFingerprint string
+    Families []modelidentity.Family
+    Models []string
+    ContextWindows []provider.ContextWindow
+    Efforts []provider.Effort
+    Tools []string
+    ExecutedModel bool
 }
 // GroupFor derives the model group from a binding (P1 T3). Rules (design P1 §3.6):
 // 1) Provider == provider.CanonicalLunaRoute -> CredLunaRoute, ConnectionRef = b.ConnectionRef
@@ -250,6 +266,7 @@ type ExecRequirements struct {
 // Family = modelidentity.ClassifyFamily(b.Provider, b.Model). Unresolved family => ErrUnresolvedFamily, except
 // CredServerConnection/CredLocalHarness (built-in only) which carry FamilyUnresolved and match only their own source.
 func GroupFor(b provider.ResolvedBinding, op OpType) (ModelGroup, error)
+func EndpointFingerprint(b provider.ResolvedBinding) (string, error) // P1 T3 domain/runner/endpoint.go
 var ErrUnresolvedFamily = errors.New("runner: model family unresolved; refusing remote placement")
 ```
 
@@ -260,6 +277,7 @@ const ( OutcomeNone OutcomeClass = ""; OutcomeExhausted = "exhausted"; OutcomeLo
         OutcomeTransient = "transient"; OutcomeRunnerLost = "runner_lost"; OutcomeOther = "other" )
 type LimitWindow struct { LimitID string; ModelScope string; DurationMins int; UsedPercent *float64; ResetAt *time.Time }
 type SourceOutcome struct {
+	Model string // dispatcher stamps the exact request model before health transition
 	Class OutcomeClass; ResetAt *time.Time; RetryAfter time.Duration
 	Windows []LimitWindow; HeadroomHint *float64
 }
@@ -297,11 +315,12 @@ type Decision struct {
 	Tier string // Phase 3: "must_move"|"should_move"|"may_move_load"|"stay"|"" (non-workspace)
 	Wait *WaitReason
 }
-type PlacementPolicy struct { MoveLoadThresholdPct int; MoveSizeCapBytes int64 } // zero value = Phase 1 behaviour
+type PlacementPolicy struct { MoveLoadThresholdPct int; MoveSizeCapBytes int64; TelemetryMaxAge time.Duration } // zero value = Phase 1 behaviour
 func Place(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Decision
 ```
 Rules: exclude cordoned, draining, suspect, lost, offline, incompatible runners (chat_only runners accept only `AffinityNone`);
 `CredServerConnection`/`CredLocalHarness`/`AffinityBuiltIn` only on `BuiltInRunnerID`; source must match Kind, ConnectionRef (when kind is LunaRoute/server/local), Family (never crossed), Backend, and Model (if `Models` non-empty);
+source inventory eligible iff `UnavailableReason == ""` and verified capabilities match the complete request;
 source health eligible iff `Auth != logged_out && (Capacity == available || (Capacity == probation && SourceInFlight[src]==0))`;
 free slot iff `SlotsInUse[r] < StepLimit`. If eligible sources exist but none has a slot => `Wait{Kind: slot}`.
 If none eligible => `Wait{Kind: capacity, NextReset: earliest known ResetAt among matching exhausted sources}`.
@@ -340,7 +359,9 @@ type Fence struct { JobID uuid.UUID; RunnerID RunnerID; Generation int64 }
 type Ledger interface {
 	EnsureIntent(ctx context.Context, key JobKey, nodeID string, req ExecRequirements) (Job, error) // idempotent on key; writes queued
 	SetWait(ctx context.Context, jobID uuid.UUID, w *WaitReason) error
-	// Reserve: one transaction — job must be queued; counts offered+running on runner; if count >= limit => ErrSlotTaken;
+	// Reserve: one transaction — job must be queued; re-read persisted runner/source eligibility, actual step limit,
+	// and source probation single-flight. Caller limit is not authority. Reject changed inventory/cordon/drain/liveness/compat.
+	// Counts offered+running on runner; if count >= persisted limit => ErrSlotTaken;
 	// sets runner/source/reason, generation+1, state offered, lease. Returns the fence.
 	Reserve(ctx context.Context, jobID uuid.UUID, d Decision, limit int, leaseUntil time.Time) (Job, error)
 	MarkRunning(ctx context.Context, f Fence) error
@@ -399,7 +420,7 @@ type ExecutionStatus struct {
 type MoveProgress struct { BytesDone, BytesTotal int64 `json:"..."` } // json: bytesDone, bytesTotal
 // EnrichedInstanceSummary gains: Execution []ExecutionStatus `json:"execution,omitempty"`
 ```
-Port in engine: `type ExecutionStatusProvider interface { ExecutionStatuses(ctx context.Context, runIDs []uuid.UUID) (map[uuid.UUID][]instance.ExecutionStatus, error) }`; `(*InstanceEnricher).SetExecutionStatusProvider(p)` (nil rejected; default `NoopExecutionStatusProvider{}`).
+Port in engine: `type ExecutionStatusProvider interface { ExecutionStatuses(ctx context.Context, runIDs []uuid.UUID) (map[uuid.UUID][]instance.ExecutionStatus, error) }`; `(*InstanceEnricher).SetExecutionStatusProvider(p)` (nil rejected; default `NoopExecutionStatusProvider{}`). P1 T7 also defines `(*Engine).GetExecutionStatus(ctx context.Context, id uuid.UUID) ([]instance.ExecutionStatus, error)`, authorizing via `GetInstance` before projection; REST instance detail and MCP `instance_get` consume it.
 Producer: `runner.NewExecutionStatusProjector(ledger Ledger) *ExecutionStatusProjector` (implements the port from queued/offered/running jobs) and `(*ExecutionStatusProjector).Publish(ctx, job Job, state instance.ExecutionState)` publishes `execution.status` on the bus (dispatcher calls it).
 
 ## 11. Dispatcher and runner port (`domain/runner`, P1 T8/T10)
@@ -416,6 +437,7 @@ type Assignment struct { Job Job; Fence Fence }
 type StepOutput struct {
 	Chat *engine.ChatResponse; Stream <-chan engine.ChatChunk
 	Agent *engine.AgentResult; Process *engine.ProcessResult
+	Completion *engine.StepCompletion // P3 T6; streams record final receipt before Done
 }
 type StepRunner interface { Run(ctx context.Context, a Assignment, job StepJob) (StepOutput, error) } // error carries outcome via WithOutcome
 type RunnerSet interface { For(id RunnerID) (StepRunner, bool) }
@@ -425,15 +447,17 @@ type DispatcherDeps struct {
 	Status *ExecutionStatusProjector; Health HealthTransitioner; Telemetry TelemetrySource
 	Policy PlacementPolicy; Clock func() time.Time
 	TransientMaxAttempts int; BackoffMin, BackoffMax time.Duration
-	Wake <-chan struct{} // pool-change notifications (registry/ledger writes call Notifier.Notify)
+	Wake <-chan struct{} // one forwarding goroutine broadcasts to all waiters
+	Sleep func(context.Context, time.Duration) error // injectable cancellable delay
 }
 type HealthTransitioner interface { ApplyOutcome(ctx context.Context, src SourceID, o SourceOutcome) error } // implemented by HealthMonitor
 type TelemetrySource interface { Latest() map[RunnerID]Telemetry } // P1: built-in sampler or empty; P2: hub window
 type PoolNotifier struct{} // NewPoolNotifier(); Notify(); Subscribe() (<-chan struct{}, func())
 func NewStepDispatcher(d DispatcherDeps) *StepDispatcher
 func (d *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job StepJob) (StepOutput, error)
+func (d *StepDispatcher) Close() // idempotent: stops and joins wake forwarder
 ```
-Flow (design P1 §3.5): require `engine.StepIdentityFromContext` (else `engine.ErrMissingStepIdentity`); `EnsureIntent` (ledger write failure => return error, never execute); loop { snapshot+telemetry → `Place`; on Wait → `SetWait`, `Status.Publish(waiting_capacity|queued_slot)`, block on Wake/ctx (ctx cancel ends wait) ; `Reserve` (ErrSlotTaken => loop) ; `Status.Publish(running)`; record `engine.PlacementFact` into the context sink; `MarkRunning`; `Runners.For(runner).Run`; classify: exhausted/logged_out → `Health.ApplyOutcome`, `Requeue`, `Events.Record(job.rerouted)`, continue (no workflow retry spent); transient → backoff (RetryAfter honoured, bounded), same source, up to TransientMaxAttempts then `Fail` + return error; runner_lost → `Requeue` and continue; other → `Fail` and return error; success → `Complete` (result ref = job id) and return }.
+Flow (design P1 §3.5): require `engine.StepIdentityFromContext` (else `engine.ErrMissingStepIdentity`); `EnsureIntent` (ledger write failure => return error, never execute); loop { snapshot+telemetry → `Place`; on Wait → `SetWait`, `Status.Publish(waiting_capacity|queued_slot)`, block on Wake/ctx (ctx cancel ends wait) ; `Reserve` (ErrSlotTaken => loop) ; `Status.Publish(running)`; record `engine.PlacementFact` into the context sink; `MarkRunning`; `Runners.For(runner).Run`; classify: exhausted/logged_out → `Health.ApplyOutcome`, `Requeue`, `Events.Record(job.rerouted)`, continue (no workflow retry spent); transient → backoff (exponential part bounded; provider RetryAfter is a minimum and is never shortened; wait remains cancellable), same source, up to TransientMaxAttempts then `Fail` + return error; runner_lost → `Requeue` and continue; other → `Fail` and return error; success → `Complete` (result ref = job id) and return }.
 Streams: the dispatcher returns a wrapping channel; the slot is held until the terminal chunk; a classified exhausted/logged_out terminal error BEFORE any token was forwarded re-places transparently; after tokens it applies the outcome to the source and forwards the error (Phase 4 adds turn restart).
 
 Decorators (`domain/runner/selectors.go`, P1 T10):
@@ -443,7 +467,7 @@ func NewRoutingAgentSelector(inner engine.AgentProviderSelector, d *StepDispatch
 func NewRoutingStreamSelector(inner engine.InteractiveStreamSelector, d *StepDispatcher) engine.InteractiveStreamSelector
 func NewRoutedProcessRunner(d *StepDispatcher) engine.ProcessRunner
 ```
-The decorated selector still calls `inner.XFor(b)` first so factory validation errors surface unchanged, then returns a routed provider whose methods build `ExecRequirements` via `GroupFor` and call `Dispatch`. Phase 1 affinity is `AffinityBuiltIn` for all ops; P2 T6 makes `llm_call`/child-input chat `AffinityNone`.
+The decorated selector still calls `inner.XFor(b)` first so factory validation errors surface unchanged, then returns a routed provider whose methods build `ExecRequirements` via `GroupFor` and call `Dispatch`. Phase 1 affinity is `AffinityBuiltIn` for all ops; P2 T6 makes `llm_call`/child-input chat `AffinityNone`. Apply the deployment default backend outside routing: `WithDefaultAgentBackend(NewRoutingStreamSelector(inner, dispatcher), defaultBackend)`, so `GroupFor` and the inner stream adapter see the same effective backend.
 Built-in runner: `adapter/runner/builtin/runner.go` — `builtin.New(builtin.Deps{Chats engine.ChatProviderSelector; Agents engine.AgentProviderSelector; Streams engine.InteractiveStreamSelector; Process engine.ProcessRunner}) *builtin.Runner` (INNER undecorated selectors + `process.LocalProcessRunner`).
 
 ## 12. Health (`domain/runner/health.go`, P1 T13)
@@ -465,9 +489,10 @@ func (m *HealthMonitor) Start(ctx context.Context) // goroutine; stops on ctx
 func (m *HealthMonitor) ProbeNow(ctx context.Context, id SourceID) (SourceHealth, error)
 func (m *HealthMonitor) ApplyOutcome(ctx context.Context, id SourceID, o SourceOutcome) error // implements HealthTransitioner
 func (m *HealthMonitor) Tick(ctx context.Context) error // one pass; tests drive it with a fake clock
+func (m *HealthMonitor) Wait() // joins the loop and quota confirmations on shutdown
 ```
 Notification: `notification.TypeSourceLoggedOut Type = "source_logged_out"` (instance-less; `WorkflowName` = `"runner <runner> source <kind>"`). Adapter notifier: `adapter/notification/source_alerts.go:SourceAlerts` implementing `runner.SourceAlertNotifier` (creates notification row + Teams card via existing notifier).
-Probers: `adapter/runner/probe/claude.go:ClaudeAuthProber` (`env -u ANTHROPIC_API_KEY claude auth status`, JSON/exit code), `adapter/runner/probe/codex.go:CodexProber` (`codex.Readiness` + `account/rateLimits/read` via `codex app-server`), `adapter/runner/probe/lunaroute.go:LunaRouteProber` (wraps `adapter/probe` factory). Confirmation: `adapter/runner/probe/confirm.go:DispatchConfirmer` dispatches a bounded 1-token same-model chat through the `StepDispatcher` with synthetic identity `OperationProbe`.
+Probers: `adapter/runner/probe/claude.go:ClaudeAuthProber` (`env -u ANTHROPIC_API_KEY claude auth status`, JSON/exit code), `adapter/runner/probe/codex.go:CodexProber` (`codex.Readiness` + `account/rateLimits/read` via `codex app-server`), `adapter/runner/probe/lunaroute.go:LunaRouteProber` (wraps `adapter/probe` factory). Confirmation: `adapter/runner/probe/confirm.go:DispatchConfirmer` dispatches a bounded 1-token exact-model chat through the `StepDispatcher` with synthetic identity `OperationProbe`. `SourceHealth.ConfirmationModel` is populated from the dispatcher-stamped exhaustion outcome; a different same-family model cannot confirm recovery. No matching authorized profile/binding yields `ErrNoConfirmationModel` and retains probation for a real exact-model request.
 
 ## 13. Source inventory (P1 T13)
 
@@ -491,10 +516,10 @@ type AuditRecorder interface { Record(ctx context.Context, action, target, detai
 type RunVisibility interface { CanView(ctx context.Context, runID uuid.UUID) bool }
 // engine exports: func CanViewInstance(ctx context.Context, inst *instance.Instance) bool (wraps canView)
 // runner.NewInstanceVisibility(repo instance.InstanceRepository) RunVisibility
-type ServiceDeps struct { Registry Registry; Ledger Ledger; Events EventLog; Recorder *EventRecorder; Audit AuditRecorder; Visibility RunVisibility; Monitor *HealthMonitor; Telemetry TelemetrySource; Notifier *PoolNotifier; Clock func() time.Time }
+type ServiceDeps struct { Registry Registry; Ledger Ledger; Events EventLog; Recorder *EventRecorder; Audit AuditRecorder; Visibility RunVisibility; Monitor *HealthMonitor; Telemetry TelemetrySource; Notifier *PoolNotifier; Clock func() time.Time; Window TelemetryWindow /*P2 T12*/; Homes HomeStore /*P3 T14*/; Sessions RunnerSessionIndex /*P4 T14*/ }
 func NewService(d ServiceDeps) *Service
 type RunnerView struct { Runner Runner; Sources []Source; SlotsUsed int; Queued int; Telemetry *Telemetry; HomedWorkspaces int; Drain *DrainProgress /*P3*/ }
-type RunnerDetail struct { RunnerView; Assignments []AssignmentView; RecentTelemetry []Telemetry /*P2*/ ; Sessions []SessionPinView /*P4*/ }
+type RunnerDetail struct { RunnerView; Assignments []AssignmentView; RecentTelemetry []Telemetry /*P2 T12*/; Homes []HomeView /*P3 T14*/; Sessions []SessionPinView /*P4 T14*/ }
 type AssignmentView struct { JobID uuid.UUID; RunID *uuid.UUID; NodeID string; State JobState; SourceID SourceID; Hidden bool } // RunID nil + Hidden when caller cannot view
 func (s *Service) List(ctx) ([]RunnerView, error)          // any authenticated user
 func (s *Service) Get(ctx, id RunnerID) (RunnerDetail, error)
@@ -508,27 +533,27 @@ Audit actions (add to `domain/audit/audit.go`): `ActionRunnerUpdate = "runner.up
 MCP (`adapter/mcp/tools_runner.go`, `Deps.Runners RunnerService` interface mirroring the service): `runner_list`, `runner_get`, `runner_events`, `runner_update`, `runner_cordon`, `runner_uncordon`, `runner_source_probe` (P1); `runner_key_create`, `runner_key_list`, `runner_key_revoke` (P2, `Deps.RunnerKeys`); `runner_drain` (P3).
 REST (`adapter/http/runner_handler.go`, `RouterDeps.Runners`, under the user-auth `/api/v1` group): `GET /runners`, `GET /runners/events`, `GET /runners/{id}`, `PATCH /runners/{id}`, `POST /runners/{id}/cordon`, `POST /runners/{id}/uncordon`, `POST /runners/sources/{sourceId}/probe` (sourceId URL-escaped) (P1); `GET|POST /runners/keys`, `DELETE /runners/keys/{id}` with JSON body `{"acknowledge": true}` (P2); `POST /runners/{id}/drain` (P3).
 Runner-key-only routes (outside user auth, P2/P3): `GET /api/v1/runners/connect` (WebSocket), `/api/v1/runners/transfers/*`.
-JSON DTOs (both MCP and REST, defined once in `adapter/http/runner_dto.go` and reused by MCP via `adapter/mcp` importing nothing from http — MCP defines `adapter/mcp/runner_dto.go` with identical json tags). Field names camelCase: `id,name,builtIn,stepLimit,labels,cordoned,draining,compat{state,reason},liveness,lastContact,os,runnerVersion,harnessVersions,slotsUsed,queued,homedWorkspaces,sources[{id,kind,credentialRef,families,health{auth,capacity,resetAt,headroom,congested,lastProbeAt,lastOutcome}}],telemetry{...},drain{...}`.
+JSON DTOs use separate adapter-local mappers in `adapter/http/runner_dto.go` and `adapter/mcp/runner_dto.go`, with identical JSON tags and fixture-contract tests. MCP does not import the HTTP adapter. Field names camelCase: `id,name,builtIn,stepLimit,labels,cordoned,draining,compat{state,reason},liveness,lastContact,os,runnerVersion,harnessVersions,slotsUsed,queued,homedWorkspaces,sources[{id,kind,credentialRef,unavailableReason,families,health{auth,capacity,resetAt,headroom,congested,lastProbeAt,lastOutcome}}],telemetry{...},drain{...}`.
 
 ## 15. Phase 2 names
 
 - Protocol package `adapter/runnerproto`: `const ProtocolVersion = 1`; `type Envelope struct { V int; Kind string; Seq uint64; JobID string; Generation int64; Payload json.RawMessage }` (json: v,kind,seq,jobId,generation,payload); kinds `KindHello="hello"`, `KindHeartbeat="heartbeat"`, `KindAccept="accept"`, `KindReject="reject"`, `KindOutput="output"`, `KindResult="result"`, `KindDispatch="dispatch"`, `KindCancel="cancel"`, `KindProbe="probe"`, `KindProbeResult="probe_result"`, `KindAck="ack"`, `KindFenced="fenced"`, `KindChallenge="challenge"`, `KindChallengeResponse="challenge_response"`, `KindAdmitted="admitted"`, `KindRefused="refused"`; P3 adds `KindDeleteCopy="delete_copy"`, `KindTransferReady="transfer_ready"`; P4 adds `KindSessionExport="session_export"`, `KindSessionImport="session_import"`. `func Encode(e Envelope) ([]byte, error)`, `func Decode(b []byte) (Envelope, error)` (rejects unknown V>ProtocolVersion except Hello/Refused, missing kind, >1 MiB).
-- Payloads: `Hello{OS, Arch, ProtocolVersion int, RunnerVersion string, HarnessVersions map[string]string, WorkspaceRoot, ScratchRoot string, Capabilities []string, Sources []WireSource, Held []HeldJob}`, `HeldJob{JobID string; Generation int64; State string /*running|terminal*/; LastOutputSeq uint64}`, `Heartbeat{Telemetry WireTelemetry; Sources []WireSource; Jobs []HeldJob}`, `Dispatch{Op string; Chat *WireChat; Agent *WireAgent; Process *WireProcess; LeaseUntil time.Time}`, `WireChat{Model, SystemPrompt, Prompt string; MaxTokens int; Temperature float64; OutputSchema json.RawMessage; SessionID string; RequireExecutedModel bool; Stream bool; CredentialKind string; Backend string; ContextWindow string; Effort string; Tools []string}` (no RevealKey/BaseURL/ConnectionRef secrets), `Output{Seq uint64; Token string}`, `Result{OK bool; Chat *WireChatResult; Agent *WireAgentResult; Process *WireProcessResult; Outcome WireOutcome; ErrorText string /*sanitized*/}`, `WireOutcome{Class string; ResetAt *time.Time; RetryAfterMs int64; Windows []WireWindow; HeadroomHint *float64}`.
+- Payloads: `Hello{OS, Arch string; ProtocolVersion int; RunnerVersion string, HarnessVersions map[string]string, WorkspaceRoot, ScratchRoot string, Capabilities []string, Sources []WireSource, Held []HeldJob}`, `HeldJob{JobID string; Generation int64; State string /*running|terminal*/; LastOutputSeq uint64}`, `Heartbeat{Telemetry WireTelemetry; Sources []WireSource; Jobs []HeldJob}`, `Dispatch{Op string; Chat *WireChat; Agent *WireAgent; Process *WireProcess; LeaseUntil time.Time}`, `WireChat{Model, SystemPrompt, Prompt string; MaxTokens int; Temperature float64; OutputSchema json.RawMessage; SessionID string; RequireExecutedModel bool; Stream bool; CredentialKind string; Backend string; ContextWindow string; Effort string; Tools []string}` (no RevealKey/BaseURL/ConnectionRef secrets), `Output{Seq uint64; Token string}`, `Result{OK bool; Chat *WireChatResult; Agent *WireAgentResult; Process *WireProcessResult; Outcome WireOutcome; ErrorText string /*sanitized*/}`, `WireOutcome{Class string; ResetAt *time.Time; RetryAfterMs int64; Windows []WireWindow; HeadroomHint *float64}`.
 - Keys (`domain/runner/keys.go`): `type RunnerKey struct { ID uuid.UUID; Name string; RunnerID RunnerID; Hash string; Prefix string; MachinePublicKey []byte; CreatedAt time.Time; ClaimedAt, LastUsedAt, RevokedAt *time.Time }`; `type KeyStore interface { Create(ctx, *RunnerKey) error; GetByHash(ctx, hash string) (RunnerKey, error); List(ctx) ([]RunnerKey, error); Claim(ctx, id uuid.UUID, pub []byte, at time.Time) error /* atomic: only if machine_public_key IS NULL, ErrKeyAlreadyClaimed */; TouchLastUsed(ctx, id, at) error; Revoke(ctx, id, at) error }`; `type KeyService` with `NewKeyService(KeyServiceDeps{Store KeyStore; Registry Registry; Audit AuditRecorder; Revoker SessionRevoker; Clock; DefaultStepLimit int})`, `Create(ctx, name string) (plaintext string, k RunnerKey, err error)` (prefix `ark_`, 32 random bytes base64url, SHA-256 hex hash, name `^[a-z0-9][a-z0-9-]{1,62}$`, registers a runner row with `Liveness offline`), `List(ctx) ([]RunnerKey, error)`, `Revoke(ctx, id uuid.UUID, ack RevokeAck) error` (`type RevokeAck struct{ Acknowledged bool }`; false => `ErrRevokeNotAcknowledged`), `Authenticate(ctx, plaintext string) (RunnerKey, error)`; `type SessionRevoker interface { RevokeRunner(ctx context.Context, id RunnerID) error }` (Hub implements). Machine binding: ed25519; server challenge = 32 random bytes; runner signs `"arbitron-runner-v1:" + keyID + ":" + base64(challenge)`.
 - SQLite: `adapter/sqlite/runner_key_repo.go:RunnerKeyRepo`.
-- Hub (`domain/runner/hub.go`): `type RunnerConn interface { Send(ctx context.Context, m Outbound) error; Close(code int, reason string) error }`; `type Outbound struct { Kind string; JobID uuid.UUID; Generation int64; Dispatch *DispatchPayload; Ack *AckPayload }` and `type Inbound struct { Kind string; JobID uuid.UUID; Generation int64; Seq uint64; Hello *HelloInfo; Heartbeat *HeartbeatInfo; Output *OutputFrame; Result *RemoteResult; Accept bool; RejectReason string }` (domain mirrors; `adapter/http/runner_connect.go` translates `runnerproto` <-> these). `NewHub(HubDeps{Registry; Ledger; Events *EventRecorder; Health HealthTransitioner; Notifier *PoolNotifier; Clock; Config HubConfig{Heartbeat, SuspectAfter, LostAfter, OfferTTL time.Duration; TelemetryWindow int; ServerWorkspaceRoot string; Compat CompatTable}})`; methods `Admit(ctx, key RunnerKey, conn RunnerConn, hello HelloInfo) (*Session, error)`, `Handle(ctx, s *Session, in Inbound) error`, `Disconnect(s *Session)`, `Tick(ctx) error` (liveness), `Start(ctx)`, `RevokeRunner(ctx, id) error`, `Run(ctx, a Assignment, job StepJob) (StepOutput, error)` (used by remote StepRunner), `Latest() map[RunnerID]Telemetry`, `Window(id RunnerID) []Telemetry` (TelemetrySource).
-- `type CompatTable struct { ProtocolMin, ProtocolMax int; RunnerMin string; Harness map[string]string /* harness -> min version */ }`; `func (c CompatTable) Check(h HelloInfo, serverRoot string) Compatibility`.
+- Hub (`domain/runner/hub.go`): `type RunnerConn interface { Send(ctx context.Context, m Outbound) error; Close(code int, reason string) error }`; `type Outbound struct { Kind string; JobID uuid.UUID; Generation int64; Dispatch *DispatchPayload; Ack *AckPayload }` and `type Inbound struct { Kind string; JobID uuid.UUID; Generation int64; Seq uint64; Hello *HelloInfo; Heartbeat *HeartbeatInfo; Output *OutputFrame; Result *RemoteResult; Accept bool; RejectReason string }` (domain mirrors; `adapter/http/runner_connect.go` translates `runnerproto` <-> these). `NewHub(HubDeps{Registry; Ledger; Inbox RemoteInbox; Events *EventRecorder; Health HealthTransitioner; Notifier *PoolNotifier; Clock; Config HubConfig{Heartbeat, SuspectAfter, LostAfter, OfferTTL time.Duration; TelemetryWindow int; ServerWorkspaceRoot string; Compat CompatTable}})`; methods `Admit(ctx, key RunnerKey, conn RunnerConn, hello HelloInfo) (*Session, error)`, `Handle(ctx, s *Session, in Inbound) error`, `Disconnect(s *Session)`, `Tick(ctx) error` (liveness), `Start(ctx)`, `RevokeRunner(ctx, id) error`, `Run(ctx, a Assignment, job StepJob) (StepOutput, error)` (used by remote StepRunner), `Latest() map[RunnerID]Telemetry`, `Window(id RunnerID) []Telemetry` (TelemetrySource).
+- `type CompatTable struct { ProtocolMin, ProtocolMax int; RunnerMin, RunnerMaxExclusive string; Harness map[string]string /* harness -> min version */ }`; `func (c CompatTable) Check(h HelloInfo, serverRoot string) Compatibility`.
 - Remote StepRunner `adapter/runner/remote/runner.go`: `remote.New(h *runner.Hub) *remote.Runner`; `runner.NewHubRunnerSet(builtin StepRunner, remote StepRunner, reg Registry) RunnerSet` (any non-builtin ID → remote).
-- Telemetry: `runner.MachineTelemetry interface { Sample(ctx context.Context) (Telemetry, error) }`; adapters `adapter/telemetry/darwin.go` (`//go:build darwin`), `adapter/telemetry/linux.go` (`//go:build linux`), `adapter/telemetry/null.go` (all fields nil); `telemetry.New() runner.MachineTelemetry`. Server built-in feeds the hub window through `runner.NewBuiltInTelemetryLoop(t MachineTelemetry, h *Hub, every time.Duration)`.
+- Telemetry: `runner.MachineTelemetry interface { Sample(ctx context.Context) (Telemetry, error) }`; adapters `adapter/telemetry/darwin.go` (`//go:build darwin`), `adapter/telemetry/linux.go` (`//go:build linux`), `adapter/telemetry/null.go` (all fields nil); `telemetry.NewForRoot(root string) runner.MachineTelemetry` (samples the actual workspace volume). Server built-in feeds the hub window through `runner.NewBuiltInTelemetryLoop(t MachineTelemetry, h *Hub, every time.Duration)`.
 - Runner binary: `cmd/arbitron-runner/main.go`; domain `domain/runneragent` (`Agent`, ports `Connection`, `JobExecutor`, `LocalSources`, `Spool`, `IdentityStore`); adapters `adapter/runneragent/wsclient`, `adapter/runneragent/config`, `adapter/runneragent/executor`, `adapter/runneragent/spool`, `adapter/runneragent/identity`. Config dir `~/.arbitron-runner/` (`config.yaml`, `runner.env` 0600: `ARBITRON_SERVER_URL`, `ARBITRON_RUNNER_KEY`, `LUNAROUTE_API_KEY` optional, `ARBITRON_EXTRA_HEADERS` optional `Name: value;Name2: value2`), machine key `~/.arbitron-runner/machine_ed25519` (0600).
 
 ## 16. Phase 3 names
 
-- `domain/runner/checkpoint.go`: `type Manifest struct { Version int64; Entries []ManifestEntry; Hash string }`, `type ManifestEntry struct { Path string; Size int64; Mode uint32; SHA256 string; Symlink string; Deleted bool }`, `type CheckpointRef struct { RunID uuid.UUID; Version int64; ManifestHash string }`; port `CheckpointStore interface { Commit(ctx, runID uuid.UUID, srcDir string) (CheckpointRef, Manifest, error); Restore(ctx, ref CheckpointRef, dstDir string) error; Manifest(ctx, ref CheckpointRef) (Manifest, error); Latest(ctx, runID uuid.UUID) (CheckpointRef, bool, error); StageDelta(ctx, runID uuid.UUID, base CheckpointRef, delta io.Reader) (StagedCheckpoint, error); Publish(ctx, staged StagedCheckpoint, f Fence) (CheckpointRef, error); Discard(ctx, staged StagedCheckpoint) error; ReadFile(ctx, ref CheckpointRef, path string) (io.ReadCloser, error); Delete(ctx, runID uuid.UUID) error }`. Adapter `adapter/checkpoint/store.go` (`checkpoint.NewStore(dir string) *Store`), archives use stdlib `archive/tar` + `compress/gzip` (RR-15 decision: gzip, no new dependency).
-- Homes: `type HomeStore interface { GetHome(ctx, runID) (Home, error); AcquireResource(ctx, runID uuid.UUID, owner RunnerID, expectGen int64) (Home, error); HandOff(ctx, runID uuid.UUID, to RunnerID, reason string, bytes int64, expectGen int64) (Home, error); SetCheckpoint(ctx, runID uuid.UUID, version int64) error; MarkDirty(ctx, runID uuid.UUID, dirty bool) error; History(ctx, runID uuid.UUID) ([]HomeMove, error); ListByRunner(ctx, id RunnerID) ([]Home, error); Release(ctx, runID uuid.UUID, expectGen int64) error }`; `type HomeMove struct { RunID uuid.UUID; From, To RunnerID; Reason string; Bytes int64; Generation int64; At time.Time }`. SQLite `adapter/sqlite/workspace_home_repo.go:WorkspaceHomeRepo`.
-- Commit protocol (RR-10) `domain/engine/step_commit.go`: `type StepCommit struct { RunID, InvocationID uuid.UUID; NodeID string; Execution *instance.NodeExecution; Variables map[string]any; NextNodeID string; CheckpointRef string; JobFence *JobFenceRef }`, `type JobFenceRef struct { JobID uuid.UUID; RunnerID string; Generation int64 }`, `type StepCommitter interface { CommitStep(ctx context.Context, c StepCommit) error; CommittedResult(ctx context.Context, invocationID uuid.UUID) (*StepCommit, bool, error) }`; `(*Engine).SetStepCommitter(c)`. SQLite `adapter/sqlite/step_commit_repo.go:StepCommitRepo` (one transaction: node_executions insert, instances variables + current_node_id, node_invocations committed, runner_jobs completed via fence, step_commits row). Errors are propagated (fixes ignored `Create` error).
-- Workspace sync service `domain/runner/sync.go`: `NewWorkspaceSync(SyncDeps{Checkpoints CheckpointStore; Homes HomeStore; Ledger Ledger; Tokens TransferTokens; Events *EventRecorder; Status *ExecutionStatusProjector; Clock})`, `PreparePull(ctx, a Assignment, runID) (PullPlan, error)`, `AcceptPush(ctx, f Fence, runID uuid.UUID, staged StagedCheckpoint) (CheckpointRef, error)`, `CommitBuiltIn(ctx, f Fence, runID uuid.UUID, dir string) (CheckpointRef, error)`, `RestoreBuiltIn(ctx, runID uuid.UUID, dir string) error`.
-- Transfer tokens `domain/runner/transfer.go`: `type TransferToken struct { Token string; JobID uuid.UUID; Generation int64; RunnerID RunnerID; RunID uuid.UUID; Direction string /*pull|push|bundle*/; ExpiresAt time.Time }`; `TransferTokens interface { Issue(ctx, ...) (TransferToken, error); Validate(ctx, token string, runner RunnerID) (TransferToken, error) }`. HTTP `adapter/http/runner_transfer_handler.go` routes: `GET /api/v1/runners/transfers/manifest`, `GET /api/v1/runners/transfers/files?path=`, `PUT /api/v1/runners/transfers/push/{part}`, `POST /api/v1/runners/transfers/push/commit`, `GET /api/v1/runners/transfers/bundles/{hash}`; headers `Authorization: Runner <key>`, `X-Arbitron-Transfer: <token>`.
+- `domain/runner/checkpoint.go`: `type Manifest struct { Version int64; Entries []ManifestEntry; Hash string }`, `type ManifestEntry struct { Path string; Size int64; Mode uint32; SHA256 string; Symlink string; Deleted bool }`, `type CheckpointRef struct { RunID uuid.UUID; Version int64; ManifestHash string }`; port `CheckpointStore interface { Commit(ctx, runID uuid.UUID, srcDir string) (CheckpointRef, Manifest, error) /* bootstrap only */; StageBuiltIn(ctx context.Context, runID uuid.UUID, srcDir string, f Fence, resource engine.ResourceFenceRef) (CheckpointRef, Manifest, error); Restore(ctx, ref CheckpointRef, dstDir string) error; Manifest(ctx, ref CheckpointRef) (Manifest, error); Latest(ctx, runID uuid.UUID) (CheckpointRef, bool, error); StageDelta(ctx, runID uuid.UUID, base CheckpointRef, delta io.Reader) (StagedCheckpoint, error); Publish(ctx, staged StagedCheckpoint, f Fence) (CheckpointRef, error); Discard(ctx, staged StagedCheckpoint) error; ReadFile(ctx, ref CheckpointRef, path string) (io.ReadCloser, error); Delete(ctx, runID uuid.UUID) error }`. Adapter `adapter/checkpoint/store.go` (`checkpoint.NewStore(dir string, opts ...Option) *Store`; production requires `WithCatalog`), archives use stdlib `archive/tar` + `compress/gzip` (RR-15 decision: gzip, no new dependency).
+- Homes: `type HomeStore interface { GetHome(ctx, runID) (Home, error); AcquireResource(ctx, runID uuid.UUID, owner RunnerID, expectGen int64) (Home, error); HandOff(ctx, runID uuid.UUID, to RunnerID, reason string, bytes int64, expectGen int64, cause HomeMoveCause) (Home, error); SetCheckpoint(ctx, runID uuid.UUID, version int64) error; MarkDirty(ctx, runID uuid.UUID, dirty bool) error; History(ctx, runID uuid.UUID) ([]HomeMove, error); ListByRunner(ctx, id RunnerID) ([]Home, error); Release(ctx, runID uuid.UUID, expectGen int64) error }`; `type HomeMove struct { RunID uuid.UUID; From, To RunnerID; Reason string; Bytes int64; Generation int64; At time.Time; TargetJobID, InvocationID *uuid.UUID; NodeID, OperationID string; FromGeneration, ToGeneration int64 }`. SQLite `adapter/sqlite/workspace_home_repo.go:WorkspaceHomeRepo`.
+- Commit protocol (RR-10) `domain/engine/step_commit.go`: `type StepCommit struct { RunID, InvocationID uuid.UUID; NodeID string; Execution *instance.NodeExecution; Variables map[string]any; NextNodeID string; Completions []StepCompletion; Mode StepCommitMode; Suspension *StepSuspension }`, `type JobFenceRef struct { JobID uuid.UUID; RunnerID string; Generation int64 }`, `type StepCommitter interface { CommitStep(ctx context.Context, c StepCommit) error; CommittedResult(ctx context.Context, invocationID uuid.UUID) (*StepCommit, bool, error) }`; `(*Engine).SetStepCommitter(c)`. SQLite `adapter/sqlite/step_commit_repo.go:StepCommitRepo` (one transaction: promote exact prepared candidates/home pointers, node_executions insert, instances variables + current_node_id, node_invocations committed, every runner_job completed via its receipt, step_commits row; see §21). Errors are propagated (fixes ignored `Create` error).
+- Workspace sync service `domain/runner/sync.go`: `NewWorkspaceSync(SyncDeps{Checkpoints CheckpointStore; Homes HomeStore; Leases ResourceLeaseStore; Ledger Ledger; Tokens TransferTokens; Sizes WorkspaceSizer; Events *EventRecorder; Status *ExecutionStatusProjector; Clock})`, `PreparePull(ctx, a Assignment, runID) (PullPlan, error)`, `AcceptPush(ctx, f Fence, runID uuid.UUID, staged StagedCheckpoint) (CheckpointRef, error)` (prepared candidate only; §21), `CommitBuiltIn(ctx, f Fence, runID uuid.UUID, dir string) (CheckpointRef, error)` (prepared candidate only; §21), `RestoreBuiltIn(ctx, runID uuid.UUID, dir string) error`.
+- Transfer tokens `domain/runner/transfer.go`: `type TransferToken struct { Token string; JobID uuid.UUID; Generation int64; RunnerID RunnerID; RunID uuid.UUID; Direction string /*pull|push|bundle*/; BaseRef, BundleHash, MaintenanceOperationID string; Resource engine.ResourceFenceRef; ExpiresAt time.Time }`; `TransferTokens interface { Issue(ctx context.Context, scope TransferScope, ttl time.Duration) (TransferToken, error); Validate(ctx context.Context, token string, runner RunnerID) (TransferToken, error) }`. HTTP `adapter/http/runner_transfer_handler.go` routes: `GET /api/v1/runners/transfers/manifest`, `GET /api/v1/runners/transfers/files?path=`, `PUT /api/v1/runners/transfers/push/{part}`, `POST /api/v1/runners/transfers/push/commit`, `GET /api/v1/runners/transfers/bundles/{hash}`; headers `Authorization: Runner <key>`, `X-Arbitron-Transfer: <token>`.
 - Bundles: `adapter/process/bundle.go:BuildScriptBundle(scriptPath string) (engine.ScriptBundleRef, []byte, error)`; `domain/runner/bundles.go:BundleStore` port; SQLite-less filesystem store `adapter/checkpoint/bundles.go`.
 - Recovery: `domain/runner/recovery.go:NewPoolRecovery(...)`, `(*PoolRecovery).Recover(ctx) error`; engine `(*Engine).RecoverRunningInstances(ctx context.Context, rec RecoveryPolicy) error` replacing `RecoverCrashedInstancesContext` in `startRuntime`; `type RecoveryPolicy interface { PrepareRun(ctx context.Context, inst *instance.Instance) (RecoveryAction, error) }` (`RecoveryResume`, `RecoveryReplayCommitted`, `RecoveryFail`).
 - Drain: `(*Service).Drain(ctx, id RunnerID) (DrainProgress, error)`; `type DrainProgress struct { ActiveSteps int; HomedWorkspaces int; Sessions int; Blocked []DrainBlocker; Complete bool }`, `type DrainBlocker struct { Kind string /*workspace|session*/; RunID *uuid.UUID; Group string; Reason string }`.
@@ -538,7 +563,7 @@ JSON DTOs (both MCP and REST, defined once in `adapter/http/runner_dto.go` and r
 
 - `domain/engine/session_portability.go`: `type SessionBundle struct { Backend, SessionID, HarnessVersion, OriginWorkDir, Checksum string; Data []byte }`; `type SessionPortability interface { Export(ctx context.Context, sessionID, workDir string) (SessionBundle, error); Import(ctx context.Context, b SessionBundle, workDir string) (sessionID string, err error) }`; `var ErrBundleRequiresRebuild = errors.New(...)`. Adapters `adapter/claudecli/session_portability.go:SessionPortability`, `adapter/codex/session_portability.go:SessionPortability` (strips reasoning; compaction => ErrBundleRequiresRebuild).
 - `domain/engine/session_checkpoints.go`: `type SessionKey struct { RunID uuid.UUID; InvocationID uuid.UUID; TurnIndex int }`; `type SessionCheckpointStore interface { Put(ctx, SessionKey, SessionBundle) (ref string, err error); Get(ctx, ref string) (SessionBundle, error); Prune(ctx, runID, invocationID uuid.UUID, keepRef string) error }`; adapter `adapter/checkpoint/sessions.go`.
-- `domain/engine/turn_lease.go`: `type TurnLease struct { Key string /* "run:<id>" or "resolution:<identity>" */; Token uuid.UUID; Generation int64; ExpiresAt time.Time }`; `type TurnLeaseStore interface { Acquire(ctx, key string, ttl time.Duration) (TurnLease, error) /* ErrInteractiveTurnInProgress */; Renew(ctx, l TurnLease, ttl time.Duration) (TurnLease, error); Release(ctx, l TurnLease) error; BumpGeneration(ctx, l TurnLease) (TurnLease, error); Current(ctx, key string) (TurnLease, bool, error) }`; `type TurnIntent struct { ID uuid.UUID; LeaseKey string; RunID, InvocationID uuid.UUID; NodeID string; TurnIndex int; Kind string /*first|message|end|abandon|move*/; Prompt, SystemPrompt, Nonce, Message string; Model string; Tools []string; PriorCheckpointRef string; SessionGeneration int64; OperationID string; CreatedAt time.Time; CompletedAt *time.Time }`; `type TurnIntentStore interface { Persist(ctx, TurnIntent) error; Complete(ctx, id uuid.UUID) error; Pending(ctx) ([]TurnIntent, error); PendingFor(ctx, leaseKey string) (*TurnIntent, error) }`. SQLite `adapter/sqlite/turn_lease_repo.go`.
+- `domain/engine/turn_lease.go`: `type TurnLease struct { Key string /* "run:<id>" or "resolution:<identity>" */; Token uuid.UUID; Generation int64; ExpiresAt time.Time }`; `type TurnLeaseStore interface { Acquire(ctx, key string, ttl time.Duration) (TurnLease, error) /* ErrInteractiveTurnInProgress */; Renew(ctx, l TurnLease, ttl time.Duration) (TurnLease, error); Release(ctx, l TurnLease) error; BumpGeneration(ctx, l TurnLease) (TurnLease, error); Current(ctx, key string) (TurnLease, bool, error) }`; `type TurnIntent struct { ID uuid.UUID; RequestID uuid.UUID; Binding AcceptedTurnBinding; LeaseKey string; RunID, InvocationID uuid.UUID; NodeID string; TurnIndex int; Kind string /*first|message|end|abandon|move*/; Prompt, SystemPrompt, Nonce, Message string; Model string; Tools []string; PriorCheckpointRef string; SessionGeneration int64; OperationID string; CreatedAt time.Time; CompletedAt *time.Time }`; `type TurnIntentStore interface { Persist(ctx, TurnIntent) error; Complete(ctx, id uuid.UUID) error; Pending(ctx) ([]TurnIntent, error); PendingFor(ctx, leaseKey string) (*TurnIntent, error) }`. SQLite `adapter/sqlite/turn_lease_repo.go`.
 - Mover `domain/runner/session_mover.go`: `NewSessionMover(MoverDeps{...})`, `Move(ctx, lease engine.TurnLease, req MoveRequest) (MoveResult, error)`; `type MoveRequest struct { RunID, InvocationID uuid.UUID; NodeID string; Reason string /*exhausted|logged_out|drain|runner_lost*/; From RunnerID; Requirements ExecRequirements }`; `type MoveResult struct { To RunnerID; SessionID string; Lossy bool; Notice string; Generation int64 }`. Engine port `engine.SessionMover interface { MoveSession(ctx context.Context, lease TurnLease, req SessionMoveRequest) (SessionMoveResult, error) }` (domain/engine mirror types so engine does not import runner).
 - Events: `interactive.turn_restarted` `{instanceId,nodeId,turnIndex,generation}`; `interactive.context_notice` `{instanceId,nodeId,notice:"tool details and reasoning may be lost",lossy:true}`; `session.moved` `{from,to,reason,lossy}`.
 
@@ -546,6 +571,469 @@ JSON DTOs (both MCP and REST, defined once in `adapter/http/runner_dto.go` and r
 
 `dashboard/src/api/types.ts` additions: `RunnerView`, `RunnerDetail`, `RunnerSource`, `SourceHealth`, `RunnerTelemetry`, `PoolEvent`, `RunnerKey`, `RunnerKeyCreateResponse`, `ExecutionStatus`, `PlacementRecord`, `HomeMove`, `DrainProgress`, `SessionMove`. API fns in `dashboard/src/api/runners.ts`: `listRunners()`, `getRunner(id)`, `listPoolEvents(limit)`, `listRunnerKeys()`, `createRunnerKey(name)`, `revokeRunnerKey(id)`. Hooks `dashboard/src/hooks/usePool.ts`, `useRunner.ts`. Routes `/pool`, `/pool/runners/:id`.
 
-## 19. Escalations recorded at plan level
+## 19. Reviewed producer graph and implementation order
 
-See each phase's task files for the `ESCALATION:` lines; the summary list is reproduced in the final report.
+A design's RR labels describe the pre-implementation baseline. A dependency is
+closed **for planning** only when an owning task produces it, names its runtime
+input and wires it into its consumer; planned code is not evidence that it is
+already implemented. The residual evidence/platform decisions in task-level
+`ESCALATION:` entries remain open and must appear in the final planning-gate
+report. A conservative fallback closes a dependency only when it meets the spec;
+chat-only admission or built-in-only recovery does not prove workspace mobility.
+
+| Design dependency | Producer tasks and real composition root | Required downstream sink |
+|---|---|---|
+| RR-01 identity, registry, ledger, authz and events | P1 T2–T8, T15; P1 T16 `initDomainWithModelDependencies` | SQL job/invocation/trace rows, authorized REST/MCP and filtered stream |
+| RR-02 complete request eligibility and local credential routing | P1 T3/T4/T10/T13; P2 T1/T4/T6/T9; P1 T16 and P2 T10 roots | selected runner executes exact model/backend/route/tools; unsupported requests never offered |
+| RR-03 outcomes, recovery probes, floors and logout alerts | P1 T11–T13; P1 T16; runner-local probes P2 T9 | actual process/RPC bytes → classified outcome → registry transition → reroute/alert; real captured-version evidence remains gated |
+| RR-04 validated policy/config and clocks | P1 T1, P2 T2, P3 T1, P4 T1; phase roots P1 T16/P2 T10/P3 T13/P4 T13 | configured limits/timeouts affect production behavior; invalid config refuses startup |
+| RR-05 keys, protocol, durable replay, runner binary/install | P2 T1–T6/T8–T11; server P2 T10 and runner P2 T9 | real WebSocket → durable inbox → ACK → result; reboot/account launch evidence remains gated |
+| RR-06 machine measurements | P2 T7; P2 T9/T10; detail P2 T12 | samples of execution volume → hub window/placement/API; unsupported measurements stay explicit; thermal evidence remains gated |
+| RR-07 common execution root | P2 T4/T9/T11 and P2 T10 root comparison | matching usable absolute root admits workspace jobs; chat-only fallback is not closure for affected Linux/Mac layouts |
+| RR-08 checkpoints, ownership, transfer, drain, cleanup | P3 T1–T3/T6/T7/T9/T11–T14; P3 T13 roots | committed files restored on another runner, fenced writer/deletion, durable drain progress |
+| RR-09 process descriptors, bundles, local environment | P1 T9/T10; P3 T8/T9; P1 T16/P3 T13 | real remote process sees relative bundle entrypoint, canonical workspace, runner environment; outside-bundle dependencies remain explicit |
+| RR-10 crash-safe completion/replay | P3 T2/T3/T5/T6/T10; P4 T6/T10; roots P3 T13/P4 T13 | validated result + exact prepared refs + all fences + continuation commit atomically, replay without execution |
+| RR-11 branch/gather and resolution resource mobility | P3 T13; P4 T11/T12/T13 | remote staging turn commits and server gather consumes restored committed staging without touching branch/parent copies |
+| RR-12 durable turns, leases, accepted request and recovery | P4 T1–T3/T6–T10; P4 T13 | restart of a waiting run adopts live turn or resends exact accepted message under current fences |
+| RR-13 bundle export/import and visible fallback | P4 T4–T6/T8/T12; P4 T13 | native import preserving available bytes or automatic transcript rebuild with durable loss notice |
+| RR-14 cross-account uncertainty | P4 T4/T5/T8 conservative policies | always strip Codex reasoning; uncertain Claude fidelity/refused native import visibly falls back; optional fingerprint is not consumed |
+| RR-15 archive codec | P3 T2/T8/T9 | standard-library tar+gzip round trip and integrity checks; no zstd dependency |
+| RR-16 read models and live clients | P1 T7/T14/T15, P2 T3/T12, P3 T12/T14, P4 T1/T14, P5 T1–T8 | real authorized routes and aggregate graph → browser views, durable notices; rebuilt embedded dist |
+
+Execute phases in numeric order. Within each phase, numeric task order is the
+default. When a contract is needed before its implementation task (for example,
+P3 T5 uses receipt types consumed by T6, or P4 T6 consumes later remote adapters),
+its earlier owner defines the port and test double; later tasks supply and wire
+the adapter. Never import a later task's concrete adapter into domain code.
+Phase root tests depend on every preceding producer, including appended contract
+cycles. P2 T12, P3 T14 and P4 T14 finish their read surfaces before Phase 5 starts.
+
+## 20. Mandatory test and wiring gates for every task
+
+Every task executes STRICT TDD: add a behavior assertion, run the named focused
+command and observe its intended failure, implement only that behavior, rerun
+to green, then refactor. This applies separately to happy/success, rejected
+failure, injected error and boundary/edge cases. A test added after a complete
+implementation and made red with a temporary mutation does not satisfy TDD.
+Mutation checks can strengthen an already completed red/green cycle.
+
+For every newly introduced dependency or field, its owning task must name the
+producer and carry it through real construction/injection and serialization to
+the final sink. Phase root tests drive `initDomainWithModelDependencies`,
+`startRuntime`, the runner binary constructor, or `App` as appropriate. Assert
+non-empty production-derived values and effects: persisted rows, restored file
+bytes, exact provider request arguments, HTTP/MCP payloads and rendered views.
+Removing the injection, emptying the inventory or dropping a load-bearing
+argument must fail the relevant test. Fakes must inspect those arguments.
+A port-only unit test or an upload-success assertion is insufficient evidence
+for execution, recovery, or successful checkpoint publication.
+
+Snapshots read from multiple REST endpoints have no common atomic cursor.
+Pool and execution-status WebSocket frames invalidate/coalesce authoritative
+reloads; they must not patch state while assuming event-log rows were reflected
+in a different response. Serialize reloads or discard superseded response
+epochs. Deduplicate the recent-event log separately. Test delayed frames and
+out-of-order HTTP completion through mounted routes and queue views.
+
+## 21. Fenced completion receipts (Phases 3 and 4)
+
+The following extends §§11/16/17 once Phase 3 is enabled. Earlier Phase-1
+immediate `Ledger.Complete` behavior is replaced for recoverable executions;
+it must not release ownership before executor validation and durable commit.
+Placement history is presentation data and must never be used as the authority
+for a completion fence, checkpoint selection or a list of suboperations.
+
+```go
+// domain/engine/resource_fence.go — P3 T1 defines before P3 T2/T3 consumers.
+type ResourceFenceRef struct { Key, Owner string; Generation int64; Token uuid.UUID }
+// domain/engine/step_completion.go — P3 T5 owns receipt types and sink.
+type WorkspaceCompletion struct { Ref string; Resource ResourceFenceRef }
+type StepCompletion struct { JobFence JobFenceRef; Workspace *WorkspaceCompletion }
+// StepCommit carries Completions []StepCompletion (all operations, including
+// child-input preparation), instead of inferring one job from placement history.
+type StepCompletionSink struct { /* synchronized receipt collection */ }
+func NewStepCompletionSink() *StepCompletionSink
+func ContextWithStepCompletionSink(context.Context, *StepCompletionSink) context.Context
+func StepCompletionSinkFromContext(context.Context) (*StepCompletionSink, bool)
+func (s *StepCompletionSink) Record(c StepCompletion) error
+func (s *StepCompletionSink) Completions() []StepCompletion
+// The sink records every dispatched operation and is read by the engine's
+// commitNodeSuccess / checkpointAndCommit after executor validation.
+
+// domain/runner/resource_lease.go — P3 T3 defines; 044 persists workspace_leases.
+type ResourceLeaseStore interface {
+    Claim(ctx context.Context, key, holder string, owner RunnerID) (engine.ResourceFenceRef, error)
+    Check(ctx context.Context, f engine.ResourceFenceRef) error
+    Release(ctx context.Context, f engine.ResourceFenceRef) error
+    Supersede(ctx context.Context, old engine.ResourceFenceRef, holder string, owner RunnerID) (engine.ResourceFenceRef, error)
+}
+```
+
+A home identifies location; it is not a writer lock. `Claim` rejects a second
+active holder even on the same runner. Resource leases have no automatic expiry
+that bypasses liveness grace. `Supersede` is permitted only with transactional
+fencing of the old operation after confirmed loss/revocation or explicit
+cancellation and process stop. Unfenced `HomeStore.SetCheckpoint`/`MarkDirty`
+cannot publish terminal progress.
+
+`CheckpointStore.Publish`/built-in staging produce immutable **prepared**
+candidates tagged with exact job and resource receipts. `Latest` selects only
+committed versions. P3 T5 `StepCommitRepo` and P4 T6 `TurnCommitRepo` atomically
+validate every job/resource/session fence, promote the exact candidates, update
+home checkpoint pointers, persist result/messages/variables/continuation and
+complete the logical intent. Missing workspace receipts for a workspace-writing
+operation, missing job receipts, stale tokens or references to a different job
+fail closed with no progress. All checks and writes use the same `*sql.Tx` via
+transaction-aware helpers; calling a repo through its `*sql.DB` while that
+transaction holds the single connection would deadlock. Tests use the normal
+single-connection SQLite setup and a bounded context to catch that failure. Never select "newest checkpoint for job" as a
+substitute for an explicit reference. Artifact upload and `PublishTurn` after a
+DB commit are not completion boundaries. P3 T13 server-side group mutations use
+the same resource lease and a transactional resource committer. Orphan prepared
+artifacts are reclaimed only if no committed record references them.
+
+Restart and failed validation restore the previous committed checkpoint. Test
+crashes before candidate preparation, after preparation, inside the transaction
+and after commit; successful result replay must not call the executor again.
+Tests for child-input operations require all receipts, not only the last one.
+
+
+### Accepted turn binding (P4 T3; consumed by P4 T8–T11)
+
+```go
+// domain/engine/turn_intent.go
+type AcceptedTurnBinding struct {
+    Kind provider.ProfileKind
+    Provider, Model, Backend, ConnectionRef string
+    BackendExplicit bool
+    AllowedTools []string
+    ContextWindow provider.ContextWindow
+    Effort provider.Effort
+    Pinned bool
+    OpaquePinRoute string
+    RequireExecutedModel bool
+    RouteConfigHash string
+}
+func CaptureAcceptedTurnBinding(b provider.ResolvedBinding) (AcceptedTurnBinding, error)
+type TurnBindingRestorer interface {
+    RestoreTurnBinding(ctx context.Context, accepted AcceptedTurnBinding) (provider.ResolvedBinding, error)
+}
+```
+
+P4 T3 freezes the effective accepted backend/model/constraints and hashes
+canonical route Provider/BaseURL/Extras into `RouteConfigHash`; the persisted
+snapshot contains neither credentials nor `RevealKey`. The turn intent stores
+`request_id` and `accepted_binding` before accepting a submission. First-turn
+success also stores this binding in the durable conversation, feeding idle
+moves without re-resolving an edited profile. Adapter
+`adapter/provider/turn_binding.go:NewTurnBindingRestorer(store provider.ConnectionStore)`
+loads the original live connection, enforces access/revocation and unchanged
+route hash, and attaches lazy key retrieval while restoring accepted model,
+backend, tools, pin/evidence, effort and context. A changed route fails visibly;
+it cannot silently replace the accepted request. P4 T13 injects the restorer
+into executor, conversation handler, resolution bridge and startup recovery.
+
+### Additional production collaborators and their owners
+
+- P1 T6 stores `ExecRequirements` JSON on `runner_jobs` from `EnsureIntent`.
+  `Reserve` revalidates that persisted request and the latest inventory, health,
+  runner state, step limit and probation single-flight in its write transaction;
+  stale decisions cannot bypass cordon or run incompatible harnesses.
+- P2 T1/T9 produce source `Capabilities` from verified harness version/operation axes and runner-local endpoint configuration; P2 T4 persists advertised evidence and P2 T6 compares full `ExecRequirements`. Non-empty matching endpoint fingerprint is required for remote routes; a same-named connection alias alone does not prove equivalent routing. Hosted LunaRoute endpoint validation remains unchanged; a custom LunaRoute URL
+  is rejected before dispatch, never silently replaced by a runner default.
+  Generic connection-backed routes remain built-in-only. Source `UnavailableReason` is persisted and serialized beside capabilities in both protocol and operator DTOs. P2 T10 tests incompatible route/context/effort/tool/model-evidence requests receive no offers.
+- P2 T4 owns `runner.RemoteInbox`; P2 T2 owns migration 043's `runner_inbox`;
+  P2 T4 owns `adapter/sqlite/remote_inbox_repo.go:RemoteInboxRepo` and P2 T10
+  injects it into `HubDeps.Inbox`. Accepted output, terminal result and ACK cursor
+  are persisted under the job fence before any ACK; restart/reconnect reload
+  that journal, never an in-memory cursor. A crash before/after ACK must preserve
+  exactly the accepted frames and unconsumed terminal result.
+- P3 T10 owns `runner.BuiltInStopper.StopAndWait(ctx context.Context, f Fence) error`
+  and `RecoveryDeps.Stopper`; P3 T13 installs its supervised process-group/guardian
+  adapter in both built-in harness command execution and `LocalProcessRunner`.
+  A durable launch permit and PID start marker identify surviving descendants.
+  Recovery fences, stops and waits, then restores and retries. Failed stop cannot
+  restore a workspace while a surviving writer can still mutate it.
+- P4 T1 persists `node_executions.session_invocation_id`. Pin, move, recovery and
+  session-index reads carry the exact invocation/session execution ID; maximum
+  retry attempt for `(run,node)` is not a session identity because loops reset
+  retry attempts. A repeated node with an older high-retry session must select
+  the current visit, never its predecessor.
+- P4 T12 emits interactive stream identity (invocation/session, turn index and
+  session generation) in history, token, message and restart frames. P5 T7
+  updates `useInteractiveSession` and `InteractivePanel`: restart clears partial
+  text, superseded-generation frames are ignored, reconnect history restores
+  committed text and durable context-loss notices render. A test must drive
+  actual client event handlers; a decoder-only test does not prove continuity.
+
+### Turn commit and lease recovery (P4 T2/T6/T10)
+
+P4 T6 `engine.TurnCommit` carries `InvocationID uuid.UUID`,
+`AcceptedBinding AcceptedTurnBinding` and `Completions []StepCompletion` alongside
+the exact session lease token/generation, intent ID, conversation execution,
+bundle ref and target pin. There is no filesystem publication after the DB
+transaction: job/resource/session checks and workspace promotion are inside it.
+
+```go
+// domain/engine/turn_lease.go — defined P4 T2, consumed P4 T10.
+type TurnRecoveryProof struct {
+    IntentID uuid.UUID
+    Adopted bool
+    Jobs []JobFenceRef
+    Resource *ResourceFenceRef
+}
+type TurnLeaseRecoveryStore interface {
+    RecoverTurnLease(ctx context.Context, old TurnLease, proof TurnRecoveryProof, ttl time.Duration) (TurnLease, error)
+}
+// domain/runner/remote_inbox.go — P2 T4 defines; P2 T10 wires.
+type InboxReceipt struct { Fence Fence; LastOutputSeq uint64; Result *RemoteResult }
+type RemoteInbox interface {
+    AcceptOutput(ctx context.Context, f Fence, frame OutputFrame) (uint64, error)
+    AcceptResult(ctx context.Context, f Fence, result RemoteResult) error
+    Receipt(ctx context.Context, f Fence) (InboxReceipt, bool, error)
+    Outputs(ctx context.Context, f Fence, after uint64) ([]OutputFrame, error)
+}
+```
+
+Ordinary `Acquire` never steals an expired occupied turn token. P4 T10's
+coordinator produces a recovery proof only after exact live-job adoption, or
+after confirmed loss/revocation/cancel plus process-stop acknowledgment and
+durable job/resource fencing. SQLite validates the current intent, lease and
+job/resource facts with CAS. Adoption preserves the session generation; replay
+increments it. P4 T13 injects the same SQLite turn lease repository as
+`RecoveryLeases`; nil or fabricated proofs cannot permit overlapping turns.
+
+### Checkpoint catalog candidate (P3 T2)
+
+```go
+// domain/runner/checkpoint.go
+type CheckpointCandidate struct {
+    Ref, Base CheckpointRef
+    Job *Fence
+    Resource engine.ResourceFenceRef
+    ArchivePath string
+    SizeBytes int64
+}
+type CheckpointCatalog interface {
+    Publish(ctx context.Context, c CheckpointCandidate) error // prepare only
+    Bootstrap(ctx context.Context, c CheckpointCandidate) error
+    Latest(ctx context.Context, runID uuid.UUID) (CheckpointRef, string, bool, error)
+    Get(ctx context.Context, runID uuid.UUID, version int64) (CheckpointRef, string, error)
+    DeleteRun(ctx context.Context, runID uuid.UUID) error
+}
+```
+
+`Publish` receives the actual resource receipt rather than claiming to validate
+one absent from its arguments. Nil job is permitted only by `Bootstrap`, which
+transactionally rejects any existing committed checkpoint or active job/resource
+writer. Remote `StagedCheckpoint.Resource` comes from the durable scoped
+transfer session, never from the uploaded archive. The normal instance and group
+checkpoint builders copy/materialize Git objects in a private staging directory;
+they never rewrite a user's source repository to remove alternates. Missing
+promisor objects fail visibly instead of producing a falsely portable snapshot.
+
+### Version and telemetry eligibility (P2 T1/T4/T7/T9/T10; P3 T4/T13)
+
+A release server `vM.m.p` admits runner versions in `[vM.m.p, vM.(m+1).0)`
+with the same protocol/capability epoch. `CompatTable.RunnerMin` and
+`RunnerMaxExclusive` carry that range. An unstamped server uses the explicit
+`unreleased` sentinel and admits no remote execution; incompatible machines
+remain visible with a reason. Built-in local operation still starts without
+runner keys. Root fixtures stamp deterministic semver instead of accepting
+unknown versions via an empty minimum.
+
+`PlacementPolicy.TelemetryMaxAge` is `3 * cfg.Runners.HeartbeatSeconds`, 15 seconds
+by default. Zero, future or older sample timestamps provide unknown metrics;
+they cannot trigger disk or health load moves. The runner wire telemetry carries
+`SampleAgeMs`, measured monotonically by the sampler; the hub validates it and
+normalizes `SampledAt` to server receipt time minus sample age. Remote wall-clock
+skew cannot fabricate fresh samples. Built-in sampling uses the server clock.
+P2 T7 owns age measurement, P2 T1/T9 wire it, P2 T4 normalizes it, P2 T10 and P3
+T13 feed policy and the dashboard shows stale/unavailable values explicitly.
+
+## 22. Residual external inputs and policy decisions
+
+These ten inputs are **not** closed by generated fixtures, a capture script,
+an unsupported-format error, an unavailable metric, a login-only LaunchAgent,
+or chat-only admission. Their owning task must remain blocked at its acceptance
+gate until the named evidence or decision exists. Implementable paths and their
+unit tests can proceed; the planning gate must report every row below.
+
+| ID | Consumer task | Missing producer/input | Decision or evidence needed |
+|---|---|---|---|
+| RR-03a | P1 T11 Claude outcome decoder and version table | `adapter/claudecli/testdata/outcomes/captured/<version>/*.jsonl` with reviewed state/channel matrix | Capture real success/exhaustion/logout/transient stream and session records; certify the feature-specific supported floors from those records. |
+| RR-03b | P1 T13 `ClaudeAuthProber` | Verified per-version `claude auth status` stdout/exit fixtures | Decide and verify which actual JSON fields/exit codes prove login/logout, including command/probe errors. |
+| RR-03c | P1 T12 Codex current-turn rollout decoder and version table | `adapter/codex/testdata/outcomes/captured/<version>/*.rollout.jsonl` and matching exec stdout | Capture actual account states and turn boundaries; certify supported feature floors instead of inferring them from main-branch schema/binary strings. |
+| RR-03d | P1 T12 `RateLimitsRead`, consumed P1 T13 | A real initialized `codex app-server` `account/rateLimits/read` exchange | Verify framing, initialization, EOF/process lifetime and response schema on the supported binary; synthetic RPC output is insufficient. |
+| RR-05 | P2 T11 runner autostart | Verified `register_runner_service_macos` boot launch/account-access context | Choose and prove a reboot launch context that starts automatically and can use the operator's own harness credentials; login-only startup does not meet machine-start behavior. |
+| RR-06 | P2 T7 `Telemetry.Thermal` | Verified Apple-silicon thermal observation/fixtures | Choose a supported native helper or prove real `pmset` thermal-load output; unavailable is honest rendering but not a thermal source. |
+| RR-07 | P2 T11 root setup, P2 T4 workspace compatibility | A usable common absolute execution root for Macs and a Linux server | Choose and verify provisioning/permissions or a revised portable layout; falling back to chat-only does not implement workspace mobility on that layout. |
+| RR-08 | P3 T2 `MaterializePortableGit` | Required Git promisor objects absent from local object storage | Decide whether/how authenticated network fetching is allowed, or explicitly narrow supported repositories; a checkpoint must never omit required objects. |
+| RR-09a | P3 T8 bundles, P3 T9 remote scripts | Declared bytes for runtime file dependencies outside the script directory | Choose an authored dependency-manifest/transfer or enforced-affinity policy; arbitrary runtime absolute/parent paths cannot be supplied by the current folder bundle. |
+| RR-09b | P3 T8/P3 T9 process eligibility | Declared/probed required command versions and nested tool capabilities | Choose capability declarations/probes and re-placement policy; `LookPath` for the interpreter alone does not produce these requirements. |
+
+RR-13 foreign-home native restore and RR-14 cross-account fidelity are handled
+by P4's mandatory automatic transcript rebuild, unconditional Codex reasoning
+stripping and durable loss notices. No required path consumes an account
+fingerprint. They are optional native-fidelity research, not unresolved inputs
+on the supported fallback path. RR-11 staging portability and RR-16 branch/client
+observability now have required producer, wiring and sink-test tasks; neither
+may retain a built-in-only or decoder-only shortcut.
+
+## 23. Suspension, maintenance and lifecycle completion owners
+
+```go
+// domain/engine/step_commit.go — P3 T5
+type StepCommitMode string
+const (
+    StepCommitAdvance StepCommitMode = "advance"
+    StepCommitSuspend StepCommitMode = "suspend"
+)
+type StepSuspension struct { Kind string; ChildLinkID *uuid.UUID; State map[string]any }
+// StepCommit includes Mode StepCommitMode and Suspension *StepSuspension.
+// domain/runner/transfer.go — P3 T6 defines, P3 T7 implements.
+type TransferScope struct {
+    Fence Fence
+    RunID uuid.UUID
+    Direction, BaseRef, BundleHash, MaintenanceOperationID string
+    Resource engine.ResourceFenceRef
+}
+// domain/runner/homes.go — P3 T3
+type HomeMoveCause struct {
+    TargetJobID, InvocationID *uuid.UUID
+    NodeID, OperationID string
+    FromGeneration, ToGeneration int64
+}
+```
+
+An awaited spawn may execute a routed child-input preparation before it waits.
+P3 T5's successful suspension commit consumes those exact validated operation
+receipts and releases their slots while keeping the node invocation open and
+current node unchanged. Persist the existing child-link ID and prepared inputs
+before exposing the wait. On commit failure/restart preserve/reuse that durable
+link; never spawn a second child. Final child completion extends the invocation
+without committing already-consumed receipts again. P4 first turns already
+commit through `TurnCommit` and are not committed a second time by suspension.
+P3 T13's step-limit-one root test proves a child can execute while its parent
+waits and the waiting parent holds zero runner slots.
+
+Synthetic `OperationProbe` has no node continuation. Its explicit probe
+completion owner validates the exact-model confirmation and commits its ledger
+result, releasing its slot without manufacturing a node invocation/step commit.
+P3 T5/T6 define that policy and P3 T13 exercises the P1 T13 monitor through the
+real root after deferred completion is enabled. Ordinary workflow operations
+cannot use the probe exception.
+
+A drain's pull-only maintenance operation is persisted by P3 T12 before moving
+bytes; P3 T7 validates its exact target runner, resource, pinned checkpoint and
+operation ID. A transfer scope names exactly one active job fence or one durable
+maintenance operation. Zero job fields are allowed only in that explicit
+maintenance branch, never as wildcard authorization. The target's verified pull
+receipt is required before drain reports completion; waiting for a future
+workflow step to pull does not complete maintenance.
+
+P3 T3 records `HomeMoveCause` atomically with handoff; P3 T6 supplies assignment
+job/invocation/node/operation and generations, and drain supplies its maintenance
+operation. P3 T12 read DTOs preserve the correlation; P5 T7 joins move badges to
+the exact target job/operation, never a timestamp heuristic across loop visits.
+A drain-only move remains in history without inventing an execution edge.
+
+P1 T16 owns `RefreshInventory func(context.Context) error` and periodically
+re-runs `sourceSync` under the server background lifetime, updating missing and
+upgraded harness inventory independently of health. The root retains notifier
+unsubscribe callbacks, closes/joins `StepDispatcher`, waits for `HealthMonitor`
+and outstanding confirmations, and only then closes DB/runtime dependencies.
+Tests remove these production producers and check durable source changes and
+shutdown joins, rather than reading a constructor field.
+
+### Probe and process supervision adapters
+
+P3 T5 defines `ProbeCompletion{RequestedModel, ExecutedModel string; Validated bool}`
+and `ProbeCommitter.CommitProbe(ctx context.Context, f engine.JobFenceRef,
+result ProbeCompletion) error`; `adapter/sqlite/probe_commit_repo.go:ProbeCommitRepo`
+is the production producer, wired by P3 T13 into dispatcher/confirmation policy.
+It validates the explicit synthetic operation kind and exact successful model
+before completing its fenced ledger job. Missing owner or invalid evidence
+fails without leaving a successful slot-holding operation.
+
+`adapter/runner/builtin/supervisor.go:ProcessSupervisor` implements
+`BuiltInStopper.StopAndWait(ctx context.Context, f runner.Fence) error` and owns
+durable launch permits/guardian identities before child execution. P3 T13
+injects it into both subprocess harness command launch and local processes;
+P3 T10 recovery uses the same supervisor. Runner-side
+`adapter/runneragent/workspace/gate.go:ResourceGate` is shared by executor,
+restore/sync, cancel/fenced handling and janitor. A typed `stopped` acknowledgment
+is emitted only after the exact old process tree exits. A newer generation
+cannot restore or launch on that local resource while stop is pending; stale
+delete cannot remove a newer copy. Stop failure keeps the gate closed.
+
+P3 T9 produces structured reject codes `command_unavailable`,
+`capability_unavailable`, `workspace_preparation_failed`. P3 T6 maps only those
+allowlisted codes through `Reject.Code` to `OutcomePreparationFailed`; the
+operation excludes that runner and re-places across bounded remaining targets.
+Unknown reject prose is ordinary failure, never exhaustion or an unbounded
+reroute. P3 T13's missing-interpreter root test proves the final command executes
+once on a capable alternative.
+
+### Interactive event identity and supervised assignment provenance
+
+P4 T3 `domain/engine/turn_identity.go` owns the following; P4 T6 persists it in
+the atomic conversation commit and P4 T12 reads that same record for reconnect
+history. P4 T8 publishes events with the typed identity; P5 T7 consumes it.
+
+```go
+type InteractiveTurnIdentity struct {
+    RunID uuid.UUID `json:"instanceId"`
+    NodeID string `json:"nodeId"`
+    InvocationID uuid.UUID `json:"invocationId"`
+    RequestID uuid.UUID `json:"requestId"`
+    TurnIndex int `json:"turnIndex"`
+    Generation int64 `json:"generation"`
+}
+const ConversationKeyTurnIdentity = "turnIdentity"
+func ContextWithTurnIdentity(context.Context, InteractiveTurnIdentity) context.Context
+func TurnIdentityFromContext(context.Context) (InteractiveTurnIdentity, bool)
+func CommittedTurnIdentity(conv map[string]any) (InteractiveTurnIdentity, bool)
+func PublishTurnRestarted(bus EventBus, turn InteractiveTurnIdentity)
+func PublishContextNotice(bus EventBus, turn InteractiveTurnIdentity, notice string)
+// domain/runner/assignment_context.go — P3 T10
+func ContextWithAssignment(ctx context.Context, a Assignment) context.Context
+func AssignmentFromContext(ctx context.Context) (Assignment, bool)
+```
+
+`builtin.Run` stamps the actual assignment for every supervised harness/process
+launch; the supervisor records its durable permit against that exact job fence.
+Read-only probes explicitly use unsupervised launch; token-spending confirmation
+uses a real assignment. Missing provenance cannot register or start a supervised
+workflow process. P3 T13 checks the actual `builtin_processes` row and surviving
+child identity; constructing a supervisor alone does not prove safe recovery.
+
+For mutable streamed turns P3 T6 `BeginAttempt` retains the writer claim, and
+the terminal forwarder invokes `FinishSuccess` to prepare the exact workspace
+candidate and record its full `StepCompletion` **before** forwarding `Done`.
+P4 T6 `StageTurn` validates/reuses this candidate. It does not create a second
+candidate or infer a missing resource token through `Latest`; missing receipt
+fails the turn before bundle/result commit.
+
+### Baseline before assignment (P3 T6; wired P3 T13)
+
+```go
+// domain/engine/workspace_baseline.go
+type WorkspaceBaselineInitializer interface {
+    EnsureBaseline(ctx context.Context, runID uuid.UUID, dir string) error
+}
+func (e *Engine) SetWorkspaceBaselineInitializer(WorkspaceBaselineInitializer)
+// domain/runner/baseline.go
+type BaselineDeps struct { Checkpoints CheckpointStore; Ledger Ledger; Leases ResourceLeaseStore }
+func NewWorkspaceBaselineInitializer(BaselineDeps) *BaselineInitializer
+```
+
+`Engine.prepareWorkspace` calls this hook after `EnsureInstanceDir` and completed
+branch setup, before any intent, slot reservation or resource claim. P3 T13
+installs it before executors freeze/runtime starts. Bootstrap's no-active-writer
+check is therefore satisfiable. An existing committed baseline is reused and
+never overwritten by a mutable restart copy; missing/active/failed initialization
+fails before any remote offer. `WorkspaceSync.BeginAttempt` only consumes the
+baseline and must never attempt bootstrap after it claims an active resource.
+Root tests verify first-step files and branch-fork bytes on a second runner and
+that baseline disk failure prevents dispatch entirely.
