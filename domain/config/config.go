@@ -1,6 +1,11 @@
 // Package config defines the domain configuration types for Arbitron.
 package config
 
+import (
+	"errors"
+	"fmt"
+)
+
 // Config is the top-level configuration structure for the Arbitron system.
 type Config struct {
 	Server        ServerConfig
@@ -17,6 +22,9 @@ type Config struct {
 	Samples       SamplesConfig
 	// Layout configures automatic workflow arrangement and its rendered review.
 	Layout LayoutConfig
+	// Runners configures runner limits, probes, transient retries and event retention.
+	// Validated by adapter/config.Load before boot.
+	Runners RunnersConfig
 	// CapabilitiesPath is the path to an optional capability-ruleset override file
 	// (profile-editing Phase 2). Empty or a non-existent path falls back to the
 	// embedded default ruleset (LoadCapabilityRules treats a missing file as
@@ -339,4 +347,66 @@ type LoggingConfig struct {
 type TracingConfig struct {
 	Enabled   bool
 	ExportDir string
+}
+
+// Runner pool defaults. adapter/config's defaults map reads these so the
+// default lives in exactly one place.
+const (
+	DefaultRunnerStepLimit             = 8
+	DefaultRunnerProbeIntervalSeconds  = 60
+	DefaultRunnerProbeJitterSeconds    = 10
+	DefaultRunnerTransientMaxAttempts  = 3
+	DefaultRunnerTransientBackoffMinMs = 1000
+	DefaultRunnerTransientBackoffMaxMs = 30000
+	DefaultRunnerEventRetention        = 1000
+)
+
+// RunnersConfig configures the runner pool (Remote Runners). Phase 1 fields
+// only; later phases append their own fields and extend Validate.
+type RunnersConfig struct {
+	// DefaultStepLimit is the concurrent-step limit a newly registered runner
+	// (including the built-in runner) starts with. 1..256; default 8.
+	DefaultStepLimit int
+	// ProbeIntervalSeconds is the periodic source-health probe cadence. >= 5.
+	ProbeIntervalSeconds int
+	// ProbeJitterSeconds is the random spread added to each probe and to the
+	// probation verification after a reset. >= 0.
+	ProbeJitterSeconds int
+	// TransientMaxAttempts bounds same-source retries on transient/busy
+	// outcomes before the step fails with an ordinary error. 1..10.
+	TransientMaxAttempts int
+	// TransientBackoffMinMs / TransientBackoffMaxMs bound the exponential
+	// backoff between transient retries; Retry-After remains a provider minimum even when larger than Max.
+	TransientBackoffMinMs int
+	TransientBackoffMaxMs int
+	// EventRetention is how many pool events the persisted log keeps. >= 100.
+	EventRetention int
+}
+
+// Validate reports every violation at once (errors.Join). It is called from
+// adapter/config.Load so an invalid pool configuration refuses to boot.
+func (c RunnersConfig) Validate() error {
+	var errs []error
+	if c.DefaultStepLimit < 1 || c.DefaultStepLimit > 256 {
+		errs = append(errs, fmt.Errorf("runners.defaultsteplimit %d must be between 1 and 256", c.DefaultStepLimit))
+	}
+	if c.ProbeIntervalSeconds < 5 {
+		errs = append(errs, fmt.Errorf("runners.probeintervalseconds %d must be at least 5", c.ProbeIntervalSeconds))
+	}
+	if c.ProbeJitterSeconds < 0 {
+		errs = append(errs, fmt.Errorf("runners.probejitterseconds %d must not be negative", c.ProbeJitterSeconds))
+	}
+	if c.TransientMaxAttempts < 1 || c.TransientMaxAttempts > 10 {
+		errs = append(errs, fmt.Errorf("runners.transientmaxattempts %d must be between 1 and 10", c.TransientMaxAttempts))
+	}
+	if c.TransientBackoffMinMs < 1 {
+		errs = append(errs, fmt.Errorf("runners.transientbackoffminms %d must be at least 1", c.TransientBackoffMinMs))
+	}
+	if c.TransientBackoffMaxMs < c.TransientBackoffMinMs {
+		errs = append(errs, fmt.Errorf("runners.transientbackoffmaxms %d must be at least runners.transientbackoffminms (%d)", c.TransientBackoffMaxMs, c.TransientBackoffMinMs))
+	}
+	if c.EventRetention < 100 {
+		errs = append(errs, fmt.Errorf("runners.eventretention %d must be at least 100", c.EventRetention))
+	}
+	return errors.Join(errs...)
 }
