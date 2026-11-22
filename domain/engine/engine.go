@@ -61,7 +61,8 @@ type Engine struct {
 	groupHandler GroupTerminalHandler
 	// profiles resolves a node's model_profile so node.started can describe the
 	// binding the node runs on. NEVER nil: NoopProfileResolver{} until wired.
-	profiles provider.ProfileResolver
+	profiles    provider.ProfileResolver
+	invocations InvocationStore
 	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
 	// onto node events when a node has BackendUnset. It is deployment config,
 	// injected at construction — not read through the presentation enricher.
@@ -107,8 +108,9 @@ func NewEngine(
 		// Non-nil from birth so cascadeCancel never has to nil-check a
 		// containment control. The composition root overwrites this with the real
 		// repository via SetSpawnLinks.
-		spawnLinks: NoopSpawnLinks{},
-		profiles:   NoopProfileResolver{},
+		spawnLinks:  NoopSpawnLinks{},
+		profiles:    NoopProfileResolver{},
+		invocations: NewMemoryInvocationStore(),
 	}
 }
 
