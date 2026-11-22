@@ -1161,6 +1161,9 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				if halt {
 					return
 				}
+				if !e.commitOpenVisit(ctx, instanceID, currentNodeID) {
+					return
+				}
 				currentNodeID = nextNodeID
 			}
 		}
@@ -1249,17 +1252,23 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
 		lastNodeID = currentNodeID
-		result, nodeExec, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
+		result, nodeExec, invocationID, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
 
 		if execErr != nil {
 			nextNodeID, halt := e.handleNodeError(ctx, instanceID, workflowName, currentNodeID, node, *wf, nodeExec, execErr, vars, adj)
 			if halt {
 				return
 			}
+			if !e.commitVisit(ctx, instanceID, currentNodeID, invocationID) {
+				return
+			}
 			currentNodeID = nextNodeID
 		} else {
 			nextNodeID, halt := e.handleNodeSuccess(ctx, instanceID, workflowName, currentNodeID, node, result, vars, adj, &capacityFreed)
 			if halt {
+				return
+			}
+			if !e.commitVisit(ctx, instanceID, currentNodeID, invocationID) {
 				return
 			}
 			currentNodeID = nextNodeID
@@ -1506,10 +1515,14 @@ func (e *Engine) handleNodeSuccess(
 // executeWithRetry executes a node, applying retry logic from the error behavior.
 // A NodeExecution record is created for each attempt. The final record is returned
 // so the caller can update it (e.g., marking it skipped).
-func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, *instance.NodeExecution, error) {
+func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, *instance.NodeExecution, uuid.UUID, error) {
 	executor, ok := e.executorFor(node.Type)
 	if !ok {
-		return nil, nil, fmt.Errorf("no executor registered for node type: %s", node.Type)
+		return nil, nil, uuid.Nil, fmt.Errorf("no executor registered for node type: %s", node.Type)
+	}
+	inv, err := e.invocationStore().Begin(ctx, instanceID, node.ID)
+	if err != nil {
+		return nil, nil, uuid.Nil, fmt.Errorf("engine: begin invocation: %w", err)
 	}
 
 	eb := resolveErrorBehavior(node, wf)
@@ -1525,14 +1538,18 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		if attempt > 1 && eb.RetryDelaySeconds > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, lastExec, ctx.Err()
+				return nil, lastExec, inv.ID, ctx.Err()
 			case <-time.After(time.Duration(eb.RetryDelaySeconds) * time.Second):
 			}
 		}
 
 		resolvedInputs := vars.Snapshot()
 		startedAt := time.Now()
-		result, err := executor.Execute(ctx, node, vars, wf.Name)
+		attemptCtx := ContextWithPlacementSink(ContextWithStepIdentity(ctx, StepIdentity{
+			RunID: instanceID, NodeID: node.ID, InvocationID: inv.ID,
+			OperationID: nodeOperationID, Kind: OperationNode, Attempt: attempt,
+		}), NewPlacementSink())
+		result, err := executor.Execute(attemptCtx, node, vars, wf.Name)
 		completedAt := time.Now()
 
 		execStatus := instance.NodeStatusSucceeded
@@ -1566,22 +1583,46 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		nodeResultToExecution(result, nodeExec)
 		// Skip writing when the executor itself already wrote the record (IsWait path).
 		if result == nil || !result.IsWait {
-			_ = e.nodeExecutions.Create(ctx, nodeExec)
+			if persistErr := e.nodeExecutions.Create(ctx, nodeExec); persistErr != nil {
+				return nil, nodeExec, inv.ID, fmt.Errorf("engine: persist node execution %q: %w", node.ID, persistErr)
+			}
 		}
 		lastExec = nodeExec
 
 		if err == nil {
-			return result, nodeExec, nil
+			return result, nodeExec, inv.ID, nil
 		}
 		var pendingGather *pendingFileGatherError
 		var pendingWait *pendingGroupWaitError
 		if errors.As(err, &pendingGather) || errors.As(err, &pendingWait) {
-			return nil, nodeExec, err
+			return nil, nodeExec, inv.ID, err
 		}
 		lastErr = err
 	}
 
-	return nil, lastExec, lastErr
+	return nil, lastExec, inv.ID, lastErr
+}
+
+// commitVisit closes an advanced visit even when cancellation arrives after execution.
+func (e *Engine) commitVisit(ctx context.Context, instanceID uuid.UUID, nodeID string, id uuid.UUID) bool {
+	if id == uuid.Nil {
+		return true
+	}
+	if err := e.invocationStore().Commit(context.WithoutCancel(ctx), id); err != nil {
+		slog.Error("failed to commit invocation", "error", err, "instanceID", instanceID)
+		e.failInstance(context.WithoutCancel(ctx), instanceID, nodeID)
+		return false
+	}
+	return true
+}
+
+func (e *Engine) commitOpenVisit(ctx context.Context, instanceID uuid.UUID, nodeID string) bool {
+	inv, err := e.invocationStore().Begin(context.WithoutCancel(ctx), instanceID, nodeID)
+	if err != nil {
+		e.failInstance(context.WithoutCancel(ctx), instanceID, nodeID)
+		return false
+	}
+	return e.commitVisit(ctx, instanceID, nodeID, inv.ID)
 }
 
 // nodeResultToExecution maps optional NodeResult fields onto a NodeExecution
