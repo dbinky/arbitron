@@ -191,7 +191,7 @@ These are required contracts; unresolved implementation/source tasks remain in �
 - **Supported-harness-version table:** owned by these adapters, next to real fixtures. Existing `minCodexVersion` is only the execution floor; `minLunaRouteCodexVersion` is a separate credential-safety floor. Neither proves rollout/RPC/session portability support. Pin runner capability floors from fixtures; Claude and new Codex capability floors remain **UNRESOLVED DEPENDENCY RR-03**. **Resolved 2026-11-22 (contracts §22 RR-03a/c):** floors stay evidence-inferred (Claude 2.1.209/2.1.278/2.1.284; Codex 0.170.0) and are enforced by `CheckVersion`; real per-version capture certification is a Non-Goal (human decision).
 
 ### 3.11 Source health monitor (`domain/runner` service, probe adapters)
-- **Job:** keep source health current and return sources to service automatically.
+- **Job:** keep source health current and return sources to service automatically. P2 T13 routes fresh operator and periodic checks to the owning remote machine; cached heartbeat health is not a successful requested check. Native quota confirmations are normal slot-counted jobs pinned to the exact source/model, and tri-state quota observations retain model scope and an outcome-revision fence.
   - **Periodic probe:** about every 60 seconds per source, plus on demand through `runner_source_probe`:
     - Claude: an auth-status check.
     - Codex: `codex.Readiness` plus `codex app-server` `account/rateLimits/read`, which spends no tokens.
@@ -235,7 +235,7 @@ The health monitor runs alongside: probes, then registry transitions, then event
 
 ## 5. Data Provenance
 
-Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–24. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. The recorded evidence/platform decisions in §22 remain in force. The alignment review adds the explicit **UNRESOLVED DEPENDENCY RR-17** in §24: non-portable partial-clone completion has no recoverable checkpoint producer. It must be reported; upstream closure claims exclude that branch. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Leaf input | Consumer | Verified producer or explicit dependency |
 |---|---|---|
@@ -263,7 +263,7 @@ Repository verification below records the pre-implementation baseline: **UNRESOL
 
 ### Open dependency register (for produce-plans)
 
-This is the original producer checklist. Use the reviewed task-level ownership and remaining escalations in the shared contracts §§19–23 to determine planning closure; merely citing an earlier phase does not close an item.
+This is the original producer checklist. Use the reviewed task-level ownership and remaining escalations in the shared contracts §§19–24 to determine planning closure; merely citing an earlier phase does not close an item.
 
 | ID | Owning phase(s) | Required producer or verification |
 |---|---|---|
@@ -283,6 +283,7 @@ This is the original producer checklist. Use the reviewed task-level ownership a
 | RR-14 | 4 | Real two-account resume/fidelity verification and optional account-fingerprint producer; conservative stripping/notices remain required. |
 | RR-15 | 3 | Archive compression selection: vet/add zstd or explicitly choose gzip and verify round trips. |
 | RR-16 | 1–5 | Filtered runner/queue/trace/key/session/drain REST/MCP DTOs, event schemas, durable notices and client reconciliation. |
+| RR-17 | 3–4 | **Unresolved:** a recoverable last-successful workspace for the non-portable partial-clone branch; no-fetch/local-support policy does not supply it. Human product/materialization decision required (contracts §24). |
 
 ### Deferred to plans
 - **Composition-root wiring** in `cmd/arbitron/main.go`:

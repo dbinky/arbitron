@@ -89,7 +89,7 @@ Out of scope:
   - **Leases:** heartbeats extend the leases of reported jobs. An offer not accepted within its TTL is re-offered with generation + 1.
   - **Runner-originated writes:** all go through the Phase 1 ledger fence.
   - **Eligibility evidence:** source inventory carries unavailable reasons plus structured operation/backend/provider/endpoint fingerprint/model/axis/tool/model-evidence capabilities. P2 T9 produces them from actual local binary versions/rules/route configuration; T5 translates and T4 persists them; placement and atomic Reserve apply the exact predicate. A connection alias/family alone never proves a compatible remote route. LunaRoute remains hosted-only under existing endpoint validation.
-  - **Health:** source health and headroom from heartbeats update the registry and run through the same health-transition rules as Phase 1, including logged-out alerts.
+  - **Health:** source health observations from heartbeats and correlated fresh probes run through Phase 1 HealthMonitor.ObserveProbe, including logged-out alerts. Auth and capacity are merged independently, nullable ordinaryUsageAllowed/model scope survive transport, and old checks cannot undo newer classified failures. P2 T13 wires the actual remote prober and exact-source slot-counted native confirmation; operator checks never return cached success. Slow probes do not block heartbeats.
   - **Telemetry:** freshness uses server receipt minus runner monotonic sample age; placement discards zero/future/older-than-three-heartbeat samples. Disk is sampled on the canonical workspace volume. The latest telemetry plus a **short in-memory window of recent samples** per runner. This feeds Phase 5 sparklines and the Phase 3 load tiers. It is not persisted history (spec non-goal).
   - **Grace:** job TTLs and reconnect processing must not reassign accepted work before the liveness loss deadline. Temporary socket breaks retain assignment ownership; explicit revocation bypasses grace.
   - **Events:** publishes `runner.connected`, `runner.suspect`, `runner.lost`, `runner.reconnected` and `runner.incompatible`, and appends each to the pool event log.
@@ -135,7 +135,7 @@ Out of scope:
 
 ## 5. Data Provenance
 
-Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–24. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. The recorded evidence/platform decisions in §22 remain in force. The alignment review adds the explicit **UNRESOLVED DEPENDENCY RR-17** in §24: non-portable partial-clone completion has no recoverable checkpoint producer. It must be reported; upstream closure claims exclude that branch. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Leaf input | Consumer | Verified producer or explicit dependency |
 |---|---|---|
@@ -171,7 +171,7 @@ Repository verification below records the pre-implementation baseline: **UNRESOL
 - **Ledger fence:** the hub's single write path, so no per-handler generation checks.
 - **`runnerproto`:** the only coupling between server and runner binary. Versioned in `hello`.
 - **Pool event log and telemetry window:** consumed by Phase 5.
-- **Phase 3 hook:** workspace and process jobs extend the same dispatch and accept message kinds and the runner's job executor.
+- **Phase 3 hook:** workspace and process jobs extend the same dispatch and accept message kinds and the runner's job executor. P3 T15 adds the real Codex subscription inventory/prober and Claude agent capabilities to this same discovery graph; executable code with no advertised source is incomplete.
 
 ## 7. Error handling
 - **Handshake failures close with a typed reason and do not register the runner:** a bad or revoked key, a wrong machine (failed signature), or a malformed admission envelope. A valid bound machine with unsupported protocol/version stays visible as incompatible (§3.4), even if its execution channel closes. No secret appears in logs.

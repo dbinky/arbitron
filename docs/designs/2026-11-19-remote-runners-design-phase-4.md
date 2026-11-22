@@ -49,11 +49,11 @@ Out of scope: guaranteed preservation of hidden reasoning across accounts (spec 
   - **Import:** on the target runner, install a bundle and return the session ID to resume.
     - **Claude:** bytes are never edited (an edited history can cause a 400). Identical workspace paths (D2) preserve workspace references; foreign harness-home/sidecar references refuse native import and take the visible rebuild fallback (P4 T4/T8/T9).
     - **Codex:** reasoning items are **always** stripped (see §5). A bundle containing compaction items refuses import, which leads to the rebuild fallback.
-- **Executed on runners:** remote runners carry export and import as protocol message kinds; the built-in runner calls the adapters in-process.
+- **Executed on runners:** remote native export/upload is part of the originating stream assignment before its terminal success, under that parent fence and single slot. It is retained durably before terminal ACK; Hub.ExportSession reads the exact receipt without reserving another export job. Import is a separately fenced move operation. The built-in runner calls adapters in-process under its parent assignment. P4 T6/T12/T13 implement and test limit-one/full-limit completion and ACK→restart adoption (contracts §24).
 
 ### 3.2 Session checkpoint store (port in `domain/engine`; server filesystem adapter)
 - **Job:** hold bundles keyed by (run, durable session/invocation identity, turn index), including the group-resolution attempt identity. Node ID alone can recur and must not alias a previous session. Only the bundle for the latest successful turn is kept per session (plus the one being written).
-- **Bundle bytes:** travel through the Phase 3 transfer endpoints, scoped to the job and generation.
+- **Bundle bytes:** travel through the Phase 3 transfer endpoints, scoped to the exact parent job/session/resource and generation. P4 T12 OpenSessionBlobs fsyncs prepared bytes and records their immutable ref in the durable inbox before ACK; P4 T13 injects the persistent store into the real hub/transfer/export graph. An in-memory blob cannot back a terminal acknowledgment.
 - **Reference:** recorded in dedicated session columns with invocation/pin/generation; accepted binding and transcript remain in conversation metadata.
 
 ### 3.3 Durable turn lease (port in `domain/engine`; SQLite adapter)
@@ -116,7 +116,7 @@ Out of scope: guaranteed preservation of hidden reasoning across accounts (spec 
 
 ## 5. Data Provenance
 
-Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–24. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. The recorded evidence/platform decisions in §22 remain in force. The alignment review adds the explicit **UNRESOLVED DEPENDENCY RR-17** in §24: non-portable partial-clone completion has no recoverable checkpoint producer. It must be reported; upstream closure claims exclude that branch. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Leaf input | Required production producer and consumer | Root wiring / final proof |
 |---|---|---|

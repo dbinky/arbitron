@@ -89,7 +89,7 @@ Out of scope:
 
 ## 5. Data Provenance
 
-Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–23. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. Real evidence/platform decisions still marked `ESCALATION:` in those tasks remain unresolved and must be reported. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
+Repository verification below records the pre-implementation baseline: **UNRESOLVED DEPENDENCY** labels identify inputs that had no implemented producer or verified source when this design was written. The reviewed implementation-task ownership, runtime wiring and sink proofs are in `docs/plans/remote-runners/2026-11-20-contracts.md` §§19–24. A named, fully specified producer task closes a dependency for the planning gate; it does not claim that code already exists. The recorded evidence/platform decisions in §22 remain in force. The alignment review adds the explicit **UNRESOLVED DEPENDENCY RR-17** in §24: non-portable partial-clone completion has no recoverable checkpoint producer. It must be reported; upstream closure claims exclude that branch. Upstream gaps propagate to their consumers; a fallback closes a gap only when it delivers the spec outcome.
 
 | Rendered leaf input | Required production producer | Client/root consumer and sink proof |
 |---|---|---|
@@ -108,7 +108,7 @@ Repository verification below records the pre-implementation baseline: **UNRESOL
 | Interactive pin/context loss/restart/current generation | P4 T1/T6/T8 durable fields; P4 T9/T12 full-identity events/history | T7 actual useInteractiveSession clears partial output/discards superseded frames; InteractivePanel persists notices after reload; T8 browser sink |
 | REST/event reconciliation/polling | Existing system socket; P1–P4 authorized list/detail snapshots | T2 events invalidate serialized/coalesced loads. No cross-endpoint atomic cursor is inferred from timestamp or event-log ID; epoch guards discard stale HTTP responses |
 
-All rows have named planned producers, root wiring and final consumers. They remain mandatory implementation scope. Missing/nil/empty production input must fail the relevant root sink or render unavailable, never masquerade as healthy/default data. Optional RR-13/RR-14 native-fidelity research does not block supported visible recovery.
+All rows have named planned producers, root wiring and final consumers for the supported portable path. RR-17 remains an explicit recovery-base dependency for the non-portable partial-clone branch; render its durable recovery/drain blocker rather than successful recovery. They remain mandatory implementation scope. Missing/nil/empty production input must fail the relevant root sink or render unavailable, never masquerade as healthy/default data. Optional RR-13/RR-14 native-fidelity research does not block supported visible recovery.
 
 ### Deferred to plans
 - **Read endpoints consumed:** `runner_events` (Phase 1 §3.14) for the pool event log and the home history on instance and trace reads (Phase 3 §3.1). This phase adds no server endpoints.

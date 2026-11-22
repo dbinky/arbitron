@@ -1,7 +1,7 @@
 # Remote Runners — Shared Plan Contracts (source of truth for names)
 
 Every task file under `docs/plans/remote-runners/` uses the names, signatures,
-file paths, migration numbers and event/audit vocabulary below. Sections 19–23
+file paths, migration numbers and event/audit vocabulary below. Sections 19–24
 record the reviewed producer graph, execution gates and cross-phase completion
 contract; read them before implementing any task. A task that needs
 a symbol defined by another task copies the signature into its own
@@ -44,7 +44,7 @@ Spec: `docs/specs/2026-11-19-remote-runners-spec.md`. Designs:
 | 041 | `041_runner_pool` | P1 T5 | `runners`, `runner_sources`, `runner_jobs`, `runner_job_attempts`, `workspace_homes`, `pool_events`; source inventory availability, confirmation model and persisted job requirements |
 | 042 | `042_node_execution_placement` | P1 T14 | `node_executions` columns `runner_id`, `source_id`, `placement_reason`, `placement_history` (JSON text) |
 | 043 | `043_runner_keys` | P2 T2 | `runner_keys`, `runner_inbox`, `runner_inbox_cursors`; `runner_sources.capabilities` (runner metadata already belongs to 041) |
-| 044 | `044_workspace_mobility` | P3 T1 | `workspace_checkpoints` (prepared/committed), `workspace_leases`, `home_moves`, `transfer_sessions`, `step_commits`, `step_commit_operations`, suspension records, maintenance operations, `builtin_processes`, `drain_items`, `runner_copies` |
+| 044 | `044_workspace_mobility` | P3 T1 | `workspace_checkpoints` (prepared/committed), `workspace_leases`, `home_moves`, `transfer_sessions`, `step_commits`, `step_commit_operations`, `node_retry_progress`, `node_retry_failures`, suspension records, maintenance operations, `builtin_processes`, `drain_items`, `runner_copies` |
 | 045 | `045_interactive_sessions` | P4 T1 | `turn_leases`, `turn_intents` (accepted binding and request ID), `session_moves`, resolution resources/materialization state; `node_executions` columns `session_checkpoint_ref`, `session_pin_runner`, `session_generation`, `session_invocation_id` |
 
 ## 2. Config (`domain/config/config.go`, loader keys in `adapter/config/loader.go`)
@@ -215,6 +215,7 @@ func MakeSourceID(r RunnerID, k CredentialKind, ref string) SourceID // "<runner
 type AuthState string     // "unknown" | "ok" | "logged_out"
 type CapacityState string // "available" | "exhausted" | "probation"
 type SourceHealth struct {
+	Revision uint64 // P1 T13 availability/outcome revision; 041 runner_sources.revision
 	Auth AuthState; Capacity CapacityState
 	ResetAt *time.Time         // nil = unknown reset (only meaningful when exhausted)
 	Headroom *float64          // 0..1 remaining; nil = unknown (NEVER treated as 0 or 1)
@@ -248,6 +249,8 @@ type ExecRequirements struct {
 	Affinity Affinity; RunID uuid.UUID; WorkspaceBytes int64
 	PinnedRunner RunnerID // Phase 4 session pin; "" = none
 	RequireExecutedModel bool; Tools []string
+
+	RequiredSource SourceID // synthetic OperationProbe only; exact credential source
 }
 type ExecutionCapability struct {
     Op OpType
@@ -476,8 +479,8 @@ Built-in runner: `adapter/runner/builtin/runner.go` — `builtin.New(builtin.Dep
 
 ```go
 type AuthObservation struct { State AuthState }
-type CapacityObservation struct { State CapacityState; ResetAt *time.Time; OrdinaryUsageAllowed *bool; Windows []LimitWindow; Headroom *float64 }
-type ProbeResult struct { Auth AuthState; Capacity *CapacityObservation } // Capacity nil = probe cannot observe capacity
+type CapacityObservation struct { State CapacityState; ModelScope string; ResetAt *time.Time; OrdinaryUsageAllowed *bool; Windows []LimitWindow; Headroom *float64 }
+type ProbeResult struct { Auth AuthState; Capacity *CapacityObservation; HealthRevision uint64 } // Capacity nil = probe cannot observe capacity
 type SourceProber interface { Probe(ctx context.Context, s Source) (ProbeResult, error) } // read-only: spends no tokens, no slot
 type ConfirmationProber interface { Confirm(ctx context.Context, s Source) error } // token-spending same-model probe; dispatched WITH a slot
 type SourceAlertNotifier interface { SourceLoggedOut(ctx context.Context, s Source) error; SourceRecovered(ctx context.Context, s Source) error }
@@ -603,12 +606,12 @@ chat-only admission or built-in-only recovery does not prove workspace mobility.
 | RR-16 read models and live clients | P1 T7/T14/T15, P2 T3/T12, P3 T12/T14, P4 T1/T14, P5 T1–T8 | real authorized routes and aggregate graph → browser views, durable notices; rebuilt embedded dist |
 
 Execute phases in numeric order. Within each phase, numeric task order is the
-default. When a contract is needed before its implementation task (for example,
+default except P1 T9 must precede T8: T9 produces ProcessSpec/ProcessResult, which T8 StepJob/StepOutput consume. P1 order is 1–7, 9, 8, 10–16. When a contract is needed before its implementation task (for example,
 P3 T5 uses receipt types consumed by T6, or P4 T6 consumes later remote adapters),
 its earlier owner defines the port and test double; later tasks supply and wire
 the adapter. Never import a later task's concrete adapter into domain code.
 Phase root tests depend on every preceding producer, including appended contract
-cycles. P2 T12, P3 T14 and P4 T14 finish their read surfaces before Phase 5 starts.
+cycles. P2 T13 and P3 T15 close remote health and native-source production wiring before their phases are accepted; §24 records their order. P2 T12, P3 T14 and P4 T14 finish their read surfaces before Phase 5 starts.
 
 ## 20. Mandatory test and wiring gates for every task
 
@@ -860,7 +863,7 @@ T13 feed policy and the dashboard shows stale/unavailable values explicitly.
 These ten inputs were open at the planning gate. Each is now closed by a named
 producer (observed evidence under `docs/evidence/remote-runners/`) or by an
 explicit human decision recorded here, in the phase designs' provenance tables
-and in every consuming plan task. Implementers follow the consuming task's
+and in every consuming plan task. RR-17 in §24 records the still-open recovery consequence of RR-08; the ten input decisions do not close it. Implementers follow the consuming task's
 `DECISION (2026-11-22, …)` paragraph; nothing below is gated on further evidence.
 
 | ID | Consumer task | Producer / decision | Rule an implementer follows |
@@ -1041,3 +1044,163 @@ fails before any remote offer. `WorkspaceSync.BeginAttempt` only consumes the
 baseline and must never attempt bootstrap after it claims an active resource.
 Root tests verify first-step files and branch-fork bytes on a second runner and
 that baseline disk failure prevents dispatch entirely.
+
+## Source-bound verification requirement (alignment review 2026-11-22)
+
+`ExecRequirements` gains `RequiredSource SourceID` (defined by P1 T3). Empty means ordinary placement; only synthetic `engine.OperationProbe` may set it. P1 T13 `DispatchConfirmer` sets it from the actual source being confirmed. P1 T4 `sourceMatches` requires exact source identity when nonempty, and P1 T6 persists/rechecks it within `Reserve` alongside the complete request. It never relaxes runner, compatibility, auth, slot or probation gates. P2 T13 extends confirmation to the owning remote runner; `PinnedRunner` alone does not prove which credential source succeeded.
+
+Write/run `TestPlace_RequiredSourceCannotUseHealthyAlternative` RED before the predicate, then GREEN; P1 T6 adds `TestReserve_RequiredSourceCannotBeChangedByDecision`. A successful request on B cannot recover exhausted A even when runner, family and model match. P1 T16 and P2 T13 own the actual monitor-to-ledger-to-health sink tests. Ordinary user dispatch with this internal field is rejected before an offer.
+
+## 24. Alignment review: remaining production edges (2026-11-22)
+
+This section supplements the exact earlier types and supersedes conflicting
+implementation transcripts. New work is assigned below; no component is
+accepted merely because a constructor or fake says it exists.
+
+| Gap | Owner / production source | Root and final proof |
+|---|---|---|
+| Cached remote operator probe; wrong-machine quota verification; lost nullable quota observations | P1 T13 merger, P2 T1/T4/T5/T8/T9 transport, new P2 T13 fresh probes/source-bound confirmation | P2 T13 actual server + runner constructors; fresh check reads runner-local auth; exact source job → health/alert/REST sink |
+| Remote Codex/Claude agent implementation with no matching advertised source, missing Codex config and local capability rules | P2 T9 codex_binary loader; P3 T9 executor; new P3 T15 inventory/rules/root closure | Installed-version/login/RPC/rules → real hello → reservation → actual CLI launch/checkpoint on remote Mac; Codex chat remains unsupported |
+| Session export overcommits a slot or fails at limit one | P4 T6 exact export receipt, P4 T12 export/upload inside originating stream assignment; P4 T13 wiring | Limit 1 and fully occupied limit 8: first/later/terminal turn commits matching bundle/workspace with no second export reservation |
+| Restart resets workflow retry attempt, cannot find live attempt N | P3 T1 retry journal, P3 T5 RetryProgressStore transaction; P3 T10 recovery consumes it | P3 T13 restart during attempt 2 adopts that exact job, preserves delay/budget; no attempt-1 execution |
+| Missing promisor objects accepted as successful progress with no recoverable checkpoint | **UNRESOLVED DEPENDENCY RR-17** below | No recovery-completeness claim is permitted for this branch |
+
+Execution order: P2 T13 follows P2 T12 and is a prerequisite for Phase 3;
+P3 T15 follows T14 and is a prerequisite for Phase 4. Ports and fields used
+by earlier tasks are declared by their earlier owners as noted in those tasks;
+new closure tasks supply adapters/runtime integration, not duplicate services.
+All new cycles follow RED → minimum implementation → GREEN → refactor for
+happy, success, failure, injected error and edge cases. Run the named focused
+commands, then the existing full phase gates. No new Go/UI implementation is
+part of this documentation review.
+
+### Retry progress and terminal failure replay (P3 T1/T5/T10/T13)
+
+```go
+// domain/engine/retry_progress.go — P3 T5
+// The workflow snapshot supplies retry policy; source reroutes never advance it.
+type RetryProgress struct {
+    InvocationID uuid.UUID
+    Attempt int
+    RetryNotBefore *time.Time
+    Exhausted bool
+    LastExecution *instance.NodeExecution
+}
+type RetryProgressStore interface {
+    LoadRetryProgress(context.Context, uuid.UUID) (RetryProgress, error)
+    CommitRetryFailure(ctx context.Context, invocationID uuid.UUID, attempt int,
+        execution *instance.NodeExecution, retryAt *time.Time) (RetryProgress, error)
+}
+func (e *Engine) SetRetryProgressStore(RetryProgressStore)
+```
+
+P3 T1 migration 044 adds `node_retry_progress(invocation_id PRIMARY KEY,
+attempt, retry_not_before, exhausted, last_execution_id)` and
+`node_retry_failures(invocation_id,attempt,execution_id,payload_hash)` unique
+by invocation/attempt. P3 T5 `StepCommitRepo` implements this port with the same
+SQLite DB. Initial load for an open invocation is attempt 1. CommitRetryFailure
+atomically checks invocation/run/node/attempt, writes the failed NodeExecution
+and failure receipt and advances to attempt+1 when retryAt is non-nil; nil marks
+retry exhaustion. Identical replay is idempotent, conflicting replay rejected.
+The engine resumes the persisted attempt and remaining delay; exhausted retry
+state replays ordinary existing halt/skip/route behavior with no provider call.
+Cleanup/stop of an uncommitted workspace attempt precedes the failure commit;
+storage/ownership failures do not consume provider retries. Successful step
+commit closes the same invocation; a graph back-edge gets fresh attempt 1.
+P3 T13 injects the same committer as RetryProgressStore before startup recovery.
+
+### Session export is part of its originating turn (P4 T6/T12/T13)
+
+The completed harness stream still holds its single slot/resource claim until
+TurnCommit. Export is file checkpoint work under that exact assignment, not
+another model execution or independently reserved runner job. Remove
+`Reserve(...StepLimit+1...)`, `lastTurnJob` inference and post-hoc export-job
+selection. Atomic Reserve never trusts a caller-supplied higher limit.
+
+P4 T12's remote stream executor intercepts terminal Done, stops/reaps the
+harness, prepares the workspace, exports the native session via its linked
+SessionPortability adapter and uploads the bundle under the originating job's
+session-transfer token BEFORE producing the terminal successful result. It
+retains the verified session descriptor in `Result.Session` and the durable
+spool/inbox. The server forwards successful Done only after receiving/verifying
+that result and exact workspace/session receipts. Partial tokens still stream.
+Export/upload failure is a failed turn with no conversation/workspace commit.
+
+```go
+// domain/engine/session_checkpoints.go — P4 T6
+// Extend the existing request; resource is nil only for nonmutable chat.
+type SessionExportRequest struct {
+    RunnerID, Backend, SessionID, WorkDir string
+    JobFence JobFenceRef
+    Resource *ResourceFenceRef
+}
+```
+
+P4 T6 obtains this fence from the operation completion sink, never timestamps
+or latest-job lookup. For remote sessions Hub.ExportSession reads the exact
+persisted parent Result.Session and uploaded bundle from P4 T12, validates all
+identity/checksum/resource fields and returns the bytes; it sends no extra job.
+Built-in export uses the same parent context/fence and in-process adapter.
+P4 T12 adds optional `WireChat.SessionExportToken`/runner mirror and an explicit
+native-checkpoint flag: token producer is Hub stream dispatch using the shared
+TransferTokens issuer, scoped to that parent assignment/session/resource. The
+transfer session binds parent fence and session identity; uploaded content
+cannot choose its own authority. Stateless API chat commits transcript with no
+native export flag or bundle. Native session import for a move still owns its
+own single reserved operation and exact receipt, completed by CommitMove.
+Retire the old nested export tests; P4 T13 covers first/later/terminal turns
+and restart adoption while every normal slot is occupied.
+
+### UNRESOLVED DEPENDENCY RR-17 — partial-clone recovery base
+
+The recorded RR-08 decision forbids network fetching and preserves local
+execution when required promisor objects are absent. Its amendments to P3
+T2/T5/T6/T10 allow a completed workspace-changing step with NO checkpoint and
+reuse a possibly dirty built-in working copy. P3 recovery, drain and P4 turn
+commit still consume a recoverable last-successful workspace. No task or
+existing `file:symbol` produces that artifact for the non-portable branch;
+pinning to builtin does not preserve successful progress after interruption.
+
+A human must decide how the existing local-support decision reconciles with
+the spec's mandatory recoverability and last-successful-turn rollback: approve
+an explicit product exception, or approve a recoverable materialization policy
+(and its object source). Do not fetch implicitly, silently discard completed
+progress, advertise successful drain/recovery, fabricate a checkpoint ref or
+weaken the spec during unattended review. Existing non-portable live execution
+is described, but its recovery-completeness acceptance is blocked pending that
+decision. P3 T10 and P4 T6 must expose the missing recovery base as a durable
+operator-visible blocker, never silently run recovery against dirty files.
+
+### Additional exact execution policy port (P1 T10/P3 T8/T13/T15)
+
+```go
+// domain/runner/agent_policy.go — declared P1 T10; adapter P3 T8; wired P3 T13, verified P3 T15.
+type AgentToolPolicy func(provider.ResolvedBinding, []string) ([]string,error)
+func (d *StepDispatcher) SetAgentToolPolicy(AgentToolPolicy)
+```
+
+P3 production initialization requires this policy. The routed RunAgent applies it before EnsureIntent and copies the effective scope into BOTH the immutable request and ExecRequirements.Tools. P4 T3 uses the same helper before freezing an accepted agent-turn binding. P3 T8 defines/implements adapter `Factory.EffectiveAgentTools`, which reads the same per-binding/config/default policy as its actual agent selector; it cannot claim tool restrictions a backend cannot enforce. Supported unrestricted defaults remain explicitly described; absent evidence is not a universal empty-list grant. P3 T8 owns helper implementation before P3 T13 consumes it; P3 T15 owns native-source closure tests, and P3 T13's root supplies the real factory method.
+
+### Durable remote session-artifact staging (P4 T12)
+
+`checkpoint.SessionStore.Put` after Hub.Run returns is too late to back a terminal ACK. P4 T12 adds `OpenSessionBlobs(dir string, perBlob,total int64) (*SessionBlobs,error)` and a filesystem-backed implementation using atomic writes/fsync beneath `<CheckpointDir>/session-staging`. The old memory constructor is explicitly test-only. A verified upload receives a server-generated immutable staged ref keyed by parent job/generation/checksum; `RemoteSessionResult.PreparedBundleRef` is added by the server and persisted in RemoteInbox BEFORE ACK. Restart opens the same staging directory and resolves that exact ref. P4 T6 consumes it through the exact SessionExportRequest; it cannot reconstruct it from a global latest blob. Orphan GC respects live inbox/intent/move/committed-session refs and staging retention. P4 T13 wires one shared persistent staging store into transfer/hub/checkpoint/export and tests ACK→server-restart→turn-commit without another harness call.
+
+### Observation revision fence (P1 T3/T5/T13; P2 T1/T13)
+
+`SourceHealth.Revision uint64` is monitor-produced and persisted in `runner_sources.revision`; `ProbeResult.HealthRevision uint64` is captured before probe I/O. Local monitor probes and remote pending-request entries stamp that value. Correlated wire Probe/ProbeResult preserve it alongside RequestID. A returned observation cannot recover capacity if a newer outcome changed the revision while I/O ran. Periodic remote requests and operator checks both use the real remote prober; uncorrelated cached heartbeats cannot prove recovery of a newer exhaustion episode. Native confirmation still requires exact source/model evidence. All probe work is bounded, background and joined so slow auth/RPC calls do not starve runner heartbeats.
+
+### Spec-purpose audit and release gate
+
+Fan-out still has per-operation placement/atomic normal limits (P1–P3);
+waiting holds no execution slot; exact family/model/backend/tool constraints
+survive both placement and replay. P2 T13 makes real account restoration and
+operator health checks functional on the owning machine. P3 T15 makes native
+remote subscriptions discoverable rather than merely linking idle adapters.
+P3 T5's retry journal closes restart identity, and P4's parent-assignment export
+plus durable staging closes full-capacity turn completion and ACK/restart.
+P3 T12/T13 and P4 T13 drain the built-in execution resource too, retaining
+honest blockers for local-only/server-only capacity. Existing authorized read
+models and P5 hooks/browser sinks carry these actual statuses; the dashboard
+still adds no execution controls. The spec is unchanged. RR-17 is the single
+remaining recovery-base decision and prevents a blanket recovery-completeness
+claim for non-portable partial clones.
