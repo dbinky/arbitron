@@ -283,7 +283,7 @@ This is the original producer checklist. Use the reviewed task-level ownership a
 | RR-14 | 4 | Real two-account resume/fidelity verification and optional account-fingerprint producer; conservative stripping/notices remain required. |
 | RR-15 | 3 | Archive compression selection: vet/add zstd or explicitly choose gzip and verify round trips. |
 | RR-16 | 1–5 | Filtered runner/queue/trace/key/session/drain REST/MCP DTOs, event schemas, durable notices and client reconciliation. |
-| RR-17 | 3–4 | **Unresolved:** a recoverable last-successful workspace for the non-portable partial-clone branch; no-fetch/local-support policy does not supply it. Human product/materialization decision required (contracts §24). |
+| RR-17 | 3–4 | **Resolved 2026-11-22 (decision B):** each non-portable (partial-clone) home takes a server-local checkpoint, a plain copy on the server's disk, after every completed workspace-changing step. The copy is committed with the step and only the latest is kept. Recovery restores it and repeats the interrupted step; with no base at all, it shows a visible recovery blocker. Producer P3 T16 (contracts §22/§24). |
 
 ### Deferred to plans
 - **Composition-root wiring** in `cmd/arbitron/main.go`:

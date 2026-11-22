@@ -404,7 +404,7 @@ System-scope events are published with `instanceID = uuid.Nil`; P1 T7 changes `S
 - `runner.updated`, `runner.cordoned`, `runner.uncordoned` (P1); `runner.connected`, `runner.suspect`, `runner.lost`, `runner.reconnected`, `runner.incompatible`, `runner.key_revoked` (P2); `runner.draining`, `runner.drained` (P3).
 - `source.health_changed`, `source.logged_out`, `source.recovered` (P1).
 - `execution.status` (run-scoped; P1, extended P3/P4), payload `instance.ExecutionStatus`.
-- `job.rerouted` (P1), `job.recovered`, `job.adopted` (P3), `workspace.moved` (P3, run-scoped).
+- `job.rerouted` (P1), `job.recovered`, `job.adopted`, `job.recovery_blocked` (P3; the last is run-scoped, from P3 T10 on `runner.ErrNoRecoveryBase`, RR-17 B), `workspace.moved` (P3, run-scoped).
 - `session.moved`, `interactive.turn_restarted`, `interactive.context_notice` (P4, run-scoped).
 Recorder: `runner.EventRecorder` — `NewEventRecorder(log EventLog, bus engine.EventBus, retention int, now func() time.Time) *EventRecorder`; `Record(ctx, ev PoolEvent)` appends (logs error, never fails caller) and publishes `engine.Event{Type: ev.Kind, Data: PoolEventView}` scoped to `*ev.RunID` or `uuid.Nil`.
 
@@ -555,12 +555,13 @@ JSON DTOs use separate adapter-local mappers in `adapter/http/runner_dto.go` and
 ## 16. Phase 3 names
 
 - `domain/runner/checkpoint.go`: `type Manifest struct { Version int64; Entries []ManifestEntry; Hash string }`, `type ManifestEntry struct { Path string; Size int64; Mode uint32; SHA256 string; Symlink string; Deleted bool }`, `type CheckpointRef struct { RunID uuid.UUID; Version int64; ManifestHash string }`; port `CheckpointStore interface { Commit(ctx, runID uuid.UUID, srcDir string) (CheckpointRef, Manifest, error) /* bootstrap only */; StageBuiltIn(ctx context.Context, runID uuid.UUID, srcDir string, f Fence, resource engine.ResourceFenceRef) (CheckpointRef, Manifest, error); Restore(ctx, ref CheckpointRef, dstDir string) error; Manifest(ctx, ref CheckpointRef) (Manifest, error); Latest(ctx, runID uuid.UUID) (CheckpointRef, bool, error); StageDelta(ctx, runID uuid.UUID, base CheckpointRef, delta io.Reader) (StagedCheckpoint, error); Publish(ctx, staged StagedCheckpoint, f Fence) (CheckpointRef, error); Discard(ctx, staged StagedCheckpoint) error; ReadFile(ctx, ref CheckpointRef, path string) (io.ReadCloser, error); Delete(ctx, runID uuid.UUID) error }`. Adapter `adapter/checkpoint/store.go` (`checkpoint.NewStore(dir string, opts ...Option) *Store`; production requires `WithCatalog`), archives use stdlib `archive/tar` + `compress/gzip` (RR-15 decision: gzip, no new dependency).
-- Homes: `type HomeStore interface { GetHome(ctx, runID) (Home, error); AcquireResource(ctx, runID uuid.UUID, owner RunnerID, expectGen int64) (Home, error); HandOff(ctx, runID uuid.UUID, to RunnerID, reason string, bytes int64, expectGen int64, cause HomeMoveCause) (Home, error); SetCheckpoint(ctx, runID uuid.UUID, version int64) error; MarkDirty(ctx, runID uuid.UUID, dirty bool) error; SetNonPortable(ctx, runID uuid.UUID, reason string) error /* P3 T3, §22 RR-08 */; History(ctx, runID uuid.UUID) ([]HomeMove, error); ListByRunner(ctx, id RunnerID) ([]Home, error); Release(ctx, runID uuid.UUID, expectGen int64) error }`; `type HomeMove struct { RunID uuid.UUID; From, To RunnerID; Reason string; Bytes int64; Generation int64; At time.Time; TargetJobID, InvocationID *uuid.UUID; NodeID, OperationID string; FromGeneration, ToGeneration int64 }`. SQLite `adapter/sqlite/workspace_home_repo.go:WorkspaceHomeRepo`.
+- Homes: `type HomeStore interface { GetHome(ctx, runID) (Home, error); AcquireResource(ctx, runID uuid.UUID, owner RunnerID, expectGen int64) (Home, error); HandOff(ctx, runID uuid.UUID, to RunnerID, reason string, bytes int64, expectGen int64, cause HomeMoveCause) (Home, error); SetCheckpoint(ctx, runID uuid.UUID, version int64) error; MarkDirty(ctx, runID uuid.UUID, dirty bool) error; SetNonPortable(ctx, runID uuid.UUID, reason string) error /* P3 T3, §22 RR-08 */; BootstrapLocalCheckpoint(ctx, runID uuid.UUID, ref string) error /* P3 T16, §22 RR-17 */; History(ctx, runID uuid.UUID) ([]HomeMove, error); ListByRunner(ctx, id RunnerID) ([]Home, error); Release(ctx, runID uuid.UUID, expectGen int64) error }`; `type HomeMove struct { RunID uuid.UUID; From, To RunnerID; Reason string; Bytes int64; Generation int64; At time.Time; TargetJobID, InvocationID *uuid.UUID; NodeID, OperationID string; FromGeneration, ToGeneration int64 }`. SQLite `adapter/sqlite/workspace_home_repo.go:WorkspaceHomeRepo`.
 - Commit protocol (RR-10) `domain/engine/step_commit.go`: `type StepCommit struct { RunID, InvocationID uuid.UUID; NodeID string; Execution *instance.NodeExecution; Variables map[string]any; NextNodeID string; Completions []StepCompletion; Mode StepCommitMode; Suspension *StepSuspension }`, `type JobFenceRef struct { JobID uuid.UUID; RunnerID string; Generation int64 }`, `type StepCommitter interface { CommitStep(ctx context.Context, c StepCommit) error; CommittedResult(ctx context.Context, invocationID uuid.UUID) (*StepCommit, bool, error) }`; `(*Engine).SetStepCommitter(c)`. SQLite `adapter/sqlite/step_commit_repo.go:StepCommitRepo` (one transaction: promote exact prepared candidates/home pointers, node_executions insert, instances variables + current_node_id, node_invocations committed, every runner_job completed via its receipt, step_commits row; see §21). Errors are propagated (fixes ignored `Create` error).
 - Workspace sync service `domain/runner/sync.go`: `NewWorkspaceSync(SyncDeps{Checkpoints CheckpointStore; Homes HomeStore; Leases ResourceLeaseStore; Ledger Ledger; Tokens TransferTokens; Sizes WorkspaceSizer; Events *EventRecorder; Status *ExecutionStatusProjector; Clock})`, `PreparePull(ctx, a Assignment, runID) (PullPlan, error)`, `AcceptPush(ctx, f Fence, runID uuid.UUID, staged StagedCheckpoint) (CheckpointRef, error)` (prepared candidate only; §21), `CommitBuiltIn(ctx, f Fence, runID uuid.UUID, dir string) (CheckpointRef, error)` (prepared candidate only; §21), `RestoreBuiltIn(ctx, runID uuid.UUID, dir string) error`.
 - Transfer tokens `domain/runner/transfer.go`: `type TransferToken struct { Token string; JobID uuid.UUID; Generation int64; RunnerID RunnerID; RunID uuid.UUID; Direction string /*pull|push|bundle*/; BaseRef, BundleHash, MaintenanceOperationID string; Resource engine.ResourceFenceRef; ExpiresAt time.Time }`; `TransferTokens interface { Issue(ctx context.Context, scope TransferScope, ttl time.Duration) (TransferToken, error); Validate(ctx context.Context, token string, runner RunnerID) (TransferToken, error) }`. HTTP `adapter/http/runner_transfer_handler.go` routes: `GET /api/v1/runners/transfers/manifest`, `GET /api/v1/runners/transfers/files?path=`, `PUT /api/v1/runners/transfers/push/{part}`, `POST /api/v1/runners/transfers/push/commit`, `GET /api/v1/runners/transfers/bundles/{hash}`; headers `Authorization: Runner <key>`, `X-Arbitron-Transfer: <token>`.
 - Bundles: `adapter/process/bundle.go:BuildScriptBundle(scriptPath string) (engine.ScriptBundleRef, []byte, error)`; `domain/runner/bundles.go:BundleStore` port; SQLite-less filesystem store `adapter/checkpoint/bundles.go`.
 - Recovery: `domain/runner/recovery.go:NewPoolRecovery(...)`, `(*PoolRecovery).Recover(ctx) error`; engine `(*Engine).RecoverRunningInstances(ctx context.Context, rec RecoveryPolicy) error` replacing `RecoverCrashedInstancesContext` in `startRuntime`; `type RecoveryPolicy interface { PrepareRun(ctx context.Context, inst *instance.Instance) (RecoveryAction, error) }` (`RecoveryResume`, `RecoveryReplayCommitted`, `RecoveryFail`).
+- Local checkpoints for non-portable homes (P3 T16, §22 RR-17 decision B): `domain/runner/checkpoint.go`: `type LocalCheckpointRef struct { RunID uuid.UUID; Version int64; ManifestHash string }` (`String()` = `"local:<runID>@<version>:<manifestHash>"`, `ParseLocalCheckpointRef`), port `LocalCheckpointStore interface { StageLocal(ctx, runID uuid.UUID, srcDir string, version int64) (LocalCheckpointRef, error) /* prepared only */; RestoreLocal(ctx, ref LocalCheckpointRef, dstDir string) error; PruneLocal(ctx, runID uuid.UUID, keep LocalCheckpointRef) error; Delete(ctx, runID uuid.UUID) error }`, `var ErrNoRecoveryBase error`. `Home` gains `LocalCheckpoint string` (committed ref; `""` = none), persisted in `workspace_homes.local_checkpoint` (migration 044). Adapter `adapter/checkpoint/local.go`: `checkpoint.NewLocalStore(dir string, opts ...LocalOption) *LocalStore`, `WithLocalFileCreator`; production root `<cfg.Runners.CheckpointDir>/local`. It does a plain copy written to a temp dir and renamed into place, keeps only the latest committed copy, and does no tar or Git materialization. Domain policy `domain/runner/local_checkpoint.go`: `NewLocalCheckpoints(LocalCheckpointDeps{Local, Homes, Checkpoints, Leases}) (*LocalCheckpoints, error)` with `Take`, `Bootstrap`, `Restore`, and `NewLocalCheckpointRetention(inner engine.StepCommitter, local LocalCheckpointStore) (*LocalCheckpointRetention, error)`. `SyncDeps.Local` and `BaselineDeps.{Homes, Local}` are required. `runner.JoinCheckpointDeleters(...CheckpointDeleter) CheckpointDeleter` feeds `RemovalDeps.Checkpoints`. The root sets `eng.SetStepCommitter(mobility.StepCommitter)`.
 - Drain: `(*Service).Drain(ctx, id RunnerID) (DrainProgress, error)`; `type DrainProgress struct { ActiveSteps int; HomedWorkspaces int; Sessions int; Blocked []DrainBlocker; Complete bool }`, `type DrainBlocker struct { Kind string /*workspace|session*/; RunID *uuid.UUID; Group string; Reason string }`.
 - Workspace removal: `runner.NewRemovalNotifier(...)` implementing `engine.WorkspaceRemovalHook interface { WorkspaceRemoved(ctx context.Context, runID uuid.UUID) }`; `(*Engine).SetWorkspaceRemovalHook(h)`.
 
@@ -595,7 +596,7 @@ chat-only admission or built-in-only recovery does not prove workspace mobility.
 | RR-05 keys, protocol, durable replay, runner binary/install | P2 T1–T6/T8–T11; server P2 T10 and runner P2 T9 | real WebSocket → durable inbox → ACK → result; launch context per §22 RR-05 (per-user LaunchAgent) |
 | RR-06 machine measurements | P2 T7; P2 T9/T10; detail P2 T12 | samples of execution volume → hub window/placement/API; unsupported measurements stay explicit; macOS thermal via notifyutil per §22 RR-06 |
 | RR-07 common execution root | P2 T4/T9/T11 and P2 T10 root comparison | matching usable absolute root (`/opt/arbitron/workspaces`, §22 RR-07) admits workspace jobs; mismatched roots are chat_only |
-| RR-08 checkpoints, ownership, transfer, drain, cleanup | P3 T1–T3/T6/T7/T9/T11–T14; P3 T13 roots | committed files restored on another runner, fenced writer/deletion, durable drain progress |
+| RR-08 checkpoints, ownership, transfer, drain, cleanup | P3 T1–T3/T6/T7/T9/T11–T14/T16; P3 T13 roots | committed files restored on another runner, fenced writer/deletion, durable drain progress |
 | RR-09 process descriptors, bundles, local environment | P1 T9/T10; P3 T8/T9; P1 T16/P3 T13 | real remote process sees relative bundle entrypoint, canonical workspace, runner environment; remote scripts only with `portable: true` and declared `requires` (§22 RR-09a/b) |
 | RR-10 crash-safe completion/replay | P3 T2/T3/T5/T6/T10; P4 T6/T10; roots P3 T13/P4 T13 | validated result + exact prepared refs + all fences + continuation commit atomically, replay without execution |
 | RR-11 branch/gather and resolution resource mobility | P3 T13; P4 T11/T12/T13 | remote staging turn commits and server gather consumes restored committed staging without touching branch/parent copies |
@@ -604,9 +605,10 @@ chat-only admission or built-in-only recovery does not prove workspace mobility.
 | RR-14 cross-account uncertainty | P4 T4/T5/T8 conservative policies | always strip Codex reasoning; uncertain Claude fidelity/refused native import visibly falls back; optional fingerprint is not consumed |
 | RR-15 archive codec | P3 T2/T8/T9 | standard-library tar+gzip round trip and integrity checks; no zstd dependency |
 | RR-16 read models and live clients | P1 T7/T14/T15, P2 T3/T12, P3 T12/T14, P4 T1/T14, P5 T1–T8 | real authorized routes and aggregate graph → browser views, durable notices; rebuilt embedded dist |
+| RR-17 non-portable (partial-clone) recovery base | P3 T16 (local checkpoint store/policy/receipt/root); consumed by P3 T10 recovery, P3 T12 drain blocker, P4 T6 turn commit | interrupted step on a non-portable home restored from its latest committed local checkpoint and repeated; no base → durable `job.recovery_blocked` |
 
 Execute phases in numeric order. Within each phase, numeric task order is the
-default except P1 T9 must precede T8: T9 produces ProcessSpec/ProcessResult, which T8 StepJob/StepOutput consume. P1 order is 1–7, 9, 8, 10–16. When a contract is needed before its implementation task (for example,
+default except P1 T9 must precede T8: T9 produces ProcessSpec/ProcessResult, which T8 StepJob/StepOutput consume. P1 order is 1–7, 9, 8, 10–16. P3 T16 (RR-17 B) is the other exception: its Cycles 1–5 run after P3 T6 and before P3 T10, and its Cycle 6 root wiring runs after P3 T13 Cycle 5. P3 order is 1–6, 16 (Cycles 1–5), 7–12, 13 (through Cycle 5), 16 (Cycle 6), the rest of 13, 14, 15. When a contract is needed before its implementation task (for example,
 P3 T5 uses receipt types consumed by T6, or P4 T6 consumes later remote adapters),
 its earlier owner defines the port and test double; later tasks supply and wire
 the adapter. Never import a later task's concrete adapter into domain code.
@@ -652,7 +654,7 @@ for a completion fence, checkpoint selection or a list of suboperations.
 // domain/engine/resource_fence.go — P3 T1 defines before P3 T2/T3 consumers.
 type ResourceFenceRef struct { Key, Owner string; Generation int64; Token uuid.UUID }
 // domain/engine/step_completion.go — P3 T5 owns receipt types and sink.
-type WorkspaceCompletion struct { Ref string; Resource ResourceFenceRef }
+type WorkspaceCompletion struct { Ref string; Resource ResourceFenceRef; NonPortable bool /* P3 T5, RR-08 */; LocalRef string /* P3 T16, RR-17 B: set iff NonPortable */ }
 type StepCompletion struct { JobFence JobFenceRef; Workspace *WorkspaceCompletion }
 // StepCommit carries Completions []StepCompletion (all operations, including
 // child-input preparation), instead of inferring one job from placement history.
@@ -860,10 +862,10 @@ T13 feed policy and the dashboard shows stale/unavailable values explicitly.
 
 ## 22. Resolved external inputs and policy decisions (2026-11-22)
 
-These ten inputs were open at the planning gate. Each is now closed by a named
+These ten inputs, plus RR-17, were open at the planning gate. Each is now closed by a named
 producer (observed evidence under `docs/evidence/remote-runners/`) or by an
 explicit human decision recorded here, in the phase designs' provenance tables
-and in every consuming plan task. RR-17 in §24 records the still-open recovery consequence of RR-08; the ten input decisions do not close it. Implementers follow the consuming task's
+and in every consuming plan task. RR-17, the recovery consequence of RR-08 recorded in §24, was decided on 2026-11-22 (option B, row below). Implementers follow the consuming task's
 `DECISION (2026-11-22, …)` paragraph; nothing below is gated on further evidence.
 
 | ID | Consumer task | Producer / decision | Rule an implementer follows |
@@ -878,6 +880,7 @@ and in every consuming plan task. RR-17 in §24 records the still-open recovery 
 | RR-08 | P3 T2 `MaterializePortableGit` | **Decision A:** narrow support, no network fetch | Missing promisor objects → home marked non-portable with a visible reason, pinned to the built-in runner, excluded from remote placement/moves; steps continue on built-in; marker clears when a later checkpoint finds all objects. Partial clones are a Non-Goal for remote execution. |
 | RR-09a | P3 T8 bundles, P3 T9 remote scripts | **Decision A:** enforced affinity with author opt-in | Scripts are `AffinityBuiltIn` unless the node declares `portable: true`; a portable script that cannot be bundled is a load-time validation error. Outside-bundle dependency manifests are a Non-Goal. |
 | RR-09b | P3 T8/P3 T9 process eligibility | **Decision A:** declared command names, accept-time `LookPath`, built-in fallback | Node `requires: [names]` (with `portable: true`); runner `LookPath`s interpreter/command + requires, rejects `command_unavailable: <name>`; dispatcher excludes that runner for the attempt, tries the next remote, then the built-in runner. Version constraints are a Non-Goal. |
+| RR-17 | P3 T10 recovery, P3 T12 drain, P4 T6 turn commit (producer **P3 T16**) | **Decision B:** local checkpoints for non-portable homes | After each workspace-changing step completes, at the same point a portable home checkpoints, the server takes a plain local copy of the home directory on its own disk. No portable-Git materialization is done, and the copy never leaves the built-in runner. The copy is staged in a temp dir and renamed into place, then committed in the step transaction (`WorkspaceCompletion.LocalRef` → `workspace_homes.local_checkpoint`). A failed copy means the node is not done. PoolRecovery restores the latest committed local copy and re-runs the interrupted step under the same generation and epoch fences. Only the latest committed copy is kept, plus the in-progress one until it commits. With no local copy, recovery restores the initial state: the local baseline from `EnsureBaseline`, or the last committed portable checkpoint. With neither, it raises the visible blocker (`ErrNoRecoveryBase` → `job.recovery_blocked`). |
 
 RR-13 foreign-home native restore and RR-14 cross-account fidelity are handled
 by P4's mandatory automatic transcript rebuild, unconditional Codex reasoning
@@ -1063,10 +1066,12 @@ accepted merely because a constructor or fake says it exists.
 | Remote Codex/Claude agent implementation with no matching advertised source, missing Codex config and local capability rules | P2 T9 codex_binary loader; P3 T9 executor; new P3 T15 inventory/rules/root closure | Installed-version/login/RPC/rules → real hello → reservation → actual CLI launch/checkpoint on remote Mac; Codex chat remains unsupported |
 | Session export overcommits a slot or fails at limit one | P4 T6 exact export receipt, P4 T12 export/upload inside originating stream assignment; P4 T13 wiring | Limit 1 and fully occupied limit 8: first/later/terminal turn commits matching bundle/workspace with no second export reservation |
 | Restart resets workflow retry attempt, cannot find live attempt N | P3 T1 retry journal, P3 T5 RetryProgressStore transaction; P3 T10 recovery consumes it | P3 T13 restart during attempt 2 adopts that exact job, preserves delay/budget; no attempt-1 execution |
-| Missing promisor objects accepted as successful progress with no recoverable checkpoint | **UNRESOLVED DEPENDENCY RR-17** below | No recovery-completeness claim is permitted for this branch |
+| Missing promisor objects accepted as successful progress with no recoverable checkpoint | **Resolved — DECISION RR-17: B** below; owner **P3 T16** (`2026-11-20-phase-3-task-16.md`), consumed by P3 T10/T12 and P4 T6 | P3 T16 `TestPhase3E2E_NonPortableRestartRestoresLocalCheckpoint` (crash mid-step → local checkpoint restored → step repeats once) and `TestPhase3E2E_NonPortableLocalCopyFailureLeavesStepUndone` |
 
 Execution order: P2 T13 follows P2 T12 and is a prerequisite for Phase 3;
-P3 T15 follows T14 and is a prerequisite for Phase 4. Ports and fields used
+P3 T15 follows T14 and is a prerequisite for Phase 4. P3 T16 Cycles 1–5
+run after P3 T6 and before P3 T10 (which consumes them); its Cycle 6 root
+wiring runs after P3 T13 Cycle 5 and before the P3 T13 final gate and P3 T15. Ports and fields used
 by earlier tasks are declared by their earlier owners as noted in those tasks;
 new closure tasks supply adapters/runtime integration, not duplicate services.
 All new cycles follow RED → minimum implementation → GREEN → refactor for
@@ -1151,25 +1156,43 @@ own single reserved operation and exact receipt, completed by CommitMove.
 Retire the old nested export tests; P4 T13 covers first/later/terminal turns
 and restart adoption while every normal slot is occupied.
 
-### UNRESOLVED DEPENDENCY RR-17 — partial-clone recovery base
+### DECISION (2026-11-22) RR-17: B — local checkpoints for non-portable homes
 
-The recorded RR-08 decision forbids network fetching and preserves local
-execution when required promisor objects are absent. Its amendments to P3
-T2/T5/T6/T10 allow a completed workspace-changing step with NO checkpoint and
-reuse a possibly dirty built-in working copy. P3 recovery, drain and P4 turn
-commit still consume a recoverable last-successful workspace. No task or
-existing `file:symbol` produces that artifact for the non-portable branch;
-pinning to builtin does not preserve successful progress after interruption.
+The RR-08 decision still forbids network fetching and keeps non-portable homes
+on the built-in runner. The human resolved the missing recovery base with
+**option B**: a non-portable home takes a **local checkpoint**. After each
+workspace-changing step completes, at the same point a portable home takes its
+checkpoint, the server copies the home's directory to its own disk. The node is
+not done until that checkpoint lands. The copy is staged under
+`<CheckpointDir>/local/<run>/.staging-*` and renamed atomically into
+`v<version>-<hash>`. The step transaction then commits it as
+`workspace_homes.local_checkpoint` via `WorkspaceCompletion.LocalRef`, in place
+of P3 T5's former `dirty = 1` rule. The copy never leaves the built-in runner,
+so it needs no portable-Git materialization.
 
-A human must decide how the existing local-support decision reconciles with
-the spec's mandatory recoverability and last-successful-turn rollback: approve
-an explicit product exception, or approve a recoverable materialization policy
-(and its object source). Do not fetch implicitly, silently discard completed
-progress, advertise successful drain/recovery, fabricate a checkpoint ref or
-weaken the spec during unattended review. Existing non-portable live execution
-is described, but its recovery-completeness acceptance is blocked pending that
-decision. P3 T10 and P4 T6 must expose the missing recovery base as a durable
-operator-visible blocker, never silently run recovery against dirty files.
+PoolRecovery restores a non-portable home from its latest committed local
+checkpoint through the unchanged `BuiltInRestorer` port
+(`WorkspaceSync.RestoreBuiltIn`). It re-runs the interrupted step exactly as for
+a portable home, fenced by the same ledger generation and resource epoch. Each
+home keeps only its latest committed local checkpoint, plus the in-progress
+copy until it commits (`PruneLocal` before staging, `LocalCheckpointRetention`
+after commit).
+
+If no local checkpoint exists yet, recovery restores the home's initial state:
+the local baseline that `EnsureBaseline` commits for a run that was
+non-portable from the start, or the last committed portable checkpoint for a
+home that became non-portable mid-run. If neither exists, or the committed
+local copy is missing or corrupt, `RestoreBuiltIn` returns
+`runner.ErrNoRecoveryBase`. P3 T10 then records the durable
+`job.recovery_blocked` event and fails only that run with the visible reason.
+It never silently re-runs against dirty files and never falls back to an older
+base.
+
+Owner: **P3 T16**. Consumers: P3 T10 (recovery), P3 T12 (built-in drain keeps a
+non-portable home as a visible local-only blocker, since the home can never
+move), P4 T6 (turn commits on a non-portable home carry the same `LocalRef`
+receipt and promotion) and P5 T3 (renders the blocker only for the no-base
+case).
 
 ### Additional exact execution policy port (P1 T10/P3 T8/T13/T15)
 
@@ -1201,6 +1224,6 @@ plus durable staging closes full-capacity turn completion and ACK/restart.
 P3 T12/T13 and P4 T13 drain the built-in execution resource too, retaining
 honest blockers for local-only/server-only capacity. Existing authorized read
 models and P5 hooks/browser sinks carry these actual statuses; the dashboard
-still adds no execution controls. The spec is unchanged. RR-17 is the single
-remaining recovery-base decision and prevents a blanket recovery-completeness
-claim for non-portable partial clones.
+still adds no execution controls. The spec is unchanged. RR-17 is decided
+(option B, P3 T16): non-portable partial clones recover from their latest
+local checkpoint, and only a home with no base at all shows the recovery blocker.
