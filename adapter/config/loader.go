@@ -67,19 +67,27 @@ func defaults() map[string]interface{} {
 		// Org-readiness Phase 2: deployment-wide default agent backend. The org
 		// default is claude-code → LiteLLM. An empty value is floored back to
 		// claude-code in normalize so the policy lives in exactly one place.
-		"llm.defaultagentbackend":     "claude-code",
-		"logging.level":               "info",
-		"logging.file":                "arbitron.log",
-		"tracing.enabled":             false,
-		"tracing.exportdir":           "./traces",
-		"queue.globalcap":             20,
-		"queue.perusercap":            5,
-		"script.envpassthrough":       []string{},
-		"server.tls.enabled":          false,
-		"server.tls.certfile":         "",
-		"server.tls.keyfile":          "",
-		"server.tls.autocertdomain":   "",
-		"server.tls.autocertcachedir": "",
+		"llm.defaultagentbackend": "claude-code",
+		"logging.level":           "info",
+		"logging.file":            "arbitron.log",
+		"tracing.enabled":         false,
+		"tracing.exportdir":       "./traces",
+		"queue.globalcap":         20,
+		"queue.perusercap":        5,
+		// Runner pool defaults are shared with domain validation.
+		"runners.defaultsteplimit":      domainconfig.DefaultRunnerStepLimit,
+		"runners.probeintervalseconds":  domainconfig.DefaultRunnerProbeIntervalSeconds,
+		"runners.probejitterseconds":    domainconfig.DefaultRunnerProbeJitterSeconds,
+		"runners.transientmaxattempts":  domainconfig.DefaultRunnerTransientMaxAttempts,
+		"runners.transientbackoffminms": domainconfig.DefaultRunnerTransientBackoffMinMs,
+		"runners.transientbackoffmaxms": domainconfig.DefaultRunnerTransientBackoffMaxMs,
+		"runners.eventretention":        domainconfig.DefaultRunnerEventRetention,
+		"script.envpassthrough":         []string{},
+		"server.tls.enabled":            false,
+		"server.tls.certfile":           "",
+		"server.tls.keyfile":            "",
+		"server.tls.autocertdomain":     "",
+		"server.tls.autocertcachedir":   "",
 		// Auth (Phase 6): local mode by default (single auto-admin, no login).
 		// Org-mode OIDC fields are validated fail-fast in validateAuth.
 		"auth.mode":              "local",
@@ -314,6 +322,19 @@ notifications:
 tracing:
   enabled: false
   exportdir: "./traces"
+# runners:
+#   defaultsteplimit: 8
+#     Concurrent steps a newly registered runner (including the built-in
+#     runner) may run. 1..256. Change one runner later with runner_update.
+#     Override via ARBITRON_RUNNERS_DEFAULTSTEPLIMIT.
+#   probeintervalseconds: 60   # source health probe cadence (>= 5)
+#   probejitterseconds: 10     # random spread on probes and probation checks (>= 0)
+#   transientmaxattempts: 3    # same-source retries on transient/busy outcomes (1..10)
+#   transientbackoffminms: 1000
+#   transientbackoffmaxms: 30000
+#     Exponential backoff bounds between transient retries; Retry-After remains
+#     a provider minimum even when larger than the maximum.
+#   eventretention: 1000       # pool events kept in the persisted log (>= 100)
 layout:
   maxattempts: 5
   #   Total arrangement-and-review attempts per saved workflow revision. Each
@@ -542,6 +563,11 @@ func Load(configPath string) (*domainconfig.Config, error) {
 
 	if err := validateTLS(&cfg); err != nil {
 		return nil, err
+	}
+
+	// Refuse to boot with pool settings that would prevent execution.
+	if err := cfg.Runners.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid runners config: %w", err)
 	}
 
 	return &cfg, nil

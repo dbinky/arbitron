@@ -1,0 +1,117 @@
+package config_test
+
+import (
+	"os"
+	"testing"
+
+	adapterconfig "github.com/arbitron/arbitron/adapter/config"
+	domainconfig "github.com/arbitron/arbitron/domain/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+var runnersEnvKeys = []string{
+	"ARBITRON_RUNNERS_DEFAULTSTEPLIMIT",
+	"ARBITRON_RUNNERS_PROBEINTERVALSECONDS",
+	"ARBITRON_RUNNERS_PROBEJITTERSECONDS",
+	"ARBITRON_RUNNERS_TRANSIENTMAXATTEMPTS",
+	"ARBITRON_RUNNERS_TRANSIENTBACKOFFMINMS",
+	"ARBITRON_RUNNERS_TRANSIENTBACKOFFMAXMS",
+	"ARBITRON_RUNNERS_EVENTRETENTION",
+}
+
+// Unset rather than blank: koanf weak-decodes an empty override to zero.
+func isolateRunnersEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	for _, key := range runnersEnvKeys {
+		t.Setenv(key, "")
+		require.NoError(t, os.Unsetenv(key))
+	}
+}
+
+func TestLoad_Runners_DefaultsWhenBlockAbsent(t *testing.T) {
+	isolateRunnersEnv(t)
+	cfg, err := adapterconfig.Load(writeConfigFile(t, "server:\n  port: 9999\n"))
+	require.NoError(t, err)
+	assert.Equal(t, domainconfig.RunnersConfig{
+		DefaultStepLimit:      8,
+		ProbeIntervalSeconds:  60,
+		ProbeJitterSeconds:    10,
+		TransientMaxAttempts:  3,
+		TransientBackoffMinMs: 1000,
+		TransientBackoffMaxMs: 30000,
+		EventRetention:        1000,
+	}, cfg.Runners)
+}
+
+func TestLoad_Runners_GeneratedDefaultFileLoads(t *testing.T) {
+	isolateRunnersEnv(t)
+	// A missing file makes Load write defaultYAMLContent; the commented runners
+	// block must not change the defaults.
+	path := t.TempDir() + "/fresh/config.yaml"
+	cfg, err := adapterconfig.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 8, cfg.Runners.DefaultStepLimit)
+}
+
+func TestLoad_Runners_YAMLOverrides(t *testing.T) {
+	isolateRunnersEnv(t)
+	cfg, err := adapterconfig.Load(writeConfigFile(t, "runners:\n"+
+		"  defaultsteplimit: 4\n"+
+		"  probeintervalseconds: 30\n"+
+		"  probejitterseconds: 0\n"+
+		"  transientmaxattempts: 5\n"+
+		"  transientbackoffminms: 250\n"+
+		"  transientbackoffmaxms: 4000\n"+
+		"  eventretention: 500\n"))
+	require.NoError(t, err)
+	assert.Equal(t, domainconfig.RunnersConfig{
+		DefaultStepLimit: 4, ProbeIntervalSeconds: 30, ProbeJitterSeconds: 0,
+		TransientMaxAttempts: 5, TransientBackoffMinMs: 250, TransientBackoffMaxMs: 4000,
+		EventRetention: 500,
+	}, cfg.Runners)
+}
+
+func TestLoad_Runners_EnvOverridesYAML(t *testing.T) {
+	isolateRunnersEnv(t)
+	path := writeConfigFile(t, "runners:\n  defaultsteplimit: 4\n")
+	t.Setenv("ARBITRON_RUNNERS_DEFAULTSTEPLIMIT", "12")
+	t.Setenv("ARBITRON_RUNNERS_EVENTRETENTION", "2500")
+	cfg, err := adapterconfig.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 12, cfg.Runners.DefaultStepLimit)
+	assert.Equal(t, 2500, cfg.Runners.EventRetention)
+	assert.Equal(t, 60, cfg.Runners.ProbeIntervalSeconds, "untouched keys keep their defaults")
+}
+
+func TestLoad_Runners_InvalidValuesRefuseToLoad(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml, key string
+	}{
+		{"zero step limit", "runners:\n  defaultsteplimit: 0\n", "runners.defaultsteplimit"},
+		{"step limit above 256", "runners:\n  defaultsteplimit: 300\n", "runners.defaultsteplimit"},
+		{"probe interval too short", "runners:\n  probeintervalseconds: 1\n", "runners.probeintervalseconds"},
+		{"negative jitter", "runners:\n  probejitterseconds: -5\n", "runners.probejitterseconds"},
+		{"zero transient attempts", "runners:\n  transientmaxattempts: 0\n", "runners.transientmaxattempts"},
+		{"backoff max below min", "runners:\n  transientbackoffminms: 5000\n  transientbackoffmaxms: 100\n", "runners.transientbackoffmaxms"},
+		{"retention too small", "runners:\n  eventretention: 10\n", "runners.eventretention"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunnersEnv(t)
+			cfg, err := adapterconfig.Load(writeConfigFile(t, tc.yaml))
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), "invalid runners config")
+			assert.Contains(t, err.Error(), tc.key)
+		})
+	}
+}
+
+func TestLoad_Runners_InvalidEnvRefusesToLoad(t *testing.T) {
+	isolateRunnersEnv(t)
+	t.Setenv("ARBITRON_RUNNERS_TRANSIENTMAXATTEMPTS", "42")
+	_, err := adapterconfig.Load(writeConfigFile(t, "server:\n  port: 9999\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runners.transientmaxattempts")
+}
