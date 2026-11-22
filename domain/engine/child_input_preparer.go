@@ -112,6 +112,7 @@ func (p *LLMChildInputPreparer) Prepare(ctx context.Context, req ChildInputReque
 		return nil, fmt.Errorf("spawn_workflow %q: select provider: %w", req.NodeID, err)
 	}
 
+	ctx = WithSubOperation(ctx, "child-input", OperationChildInput)
 	resp, err := chatProvider.Chat(ctx, ChatRequest{
 		Model:        binding.Model,
 		Prompt:       prompt,

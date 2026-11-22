@@ -188,6 +188,7 @@ type GroupResolutionBridge struct {
 	queueMgr    QueueManager
 	turnTimeout time.Duration
 	now         func() time.Time
+	invocations InvocationStore
 }
 
 var (
@@ -225,8 +226,18 @@ func NewGroupResolutionBridge(
 	return &GroupResolutionBridge{
 		groups: groups, instances: instances, nodeExecs: nodeExecs, sessions: sessions, resolver: resolver, selector: selector,
 		files: files, notifier: notifier, bus: bus, waker: waker, queueMgr: queueMgr, turnTimeout: turnTimeout, now: time.Now,
+		invocations: NewMemoryInvocationStore(),
 	}
 }
+
+// SetInvocationStore installs the shared store before resolution begins.
+func (b *GroupResolutionBridge) SetInvocationStore(s InvocationStore) {
+	if s == nil {
+		s = NewMemoryInvocationStore()
+	}
+	b.invocations = s
+}
+func (b *GroupResolutionBridge) InvocationStore() InvocationStore { return b.invocations }
 
 // StartResolution runs the AUTONOMOUS first turn of a resolution session in
 // the gather's staging directory, persists the session on the parent at the
@@ -264,6 +275,15 @@ func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instan
 	// refuses without a run). The gather reconciler path does not guarantee the
 	// parent's ID is on ctx, so attach it before resolving.
 	ctx = ContextWithInstanceID(ctx, parent.ID)
+	inv, err := b.invocations.Begin(ctx, parent.ID, run.NodeID)
+	if err != nil {
+		return nil, fmt.Errorf("group resolution %q: begin invocation: %w", run.NodeID, err)
+	}
+	ctx = ContextWithStepIdentity(ctx, StepIdentity{
+		RunID: parent.ID, NodeID: run.NodeID, InvocationID: inv.ID,
+		OperationID: resolutionOperationID(ref.GroupRunID, ref.MergeIndex, ref.Attempt),
+		Kind:        OperationResolution, Attempt: 1,
+	})
 	binding, err := b.resolver.Resolve(ctx, alias)
 	if err != nil {
 		return nil, fmt.Errorf("group resolution %q: resolve profile %q: %w", run.NodeID, alias, err)
