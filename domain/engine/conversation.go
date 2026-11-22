@@ -84,6 +84,7 @@ type conversationHandler struct {
 	// EndSession/completeSession variable-rewrite race — see dbinky/arbitron#38.
 	// The zero value is ready to use.
 	turnInProgress sync.Map // map[uuid.UUID]struct{}
+	invocations    InvocationStore
 }
 
 // groupSessionTarget holds the validated session record and its staging directory.
@@ -103,14 +104,25 @@ func NewConversationHandler(
 	queueMgr QueueManager,
 ) ConversationHandler {
 	return &conversationHandler{
-		instances: instances,
-		nodeExecs: nodeExecs,
-		selector:  selector,
-		resolver:  resolver,
-		eventBus:  eventBus,
-		queueMgr:  queueMgr,
+		instances:   instances,
+		nodeExecs:   nodeExecs,
+		selector:    selector,
+		resolver:    resolver,
+		eventBus:    eventBus,
+		queueMgr:    queueMgr,
+		invocations: NewMemoryInvocationStore(),
 	}
 }
+
+// SetInvocationStore installs the shared node-visit store before handling turns.
+func (h *conversationHandler) SetInvocationStore(s InvocationStore) {
+	if s == nil {
+		s = NewMemoryInvocationStore()
+	}
+	h.invocations = s
+}
+
+func (h *conversationHandler) InvocationStore() InvocationStore { return h.invocations }
 
 // SetInterventions wires the intervention audit repository so admin
 // participation in an interactive session is attributed. Nil-safe: when unset,
@@ -263,6 +275,23 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// 3. Parse conversation history.
 	messages := parseConversation(nodeExec.LLMConversation)
 	bus := conversationEvents(h.eventBus, nodeExec.LLMConversation, nodeID)
+	inv, err := h.invocations.Begin(ctx, instanceID, nodeID)
+	if err != nil {
+		return fmt.Errorf("conversation: begin invocation: %w", err)
+	}
+	userTurns := 0
+	for _, m := range messages {
+		if m["role"] == "user" {
+			userTurns++
+		}
+	}
+	opID := turnOperationID(userTurns + 1)
+	if group != nil {
+		if gid, ok := GroupResolutionIdentityOf(group.exec.LLMConversation); ok {
+			opID = resolutionOperationID(gid.GroupRunID, gid.MergeIndex, gid.Attempt) + "/" + opID
+		}
+	}
+	ctx = ContextWithStepIdentity(ctx, StepIdentity{RunID: instanceID, NodeID: nodeID, InvocationID: inv.ID, OperationID: opID, Kind: OperationTurn, Attempt: 1})
 
 	// 4. Append user message (in memory only -- not persisted until LLM succeeds).
 	messages = append(messages, map[string]any{
