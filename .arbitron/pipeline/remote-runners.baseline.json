@@ -1,0 +1,53 @@
+{
+  "suites": [
+    {
+      "name": "go",
+      "command": "go test -timeout 30m ./...",
+      "paths": [
+        "adapter",
+        "cmd",
+        "domain",
+        "test",
+        "samples",
+        "go.mod",
+        "go.sum"
+      ],
+      "build_ok": true,
+      "failed_count": 4,
+      "passed_count": 16072,
+      "failing_tests": [
+        "github.com/arbitron/arbitron/test/lunaroute > TestPiModelControlsInstalledSchema",
+        "github.com/arbitron/arbitron/test/lunaroute > TestPiModelControlsInstalledSchema/deepseek-4.1-flash",
+        "github.com/arbitron/arbitron/test/lunaroute > TestPiModelControlsInstalledSchema/glm-5.3",
+        "github.com/arbitron/arbitron/test/lunaroute > TestPiModelControlsInstalledSchema/glm-5.3-flash"
+      ]
+    },
+    {
+      "name": "dashboard",
+      "command": "cd dashboard && npx tsc --noEmit && npx vitest run",
+      "paths": [
+        "dashboard",
+        "domain/layout",
+        "domain/workflow",
+        "go.mod",
+        "go.sum"
+      ],
+      "build_ok": true,
+      "failed_count": 0,
+      "passed_count": 1572,
+      "failing_tests": []
+    },
+    {
+      "name": "scripts",
+      "command": "make test-scripts (shellcheck + bats + sh *_test.sh)",
+      "paths": [
+        "samples",
+        "Makefile"
+      ],
+      "build_ok": true,
+      "failed_count": 0,
+      "passed_count": 807,
+      "failing_tests": []
+    }
+  ]
+}
