@@ -174,6 +174,8 @@ type ProcessSpec struct {
 	TimeoutSecs int
 	WorkDir     string            // canonical {{workspace}} for affinity; "" = no workspace
 	Bundle      *ScriptBundleRef  // nil in Phase 1; Phase 3 P3 T8 fills
+	Portable    bool              // P3 T8 (§22 RR-09a): from workflow.NodeConfig.Portable; false = AffinityBuiltIn
+	Requires    []string          // P3 T8 (§22 RR-09b): from workflow.NodeConfig.Requires; checked by runner LookPath at accept
 }
 type ScriptBundleRef struct { Hash string; Entrypoint string } // Entrypoint is bundle-relative
 type ProcessResult struct { Stdout, Stderr string; ExitCode int }
@@ -300,7 +302,7 @@ type Telemetry struct {
 	Load1Pct *float64; DiskFreeBytes *uint64; Thermal *string // "nominal"|"fair"|"serious"|"critical"
 	UptimeSeconds *uint64; Cores *int; RAMBytes *uint64
 }
-type Home struct { RunID uuid.UUID; RunnerID RunnerID; Generation int64; CheckpointVersion int64; Dirty bool } // RunnerID "" = server checkpoint only
+type Home struct { RunID uuid.UUID; RunnerID RunnerID; Generation int64; CheckpointVersion int64; Dirty bool; NonPortableReason string /* P3 T3, §22 RR-08; "" = portable */ } // RunnerID "" = server checkpoint only
 type PoolSnapshot struct {
 	Runners []Runner; Sources []Source
 	SlotsInUse map[RunnerID]int; SourceInFlight map[SourceID]int
@@ -550,7 +552,7 @@ JSON DTOs use separate adapter-local mappers in `adapter/http/runner_dto.go` and
 ## 16. Phase 3 names
 
 - `domain/runner/checkpoint.go`: `type Manifest struct { Version int64; Entries []ManifestEntry; Hash string }`, `type ManifestEntry struct { Path string; Size int64; Mode uint32; SHA256 string; Symlink string; Deleted bool }`, `type CheckpointRef struct { RunID uuid.UUID; Version int64; ManifestHash string }`; port `CheckpointStore interface { Commit(ctx, runID uuid.UUID, srcDir string) (CheckpointRef, Manifest, error) /* bootstrap only */; StageBuiltIn(ctx context.Context, runID uuid.UUID, srcDir string, f Fence, resource engine.ResourceFenceRef) (CheckpointRef, Manifest, error); Restore(ctx, ref CheckpointRef, dstDir string) error; Manifest(ctx, ref CheckpointRef) (Manifest, error); Latest(ctx, runID uuid.UUID) (CheckpointRef, bool, error); StageDelta(ctx, runID uuid.UUID, base CheckpointRef, delta io.Reader) (StagedCheckpoint, error); Publish(ctx, staged StagedCheckpoint, f Fence) (CheckpointRef, error); Discard(ctx, staged StagedCheckpoint) error; ReadFile(ctx, ref CheckpointRef, path string) (io.ReadCloser, error); Delete(ctx, runID uuid.UUID) error }`. Adapter `adapter/checkpoint/store.go` (`checkpoint.NewStore(dir string, opts ...Option) *Store`; production requires `WithCatalog`), archives use stdlib `archive/tar` + `compress/gzip` (RR-15 decision: gzip, no new dependency).
-- Homes: `type HomeStore interface { GetHome(ctx, runID) (Home, error); AcquireResource(ctx, runID uuid.UUID, owner RunnerID, expectGen int64) (Home, error); HandOff(ctx, runID uuid.UUID, to RunnerID, reason string, bytes int64, expectGen int64, cause HomeMoveCause) (Home, error); SetCheckpoint(ctx, runID uuid.UUID, version int64) error; MarkDirty(ctx, runID uuid.UUID, dirty bool) error; History(ctx, runID uuid.UUID) ([]HomeMove, error); ListByRunner(ctx, id RunnerID) ([]Home, error); Release(ctx, runID uuid.UUID, expectGen int64) error }`; `type HomeMove struct { RunID uuid.UUID; From, To RunnerID; Reason string; Bytes int64; Generation int64; At time.Time; TargetJobID, InvocationID *uuid.UUID; NodeID, OperationID string; FromGeneration, ToGeneration int64 }`. SQLite `adapter/sqlite/workspace_home_repo.go:WorkspaceHomeRepo`.
+- Homes: `type HomeStore interface { GetHome(ctx, runID) (Home, error); AcquireResource(ctx, runID uuid.UUID, owner RunnerID, expectGen int64) (Home, error); HandOff(ctx, runID uuid.UUID, to RunnerID, reason string, bytes int64, expectGen int64, cause HomeMoveCause) (Home, error); SetCheckpoint(ctx, runID uuid.UUID, version int64) error; MarkDirty(ctx, runID uuid.UUID, dirty bool) error; SetNonPortable(ctx, runID uuid.UUID, reason string) error /* P3 T3, §22 RR-08 */; History(ctx, runID uuid.UUID) ([]HomeMove, error); ListByRunner(ctx, id RunnerID) ([]Home, error); Release(ctx, runID uuid.UUID, expectGen int64) error }`; `type HomeMove struct { RunID uuid.UUID; From, To RunnerID; Reason string; Bytes int64; Generation int64; At time.Time; TargetJobID, InvocationID *uuid.UUID; NodeID, OperationID string; FromGeneration, ToGeneration int64 }`. SQLite `adapter/sqlite/workspace_home_repo.go:WorkspaceHomeRepo`.
 - Commit protocol (RR-10) `domain/engine/step_commit.go`: `type StepCommit struct { RunID, InvocationID uuid.UUID; NodeID string; Execution *instance.NodeExecution; Variables map[string]any; NextNodeID string; Completions []StepCompletion; Mode StepCommitMode; Suspension *StepSuspension }`, `type JobFenceRef struct { JobID uuid.UUID; RunnerID string; Generation int64 }`, `type StepCommitter interface { CommitStep(ctx context.Context, c StepCommit) error; CommittedResult(ctx context.Context, invocationID uuid.UUID) (*StepCommit, bool, error) }`; `(*Engine).SetStepCommitter(c)`. SQLite `adapter/sqlite/step_commit_repo.go:StepCommitRepo` (one transaction: promote exact prepared candidates/home pointers, node_executions insert, instances variables + current_node_id, node_invocations committed, every runner_job completed via its receipt, step_commits row; see §21). Errors are propagated (fixes ignored `Create` error).
 - Workspace sync service `domain/runner/sync.go`: `NewWorkspaceSync(SyncDeps{Checkpoints CheckpointStore; Homes HomeStore; Leases ResourceLeaseStore; Ledger Ledger; Tokens TransferTokens; Sizes WorkspaceSizer; Events *EventRecorder; Status *ExecutionStatusProjector; Clock})`, `PreparePull(ctx, a Assignment, runID) (PullPlan, error)`, `AcceptPush(ctx, f Fence, runID uuid.UUID, staged StagedCheckpoint) (CheckpointRef, error)` (prepared candidate only; §21), `CommitBuiltIn(ctx, f Fence, runID uuid.UUID, dir string) (CheckpointRef, error)` (prepared candidate only; §21), `RestoreBuiltIn(ctx, runID uuid.UUID, dir string) error`.
 - Transfer tokens `domain/runner/transfer.go`: `type TransferToken struct { Token string; JobID uuid.UUID; Generation int64; RunnerID RunnerID; RunID uuid.UUID; Direction string /*pull|push|bundle*/; BaseRef, BundleHash, MaintenanceOperationID string; Resource engine.ResourceFenceRef; ExpiresAt time.Time }`; `TransferTokens interface { Issue(ctx context.Context, scope TransferScope, ttl time.Duration) (TransferToken, error); Validate(ctx context.Context, token string, runner RunnerID) (TransferToken, error) }`. HTTP `adapter/http/runner_transfer_handler.go` routes: `GET /api/v1/runners/transfers/manifest`, `GET /api/v1/runners/transfers/files?path=`, `PUT /api/v1/runners/transfers/push/{part}`, `POST /api/v1/runners/transfers/push/commit`, `GET /api/v1/runners/transfers/bundles/{hash}`; headers `Authorization: Runner <key>`, `X-Arbitron-Transfer: <token>`.
@@ -576,22 +578,22 @@ JSON DTOs use separate adapter-local mappers in `adapter/http/runner_dto.go` and
 A design's RR labels describe the pre-implementation baseline. A dependency is
 closed **for planning** only when an owning task produces it, names its runtime
 input and wires it into its consumer; planned code is not evidence that it is
-already implemented. The residual evidence/platform decisions in task-level
-`ESCALATION:` entries remain open and must appear in the final planning-gate
-report. A conservative fallback closes a dependency only when it meets the spec;
+already implemented. The former task-level `ESCALATION:` evidence/platform
+items were resolved on 2026-11-22 (§22) and replaced by `DECISION` paragraphs in
+the consuming tasks. A conservative fallback closes a dependency only when it meets the spec;
 chat-only admission or built-in-only recovery does not prove workspace mobility.
 
 | Design dependency | Producer tasks and real composition root | Required downstream sink |
 |---|---|---|
 | RR-01 identity, registry, ledger, authz and events | P1 T2–T8, T15; P1 T16 `initDomainWithModelDependencies` | SQL job/invocation/trace rows, authorized REST/MCP and filtered stream |
 | RR-02 complete request eligibility and local credential routing | P1 T3/T4/T10/T13; P2 T1/T4/T6/T9; P1 T16 and P2 T10 roots | selected runner executes exact model/backend/route/tools; unsupported requests never offered |
-| RR-03 outcomes, recovery probes, floors and logout alerts | P1 T11–T13; P1 T16; runner-local probes P2 T9 | actual process/RPC bytes → classified outcome → registry transition → reroute/alert; real captured-version evidence remains gated |
+| RR-03 outcomes, recovery probes, floors and logout alerts | P1 T11–T13; P1 T16; runner-local probes P2 T9 | actual process/RPC bytes → classified outcome → registry transition → reroute/alert; floors evidence-inferred per §22 RR-03a–d |
 | RR-04 validated policy/config and clocks | P1 T1, P2 T2, P3 T1, P4 T1; phase roots P1 T16/P2 T10/P3 T13/P4 T13 | configured limits/timeouts affect production behavior; invalid config refuses startup |
-| RR-05 keys, protocol, durable replay, runner binary/install | P2 T1–T6/T8–T11; server P2 T10 and runner P2 T9 | real WebSocket → durable inbox → ACK → result; reboot/account launch evidence remains gated |
-| RR-06 machine measurements | P2 T7; P2 T9/T10; detail P2 T12 | samples of execution volume → hub window/placement/API; unsupported measurements stay explicit; thermal evidence remains gated |
-| RR-07 common execution root | P2 T4/T9/T11 and P2 T10 root comparison | matching usable absolute root admits workspace jobs; chat-only fallback is not closure for affected Linux/Mac layouts |
+| RR-05 keys, protocol, durable replay, runner binary/install | P2 T1–T6/T8–T11; server P2 T10 and runner P2 T9 | real WebSocket → durable inbox → ACK → result; launch context per §22 RR-05 (per-user LaunchAgent) |
+| RR-06 machine measurements | P2 T7; P2 T9/T10; detail P2 T12 | samples of execution volume → hub window/placement/API; unsupported measurements stay explicit; macOS thermal via notifyutil per §22 RR-06 |
+| RR-07 common execution root | P2 T4/T9/T11 and P2 T10 root comparison | matching usable absolute root (`/opt/arbitron/workspaces`, §22 RR-07) admits workspace jobs; mismatched roots are chat_only |
 | RR-08 checkpoints, ownership, transfer, drain, cleanup | P3 T1–T3/T6/T7/T9/T11–T14; P3 T13 roots | committed files restored on another runner, fenced writer/deletion, durable drain progress |
-| RR-09 process descriptors, bundles, local environment | P1 T9/T10; P3 T8/T9; P1 T16/P3 T13 | real remote process sees relative bundle entrypoint, canonical workspace, runner environment; outside-bundle dependencies remain explicit |
+| RR-09 process descriptors, bundles, local environment | P1 T9/T10; P3 T8/T9; P1 T16/P3 T13 | real remote process sees relative bundle entrypoint, canonical workspace, runner environment; remote scripts only with `portable: true` and declared `requires` (§22 RR-09a/b) |
 | RR-10 crash-safe completion/replay | P3 T2/T3/T5/T6/T10; P4 T6/T10; roots P3 T13/P4 T13 | validated result + exact prepared refs + all fences + continuation commit atomically, replay without execution |
 | RR-11 branch/gather and resolution resource mobility | P3 T13; P4 T11/T12/T13 | remote staging turn commits and server gather consumes restored committed staging without touching branch/parent copies |
 | RR-12 durable turns, leases, accepted request and recovery | P4 T1–T3/T6–T10; P4 T13 | restart of a waiting run adopts live turn or resends exact accepted message under current fences |
@@ -830,7 +832,9 @@ writer. Remote `StagedCheckpoint.Resource` comes from the durable scoped
 transfer session, never from the uploaded archive. The normal instance and group
 checkpoint builders copy/materialize Git objects in a private staging directory;
 they never rewrite a user's source repository to remove alternates. Missing
-promisor objects fail visibly instead of producing a falsely portable snapshot.
+promisor objects never produce a falsely portable snapshot: per §22 RR-08 the
+home is marked non-portable with a visible reason and pinned to the built-in
+runner (no network fetch, no step failure).
 
 ### Version and telemetry eligibility (P2 T1/T4/T7/T9/T10; P3 T4/T13)
 
@@ -851,26 +855,26 @@ skew cannot fabricate fresh samples. Built-in sampling uses the server clock.
 P2 T7 owns age measurement, P2 T1/T9 wire it, P2 T4 normalizes it, P2 T10 and P3
 T13 feed policy and the dashboard shows stale/unavailable values explicitly.
 
-## 22. Residual external inputs and policy decisions
+## 22. Resolved external inputs and policy decisions (2026-11-22)
 
-These ten inputs are **not** closed by generated fixtures, a capture script,
-an unsupported-format error, an unavailable metric, a login-only LaunchAgent,
-or chat-only admission. Their owning task must remain blocked at its acceptance
-gate until the named evidence or decision exists. Implementable paths and their
-unit tests can proceed; the planning gate must report every row below.
+These ten inputs were open at the planning gate. Each is now closed by a named
+producer (observed evidence under `docs/evidence/remote-runners/`) or by an
+explicit human decision recorded here, in the phase designs' provenance tables
+and in every consuming plan task. Implementers follow the consuming task's
+`DECISION (2026-11-22, …)` paragraph; nothing below is gated on further evidence.
 
-| ID | Consumer task | Missing producer/input | Decision or evidence needed |
+| ID | Consumer task | Producer / decision | Rule an implementer follows |
 |---|---|---|---|
-| RR-03a | P1 T11 Claude outcome decoder and version table | `adapter/claudecli/testdata/outcomes/captured/<version>/*.jsonl` with reviewed state/channel matrix | Capture real success/exhaustion/logout/transient stream and session records; certify the feature-specific supported floors from those records. |
-| RR-03b | P1 T13 `ClaudeAuthProber` | Verified per-version `claude auth status` stdout/exit fixtures | Decide and verify which actual JSON fields/exit codes prove login/logout, including command/probe errors. |
-| RR-03c | P1 T12 Codex current-turn rollout decoder and version table | `adapter/codex/testdata/outcomes/captured/<version>/*.rollout.jsonl` and matching exec stdout | Capture actual account states and turn boundaries; certify supported feature floors instead of inferring them from main-branch schema/binary strings. |
-| RR-03d | P1 T12 `RateLimitsRead`, consumed P1 T13 | A real initialized `codex app-server` `account/rateLimits/read` exchange | Verify framing, initialization, EOF/process lifetime and response schema on the supported binary; synthetic RPC output is insufficient. |
-| RR-05 | P2 T11 runner autostart | Verified `register_runner_service_macos` boot launch/account-access context | Choose and prove a reboot launch context that starts automatically and can use the operator's own harness credentials; login-only startup does not meet machine-start behavior. |
-| RR-06 | P2 T7 `Telemetry.Thermal` | Verified Apple-silicon thermal observation/fixtures | Choose a supported native helper or prove real `pmset` thermal-load output; unavailable is honest rendering but not a thermal source. |
-| RR-07 | P2 T11 root setup, P2 T4 workspace compatibility | A usable common absolute execution root for Macs and a Linux server | Choose and verify provisioning/permissions or a revised portable layout; falling back to chat-only does not implement workspace mobility on that layout. |
-| RR-08 | P3 T2 `MaterializePortableGit` | Required Git promisor objects absent from local object storage | Decide whether/how authenticated network fetching is allowed, or explicitly narrow supported repositories; a checkpoint must never omit required objects. |
-| RR-09a | P3 T8 bundles, P3 T9 remote scripts | Declared bytes for runtime file dependencies outside the script directory | Choose an authored dependency-manifest/transfer or enforced-affinity policy; arbitrary runtime absolute/parent paths cannot be supplied by the current folder bundle. |
-| RR-09b | P3 T8/P3 T9 process eligibility | Declared/probed required command versions and nested tool capabilities | Choose capability declarations/probes and re-placement policy; `LookPath` for the interpreter alone does not produce these requirements. |
+| RR-03a | P1 T11 Claude outcome decoder and version table | **Decision C:** synthetic fixtures derived from `docs/evidence/remote-runners/research-exhaustion.md` are the authoritative coverage | Unrecognized shapes fail closed to `other`. Real per-version capture certification, `capture.sh` and the captured-matrix gate are **Non-Goals**. `SupportedVersions` floors are evidence-inferred, not certified (observed local 2.1.329). |
+| RR-03b | P1 T13 `ClaudeAuthProber` | **Decision A:** observed shape, `docs/evidence/remote-runners/claude-auth-status.md` (2.1.329) | `loggedIn:true` + exit 0 → ok; `loggedIn:false` + non-zero exit → logged_out (alert, park); anything else → unknown (never parks or recovers). Bare zero exit without JSON is not ok. |
+| RR-03c | P1 T12 Codex rollout decoder and version table | **Decision A:** synthetic fixtures plus observed logged-out evidence, `docs/evidence/remote-runners/codex-logged-out.md` (0.171.0) | Read `codex_error_info` from `error` events **and** `task_complete.error`; object form with `http_status_code` 401/403 → logged_out; other object forms keep transient. Capture certification is a Non-Goal; floor 0.170.0 is evidence-inferred. |
+| RR-03d | P1 T12 `RateLimitsRead`, consumed P1 T13 | **Decision A:** observed exchange, `docs/evidence/remote-runners/codex-app-server.md` (0.171.0) | Dedicated stdio session; stdin kept open until the id-1 answer (server exits on EOF without answering); skip id-less notifications; any id-1 error/EOF/timeout → `ErrRateLimitsUnavailable` → capacity unknown. |
+| RR-05 | P2 T11 runner autostart | **Decision A:** per-user LaunchAgent (`gui/<uid>`); evidence `docs/evidence/remote-runners/macos-runner-host.md` | Runner starts with the user's session (including the session opened by FileVault pre-boot unlock) with keychain/file credentials usable. Unattended reboot only via `sudo fdesetup authrestart`; offline before login is the normal lost/offline state. LaunchDaemon and auto-login are Non-Goals. |
+| RR-06 | P2 T7 `Telemetry.Thermal` | **Decision A:** `/usr/bin/notifyutil -g com.apple.system.thermalpressurelevel`; evidence `macos-runner-host.md` | 0→nominal, 1→fair, 2→serious, 3/4→critical; any other output → nil. `pmset` parsing dropped; no cgo helper; no hardware load test. |
+| RR-07 | P2 T11 root setup, P2 T4/T9 workspace compatibility | **Decision A:** canonical root `/opt/arbitron/workspaces` | New Linux shared server installs default to it; Mac runner installer creates it with one prompted `sudo install -d -o $USER -g staff -m 0750`; roots with symlinked components are refused; runner verifies before advertising; otherwise chat_only. Existing servers keep their root (manual migration out of scope). |
+| RR-08 | P3 T2 `MaterializePortableGit` | **Decision A:** narrow support, no network fetch | Missing promisor objects → home marked non-portable with a visible reason, pinned to the built-in runner, excluded from remote placement/moves; steps continue on built-in; marker clears when a later checkpoint finds all objects. Partial clones are a Non-Goal for remote execution. |
+| RR-09a | P3 T8 bundles, P3 T9 remote scripts | **Decision A:** enforced affinity with author opt-in | Scripts are `AffinityBuiltIn` unless the node declares `portable: true`; a portable script that cannot be bundled is a load-time validation error. Outside-bundle dependency manifests are a Non-Goal. |
+| RR-09b | P3 T8/P3 T9 process eligibility | **Decision A:** declared command names, accept-time `LookPath`, built-in fallback | Node `requires: [names]` (with `portable: true`); runner `LookPath`s interpreter/command + requires, rejects `command_unavailable: <name>`; dispatcher excludes that runner for the attempt, tries the next remote, then the built-in runner. Version constraints are a Non-Goal. |
 
 RR-13 foreign-home native restore and RR-14 cross-account fidelity are handled
 by P4's mandatory automatic transcript rebuild, unconditional Codex reasoning
