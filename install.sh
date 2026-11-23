@@ -190,7 +190,7 @@ is_elevated() {
 }
 
 # select_install_type -> Local | Shared.
-# macOS is local-only (no Shared path). On Linux the operator chooses Local
+# macOS supports Local or Runner (no Shared path). On Linux choose Local
 # (per-user, ~/.arbitron, no sudo) or Shared (system-wide under /etc + /var with
 # a dedicated service account). ARBITRON_INSTALL_TYPE forces the answer
 # non-interactively; otherwise we prompt, defaulting to Shared when running as
@@ -199,13 +199,19 @@ select_install_type() {
   local os
   os="$(detect_os)" || return 1
   case "$os" in
-    macos) printf 'Local\n' ;;
+    macos)
+      case "$(printf '%s' "${ARBITRON_INSTALL_TYPE:-}" | tr '[:upper:]' '[:lower:]')" in
+        runner) printf 'Runner\n' ;;
+        *) printf 'Local\n' ;;
+      esac
+      ;;
     linux)
       local forced="${ARBITRON_INSTALL_TYPE:-}"
       if [ -n "$forced" ]; then
         case "$(printf '%s' "$forced" | tr '[:upper:]' '[:lower:]')" in
           local)  printf 'Local\n';  return 0 ;;
           shared) printf 'Shared\n'; return 0 ;;
+          runner) log_error "remote runners are macOS-only; install the server on Linux instead"; return 1 ;;
           *)      log_error "unknown ARBITRON_INSTALL_TYPE '$forced' (want local|shared)"; return 1 ;;
         esac
       fi
@@ -2051,6 +2057,17 @@ print_summary() {
 # ---------------------------------------------------------------------------
 # main dispatcher
 # ---------------------------------------------------------------------------
+
+# parse_args [--runner] selects the remote runner scenario.
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --runner) ARBITRON_INSTALL_TYPE="runner" ;;
+      *) log_error "unknown argument: $1"; return 1 ;;
+    esac
+    shift
+  done
+}
 
 main() {
   local os arch itype state
