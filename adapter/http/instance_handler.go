@@ -824,28 +824,43 @@ func (h *InstanceHandler) DismissAll(w http.ResponseWriter, r *http.Request) {
 }
 
 // nodeExecutionResponse is a JSON-friendly representation of a node execution.
+type placementRecordResponse struct {
+	JobID      string `json:"jobId"`
+	RunnerID   string `json:"runnerId"`
+	SourceID   string `json:"sourceId,omitempty"`
+	Reason     string `json:"reason"`
+	Outcome    string `json:"outcome"`
+	Generation int64  `json:"generation"`
+	At         string `json:"at"`
+}
+
 type nodeExecutionResponse struct {
-	ID              string         `json:"id"`
-	InstanceID      string         `json:"instanceId"`
-	NodeID          string         `json:"nodeId"`
-	Attempt         int            `json:"attempt"`
-	Status          string         `json:"status"`
-	ResolvedInputs  map[string]any `json:"resolvedInputs,omitempty"`
-	Output          map[string]any `json:"output,omitempty"`
-	Error           map[string]any `json:"error,omitempty"`
-	LLMConversation map[string]any `json:"llmConversation,omitempty"`
-	LLMModel        *string        `json:"llmModel,omitempty"`
-	LLMTokensIn     *int           `json:"llmTokensIn,omitempty"`
-	LLMTokensOut    *int           `json:"llmTokensOut,omitempty"`
-	ScriptStdout    *string        `json:"scriptStdout,omitempty"`
-	ScriptStderr    *string        `json:"scriptStderr,omitempty"`
-	ScriptExitCode  *int           `json:"scriptExitCode,omitempty"`
-	StartedAt       string         `json:"startedAt"`
-	CompletedAt     *string        `json:"completedAt,omitempty"`
+	RunnerID         *string                   `json:"runnerId,omitempty"`
+	SourceID         *string                   `json:"sourceId,omitempty"`
+	PlacementReason  *string                   `json:"placementReason,omitempty"`
+	PlacementHistory []placementRecordResponse `json:"placementHistory,omitempty"`
+	ID               string                    `json:"id"`
+	InstanceID       string                    `json:"instanceId"`
+	NodeID           string                    `json:"nodeId"`
+	Attempt          int                       `json:"attempt"`
+	Status           string                    `json:"status"`
+	ResolvedInputs   map[string]any            `json:"resolvedInputs,omitempty"`
+	Output           map[string]any            `json:"output,omitempty"`
+	Error            map[string]any            `json:"error,omitempty"`
+	LLMConversation  map[string]any            `json:"llmConversation,omitempty"`
+	LLMModel         *string                   `json:"llmModel,omitempty"`
+	LLMTokensIn      *int                      `json:"llmTokensIn,omitempty"`
+	LLMTokensOut     *int                      `json:"llmTokensOut,omitempty"`
+	ScriptStdout     *string                   `json:"scriptStdout,omitempty"`
+	ScriptStderr     *string                   `json:"scriptStderr,omitempty"`
+	ScriptExitCode   *int                      `json:"scriptExitCode,omitempty"`
+	StartedAt        string                    `json:"startedAt"`
+	CompletedAt      *string                   `json:"completedAt,omitempty"`
 }
 
 func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse {
 	resp := nodeExecutionResponse{
+		RunnerID: exec.RunnerID, SourceID: exec.SourceID, PlacementReason: exec.PlacementReason,
 		ID:              exec.ID.String(),
 		InstanceID:      exec.InstanceID.String(),
 		NodeID:          exec.NodeID,
@@ -862,6 +877,9 @@ func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse
 		ScriptStderr:    exec.ScriptStderr,
 		ScriptExitCode:  exec.ScriptExitCode,
 		StartedAt:       exec.StartedAt.Format(APITimeFormat),
+	}
+	for _, p := range exec.PlacementHistory {
+		resp.PlacementHistory = append(resp.PlacementHistory, placementRecordResponse{JobID: p.JobID, RunnerID: p.RunnerID, SourceID: p.SourceID, Reason: p.Reason, Outcome: p.Outcome, Generation: p.Generation, At: p.At.UTC().Format(APITimeFormat)})
 	}
 	if exec.CompletedAt != nil {
 		s := exec.CompletedAt.Format(APITimeFormat)

@@ -100,6 +100,18 @@ func newTraceServer(nodeExecs *stubNodeExecRepo, snapshots *stubSnapshotRepo, in
 // --- Tests ---
 
 func TestTraceGet(t *testing.T) {
+	t.Run("placement fields exposed", func(t *testing.T) {
+		runner, src := "builtin", "builtin/anthropic_subscription/-"
+		repo := &stubNodeExecRepo{listByInstanceFn: func(_ context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+			return []instance.NodeExecution{{ID: uuid.New(), InstanceID: id, NodeID: "node1", Status: instance.NodeStatusSucceeded, RunnerID: &runner, SourceID: &src, PlacementHistory: []instance.PlacementRecord{{JobID: "j1", RunnerID: runner, SourceID: src, Reason: "first fit", Outcome: "completed", Generation: 1}}}}, nil
+		}}
+		srv := newTraceServer(repo, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		text := extractText(t, callTool(t, srv, "trace_get", map[string]any{"id": uuid.New().String()}))
+		assert.Contains(t, text, `"runnerId": "builtin"`)
+		assert.Contains(t, text, `"sourceId": "builtin/anthropic_subscription/-"`)
+		assert.Contains(t, text, `"placementHistory": [`)
+		assert.Contains(t, text, `"outcome": "completed"`)
+	})
 	t.Run("happy path returns node executions", func(t *testing.T) {
 		instID := uuid.New()
 		repo := &stubNodeExecRepo{
