@@ -1456,3 +1456,37 @@ placement with empty `Tier`. Telemetry influences ranking only when it is fresh:
 `SampledAt` must be within `PlacementPolicy.TelemetryMaxAge`. P3 T4 Step 3b
 authorizes the matching updates to `TestPlace_AffinityRestrictsRunner` and
 `TestPlace_HealthierTelemetryWinsUnknownIsNeutral`.
+
+## Unstick 2026-11-23 — P1/P2 contract decisions
+
+These are settled by the spec/design or by a user decision. The owning task carries the TDD steps.
+
+- **Codex launch enforcement (P1 T10 Steps 11–22; user decision 2026-11-23).** `adapter/codex/launch_policy.go` defines:
+  - `ErrToolScopeUnsupported` and `ErrContextWindowUnsupported`;
+  - `codexToolPolicy(scope) (toolPolicy, error)` and `codexContextArgs(binding, rules) ([]string, error)`.
+
+  Agent, stream and interactive launches apply them as follows:
+  - **Non-empty scope:**
+    - always: `--strict-config`, `features.plugins=false`, `features.apps=false` and a per-server `mcp_servers={…enabled=false}`;
+    - `web_search="disabled"` unless `WebSearch` is granted;
+    - read-only sandbox unless a write tool is granted.
+  - **Refusals:** a scope without `Bash`, `mcp__*`/unknown names, or a restricted launch on codex < 0.163.0.
+  - **Context:** `200k`/`1m` → `-c model_context_window=200000/1000000`, after `CapabilityRules.Validate`.
+  - **Defaults:** an empty scope or default context emits nothing new.
+- **Probe correlation (P2 T1 Cycle 4).** `Probe.RequestID` and `ProbeResult.RequestID` are mandatory UUIDs. An uncorrelated probe frame is malformed.
+- **Telemetry age (P2 T1 Cycle 5, P2 T8 Cycle 2b, P2 T7 Step O1).**
+  - `WireTelemetry.SampleAgeMs` maps to `runner.HeartbeatInfo.TelemetryAgeMs` and `runneragent.Heartbeat.TelemetryAgeMs`.
+  - The hub stores `SampledAt = receipt − age`. A negative age, or one over `3×Heartbeat`, records all metrics unavailable.
+  - The built-in loop treats a zero producer `SampledAt` as unavailable metrics.
+- **Remote dispatch route (P2 T8 Cycle 2b).**
+  - `runner.ChatDispatch`, `runnerproto.WireChat` and `runneragent.ChatJob` carry `Provider` (canonical) and `EndpointFingerprint` (from `runner.EndpointFingerprint(binding)`). A fingerprint error dispatches nothing.
+  - `runneragent.Source` carries `UnavailableReason` and `Capabilities []runner.ExecutionCapability`.
+- **Hub restart adoption (P2 T4 Cycle R).** Applies when a reconnecting runner holds a `HeldRunning` job whose ledger fence passes `FenceCheck`, and the new hub has no in-memory waiter:
+  - the hub extends the lease and ACKs `receipt.LastOutputSeq`;
+  - heartbeats keep the job alive;
+  - orphan output/result frames are journaled and ACKed;
+  - a later `Hub.Run` attaches through the retained-receipt path.
+
+  Stale or unknown jobs are still fenced.
+- **Generation after re-placement.** Requeue and Reserve each increment the generation, so the first re-placement runs at generation 3 (P1 ledger contract; P2 T6 Step 3a).
+- **Telemetry window port.** `TelemetryWindow.Window(RunnerID) []Telemetry` has no error result. Absence is "unknown" (P2 T12).
