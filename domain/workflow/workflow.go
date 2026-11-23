@@ -232,6 +232,8 @@ type Node struct {
 
 // NodeConfig holds the type-specific configuration for a node.
 type NodeConfig struct {
+	Portable           bool              `json:"portable,omitempty" yaml:"portable,omitempty"`
+	Requires           []string          `json:"requires,omitempty" yaml:"requires,omitempty"`
 	TemplateFile       string            `json:"templateFile,omitempty"`
 	Model              string            `json:"model,omitempty"`
 	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)

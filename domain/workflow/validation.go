@@ -143,6 +143,7 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 	errs = append(errs, validateInputNames(wf)...)
 	errs = append(errs, validateReservedInputNames(wf)...)
 	errs = append(errs, validateNodeConfigs(wf)...)
+	errs = append(errs, validatePortableNodes(wf)...)
 	errs = append(errs, validateErrorBehaviors(wf)...)
 	errs = append(errs, validateGitVariable(wf)...)
 
