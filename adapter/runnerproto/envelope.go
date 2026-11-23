@@ -25,6 +25,7 @@
 package runnerproto
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -192,8 +193,9 @@ type Payload interface{ Validate() error }
 // DecodePayload unmarshals e.Payload into dst and validates it. Unknown fields
 // are ignored (forward compatibility); missing required fields fail Validate.
 func DecodePayload(e Envelope, dst Payload) error {
-	if len(e.Payload) == 0 {
-		return malformed("%s frame has no payload", e.Kind)
+	raw := bytes.TrimSpace(e.Payload)
+	if len(raw) == 0 || raw[0] != '{' {
+		return malformed("%s frame needs an object payload", e.Kind)
 	}
 	if err := json.Unmarshal(e.Payload, dst); err != nil {
 		return malformed("%s payload: %v", e.Kind, err)

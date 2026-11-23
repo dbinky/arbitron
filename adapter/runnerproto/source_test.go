@@ -24,6 +24,14 @@ func TestWireSource_CapabilityEvidenceRoundTrip(t *testing.T) {
 	require.NoError(t, DecodePayload(decoded, &hello))
 	require.Equal(t, source, hello.Sources[0])
 }
+func TestWireSource_ReviewedFamilies(t *testing.T) {
+	for _, family := range []string{"anthropic", "openai", "deepseek", "zhipuai", "moonshotai"} {
+		s := provenSource()
+		s.Capabilities[0].Families = []string{family}
+		require.NoError(t, s.Validate(), family)
+	}
+}
+
 func TestWireSource_UnavailableReasonRoundTrip(t *testing.T) {
 	source := provenSource()
 	source.UnavailableReason = "unsupported harness version"
