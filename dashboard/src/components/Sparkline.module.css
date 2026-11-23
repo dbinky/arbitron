@@ -1,0 +1,6 @@
+.spark { margin: 0; display: flex; flex-direction: column; gap: 2px; min-width: 130px; }
+.caption { font-size: 11px; color: var(--text-muted); }
+.label { text-transform: uppercase; letter-spacing: 0.3px; }
+.value { color: var(--text-primary); font-weight: 600; }
+.svg { color: var(--accent); background: var(--bg-surface); border-radius: var(--radius-sm); }
+.empty { font-size: 11px; color: var(--text-muted); height: 32px; display: flex; align-items: center; }
