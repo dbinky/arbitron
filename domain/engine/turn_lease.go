@@ -97,6 +97,9 @@ func ContextWithTurnLease(ctx context.Context, l TurnLease) context.Context {
 
 // TurnLeaseFromContext returns the lease held by the current operation.
 func TurnLeaseFromContext(ctx context.Context) (TurnLease, bool) {
+	if h, ok := ctx.Value(turnLeaseCtxKey{}).(*turnLeaseHold); ok {
+		return h.Lease(), true
+	}
 	l, ok := ctx.Value(turnLeaseCtxKey{}).(TurnLease)
 	return l, ok
 }
@@ -207,7 +210,9 @@ func holdTurnLease(ctx context.Context, store TurnLeaseStore, key string, ttl ti
 	turnCtx, cancel := context.WithCancelCause(ctx)
 	h := &turnLeaseHold{store: store, ttl: ttl, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{}), lease: l}
 	go h.renewLoop(turnCtx)
-	return ContextWithTurnLease(turnCtx, l), h, nil
+	// Keep derived attempt contexts attached to the held lease, not a stale
+	// generation snapshot captured before a move.
+	return context.WithValue(turnCtx, turnLeaseCtxKey{}, h), h, nil
 }
 
 func (h *turnLeaseHold) renewLoop(ctx context.Context) {
@@ -233,7 +238,10 @@ func (h *turnLeaseHold) renewLoop(ctx context.Context) {
 		switch {
 		case err == nil:
 			h.mu.Lock()
-			h.lease = renewed
+			// A move may have adopted a newer generation while Renew was in flight.
+			if h.lease == cur {
+				h.lease = renewed
+			}
 			h.mu.Unlock()
 		case errors.Is(err, ErrTurnLeaseLost):
 			h.cancel(ErrTurnLeaseLost)
@@ -255,6 +263,15 @@ func (h *turnLeaseHold) Lease() TurnLease {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.lease
+}
+
+// Adopt accepts a move's reserved generation only for this same lease owner.
+func (h *turnLeaseHold) Adopt(l TurnLease) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if l.Token == h.lease.Token && l.Key == h.lease.Key && l.Generation >= h.lease.Generation {
+		h.lease = l
+	}
 }
 
 // Release stops renewal and releases the lease. Idempotent.
