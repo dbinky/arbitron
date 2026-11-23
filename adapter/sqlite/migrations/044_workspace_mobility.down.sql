@@ -1,0 +1,18 @@
+DROP TABLE IF EXISTS node_retry_failures;
+DROP TABLE IF EXISTS node_retry_progress;
+ALTER TABLE workspace_homes DROP COLUMN non_portable_reason;
+DROP INDEX IF EXISTS idx_runner_copies_runner;
+DROP TABLE IF EXISTS runner_copies;
+DROP TABLE IF EXISTS drain_items;
+DROP TABLE IF EXISTS builtin_processes;
+DROP TABLE IF EXISTS step_suspensions;
+DROP TABLE IF EXISTS step_commit_operations;
+DROP TABLE IF EXISTS workspace_leases;
+DROP INDEX IF EXISTS idx_step_commits_run;
+DROP TABLE IF EXISTS step_commits;
+DROP INDEX IF EXISTS idx_transfer_sessions_job;
+DROP INDEX IF EXISTS idx_transfer_sessions_expiry;
+DROP TABLE IF EXISTS transfer_sessions;
+DROP INDEX IF EXISTS idx_home_moves_run;
+DROP TABLE IF EXISTS home_moves;
+DROP TABLE IF EXISTS workspace_checkpoints;
