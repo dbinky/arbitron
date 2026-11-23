@@ -1571,10 +1571,11 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 
 		resolvedInputs := vars.Snapshot()
 		startedAt := time.Now()
+		sink := NewPlacementSink()
 		attemptCtx := ContextWithPlacementSink(ContextWithStepIdentity(ctx, StepIdentity{
 			RunID: instanceID, NodeID: node.ID, InvocationID: inv.ID,
 			OperationID: nodeOperationID, Kind: OperationNode, Attempt: attempt,
-		}), NewPlacementSink())
+		}), sink)
 		result, err := executor.Execute(attemptCtx, node, vars, wf.Name)
 		completedAt := time.Now()
 
@@ -1607,6 +1608,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 			CompletedAt:    &completedAt,
 		}
 		nodeResultToExecution(result, nodeExec)
+		applyPlacement(nodeExec, sink.Facts())
 		// Skip writing when the executor itself already wrote the record (IsWait path).
 		if result == nil || !result.IsWait {
 			if persistErr := e.nodeExecutions.Create(ctx, nodeExec); persistErr != nil {

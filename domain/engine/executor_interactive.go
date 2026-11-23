@@ -254,6 +254,9 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		StartedAt:       startTime,
 		CompletedAt:     &now,
 	}
+	if sink, ok := PlacementSinkFromContext(ctx); ok {
+		applyPlacement(nodeExec, sink.Facts())
+	}
 	if err := e.nodeExecs.Create(ctx, nodeExec); err != nil {
 		return nil, fmt.Errorf("interactive %q: persist initial conversation: %w", node.ID, err)
 	}
