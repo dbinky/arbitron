@@ -1,0 +1,4 @@
+{"timestamp":"2026-11-19T15:00:00.000Z","type":"session_meta","payload":{"id":"01a1f5d2-0c2a-7a72-a9b9-00000000beef","cwd":"/srv/arbitron/workspaces/run-1","cli_version":"0.170.0"}}
+{"timestamp":"2026-11-19T15:00:00.100Z","type":"turn_context","payload":{"cwd":"/srv/arbitron/workspaces/run-1","model":"gpt-5.6-luna"}}
+{"timestamp":"2026-11-19T15:00:00.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"long session"}]}}
+{"timestamp":"2026-11-19T15:30:00.000Z","type":"compacted","payload":{"message":"summary","replacement_history":[{"type":"compaction","encrypted_content":"gAAAAABorg-bound-compaction"}]}}

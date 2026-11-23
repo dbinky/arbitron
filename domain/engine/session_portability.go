@@ -26,6 +26,12 @@ type SessionPortability interface {
 	Import(ctx context.Context, b SessionBundle, workDir string) (sessionID string, err error)
 }
 
+// LossyImporter signals that every native import loses context detail. The mover
+// must emit a loss notice even when native restoration succeeds.
+type LossyImporter interface {
+	AlwaysLossy() bool
+}
+
 // ErrBundleRequiresRebuild means native restoration is unsafe or impossible
 // (version skew, foreign paths, compaction, corrupt bundle). Callers fall back
 // to the visible transcript rebuild; it never means "capacity exhausted".
