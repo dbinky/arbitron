@@ -1,0 +1,3 @@
+{"type":"session-owner","accountUuid":"00000000-1111-2222-3333-444444444444","organizationUuid":"55555555-6666-7777-8888-999999999999","sessionId":"{{SESSION_ID}}"}
+{"type":"user","sessionId":"{{SESSION_ID}}","cwd":"/srv/arbitron/workspaces/run-1","message":{"role":"user","content":"Remember PERIWINKLE. Reply OK."}}
+{"type":"assistant","sessionId":"{{SESSION_ID}}","message":{"role":"assistant","content":[{"type":"thinking","thinking":"short","signature":"c2lnbmF0dXJlLWJ5dGVz"},{"type":"text","text":"OK"}]}}

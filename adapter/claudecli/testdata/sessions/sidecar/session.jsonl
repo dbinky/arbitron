@@ -1,0 +1,5 @@
+{"type":"session-owner","accountUuid":"00000000-1111-2222-3333-444444444444","organizationUuid":"55555555-6666-7777-8888-999999999999","sessionId":"{{SESSION_ID}}"}
+{"type":"user","sessionId":"{{SESSION_ID}}","cwd":"/srv/arbitron/workspaces/run-1","message":{"role":"user","content":"List the files."}}
+{"type":"assistant","sessionId":"{{SESSION_ID}}","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","sessionId":"{{SESSION_ID}}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"Output saved to {{PROJECT_DIR}}/{{SESSION_ID}}/tool-results/toolu_01.json"}]}}
+{"type":"assistant","sessionId":"{{SESSION_ID}}","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}
