@@ -1255,6 +1255,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		result, nodeExec, invocationID, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
 
 		if execErr != nil {
+			var persistenceErr *stepPersistenceError
+			if errors.As(execErr, &persistenceErr) {
+				slog.Error("step persistence failed", "instanceID", instanceID, "nodeID", currentNodeID, "error", execErr)
+				e.failInstance(ctx, instanceID, currentNodeID)
+				return
+			}
 			nextNodeID, halt := e.handleNodeError(ctx, instanceID, workflowName, currentNodeID, node, *wf, nodeExec, execErr, vars, adj)
 			if halt {
 				return
@@ -1512,6 +1518,11 @@ func (e *Engine) handleNodeSuccess(
 	return e.findNextNode(currentNodeID, outputPort, adj), false
 }
 
+// stepPersistenceError cannot be retried, skipped or routed as an executor error.
+type stepPersistenceError struct{ error }
+
+func (e *stepPersistenceError) Unwrap() error { return e.error }
+
 // executeWithRetry executes a node, applying retry logic from the error behavior.
 // A NodeExecution record is created for each attempt. The final record is returned
 // so the caller can update it (e.g., marking it skipped).
@@ -1522,7 +1533,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 	inv, err := e.invocationStore().Begin(ctx, instanceID, node.ID)
 	if err != nil {
-		return nil, nil, uuid.Nil, fmt.Errorf("engine: begin invocation: %w", err)
+		return nil, nil, uuid.Nil, &stepPersistenceError{fmt.Errorf("engine: begin invocation: %w", err)}
 	}
 
 	eb := resolveErrorBehavior(node, wf)
@@ -1584,7 +1595,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		// Skip writing when the executor itself already wrote the record (IsWait path).
 		if result == nil || !result.IsWait {
 			if persistErr := e.nodeExecutions.Create(ctx, nodeExec); persistErr != nil {
-				return nil, nodeExec, inv.ID, fmt.Errorf("engine: persist node execution %q: %w", node.ID, persistErr)
+				return nil, nodeExec, inv.ID, &stepPersistenceError{fmt.Errorf("engine: persist node execution %q: %w", node.ID, persistErr)}
 			}
 		}
 		lastExec = nodeExec

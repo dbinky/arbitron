@@ -345,7 +345,9 @@ type domainStack struct {
 	// Authorized aggregate run state, shared by the production HTTP router.
 	graphState *engine.GraphStateReader
 	// subtreeEvents routes authorized descendant events for live run views.
-	subtreeEvents *engine.SubtreeEventBridge
+	subtreeEvents   *engine.SubtreeEventBridge
+	invocations     engine.InvocationStore
+	groupResolution *engine.GroupResolutionBridge
 }
 
 // Close cancels and joins startup, refresh and sweeps before draining execution,
@@ -1102,6 +1104,9 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		cfg.LLM.DefaultAgentBackend,
 	)
 
+	invocationStore := adaptsqlite.NewInvocationRepo(db)
+	eng.SetInvocationStore(invocationStore)
+
 	// 11a. Wire the per-instance workspace manager.
 	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
 	if err != nil {
@@ -1448,6 +1453,11 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	conversationHandler := engine.NewConversationHandler(
 		instanceRepo, nodeExecRepo, interactiveStreamSel, interactiveResolver, bus, queueMgr,
 	)
+	invocationSetter, ok := conversationHandler.(interface{ SetInvocationStore(engine.InvocationStore) })
+	if !ok {
+		return nil, errors.New("conversation handler does not accept the invocation store")
+	}
+	invocationSetter.SetInvocationStore(invocationStore)
 	// Wire the intervention repo so admin participation in another user's
 	// interactive session is attributed. The setter lives on the concrete type.
 	if s, ok := conversationHandler.(interface {
@@ -1484,6 +1494,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		interactiveStreamSel, fileReader, eng, bus, queueRepo, queueMgr,
 		time.Duration(cfg.LLM.TimeoutSeconds)*time.Second,
 	)
+	groupResolution.SetInvocationStore(invocationStore)
 	groupSessions, ok := conversationHandler.(interface {
 		SetGroupResolution(instance.GroupRunRepository, engine.GroupResolutionCompleter)
 	})
@@ -1597,6 +1608,8 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		graphState:            graphState,
 		awaitInitialDiscovery: defaultAwaitInitialDiscovery,
 		subtreeEvents:         subtreeEvents,
+		invocations:           invocationStore,
+		groupResolution:       groupResolution,
 	}
 	skipSeed := func(alias string, cause error) {
 		logger.Warn("skipped config profile", "alias", alias, "error", cause)

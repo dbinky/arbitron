@@ -233,6 +233,24 @@ func TestEngine_NodeExecutionPersistenceFailureStopsBeforeNextNode(t *testing.T)
 	assert.Nil(t, inv.CommittedAt)
 }
 
+func TestEngine_NodeExecutionPersistenceFailureCannotSkip(t *testing.T) {
+	f := newTestFixtures()
+	store := engine.NewMemoryInvocationStore()
+	f.engine.SetInvocationStore(store)
+	f.nodeExecRepo.createErr = errors.New("disk full")
+	wf := linearWorkflow()
+	wf.Nodes[0].ErrorBehavior = workflow.ErrorBehavior{Type: "skip"}
+	f.workflowRepo.add(wf)
+	id, _, err := f.engine.Trigger(context.Background(), "linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	require.Len(t, f.executor.getCalls(), 1)
+	inv, err := store.Begin(context.Background(), id, "A")
+	require.NoError(t, err)
+	assert.Equal(t, 1, inv.Visit)
+	assert.Nil(t, inv.CommittedAt)
+}
+
 func TestEngine_SetInvocationStoreNilFallsBackToMemory(t *testing.T) {
 	f := newTestFixtures()
 	f.engine.SetInvocationStore(nil)
