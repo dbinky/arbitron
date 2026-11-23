@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -96,14 +97,19 @@ func readRolloutOutcome(r io.Reader, now time.Time) (pool.SourceOutcome, bool, e
 					return pool.SourceOutcome{}, false, errMalformedRolloutOutcome
 				}
 				switch p.Type {
+				case "task_started":
+					info, status, reached = "", 0, false
+					windows = map[windowKey]pool.LimitWindow{}
 				case "error":
-					if v, st := decodeErrorInfo(p.ErrorInfo); v != "" {
-						info, status = v, st
+					info, status = decodeErrorInfo(p.ErrorInfo)
+					if info == "" {
+						info = "unknown"
 					}
 				case "task_complete":
 					if p.Error != nil {
-						if v, st := decodeErrorInfo(p.Error.ErrorInfo); v != "" {
-							info, status = v, st
+						info, status = decodeErrorInfo(p.Error.ErrorInfo)
+						if info == "" {
+							info = "unknown"
 						}
 					}
 				case "token_count":
@@ -194,6 +200,15 @@ func decodeRolloutRateLimits(raw json.RawMessage, at time.Time) (rateSnapshot, b
 		if w == nil {
 			continue
 		}
+		if w.WindowMinutes <= 0 || int64(w.WindowMinutes) > math.MaxInt64/int64(time.Minute) {
+			return rateSnapshot{}, false
+		}
+		if w.ResetsAt != nil && normalizeResetEpoch(w.ResetsAt) == nil {
+			return rateSnapshot{}, false
+		}
+		if w.ResetsInSeconds != nil && (math.IsNaN(*w.ResetsInSeconds) || *w.ResetsInSeconds <= 0 || *w.ResetsInSeconds >= float64(math.MaxInt64)/float64(time.Second)) {
+			return rateSnapshot{}, false
+		}
 		lw := pool.LimitWindow{LimitID: id, ModelScope: scope, DurationMins: w.WindowMinutes, UsedPercent: w.UsedPercent}
 		if t := normalizeResetEpoch(w.ResetsAt); t != nil {
 			lw.ResetAt = t
@@ -258,12 +273,16 @@ func sortedWindows(ws map[windowKey]pool.LimitWindow) []pool.LimitWindow {
 
 // normalizeResetEpoch converts epoch seconds (or ms when > 1e12) to UTC.
 func normalizeResetEpoch(v *float64) *time.Time {
-	if v == nil || *v <= 0 {
+	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v <= 0 {
 		return nil
 	}
 	sec := *v
 	if sec > 1e12 {
 		sec /= 1000
+	}
+	// Keep resets within the representable RFC3339 calendar range.
+	if sec > float64(time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC).Unix()) {
+		return nil
 	}
 	t := time.Unix(int64(sec), 0).UTC()
 	return &t
@@ -273,6 +292,10 @@ func normalizeResetEpoch(v *float64) *time.Time {
 // under env's codex home. Any lookup/read failure returns err unchanged
 // (=> classified "other"). Must run BEFORE SanitizeProcessError.
 func attachRolloutOutcome(env []string, threadID string, err error, now time.Time) error {
+	return attachRolloutOutcomeFrom(env, threadID, err, now, 0, nil)
+}
+
+func attachRolloutOutcomeFrom(env []string, threadID string, err error, now time.Time, offset int64, prior os.FileInfo) error {
 	if err == nil || strings.TrimSpace(threadID) == "" {
 		return err
 	}
@@ -289,6 +312,15 @@ func attachRolloutOutcome(env []string, threadID string, err error, now time.Tim
 		return err
 	}
 	defer f.Close()
+	if prior != nil {
+		current, statErr := f.Stat()
+		if statErr != nil || !os.SameFile(prior, current) || current.Size() <= offset {
+			return err
+		}
+	}
+	if _, seekErr := f.Seek(offset, io.SeekStart); seekErr != nil {
+		return err
+	}
 	o, ok, rerr := readRolloutOutcome(f, now)
 	if rerr != nil || !ok {
 		return err
@@ -299,11 +331,29 @@ func attachRolloutOutcome(env []string, threadID string, err error, now time.Tim
 // rolloutOutcomeAttacher adapts attachRolloutOutcome to foldExecStream's
 // classify hook; a resumed turn without thread.started uses the resume id.
 func rolloutOutcomeAttacher(env []string, resumeID string) func(threadID string, err error) error {
+	resumeID = strings.TrimSpace(resumeID)
+	var prior os.FileInfo
+	var offset int64
+	if resumeID != "" {
+		home, err := resolveCodexHome(env)
+		if err == nil {
+			path, err := findRollout(home, resumeID)
+			if err == nil {
+				prior, _ = os.Stat(path)
+				if prior != nil {
+					offset = prior.Size()
+				}
+			}
+		}
+	}
 	return func(threadID string, err error) error {
+		if resumeID != "" && (prior == nil || threadID != "" && threadID != resumeID) {
+			return err
+		}
 		if threadID == "" {
 			threadID = strings.TrimSpace(resumeID)
 		}
-		return attachRolloutOutcome(env, threadID, err, time.Now())
+		return attachRolloutOutcomeFrom(env, threadID, err, time.Now(), offset, prior)
 	}
 }
 

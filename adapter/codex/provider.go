@@ -282,6 +282,12 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 	if err != nil {
 		return nil, fmt.Errorf("codex: parse output (model %q): %w", model, err)
 	}
+	if res.failed && classifiesRollout(p.binding) {
+		failure := fmt.Errorf("%w: batch turn failed", ErrModelEvidence)
+		if classified := attachRolloutOutcome(env, res.sessionID, failure, time.Now()); classified != failure {
+			return nil, classified
+		}
+	}
 	var evidence []engine.ModelEvidence
 	if p.binding.Pinned || lunaroute {
 		if res.failed || !res.completed || lunaroute && !res.finalTurnCompleted {

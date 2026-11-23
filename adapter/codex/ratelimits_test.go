@@ -74,7 +74,11 @@ func (f *fakeAppServer) Read(b []byte) (int, error) {
 	f.buf = f.buf[n:]
 	return n, nil
 }
-func (f *fakeAppServer) Kill() error { f.killed.Store(true); f.once.Do(func() { close(f.done) }); return nil }
+func (f *fakeAppServer) Kill() error {
+	f.killed.Store(true)
+	f.once.Do(func() { close(f.done) })
+	return nil
+}
 func (f *fakeAppServer) Wait() error {
 	f.waited = true
 	if f.killed.Load() {

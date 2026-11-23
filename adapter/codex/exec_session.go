@@ -158,6 +158,10 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 		MaxResponseBytes: s.core.maxResponseBytes,
 	}
 
+	var classify func(string, error) error
+	if classifiesRollout(s.core.binding) {
+		classify = rolloutOutcomeAttacher(env, cfg.ResumeID)
+	}
 	lines, wait, err := s.core.runner.Run(ctx, spec)
 	if err != nil {
 		if cfg.ReadOnly {
@@ -186,7 +190,7 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 	joined := make(chan struct{})
 	go func() {
 		defer close(joined)
-		foldExecStream(ctx, lines, wait, events, slog.Default(), verify, rolloutOutcomeAttacher(env, cfg.ResumeID))
+		foldExecStream(ctx, lines, wait, events, slog.Default(), verify, classify)
 	}()
 	stream := newEventStream(events)
 	stream.joined = joined
