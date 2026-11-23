@@ -39,9 +39,9 @@ func (f *fakeCommands) run(ctx context.Context, name string, args ...string) (st
 }
 
 const (
-	sysctlLine = "/usr/sbin/sysctl hw.ncpu hw.memsize kern.boottime vm.loadavg kern.memorystatus_vm_pressure_level"
-	vmStatLine = "/usr/bin/vm_stat"
-	topLine    = "/usr/bin/top -l 2 -n 0 -s 1"
+	sysctlLine  = "/usr/sbin/sysctl hw.ncpu hw.memsize kern.boottime vm.loadavg kern.memorystatus_vm_pressure_level"
+	vmStatLine  = "/usr/bin/vm_stat"
+	topLine     = "/usr/bin/top -l 2 -n 0 -s 1"
 	thermalLine = "/usr/bin/notifyutil -g com.apple.system.thermalpressurelevel"
 )
 
@@ -49,9 +49,9 @@ const (
 // notifyutil stdout to return.
 func macFixtures(t *testing.T, thermal string) *fakeCommands {
 	return &fakeCommands{answers: map[string]cmdResult{
-		sysctlLine: {out: fixture(t, "sysctl.txt")},
-		vmStatLine: {out: fixture(t, "vm_stat.txt")},
-		topLine:    {out: fixture(t, "top.txt")},
+		sysctlLine:  {out: fixture(t, "sysctl.txt")},
+		vmStatLine:  {out: fixture(t, "vm_stat.txt")},
+		topLine:     {out: fixture(t, "top.txt")},
 		thermalLine: {out: thermal},
 	}}
 }

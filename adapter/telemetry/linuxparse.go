@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
@@ -115,7 +116,7 @@ func psiAvg10(fields []string) (float64, bool) {
 	for _, f := range fields {
 		if v, ok := strings.CutPrefix(f, "avg10="); ok {
 			n, err := strconv.ParseFloat(v, 64)
-			return n, err == nil
+			return n, err == nil && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 && n <= 100
 		}
 	}
 	return 0, false
@@ -141,7 +142,7 @@ func ParsePSI(content string) *string {
 			full = v
 		}
 	}
-	if some < 0 {
+	if some < 0 || full < 0 {
 		return nil
 	}
 	s := "normal"
@@ -161,7 +162,7 @@ func ParseLoadAvg(content string) *float64 {
 		return nil
 	}
 	l, err := strconv.ParseFloat(f[0], 64)
-	if err != nil || l < 0 {
+	if err != nil || math.IsNaN(l) || math.IsInf(l, 0) || l < 0 {
 		return nil
 	}
 	return &l
@@ -174,7 +175,7 @@ func ParseUptime(content string) *uint64 {
 		return nil
 	}
 	s, err := strconv.ParseFloat(f[0], 64)
-	if err != nil || s < 0 {
+	if err != nil || math.IsNaN(s) || math.IsInf(s, 0) || s < 0 || s >= math.Exp2(64) {
 		return nil
 	}
 	u := uint64(s)

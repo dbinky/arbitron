@@ -13,9 +13,9 @@ import (
 type CommandRunner func(ctx context.Context, name string, args ...string) (stdout string, err error)
 
 var (
-	macSysctlCmd = []string{"/usr/sbin/sysctl", "hw.ncpu", "hw.memsize", "kern.boottime", "vm.loadavg", "kern.memorystatus_vm_pressure_level"}
-	macVMStatCmd = []string{"/usr/bin/vm_stat"}
-	macTopCmd    = []string{"/usr/bin/top", "-l", "2", "-n", "0", "-s", "1"}
+	macSysctlCmd  = []string{"/usr/sbin/sysctl", "hw.ncpu", "hw.memsize", "kern.boottime", "vm.loadavg", "kern.memorystatus_vm_pressure_level"}
+	macVMStatCmd  = []string{"/usr/bin/vm_stat"}
+	macTopCmd     = []string{"/usr/bin/top", "-l", "2", "-n", "0", "-s", "1"}
 	macThermalCmd = []string{"/usr/bin/notifyutil", "-g", "com.apple.system.thermalpressurelevel"}
 )
 

@@ -75,16 +75,16 @@ func linuxFixtureFS(t *testing.T) *fakeFS {
 	return &fakeFS{
 		stat: []string{fixture(t, "proc_stat_1.txt"), fixture(t, "proc_stat_2.txt")},
 		files: map[string]string{
-			"/proc/meminfo":                                   fixture(t, "meminfo.txt"),
-			"/proc/pressure/memory":                           fixture(t, "pressure_memory.txt"),
-			"/proc/loadavg":                                   fixture(t, "loadavg.txt"),
-			"/proc/uptime":                                    fixture(t, "uptime.txt"),
-			"/sys/class/thermal/thermal_zone0/temp":           "85000\n",
+			"/proc/meminfo":                         fixture(t, "meminfo.txt"),
+			"/proc/pressure/memory":                 fixture(t, "pressure_memory.txt"),
+			"/proc/loadavg":                         fixture(t, "loadavg.txt"),
+			"/proc/uptime":                          fixture(t, "uptime.txt"),
+			"/sys/class/thermal/thermal_zone0/temp": "85000\n",
 			"/sys/class/thermal/thermal_zone0/trip_point_0_type": "passive\n",
 			"/sys/class/thermal/thermal_zone0/trip_point_0_temp": "80000\n",
 			"/sys/class/thermal/thermal_zone0/trip_point_1_type": "critical\n",
 			"/sys/class/thermal/thermal_zone0/trip_point_1_temp": "105000\n",
-			"/sys/class/thermal/thermal_zone1/temp":           "40000\n",
+			"/sys/class/thermal/thermal_zone1/temp":              "40000\n",
 		},
 	}
 }
