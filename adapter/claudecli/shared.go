@@ -160,6 +160,7 @@ func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec Run
 		return streamEvent{}, nil, fmt.Errorf("claudecli: call: %w", err)
 	}
 
+	var tracker outcomeTracker
 	var result streamEvent
 	var haveResult bool
 	var parseErr error
@@ -177,6 +178,10 @@ func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec Run
 			continue
 		}
 		if !ok {
+			continue
+		}
+		tracker.observe(ev)
+		if ev.Kind == eventRateLimit {
 			continue
 		}
 		if ev.Kind == eventResult {
@@ -199,6 +204,7 @@ func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec Run
 		steps = append(steps, ev)
 	}
 	if waitErr := wait(); waitErr != nil {
+		waitErr = tracker.attach(waitErr)
 		if sanitize {
 			waitErr = SanitizeProcessError(waitErr)
 		} else {
@@ -212,16 +218,21 @@ func collectResultWithPolicy(ctx context.Context, runner CommandRunner, spec Run
 		return streamEvent{}, nil, fmt.Errorf("claudecli: claude exited with error: %w", waitErr)
 	}
 	if parseErr != nil {
-		return streamEvent{}, nil, parseErr
+		err := tracker.attach(parseErr)
+		if _, classified := tracker.classify(); sanitize && classified {
+			err = SanitizeProcessError(err)
+		}
+		return streamEvent{}, nil, err
 	}
 	if !haveResult {
 		return streamEvent{}, nil, fmt.Errorf("claudecli: no result event in claude output")
 	}
 	if result.IsError {
 		if policy.sanitize {
-			return streamEvent{}, nil, errModelExecutionEvidence
+			return streamEvent{}, nil, SanitizeProcessError(tracker.attach(errModelExecutionEvidence))
 		}
-		return streamEvent{}, nil, fmt.Errorf("claudecli: claude reported an error: %s", result.Text)
+		return streamEvent{}, nil, tracker.attach(fmt.Errorf("claudecli: claude reported an error: %s", result.Text))
 	}
+	tracker.reportSuccess(ctx)
 	return result, steps, nil
 }

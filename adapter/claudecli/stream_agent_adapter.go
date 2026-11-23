@@ -174,7 +174,7 @@ func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequ
 
 		sendChunk := makeSendChunk(runCtx, out)
 
-		st := streamState{wantModel: wantModel, policy: lunaRouteCollectPolicy(a.binding)}
+		st := streamState{wantModel: wantModel, policy: lunaRouteCollectPolicy(a.binding), ctx: runCtx}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}

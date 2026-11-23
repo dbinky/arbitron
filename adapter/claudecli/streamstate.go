@@ -16,6 +16,8 @@ import (
 // mid-stream, result-with-is_error, exit-with-no-result) without spinning up
 // a full Provider.
 type streamState struct {
+	tracker   outcomeTracker
+	ctx       context.Context
 	sessionID string
 	tokensIn  int
 	tokensOut int
@@ -52,6 +54,7 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 	if !ok {
 		return
 	}
+	s.tracker.observe(ev)
 	if ev.SessionID != "" {
 		s.sessionID = ev.SessionID
 	}
@@ -90,6 +93,10 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bo
 			if s.wantModel == "" && !s.policy.sanitize {
 				err = fmt.Errorf("claudecli: claude reported an error: %s", ev.Text)
 			}
+			err = s.tracker.attach(err)
+			if s.wantModel != "" || s.policy.sanitize {
+				err = SanitizeProcessError(err)
+			}
 			sendChunk(engine.ChatChunk{Error: err})
 			s.failed = true
 		}
@@ -105,6 +112,7 @@ func (s *streamState) Finalize(waitErr error, sendChunk func(engine.ChatChunk) b
 		return
 	}
 	if waitErr != nil {
+		waitErr = s.tracker.attach(waitErr)
 		if s.wantModel != "" || s.policy.sanitize {
 			waitErr = SanitizeProcessError(waitErr)
 		}
@@ -118,6 +126,9 @@ func (s *streamState) Finalize(waitErr error, sendChunk func(engine.ChatChunk) b
 			Error: fmt.Errorf("claudecli: no result event to confirm pinned model %q", s.wantModel),
 		})
 		return
+	}
+	if s.ctx != nil {
+		s.tracker.reportSuccess(s.ctx)
 	}
 	sendChunk(engine.ChatChunk{
 		Done:      true,

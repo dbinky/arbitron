@@ -51,6 +51,7 @@ const (
 	eventAssistant eventKind = "assistant"
 	eventUser      eventKind = "user"
 	eventResult    eventKind = "result"
+	eventRateLimit eventKind = "rate_limit_event"
 )
 
 // streamEvent is a parsed claude stream-json event reduced to the fields
@@ -65,6 +66,7 @@ type streamEvent struct {
 	// ModelUsage lists the model ids billed by a result event (the keys of the
 	// result's modelUsage object). Empty when the CLI reported none.
 	ModelUsage []string
+	Signal     *outcomeSignal
 }
 
 // rawEnvelope is the on-the-wire shape of a stream-json line.
@@ -74,12 +76,18 @@ type streamEvent struct {
 // types whose `message` is a plain string. Decoding it eagerly failed the whole
 // line (and the node) on an event that never needed it.
 type rawEnvelope struct {
-	Type      string          `json:"type"`
-	SessionID string          `json:"session_id"`
-	IsError   bool            `json:"is_error"`
-	Result    string          `json:"result"`
-	Message   json.RawMessage `json:"message"`
-	Usage     *rawUsage       `json:"usage"`
+	Error               json.RawMessage `json:"error"`
+	APIErrorStatus      json.RawMessage `json:"api_error_status"`
+	APIErrorStatusCamel json.RawMessage `json:"apiErrorStatus"`
+	RateLimitInfo       json.RawMessage `json:"rate_limit_info"`
+	QuotaLimits         json.RawMessage `json:"quotaLimits"`
+	APIErrorParams      json.RawMessage `json:"apiErrorParams"`
+	Type                string          `json:"type"`
+	SessionID           string          `json:"session_id"`
+	IsError             bool            `json:"is_error"`
+	Result              string          `json:"result"`
+	Message             json.RawMessage `json:"message"`
+	Usage               *rawUsage       `json:"usage"`
 	// ModelUsage is keyed by the model ids that actually served the turn.
 	ModelUsage map[string]json.RawMessage `json:"modelUsage"`
 }
@@ -143,6 +151,8 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 		return streamEvent{Kind: eventSystem, SessionID: env.SessionID}, true, nil
 	case eventUser:
 		return streamEvent{Kind: eventUser, SessionID: env.SessionID}, true, nil
+	case eventRateLimit:
+		return streamEvent{Kind: eventRateLimit, SessionID: env.SessionID, Signal: decodeSignal(env)}, true, nil
 	case eventAssistant:
 		// An assistant message that is not an object fails closed: its text is
 		// the agent's output, and silently dropping it would lose a turn.
@@ -156,6 +166,7 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 			Kind:      eventAssistant,
 			SessionID: env.SessionID,
 			Text:      assistantText(msg),
+			Signal:    decodeSignal(env),
 		}, true, nil
 	case eventResult:
 		ev := streamEvent{
@@ -163,6 +174,7 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 			SessionID: env.SessionID,
 			Text:      env.Result,
 			IsError:   env.IsError,
+			Signal:    decodeSignal(env),
 		}
 		if env.Usage != nil {
 			ev.TokensIn = env.Usage.totalInput()

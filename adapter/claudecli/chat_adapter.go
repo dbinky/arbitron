@@ -168,7 +168,7 @@ func (a *ChatAdapter) StreamChat(ctx context.Context, req engine.ChatRequest) (<
 
 		sendChunk := makeSendChunk(runCtx, out)
 
-		st := streamState{wantModel: wantModel}
+		st := streamState{wantModel: wantModel, ctx: runCtx}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}

@@ -178,7 +178,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 
 		// streamState (SF3) holds per-line bookkeeping outside this closure
 		// so Handle / Finalize are individually testable.
-		st := streamState{wantModel: pinnedModel(req)}
+		st := streamState{wantModel: pinnedModel(req), ctx: runCtx}
 		for line := range lines {
 			st.Handle(line, sendChunk)
 		}
