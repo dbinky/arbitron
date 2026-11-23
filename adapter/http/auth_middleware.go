@@ -168,6 +168,10 @@ func (m *AuthMiddleware) Stop() {
 // wrap the /mcp handler with it (Task 8).
 func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if presentsRunnerKey(r) {
+			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "runner keys are not accepted on this endpoint")
+			return
+		}
 		id, err := m.resolve(r)
 		if err != nil {
 			if errors.Is(err, errNoCredential) {

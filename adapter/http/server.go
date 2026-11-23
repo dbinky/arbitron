@@ -143,6 +143,8 @@ type RouterDeps struct {
 	// SubtreeEvents enables ?subtree=1 only when GraphState is also set.
 	// Otherwise subtree requests return 501; per-instance mode is unchanged.
 	SubtreeEvents SubtreeSubscriber
+	// RunnerKeys is the admin key-management service. Nil disables the routes.
+	RunnerKeys RunnerKeyService
 	// Runners serves pool reads and admin writes; nil disables the routes.
 	Runners RunnerService
 }
@@ -390,6 +392,13 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 				r.Get("/", th.List)
 				r.Delete("/{id}", th.Revoke)
 			})
+		}
+
+		if d.RunnerKeys != nil {
+			kh := NewRunnerKeyHandler(d.RunnerKeys)
+			r.Get("/runners/keys", kh.List)
+			r.Post("/runners/keys", kh.Create)
+			r.Delete("/runners/keys/{id}", kh.Revoke)
 		}
 
 		// Device-grant approval actions run behind the auth middleware: the

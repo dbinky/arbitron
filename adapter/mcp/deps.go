@@ -142,6 +142,8 @@ type Deps struct {
 	// user's identity (carried on the tool ctx by the auth middleware). Optional:
 	// when nil, the token tools report the service as unavailable.
 	Tokens *identity.TokenService
+	// RunnerKeys provides admin key management; nil reports unavailable.
+	RunnerKeys RunnerKeyService
 	// Users powers the admin-only user_* tools. The admin gate + demotion floors
 	// live in the service. Optional: when nil, the user tools report unavailable.
 	Users *instance.UserService

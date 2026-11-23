@@ -14,6 +14,7 @@ func RegisterAllTools(srv *Server) {
 	RegisterConnectionTools(srv)
 	RegisterProfileTools(srv)
 	RegisterTokenTools(srv)
+	RegisterRunnerKeyTools(srv)
 	RegisterUserTools(srv)
 	RegisterLayoutTools(srv)
 	RegisterScheduleTools(srv)
