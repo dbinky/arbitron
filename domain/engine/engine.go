@@ -925,6 +925,21 @@ func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Insta
 	return inst, nil
 }
 
+// GetExecutionStatus authorizes the run before reading its active operations.
+func (e *Engine) GetExecutionStatus(ctx context.Context, id uuid.UUID) ([]instance.ExecutionStatus, error) {
+	if _, err := e.GetInstance(ctx, id); err != nil {
+		return nil, err
+	}
+	if e.enricher == nil {
+		return nil, nil
+	}
+	statuses, err := e.enricher.execStatus.ExecutionStatuses(ctx, []uuid.UUID{id})
+	if err != nil {
+		return nil, err
+	}
+	return statuses[id], nil
+}
+
 // authorizeView is the shared guard for the sub-resource reads (trace,
 // variables, history): it loads the owning instance and returns ErrNotFound if
 // the caller may not view it. It returns the loaded instance for callers that

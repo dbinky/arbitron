@@ -31,6 +31,7 @@ type EngineService interface {
 	// queue position). Same authz as ListInstances.
 	ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
 	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	GetExecutionStatus(ctx context.Context, id uuid.UUID) ([]instance.ExecutionStatus, error)
 	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)

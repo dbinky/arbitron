@@ -2,7 +2,7 @@ package mcp_test
 
 import (
 	"context"
- "encoding/json"
+	"encoding/json"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/instance"
@@ -22,10 +22,10 @@ func TestInstanceList_CarriesExecutionStatus(t *testing.T) {
 	res := callTool(t, srv, "instance_list", nil)
 	assert.False(t, res.IsError)
 	text := extractText(t, res)
- var rows []instance.EnrichedInstanceSummary
- assert.NoError(t, json.Unmarshal([]byte(text), &rows))
- if assert.Len(t, rows, 1) && assert.Len(t, rows[0].Execution, 1) {
- assert.Equal(t, id, rows[0].Execution[0].RunID)
- assert.Equal(t, instance.ExecQueuedSlot, rows[0].Execution[0].State)
- }
+	var rows []instance.EnrichedInstanceSummary
+	assert.NoError(t, json.Unmarshal([]byte(text), &rows))
+	if assert.Len(t, rows, 1) && assert.Len(t, rows[0].Execution, 1) {
+		assert.Equal(t, id, rows[0].Execution[0].RunID)
+		assert.Equal(t, instance.ExecQueuedSlot, rows[0].Execution[0].State)
+	}
 }

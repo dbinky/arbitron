@@ -184,7 +184,14 @@ func instanceGetHandler(srv *Server) server.ToolHandlerFunc {
 		if inst == nil {
 			return gomcp.NewToolResultError("instance not found"), nil
 		}
-		return MarshalResult(inst)
+		execution, err := srv.deps.Engine.GetExecutionStatus(ctx, id)
+		if err != nil {
+			return gomcp.NewToolResultError("execution status unavailable"), nil
+		}
+		return MarshalResult(struct {
+			*instance.Instance
+			Execution []instance.ExecutionStatus `json:"execution,omitempty"`
+		}{Instance: inst, Execution: execution})
 	}
 }
 

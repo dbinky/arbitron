@@ -27,6 +27,7 @@ type InstanceService interface {
 	// apply the same authz as ListInstances.
 	ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
 	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	GetExecutionStatus(ctx context.Context, id uuid.UUID) ([]instance.ExecutionStatus, error)
 	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
@@ -100,28 +101,29 @@ func (h *InstanceHandler) SetGraphState(gs GraphStateService) {
 
 // instanceResponse is a JSON-friendly representation of an instance.
 type instanceResponse struct {
-	ID                string         `json:"id"`
-	OwnerID           string         `json:"ownerId"`
-	WorkflowName      string         `json:"workflowName"`
-	State             string         `json:"state"`
-	Priority          string         `json:"priority"`
-	Department        string         `json:"department,omitempty"`
-	Visibility        string         `json:"visibility,omitempty"`
-	Variables         map[string]any `json:"variables"`
-	OriginalVariables map[string]any `json:"originalVariables"`
-	CurrentNodeID     *string        `json:"currentNodeId,omitempty"`
-	FailedNodeID      *string        `json:"failedNodeId,omitempty"`
-	CreatedAt         string         `json:"createdAt"`
-	UpdatedAt         string         `json:"updatedAt"`
-	CompletedAt       *string        `json:"completedAt,omitempty"`
-	QueuedAt          *string        `json:"queuedAt,omitempty"`
-	WaitingUntil      *string        `json:"waitingUntil,omitempty"`
-	WebhookURL        *string        `json:"webhookUrl,omitempty"`
-	WebhookReceived   bool           `json:"webhookReceived,omitempty"`
-	WorkflowSnapshot  map[string]any `json:"workflowSnapshot,omitempty"`
-	InteractiveNodeID *string        `json:"interactiveNodeId"`
-	InteractiveActive bool           `json:"interactiveActive"`
-	Layout            *layout.View   `json:"layout,omitempty"`
+	Execution         []instance.ExecutionStatus `json:"execution,omitempty"`
+	ID                string                     `json:"id"`
+	OwnerID           string                     `json:"ownerId"`
+	WorkflowName      string                     `json:"workflowName"`
+	State             string                     `json:"state"`
+	Priority          string                     `json:"priority"`
+	Department        string                     `json:"department,omitempty"`
+	Visibility        string                     `json:"visibility,omitempty"`
+	Variables         map[string]any             `json:"variables"`
+	OriginalVariables map[string]any             `json:"originalVariables"`
+	CurrentNodeID     *string                    `json:"currentNodeId,omitempty"`
+	FailedNodeID      *string                    `json:"failedNodeId,omitempty"`
+	CreatedAt         string                     `json:"createdAt"`
+	UpdatedAt         string                     `json:"updatedAt"`
+	CompletedAt       *string                    `json:"completedAt,omitempty"`
+	QueuedAt          *string                    `json:"queuedAt,omitempty"`
+	WaitingUntil      *string                    `json:"waitingUntil,omitempty"`
+	WebhookURL        *string                    `json:"webhookUrl,omitempty"`
+	WebhookReceived   bool                       `json:"webhookReceived,omitempty"`
+	WorkflowSnapshot  map[string]any             `json:"workflowSnapshot,omitempty"`
+	InteractiveNodeID *string                    `json:"interactiveNodeId"`
+	InteractiveActive bool                       `json:"interactiveActive"`
+	Layout            *layout.View               `json:"layout,omitempty"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -279,8 +281,8 @@ type enrichedSummaryDTO struct {
 	FailedNodeID      *string `json:"failedNodeId,omitempty"`
 	// ChildCount is the number of spawned children the CALLER may see. Omitted
 	// when zero so a childless row renders no expander.
-	ChildCount int `json:"childCount,omitempty"`
- Execution []instance.ExecutionStatus `json:"execution,omitempty"`
+	ChildCount int                        `json:"childCount,omitempty"`
+	Execution  []instance.ExecutionStatus `json:"execution,omitempty"`
 }
 
 // toEnrichedSummaryDTO projects an enriched summary to its JSON DTO. The
@@ -304,7 +306,7 @@ func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary, revealIdentity boo
 		SubmitterName: e.Submitter.Name,
 		FailedNodeID:  e.FailedNodeID,
 		ChildCount:    e.ChildCount,
- Execution: e.Execution,
+		Execution:     e.Execution,
 	}
 	if revealIdentity {
 		dto.SubmitterIdentity = e.Submitter.AccountIdentity
@@ -525,7 +527,13 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	execution, err := h.service.GetExecutionStatus(r.Context(), id)
+	if err != nil {
+		WriteError(w, http.StatusServiceUnavailable, "STATUS_UNAVAILABLE", "execution status unavailable")
+		return
+	}
 	resp := toInstanceResponse(inst)
+	resp.Execution = execution
 	view := h.instanceLayout(r, inst)
 	resp.Layout = &view
 	WriteJSON(w, http.StatusOK, resp)

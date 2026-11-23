@@ -75,6 +75,7 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 }
 
 type stubEngine struct {
+	executionFn        func(context.Context, uuid.UUID) ([]instance.ExecutionStatus, error)
 	triggerFn          func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
 	capturedTriggerCtx context.Context
 	capturedDepartment string
