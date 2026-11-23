@@ -20,8 +20,11 @@ import { nodeTypes as legacyNodeTypes } from '../nodes/nodeTypes'
 import { edgeTypes as legacyEdgeTypes } from '../edges/edgeTypes'
 import { DEFAULT_ZOOM } from '../constants'
 import styles from './ArrangedGraph.module.css'
+import { applyRunnerMarksByOwner, type RunnerMarksByOwner } from '../runnerMarks'
 
 export interface ArrangedGraphProps {
+  runnerMarksByOwner?: RunnerMarksByOwner
+  rootInstanceId?: string
   workflowDef: WorkflowDefinition
   view: LayoutView | null
   executionStates?: Record<string, NodeExecutionState>
@@ -70,7 +73,7 @@ export function nodeCenter(
 export default function ArrangedGraph({
   workflowDef, view, executionStates = EMPTY_STATES, selectedNodeId, selectedNodeIds,
   onNodeClick, anchorNodeId, onMoveStart, onDisplayIssues, onAnchorPosition, fixedViewport, children,
-  groups = null, groupLive, nodeContexts, tiles, onDisplayNodes, onTileDisplayIssues,
+  groups = null, groupLive, nodeContexts, tiles, onDisplayNodes, onTileDisplayIssues, runnerMarksByOwner, rootInstanceId = '',
 }: ArrangedGraphProps) {
   const reactFlow = useReactFlow()
   const graphInstanceId = `graph-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
@@ -195,8 +198,13 @@ export default function ArrangedGraph({
     groups: groupFallback ? groups : null,
     groupLive, nodeContexts,
   })
-  const baseNodes: Node[] = scene?.nodes ?? arrangedFlow?.nodes ?? legacy.rfNodes
-  const edges = scene?.edges ?? arrangedFlow?.edges ?? legacy.rfEdges
+  const base = useMemo(() => {
+    const nodes = scene?.nodes ?? arrangedFlow?.nodes ?? legacy.rfNodes
+    const edges = scene?.edges ?? arrangedFlow?.edges ?? legacy.rfEdges
+    return runnerMarksByOwner ? applyRunnerMarksByOwner(nodes, edges, runnerMarksByOwner, rootInstanceId) : { nodes, edges }
+  }, [scene, arrangedFlow, legacy.rfNodes, legacy.rfEdges, runnerMarksByOwner, rootInstanceId])
+  const baseNodes: Node[] = base.nodes
+  const edges = base.edges
   useEffect(() => { onDisplayNodes?.(baseNodes) }, [baseNodes, onDisplayNodes])
   // Group parts (header, footer, task cards) select their definition node;
   // the container box is never highlighted.

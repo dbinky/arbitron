@@ -39,6 +39,7 @@ import SidePanel from '../components/SidePanel'
 import InteractivePanel from '../components/InteractivePanel'
 import GroupPanel from '../components/GroupPanel'
 import PlacementPanel from '../components/PlacementPanel'
+import { useRunnerMarksByOwner } from '../hooks/useRunnerMarks'
 import styles from './ExecutionView.module.css'
 
 /**
@@ -120,6 +121,7 @@ export function GraphView({
   onDisplayIssues?: (issues: readonly string[]) => void
   canRetry?: boolean
 }) {
+  const runnerMarks = useRunnerMarksByOwner(instance, workflowDef, trace, graphState)
   // Aggregate view (P4-T8): node states keyed `${instanceId}:${nodeId}`,
   // projected onto the rendered graph through Phase 1 ownership. Memoized on
   // the GraphState object, which useGraphState only replaces when its version
@@ -259,6 +261,7 @@ export function GraphView({
 
   return (
     <div className={styles.tileScene}>
+      {Object.entries(runnerMarks.errors).map(([owner, error]) => <div role="status" key={owner}>Runner placement unavailable for {owner}: {error}</div>)}
       {childContexts.length > 0 && <nav className={styles.tileRail} aria-label="Child arrangements">
         {childContexts.map(c => {
           const definition = c.graph as unknown as WorkflowDefinition
@@ -275,6 +278,7 @@ export function GraphView({
       <div className={styles.graphContainer}>
         <ArrangedGraph
           workflowDef={workflowDef ?? EMPTY_WORKFLOW} view={layoutView} tiles={tiles}
+          runnerMarksByOwner={runnerMarks.marks} rootInstanceId={instance?.id ?? graphState?.rootInstanceId ?? ''}
           executionStates={executionStates} groups={groups} groupLive={aggregate?.groupLive} nodeContexts={aggregate?.nodeContexts}
           selectedNodeId={selectedNodeId}
           onNodeClick={(nodeId, node) => {
