@@ -206,6 +206,19 @@
       "finished_at": "2026-11-22T23:13:49Z",
       "instance_id": "af108303-e5ff-4183-9772-46486763360e",
       "workflow": "plan"
+    },
+    {
+      "stage": "implement",
+      "status": "blocked",
+      "outputs": {
+        "status": "blocked",
+        "blocked_reason": "Phase 1 Task 10 blocked: the Codex context/tool enforcement contract and its downstream producers are still unresolved, and the latest pass found no unblocked step in any later task; 47 tasks remaining.",
+        "baseline_path": ".arbitron/pipeline/remote-runners.baseline.json"
+      },
+      "commit": "8a89d28ed90380cf92f93518ec6ab0fb688910be",
+      "finished_at": "2026-11-23T19:46:52Z",
+      "instance_id": "c84a5e9f-b473-4b53-ac55-cd88b1d911fc",
+      "workflow": "implement"
     }
   ]
 }
