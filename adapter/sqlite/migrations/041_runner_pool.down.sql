@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS idx_pool_events_run;
+DROP TABLE IF EXISTS pool_events;
+DROP TABLE IF EXISTS workspace_homes;
+DROP TABLE IF EXISTS runner_job_attempts;
+DROP INDEX IF EXISTS idx_runner_jobs_run;
+DROP INDEX IF EXISTS idx_runner_jobs_state;
+DROP INDEX IF EXISTS idx_runner_jobs_source_state;
+DROP INDEX IF EXISTS idx_runner_jobs_runner_state;
+DROP TABLE IF EXISTS runner_jobs;
+DROP INDEX IF EXISTS idx_runner_sources_runner;
+DROP TABLE IF EXISTS runner_sources;
+DROP TABLE IF EXISTS runners;
