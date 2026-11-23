@@ -35,6 +35,9 @@ const (
 	// so triggers of workflows using it refuse. It has no instance; the
 	// denormalized WorkflowName carries "profile <alias>".
 	TypeProfileRefusesTriggers Type = "profile_refuses_triggers"
+
+	// TypeSourceLoggedOut reports a credential source requiring sign-in, without an instance.
+	TypeSourceLoggedOut Type = "source_logged_out"
 )
 
 // Notification represents a user-facing notification tied to a workflow instance.

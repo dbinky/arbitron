@@ -50,9 +50,24 @@ type cardAction struct {
 // Action.OpenUrl deep link is omitted and the card remains valid.
 func buildTeamsPayload(n *notification.Notification, baseURL string) ([]byte, error) {
 	title := "Workflow " + n.WorkflowName + ": " + string(n.Type)
-	if n.Type == notification.TypeProfileRefusesTriggers {
-		// WorkflowName carries "profile <alias>"; the reason is in the boot log.
+	link := "/instances/" + n.InstanceID.String()
+	facts := []cardFact{
+		{Title: "Event", Value: string(n.Type)},
+		{Title: "Workflow", Value: n.WorkflowName},
+		{Title: "Instance", Value: n.InstanceID.String()},
+		{Title: "Time", Value: n.CreatedAt.Format(time.RFC3339)},
+	}
+	switch n.Type {
+	case notification.TypeProfileRefusesTriggers:
 		title = n.WorkflowName + " will refuse triggers: set a fixed model version (reason in the server log)"
+	case notification.TypeSourceLoggedOut:
+		title = n.WorkflowName + " is logged out: sign in again on that machine"
+		link = "/pool"
+		facts = []cardFact{
+			{Title: "Event", Value: string(n.Type)},
+			{Title: "Source", Value: n.WorkflowName},
+			{Title: "Time", Value: n.CreatedAt.Format(time.RFC3339)},
+		}
 	}
 
 	card := adaptiveCard{
@@ -61,12 +76,7 @@ func buildTeamsPayload(n *notification.Notification, baseURL string) ([]byte, er
 		Version: "1.4",
 		Body: []cardElement{
 			{Type: "TextBlock", Size: "Medium", Weight: "Bolder", Text: title},
-			{Type: "FactSet", Facts: []cardFact{
-				{Title: "Event", Value: string(n.Type)},
-				{Title: "Workflow", Value: n.WorkflowName},
-				{Title: "Instance", Value: n.InstanceID.String()},
-				{Title: "Time", Value: n.CreatedAt.Format(time.RFC3339)},
-			}},
+			{Type: "FactSet", Facts: facts},
 		},
 	}
 
@@ -74,7 +84,7 @@ func buildTeamsPayload(n *notification.Notification, baseURL string) ([]byte, er
 		card.Actions = []cardAction{{
 			Type:  "Action.OpenUrl",
 			Title: "Open in Arbitron",
-			URL:   baseURL + "/instances/" + n.InstanceID.String(),
+			URL:   baseURL + link,
 		}}
 	}
 

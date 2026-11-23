@@ -130,3 +130,16 @@ func TestBuildTeamsPayload_NoBaseURL_OmitsAction(t *testing.T) {
 	_, hasActions := content["actions"]
 	assert.False(t, hasActions, "actions must be omitted when baseURL is empty")
 }
+
+func TestBuildTeamsPayload_SourceLoggedOut(t *testing.T) {
+	n := &notification.Notification{
+		ID: uuid.New(), WorkflowName: "runner builtin source anthropic_subscription",
+		Type: notification.TypeSourceLoggedOut, CreatedAt: time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC),
+	}
+	raw, err := buildTeamsPayload(n, "https://arbitron.example")
+	require.NoError(t, err)
+	s := string(raw)
+	assert.Contains(t, s, "runner builtin source anthropic_subscription is logged out: sign in again on that machine")
+	assert.Contains(t, s, "https://arbitron.example/pool")
+	assert.NotContains(t, s, "/instances/")
+}
