@@ -698,6 +698,9 @@ type ResourceLeaseStore interface {
     Supersede(ctx context.Context, old engine.ResourceFenceRef, holder string, owner RunnerID) (engine.ResourceFenceRef, error)
 }
 ```
+**Superseded (unstick 2026-11-23):** the interface above is replaced by the exact
+`ResourceLeaseStore` in §25 (adds `ClaimJob`, `Active`, and a `SupersedeProof`
+argument to `Supersede`).
 
 A home identifies location; it is not a writer lock. `Claim` rejects a second
 active holder even on the same runner. Resource leases have no automatic expiry
@@ -1310,3 +1313,146 @@ These names are defined by `2026-11-20-phase-2-task-13.md`. They supersede §12'
 - `Dispatch.Confirmation` and `Result.Confirmation`.
 - `FreshSourceProber.ProbeSource(ctx, kind, ref) (Source, error)` and `ErrUnknownSource`. `sources.Inventory` implements it.
 - `cmd/arbitron-runner/build.go:buildExecutor(cfg, local *providersadapter.Factory)`.
+
+## 25. Phase 3 unstick decisions (2026-11-23)
+
+Derived from the spec, the Phase 3 design and §21/§22/§24; each owning task
+plan carries the same text and its TDD steps.
+
+### Resource lease — durable recovery-proof contract (owner P3 T3)
+
+Derived from design phase 3 §3.1 ("acquire a durable resource lease ... a distinct token/generation/operation holder is required ... Claims do not expire into takeover during suspect/restart grace. Handoff fences the old writer before the target executes; job, workspace and session generations are checked together") and contracts §21 ("`Supersede` is permitted only with transactional fencing of the old operation after confirmed loss/revocation or explicit cancellation and process stop"), mirroring P4 T2's `TurnRecoveryProof`.
+
+```go
+// domain/runner/resource_lease.go (P3 T3)
+type LeaseRecord struct {
+    Fence  engine.ResourceFenceRef // exact active key/owner/generation/token
+    Holder string                  // durable operation identity
+    Job    *Fence                  // exact P1 ledger fence of the writing job; nil for server-side holders
+    BootID string                  // server boot that took a server-side (Job == nil) claim; "" for job claims
+}
+type SupersedeKind string
+const (
+    SupersedeRunnerLost    SupersedeKind = "runner_lost"    // remote owner: runners.liveness = 'lost'
+    SupersedeRevoked       SupersedeKind = "revoked"        // remote owner: runner_keys.revoked_at IS NOT NULL
+    SupersedeStopped       SupersedeKind = "stopped"        // cancellation + confirmed stop: builtin_processes(job,gen).state='stopped' (built-in) or runner_inbox_cursors(job,gen).result_received=1 (remote)
+    SupersedeServerRestart SupersedeKind = "server_restart" // server-side holder (Job == nil) whose BootID != the repo's current boot ID (design D7: restart = built-in runner loss)
+)
+type SupersedeProof struct {
+    Kind   SupersedeKind
+    OldJob *Fence // must equal LeaseRecord.Job exactly when the lease has a job; nil otherwise
+}
+type ResourceLeaseStore interface {
+    // Server-side holder (group mutation, drain/maintenance, recovery restore). Records BootID.
+    Claim(ctx context.Context, key, holder string, owner RunnerID) (engine.ResourceFenceRef, error)
+    // Dispatched job holder. In ONE transaction: the job fence must be active in runner_jobs
+    // (same rule as Ledger.FenceCheck), owner = job.RunnerID, and the job association is persisted.
+    // The SAME exact job fence re-claiming returns the existing ref (adoption/idempotent retry).
+    ClaimJob(ctx context.Context, key, holder string, job Fence) (engine.ResourceFenceRef, error)
+    Check(ctx context.Context, f engine.ResourceFenceRef) error
+    Active(ctx context.Context, key string) (LeaseRecord, bool, error)
+    Release(ctx context.Context, f engine.ResourceFenceRef) error
+    Supersede(ctx context.Context, old engine.ResourceFenceRef, proof SupersedeProof, holder string, owner RunnerID) (engine.ResourceFenceRef, error)
+}
+func JobHolder(j Job) string // "job:<jobID>/inv:<invocationID>/op:<operationID>/attempt:<n>"
+var ErrResourceBusy, ErrResourceFenced, ErrSupersedeUnproven error
+// Transaction-aware helper for P3 T5/T7/T13/P4 T6 committers (same *sql.Tx, never the *sql.DB):
+// adapter/sqlite: func checkResourceFenceTx(ctx, tx groupQueryer, f engine.ResourceFenceRef) error
+//                 func releaseResourceTx(ctx, tx groupQueryer, f engine.ResourceFenceRef) error
+```
+
+Persistence (appended to 044; owner P3 T1 file, implemented by P3 T3; no new migration number; `workspace_leases` columns are NOT changed so the landed positional-insert constraint test stays valid):
+
+```sql
+CREATE TABLE workspace_lease_holders (
+ resource_key TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation >= 1),
+ token TEXT NOT NULL, holder TEXT NOT NULL, owner TEXT NOT NULL,
+ job_id TEXT, job_runner_id TEXT, job_generation INTEGER,
+ boot_id TEXT NOT NULL DEFAULT '', claimed_at TEXT NOT NULL,
+ CHECK ((job_id IS NULL AND job_generation IS NULL AND job_runner_id IS NULL AND boot_id != '')
+     OR (job_id IS NOT NULL AND job_generation >= 1 AND job_runner_id IS NOT NULL AND boot_id = '')),
+ PRIMARY KEY (resource_key, generation)
+);
+CREATE TABLE workspace_lease_supersessions (
+ resource_key TEXT NOT NULL, old_generation INTEGER NOT NULL, old_token TEXT NOT NULL,
+ new_generation INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('runner_lost','revoked','stopped','server_restart')),
+ job_id TEXT, job_generation INTEGER, superseded_at TEXT NOT NULL,
+ PRIMARY KEY (resource_key, old_generation)
+);
+```
+
+`Supersede` rules, all inside ONE SQLite transaction (any failure changes nothing and returns `ErrSupersedeUnproven` or `ErrResourceFenced`):
+1. The active `workspace_leases` row for `old.Key` matches `old` exactly (token, generation, owner, active=1); else `ErrResourceFenced`.
+2. Its `workspace_lease_holders` row is loaded. If it has a job, `proof.OldJob` must equal it exactly, and `runner_jobs` must NOT still authorize that fence (`NOT (generation = ? AND runner_id = ? AND state IN ('offered','running'))`): the caller fences the old job (Requeue/Fail) first. A job-less holder requires `proof.OldJob == nil`.
+3. Kind evidence, read in the same transaction:
+   - `runner_lost`: owner != builtin AND `runners.liveness = 'lost'`. Suspect/offline is never enough.
+   - `revoked`: owner != builtin AND `runner_keys.revoked_at IS NOT NULL` for that runner_id.
+   - `stopped`: lease has a job; owner == builtin → `builtin_processes(job_id, generation).state = 'stopped'` (written by P3 T10 `ProcessSupervisor.StopAndWait` after confirmed group exit); remote → `runner_inbox_cursors(job_id, generation).result_received = 1`.
+   - `server_restart`: lease has no job AND `boot_id != ` current boot ID.
+   - Any other combination: `ErrSupersedeUnproven`.
+4. Insert the `workspace_lease_supersessions` receipt, replace the lease with a new random token, generation+1, new holder/owner, and insert the new holder row (server-side holder, current boot ID). Commit.
+
+There is no TTL and no liveness-only path; suspect never authorizes Supersede. `Release` is exact token/generation (stale release returns `ErrResourceFenced` and changes nothing). `NewResourceLeaseRepo(db *sql.DB, bootID string) *ResourceLeaseRepo`; P3 T13 passes one process-lifetime `uuid.NewString()` boot ID created at startup and builds exactly one repo shared by sync, group, recovery, token issuer and committers.
+
+Consumers: P3 T6 `BeginAttempt` uses `ClaimJob(ctx, "run:<uuid>", JobHolder(a.Job), a.Fence)`; P3 T10 PoolRecovery reads `Active`, fences the old job, `StopAndWait`s (built-in), then `Supersede` with the matching kind, restores under the new claim and `Release`s it before re-entry; P3 T13 group mutations use `Claim`; P3 T7 issuer and P3 T5/T13/P4 T6 transactions use `checkResourceFenceTx`/`releaseResourceTx` inside their own transaction.
+
+### Transfer token issuer (owner P3 T7)
+
+```go
+type ResourceChecker interface { Check(ctx context.Context, f engine.ResourceFenceRef) error } // ResourceLeaseStore satisfies it
+func NewTransferTokenService(store TransferSessionStore, fences FenceChecker, resources ResourceChecker, now func() time.Time) *TransferTokenService
+func (s *TransferTokenService) Issue(ctx context.Context, scope TransferScope, ttl time.Duration) (TransferToken, error)
+```
+`Issue` requires exactly one authority (job fence with `Resource.Owner == Fence.RunnerID`,
+or a maintenance operation ID with zero job fence), `Resource.Key == "run:<RunID>"`
+and a non-zero pinned `BaseRef` of the same run for pull/push, a 64-hex
+`BundleHash` and empty `BaseRef` for bundle. `Issue` and every `Validate` re-check
+the job fence (job scope) and `resources.Check` (all scopes). Pulls are served
+only from the pinned `BaseRef`, never `Latest`.
+
+### Portable-script bundle checker binding (owner P3 T8)
+
+```go
+type ScriptBundleChecker interface { CheckBundleable(ctx context.Context, owner uuid.UUID, workflowName, scriptFile string) error }
+func WithScriptBundleChecker(ctx context.Context, owner uuid.UUID, c ScriptBundleChecker) ValidateOption
+func (s *workflow.Service) SetScriptBundleChecker(c ScriptBundleChecker)
+```
+Owner binding follows the landed parallel_group checkers: validate endpoints use
+`caller(ctx).UserID` inside `GroupValidateOptions(ctx)`; Create uses the caller
+and Update uses `groupWriteFileOwner`; no identity means no checker, so the result
+is fail-closed `SCRIPT_BUNDLE_CHECKER_UNAVAILABLE`.
+
+### Engine release of uncommitted receipts (owner P3 T5; implemented P3 T6; wired P3 T13)
+
+```go
+// domain/engine/step_commit.go
+type StepCompletionReleaser interface { ReleaseCompletions(ctx context.Context, completions []StepCompletion, cause error) error }
+func (e *Engine) SetStepCompletionReleaser(r StepCompletionReleaser)
+```
+`*runner.StepDispatcher` implements it (`FinishFailure` + `Ledger.Fail` for exactly
+those receipts). The engine calls it whenever an attempt that recorded receipts
+ends without a successful `CommitStep`. A production root with a committer and no
+releaser fails at startup.
+
+### Server-side group mutation commit (owner P3 T13; staging P3 T2)
+
+Landed migration 044 forbids a job-less `prepared` checkpoint row, so a server-side
+group mutation never prepares a catalog row:
+```go
+// domain/runner (P3 T2): bytes only, no catalog write
+StageResource(ctx context.Context, runID uuid.UUID, srcDir string, base CheckpointRef) (StagedCheckpoint, error) // CheckpointStore method
+// domain/runner/resource_commit.go (P3 T13)
+type ResourceCommitter interface { CommitResource(ctx context.Context, claim engine.ResourceFenceRef, staged StagedCheckpoint) error }
+```
+`ResourceCommitRepo.CommitResource` runs one transaction. It checks the exact
+active server-side claim (a holder row with no job) and `base == committed pointer`.
+It then inserts the row as `committed` with the claim's resource fence, advances
+`checkpoint_version`, clears dirty and releases the claim.
+
+### Placement fixtures (P3 T4 Step 3b)
+
+A workspace request with no home, and an unpinned session, get ordinary ranked
+placement with empty `Tier`. Telemetry influences ranking only when it is fresh:
+`SampledAt` must be within `PlacementPolicy.TelemetryMaxAge`. P3 T4 Step 3b
+authorizes the matching updates to `TestPlace_AffinityRestrictsRunner` and
+`TestPlace_HealthierTelemetryWinsUnknownIsNeutral`.
