@@ -39,7 +39,7 @@ echo '{"cwd":"'$(pwd)'"}'
 		},
 	}
 
-	exec := process.NewScriptExecutor(filesystem.NewFileReader(base), nil)
+	exec := process.NewScriptExecutor(filesystem.NewFileReader(base), nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "any-workflow")
 	require.NoError(t, err)
 

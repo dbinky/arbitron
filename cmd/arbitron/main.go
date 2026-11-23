@@ -1078,11 +1078,12 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 
 	// 9. Create all node executors and build the executor map.
 	modelConsumers := newRunModelConsumers(fileReader, providerFactory, pinningResolver, cfg.LLM.DefaultAgentBackend)
+	localProcess := process.NewLocalProcessRunner()
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     modelConsumers.llm,
 		workflow.NodeTypeAgentCall:   modelConsumers.agent,
-		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
-		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
+		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough, localProcess),
+		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough, localProcess),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 	}

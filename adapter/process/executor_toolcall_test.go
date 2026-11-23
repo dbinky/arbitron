@@ -43,7 +43,7 @@ echo '{"status": "done"}'
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ exit 2
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -97,7 +97,7 @@ echo '{"late": true}'
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	elapsed := time.Since(start)
@@ -124,7 +124,7 @@ echo "plain text output"
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -152,7 +152,7 @@ echo "{\"name\": \"$1\"}"
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ fi
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestToolCallExecutor_CommandNotFound(t *testing.T) {
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -228,7 +228,7 @@ echo '{"ok": true}'
 		},
 	}
 
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestToolCallExecutor_PassthroughSecretAvailable(t *testing.T) {
 			Args:    []string{"-c", `echo "{\"k\": \"$LLM_API_KEY\"}"`},
 		},
 	}
-	exec := process.NewToolCallExecutor([]string{"LLM_API_KEY"})
+	exec := process.NewToolCallExecutor([]string{"LLM_API_KEY"}, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "wf")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"k": "sk-tc"}, result.Output)
@@ -265,7 +265,7 @@ func TestToolCallExecutor_SecretNotLeaked(t *testing.T) {
 			Args:    []string{"-c", `echo "{\"s\": \"${MY_SECRET:-absent}\"}"`},
 		},
 	}
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "wf")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"s": "absent"}, result.Output)
@@ -283,7 +283,7 @@ func TestToolCallExecutor_EnvCollisionFailsNode(t *testing.T) {
 			Env:     map[string]string{"PATH": "/evil"},
 		},
 	}
-	exec := process.NewToolCallExecutor(nil)
+	exec := process.NewToolCallExecutor(nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, variable.NewStore(), "wf")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collides")

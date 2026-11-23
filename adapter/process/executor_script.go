@@ -22,21 +22,25 @@ import (
 // execution, seccomp profiles, or a dedicated unprivileged user) must be implemented.
 //
 // The subprocess environment is strictly controlled: only the base allowlist, operator-
-// approved passthrough vars, and per-node env keys are forwarded (see buildEnv). The
+// approved passthrough vars, and per-node env keys are forwarded (see buildEnvFromResolved). The
 // engine's full environment is NOT inherited, preventing accidental secret leakage.
 
-// ScriptExecutor runs external scripts via os/exec, piping the variable store
+// ScriptExecutor runs external scripts through the process port, piping the variable store
 // as JSON to stdin and parsing stdout as JSON.
 type ScriptExecutor struct {
 	fileReader  engine.FileReader
 	passthrough []string
+	runner      engine.ProcessRunner
 }
 
 // NewScriptExecutor creates a ScriptExecutor. envPassthrough names the engine
 // env vars (e.g. LLM_API_KEY) that script nodes may inherit beyond the base
-// allowlist; pass nil for none.
-func NewScriptExecutor(fr engine.FileReader, envPassthrough []string) *ScriptExecutor {
-	return &ScriptExecutor{fileReader: fr, passthrough: envPassthrough}
+// allowlist. pr executes the resolved process specification; nil panics.
+func NewScriptExecutor(fr engine.FileReader, envPassthrough []string, pr engine.ProcessRunner) *ScriptExecutor {
+	if pr == nil {
+		panic("process: NewScriptExecutor requires a non-nil engine.ProcessRunner")
+	}
+	return &ScriptExecutor{fileReader: fr, passthrough: envPassthrough, runner: pr}
 }
 
 // Execute resolves the script path, runs it with the configured interpreter,
@@ -57,8 +61,7 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 		interpreter = "/bin/sh"
 	}
 
-	env, err := buildEnv(e.passthrough, node.Config.Env, vars)
-	if err != nil {
+	if err := validateNodeEnvNames(e.passthrough, node.Config.Env); err != nil {
 		return nil, fmt.Errorf("script %q: %w", node.ID, err)
 	}
 
@@ -67,13 +70,17 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 		return nil, fmt.Errorf("script %q: marshal variables: %w", node.ID, err)
 	}
 
-	res, runErr := run(ctx, commandSpec{
-		Name:        interpreter,
+	workDir, _ := engine.WorkDirFromVars(vars)
+	res, runErr := e.runner.RunProcess(ctx, engine.ProcessSpec{
+		Kind:        engine.ProcessScript,
+		Command:     interpreter,
 		Args:        append([]string{scriptPath}, args...),
 		Dir:         filepath.Dir(scriptPath),
 		Stdin:       stdinData,
-		Env:         env,
+		NodeEnv:     resolveNodeEnv(node.Config.Env, vars),
+		Passthrough: append([]string(nil), e.passthrough...),
 		TimeoutSecs: node.Config.TimeoutSeconds,
+		WorkDir:     workDir,
 	})
 
 	result := &engine.NodeResult{

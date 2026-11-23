@@ -85,7 +85,7 @@ echo '{"result": "ok"}'
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -116,7 +116,7 @@ exit 1
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exit")
@@ -148,7 +148,7 @@ echo '{"result": "late"}'
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	elapsed := time.Since(start)
@@ -180,7 +180,7 @@ echo "not json"
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -212,7 +212,7 @@ echo "{\"arg\": \"$1\"}"
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ echo "$INPUT"
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -270,7 +270,7 @@ func TestScriptExecutor_FileNotFound(t *testing.T) {
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -294,7 +294,7 @@ echo "{\"model\": \"$LLM_MODEL\"}"
 			Env: map[string]string{"LLM_MODEL": "{{m}}"},
 		},
 	}
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"model": "opus"}, result.Output)
@@ -314,7 +314,7 @@ echo "{\"k\": \"$LLM_API_KEY\"}"
 		ID: "s1", Type: workflow.NodeTypeScript,
 		Config: workflow.NodeConfig{ScriptFile: "k.sh", Interpreter: "/bin/sh"},
 	}
-	exec := process.NewScriptExecutor(fr, []string{"LLM_API_KEY"})
+	exec := process.NewScriptExecutor(fr, []string{"LLM_API_KEY"}, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"k": "sk-xyz"}, result.Output)
@@ -334,7 +334,7 @@ func TestScriptExecutor_EnvCollisionFailsNode(t *testing.T) {
 			Env: map[string]string{"PATH": "/evil"},
 		},
 	}
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	_, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collides")
@@ -354,7 +354,7 @@ echo "{\"s\": \"${MY_SECRET:-absent}\"}"
 		ID: "s1", Type: workflow.NodeTypeScript,
 		Config: workflow.NodeConfig{ScriptFile: "leak.sh", Interpreter: "/bin/sh"},
 	}
-	exec := process.NewScriptExecutor(fr, nil)
+	exec := process.NewScriptExecutor(fr, nil, process.NewLocalProcessRunner())
 	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"s": "absent"}, result.Output)

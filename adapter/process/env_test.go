@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// buildEnv composes server-side resolution and executing-machine construction.
+func buildEnv(passthrough []string, nodeEnv map[string]string, vars *variable.VariableStore) ([]string, error) {
+	if err := validateNodeEnvNames(passthrough, nodeEnv); err != nil {
+		return nil, err
+	}
+	return buildEnvFromResolved(passthrough, resolveNodeEnv(nodeEnv, vars))
+}
+
 func envMap(env []string) map[string]string {
 	m := map[string]string{}
 	for _, e := range env {
