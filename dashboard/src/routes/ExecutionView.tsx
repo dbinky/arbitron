@@ -38,6 +38,7 @@ import ResizablePanel from '../components/ResizablePanel'
 import SidePanel from '../components/SidePanel'
 import InteractivePanel from '../components/InteractivePanel'
 import GroupPanel from '../components/GroupPanel'
+import PlacementPanel from '../components/PlacementPanel'
 import styles from './ExecutionView.module.css'
 
 /**
@@ -545,6 +546,18 @@ function ExecutionPage({ id }: { id: string | undefined }) {
   const ownerContext = selectedOwner && selectedOwner !== id
     ? graph.state?.contexts.find((c) => c.instanceId === selectedOwner) ?? null
     : null
+  // Branches share their nearest workflow ancestor's immutable definition.
+  let selectedDefinition = workflowDef
+  let definitionOwner = ownerContext
+  const visitedOwners = new Set<string>()
+  while (definitionOwner && !visitedOwners.has(definitionOwner.instanceId)) {
+    visitedOwners.add(definitionOwner.instanceId)
+    if (definitionOwner.graph) {
+      selectedDefinition = definitionOwner.graph as unknown as WorkflowDefinition
+      break
+    }
+    definitionOwner = graph.state?.contexts.find(c => c.instanceId === definitionOwner?.parentInstanceId) ?? null
+  }
   const groupPanel = selection?.kind === 'group'
     ? findGroupPanel(graph.state, selection.instanceId, selection.nodeId)
     : null
@@ -585,6 +598,15 @@ function ExecutionPage({ id }: { id: string | undefined }) {
         )}
         {selection?.kind === 'node' && !selection.instanceId && (
           <div className={styles.ownerBanner} data-testid="trace-owner">Not started in this run yet</div>
+        )}
+        {selection?.kind === 'node' && selection.instanceId && !ownerContext?.redacted && (
+          <PlacementPanel
+            execution={selectedExec}
+            instance={instance}
+            nodeId={selection.nodeId}
+            nodeType={selectedDefinition?.nodes.find(n => n.id === selection.nodeId)?.type ?? null}
+            ownerIsRoute={selection.instanceId === id}
+          />
         )}
         <SidePanel
           execution={selectedExec}
