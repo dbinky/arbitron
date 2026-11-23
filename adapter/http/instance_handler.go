@@ -280,6 +280,7 @@ type enrichedSummaryDTO struct {
 	// ChildCount is the number of spawned children the CALLER may see. Omitted
 	// when zero so a childless row renders no expander.
 	ChildCount int `json:"childCount,omitempty"`
+ Execution []instance.ExecutionStatus `json:"execution,omitempty"`
 }
 
 // toEnrichedSummaryDTO projects an enriched summary to its JSON DTO. The
@@ -303,6 +304,7 @@ func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary, revealIdentity boo
 		SubmitterName: e.Submitter.Name,
 		FailedNodeID:  e.FailedNodeID,
 		ChildCount:    e.ChildCount,
+ Execution: e.Execution,
 	}
 	if revealIdentity {
 		dto.SubmitterIdentity = e.Submitter.AccountIdentity
