@@ -78,12 +78,20 @@ type assignmentJSON struct {
 	Hidden   bool    `json:"hidden"`
 }
 
+// homeJSON mirrors the REST home response, including hidden-run protection.
+type homeJSON struct {
+	RunID      *string `json:"runId"`
+	Hidden     bool    `json:"hidden"`
+	Generation int64   `json:"generation"`
+	Dirty      bool    `json:"dirty"`
+}
+
 type runnerDetailJSON struct {
 	runnerViewJSON
 	Assignments     []assignmentJSON      `json:"assignments"`
 	RecentTelemetry []runnerTelemetryJSON `json:"recentTelemetry"`
 	Sessions        []json.RawMessage     `json:"sessions"`
-	Homes           []json.RawMessage     `json:"homes"`
+	Homes           []homeJSON            `json:"homes"`
 }
 
 func runnerTimeJSON(t *time.Time) *string {
@@ -156,7 +164,7 @@ func toRunnerDetailJSON(d runner.RunnerDetail) runnerDetailJSON {
 		Assignments:     make([]assignmentJSON, 0, len(d.Assignments)),
 		RecentTelemetry: make([]runnerTelemetryJSON, 0, len(d.RecentTelemetry)),
 		Sessions:        []json.RawMessage{},
-		Homes:           []json.RawMessage{},
+		Homes:           make([]homeJSON, 0, len(d.Homes)),
 	}
 	for _, a := range d.Assignments {
 		aj := assignmentJSON{JobID: a.JobID.String(), NodeID: a.NodeID, State: string(a.State), SourceID: string(a.SourceID), Hidden: a.Hidden}
@@ -168,6 +176,14 @@ func toRunnerDetailJSON(d runner.RunnerDetail) runnerDetailJSON {
 	}
 	for _, t := range d.RecentTelemetry {
 		out.RecentTelemetry = append(out.RecentTelemetry, toRunnerTelemetryJSON(t))
+	}
+	for _, h := range d.Homes {
+		hj := homeJSON{Hidden: h.Hidden, Generation: h.Generation, Dirty: h.Dirty}
+		if h.RunID != nil && !h.Hidden {
+			s := h.RunID.String()
+			hj.RunID = &s
+		}
+		out.Homes = append(out.Homes, hj)
 	}
 	return out
 }

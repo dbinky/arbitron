@@ -81,12 +81,20 @@ type assignmentResponse struct {
 	Hidden   bool    `json:"hidden"`
 }
 
+// homeResponse hides run identifiers when the caller cannot view the run.
+type homeResponse struct {
+	RunID      *string `json:"runId"`
+	Hidden     bool    `json:"hidden"`
+	Generation int64   `json:"generation"`
+	Dirty      bool    `json:"dirty"`
+}
+
 type runnerDetailResponse struct {
 	runnerViewResponse
 	Assignments     []assignmentResponse      `json:"assignments"`
 	RecentTelemetry []runnerTelemetryResponse `json:"recentTelemetry"`
 	Sessions        []json.RawMessage         `json:"sessions"` // P4 T14 replaces with []sessionPinResponse
-	Homes           []json.RawMessage         `json:"homes"`    // P3 T14 replaces with []homeResponse
+	Homes           []homeResponse            `json:"homes"`
 }
 
 func runnerTimePtr(t *time.Time) *string {
@@ -163,7 +171,7 @@ func toRunnerDetailResponse(d runner.RunnerDetail) runnerDetailResponse {
 		Assignments:        make([]assignmentResponse, 0, len(d.Assignments)),
 		RecentTelemetry:    make([]runnerTelemetryResponse, 0, len(d.RecentTelemetry)),
 		Sessions:           []json.RawMessage{},
-		Homes:              []json.RawMessage{},
+		Homes:              make([]homeResponse, 0, len(d.Homes)),
 	}
 	for _, a := range d.Assignments {
 		ar := assignmentResponse{JobID: a.JobID.String(), NodeID: a.NodeID, State: string(a.State), SourceID: string(a.SourceID), Hidden: a.Hidden}
@@ -175,6 +183,14 @@ func toRunnerDetailResponse(d runner.RunnerDetail) runnerDetailResponse {
 	}
 	for _, t := range d.RecentTelemetry {
 		out.RecentTelemetry = append(out.RecentTelemetry, toRunnerTelemetryResponse(t))
+	}
+	for _, h := range d.Homes {
+		hr := homeResponse{Hidden: h.Hidden, Generation: h.Generation, Dirty: h.Dirty}
+		if h.RunID != nil && !h.Hidden {
+			s := h.RunID.String()
+			hr.RunID = &s
+		}
+		out.Homes = append(out.Homes, hr)
 	}
 	return out
 }
