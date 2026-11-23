@@ -108,3 +108,11 @@ var (
 	ErrFenced      = errors.New("runner: stale or terminal job fence")
 	ErrJobNotFound = errors.New("runner: job not found")
 )
+
+// IntentAbandoner is an optional Ledger capability: close a QUEUED intent that
+// will never be placed (its dispatch was cancelled or failed before
+// reservation), so execution status never shows a stale wait. A job that is no
+// longer queued is left unchanged.
+type IntentAbandoner interface {
+	Abandon(ctx context.Context, jobID uuid.UUID) error
+}

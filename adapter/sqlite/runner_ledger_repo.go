@@ -187,9 +187,9 @@ func (r *RunnerLedgerRepo) SetWait(ctx context.Context, jobID uuid.UUID, w *runn
 	return fmt.Errorf("%w: job %s is not queued", runner.ErrFenced, jobID)
 }
 
-// Reserve atomically claims a slot: the conditional UPDATE is the first
-// statement of the transaction, so the count and the claim happen under one
-// write lock and concurrent reservations can never exceed limit.
+// Reserve validates persisted requirements and current eligibility under a write
+// lock before claiming a slot and recording its assignment attempt. The persisted
+// runner limit is authoritative; the caller's limit may be stale.
 func (r *RunnerLedgerRepo) Reserve(ctx context.Context, jobID uuid.UUID, d runner.Decision, limit int, leaseUntil time.Time) (runner.Job, error) {
 	if !d.Placed || d.Runner == "" || limit < 1 {
 		return runner.Job{}, errors.New("runner ledger: invalid reservation")
@@ -198,7 +198,7 @@ func (r *RunnerLedgerRepo) Reserve(ctx context.Context, jobID uuid.UUID, d runne
 	if err != nil {
 		return runner.Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// First statement obtains the SQLite write lock before reading eligibility.
 	if _, err := tx.ExecContext(ctx, `UPDATE runner_jobs SET updated_at = updated_at WHERE id = ?`, uuidToString(jobID)); err != nil {
 		return runner.Job{}, err
@@ -431,4 +431,21 @@ func (r *RunnerLedgerRepo) Attempts(ctx context.Context, jobID uuid.UUID) ([]run
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+var _ runner.IntentAbandoner = (*RunnerLedgerRepo)(nil)
+
+// Abandon closes a queued intent (queued -> failed, wait cleared). Non-queued
+// jobs are left unchanged; a missing job is ErrJobNotFound.
+func (r *RunnerLedgerRepo) Abandon(ctx context.Context, jobID uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE runner_jobs SET state = 'failed', wait = NULL, updated_at = ? WHERE id = ? AND state = 'queued'`,
+		timeToString(r.now()), uuidToString(jobID))
+	if err != nil {
+		return fmt.Errorf("abandoning intent: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 1 {
+		return nil
+	}
+	_, err = getJob(ctx, r.db, jobID)
+	return err
 }

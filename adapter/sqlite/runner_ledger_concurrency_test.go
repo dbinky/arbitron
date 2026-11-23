@@ -120,11 +120,16 @@ func TestLedger_ConcurrentProbationSingleFlight(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	assert.Equal(t, int32(1), won, "exactly the limit wins")
+	assert.Equal(t, int32(1), won, "probation allows exactly one in-flight assignment")
 	assert.Equal(t, int32(7), lost)
 	var offered int
 	require.NoError(t, dbA.QueryRow(`SELECT COUNT(*) FROM runner_jobs WHERE state IN ('offered','running')`).Scan(&offered))
-	assert.Equal(t, 1, offered, "the sink agrees: never more than eight held slots")
+	assert.Equal(t, 1, offered, "the sink agrees: probation is single-flight")
+	var queued, attempts int
+	require.NoError(t, dbA.QueryRow(`SELECT COUNT(*) FROM runner_jobs WHERE state='queued' AND generation=0`).Scan(&queued))
+	assert.Equal(t, 7, queued)
+	require.NoError(t, dbA.QueryRow(`SELECT COUNT(*) FROM runner_job_attempts`).Scan(&attempts))
+	assert.Equal(t, 1, attempts)
 	snap, err := reg.Snapshot(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, snap.SlotsInUse[runner.BuiltInRunnerID])

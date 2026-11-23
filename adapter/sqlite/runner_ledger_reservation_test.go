@@ -20,6 +20,7 @@ func TestLedger_StaleDecisionAfterCordonOrLimitChange(t *testing.T) {
 			k := newKey()
 			j, err := f.ledger.EnsureIntent(ctx, k, "n", anthropicRequirements(k.RunID))
 			require.NoError(t, err)
+			decision := placementDecision(t, f, anthropicRequirements(k.RunID))
 			if change == "cordon" {
 				require.NoError(t, f.reg.SetCordoned(ctx, runner.BuiltInRunnerID, true))
 			} else {
@@ -31,7 +32,7 @@ func TestLedger_StaleDecisionAfterCordonOrLimitChange(t *testing.T) {
 				_, err = f.db.DB.Exec(`UPDATE runners SET step_limit=1 WHERE id=?`, string(runner.BuiltInRunnerID))
 				require.NoError(t, err)
 			}
-			_, err = f.ledger.Reserve(ctx, j.ID, f.decision(f.src), 8, ledgerNow)
+			_, err = f.ledger.Reserve(ctx, j.ID, decision, 8, ledgerNow)
 			assert.ErrorIs(t, err, runner.ErrSlotTaken)
 			if change == "limit" {
 				got, e := f.ledger.Get(ctx, j.ID)
@@ -62,13 +63,19 @@ func assertQueuedWithoutAttempt(t *testing.T, f ledgerFixture, j runner.Job) {
 }
 
 func TestLedger_StaleDecisionAfterSourceLogoutOrRemoval(t *testing.T) {
-	for _, change := range []string{"logout", "removal", "unavailable"} {
+	testStaleSource(t, []string{"logout", "removal"})
+}
+
+func testStaleSource(t *testing.T, changes []string) {
+	t.Helper()
+	for _, change := range changes {
 		t.Run(change, func(t *testing.T) {
 			f := newLedgerFixture(t)
 			ctx := context.Background()
 			k := newKey()
 			j, err := f.ledger.EnsureIntent(ctx, k, "n", anthropicRequirements(k.RunID))
 			require.NoError(t, err)
+			decision := placementDecision(t, f, anthropicRequirements(k.RunID))
 			query := `UPDATE runner_sources SET auth='logged_out' WHERE id=?`
 			if change == "removal" {
 				query = `DELETE FROM runner_sources WHERE id=?`
@@ -78,7 +85,7 @@ func TestLedger_StaleDecisionAfterSourceLogoutOrRemoval(t *testing.T) {
 			}
 			_, err = f.db.DB.Exec(query, string(f.src))
 			require.NoError(t, err)
-			_, err = f.ledger.Reserve(ctx, j.ID, f.decision(f.src), 8, ledgerNow)
+			_, err = f.ledger.Reserve(ctx, j.ID, decision, 8, ledgerNow)
 			assert.ErrorIs(t, err, runner.ErrSlotTaken)
 			assertQueuedWithoutAttempt(t, f, j)
 		})
@@ -86,7 +93,17 @@ func TestLedger_StaleDecisionAfterSourceLogoutOrRemoval(t *testing.T) {
 }
 
 func TestLedger_UnavailableHarnessRefused(t *testing.T) {
-	TestLedger_StaleDecisionAfterSourceLogoutOrRemoval(t)
+	testStaleSource(t, []string{"unavailable"})
+}
+
+func placementDecision(t *testing.T, f ledgerFixture, req runner.ExecRequirements) runner.Decision {
+	t.Helper()
+	snap, err := f.reg.Snapshot(context.Background())
+	require.NoError(t, err)
+	decision := runner.Place(req, snap, runner.PlacementPolicy{})
+	require.True(t, decision.Placed)
+	require.Equal(t, f.src, decision.Source)
+	return decision
 }
 
 func TestLedger_RequirementsRoundTripAndCorruption(t *testing.T) {
