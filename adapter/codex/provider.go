@@ -43,6 +43,8 @@ type Config struct {
 	// Runner is the subprocess seam; nil uses the shared production os/exec runner
 	// (claudecli.NewExecRunner).
 	Runner claudecli.CommandRunner
+	// appServer: nil = execAppServer; tests inject a fake.
+	appServer appServerStarter
 	// Timeout is the default per-mission timeout; <=0 means no default.
 	Timeout time.Duration
 	// MaxResponseBytes caps per-request stdout bytes; 0 means no cap.
