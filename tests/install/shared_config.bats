@@ -372,7 +372,7 @@ _env() { printf '%s/arbitron.env\n' "$ARB_ETC"; }
   write_shared_config
   local cfg; cfg="$(_cfg)"
   grep -qF "$ARB_LIB/arbitron.db" "$cfg"
-  grep -qF "$ARB_LIB/workspaces" "$cfg"
+  grep -qF 'path: "/opt/arbitron/workspaces"' "$cfg"
   grep -qF "$ARB_LOG/arbitron.log" "$cfg"
 }
 

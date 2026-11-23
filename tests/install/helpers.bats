@@ -134,7 +134,7 @@ teardown() {
   [ "$(layout_config)"      = "/etc/arbitron/config.yaml" ]
   [ "$(layout_data)"        = "/var/lib/arbitron" ]
   [ "$(layout_db)"          = "/var/lib/arbitron/arbitron.db" ]
-  [ "$(layout_workspaces)"  = "/var/lib/arbitron/workspaces" ]
+  [ "$(layout_workspaces)"  = "/opt/arbitron/workspaces" ]
   [ "$(layout_logs)"        = "/var/log/arbitron" ]
   [ "$(layout_secrets_env)" = "/etc/arbitron/arbitron.env" ]
   # runtime: shared mode reuses ARB_LIB/runtime

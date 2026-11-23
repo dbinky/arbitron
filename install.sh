@@ -243,6 +243,7 @@ ARB_INSTALL_MODE="${ARB_INSTALL_MODE:-local}"
 ARB_PREFIX_BIN="${ARB_PREFIX_BIN:-/usr/local/bin}"
 ARB_ETC="${ARB_ETC:-/etc/arbitron}"
 ARB_LIB="${ARB_LIB:-/var/lib/arbitron}"
+ARB_WORKSPACES="${ARB_WORKSPACES:-/opt/arbitron/workspaces}"
 ARB_LOG="${ARB_LOG:-/var/log/arbitron}"
 # Service account for the system install; Task 2's Q&A may override it.
 ARB_SVC_USER="${ARB_SVC_USER:-arbitron}"
@@ -272,7 +273,7 @@ layout_db() {
   if _is_shared; then printf '%s/arbitron.db\n' "$ARB_LIB"; else printf '%s/data/arbitron.db\n' "$(arbitron_home)"; fi
 }
 layout_workspaces() {
-  if _is_shared; then printf '%s/workspaces\n' "$ARB_LIB"; else printf '%s/workspaces\n' "$(arbitron_home)"; fi
+  if _is_shared; then printf '%s\n' "${SCFG_WORKSPACE_DIR:-$ARB_WORKSPACES}"; else printf '%s/workspaces\n' "$(arbitron_home)"; fi
 }
 layout_logs() {
   if _is_shared; then printf '%s\n' "$ARB_LOG"; else printf '%s/logs\n' "$(arbitron_home)"; fi
@@ -1130,10 +1131,9 @@ _make_dir() {
 }
 
 # create_system_layout — lay down /etc/arbitron (0755 root:root),
-# /var/lib/arbitron + workspaces + samples (0750 svc-account) and
-# /var/log/arbitron (0750 svc-account). Data dirs are NOT world-readable.
-# Honors the operator's SCFG_DATA_DIR override so workspaces and samples land
-# under the chosen data root, consistent with write_shared_config.
+# /var/lib/arbitron + samples and /var/log/arbitron (0750 svc-account).
+# Workspaces default to /opt/arbitron/workspaces (RR-07), independently of data.
+# Data dirs are NOT world-readable.
 create_system_layout() {
   local user="${ARB_SVC_USER:-arbitron}"
   local data="${SCFG_DATA_DIR:-$ARB_LIB}"
@@ -1142,7 +1142,10 @@ create_system_layout() {
   # The database and its <db>.model-state.key live directly under the data
   # root; `install -d` would otherwise leave a custom root root-owned.
   [ "$data" = "$ARB_LIB" ] || _make_dir "$data" 0750 "${user}:${user}"
-  _make_dir "$data/workspaces" 0750 "${user}:${user}"
+  local workspace_parent
+  workspace_parent="$(dirname "$(layout_workspaces)")"
+  [ -d "$workspace_parent" ] || _make_dir "$workspace_parent" 0755 "root:root"
+  _make_dir "$(layout_workspaces)" 0750 "${user}:${user}"
   _make_dir "$data/samples" 0750 "${user}:${user}"
   _make_dir "$ARB_LOG" 0750 "${user}:${user}"
 }
@@ -1202,6 +1205,7 @@ SCFG_AUTOCERT_CACHEDIR=""
 SCFG_ALLOW_UNAUTH="false"
 SCFG_SKIP_PERMS="false"
 SCFG_DATA_DIR=""
+SCFG_WORKSPACE_DIR=""
 SCFG_SEED_SAMPLES=""
 
 # _is_loopback_host <host> -> 0 for a loopback bind.
@@ -1371,6 +1375,16 @@ prompt_shared_data_location() {
   SCFG_DATA_DIR="$(prompt_default DATA_DIR "Data location" "$ARB_LIB")"
 }
 
+prompt_shared_workspace_location() {
+  local existing
+  existing="$(read_existing_config_value workspace.path)"
+  SCFG_WORKSPACE_DIR="$(prompt_default WORKSPACE_DIR 'Absolute workspace location' "${existing:-$ARB_WORKSPACES}")"
+  case "$SCFG_WORKSPACE_DIR" in
+    /*) ;;
+    *) log_error "workspace root must be absolute: $SCFG_WORKSPACE_DIR"; return 1 ;;
+  esac
+}
+
 # run_shared_qa — the canonical shared Q&A in order (bind -> auth -> tls ->
 # skip-perms -> service account -> data location). Also resolves LLM access /
 # API key (reusing the P1 CFG_* convention) for the secrets env.
@@ -1381,6 +1395,7 @@ run_shared_qa() {
   prompt_shared_skip_permissions
   prompt_shared_service_account
   prompt_shared_data_location
+  prompt_shared_workspace_location || die "invalid workspace location"
 
   CFG_LLM_ACCESS="$(prompt_default LLM_ACCESS \
     "LLM access — 'subscription' (Claude login) or 'api-key' (Anthropic key)" \
@@ -1445,7 +1460,7 @@ write_shared_config() {
     printf 'database:\n'
     printf '  path: "%s/arbitron.db"\n' "$data"
     printf 'workspace:\n'
-    printf '  path: "%s/workspaces"\n' "$data"
+    printf '  path: "%s"\n' "$(layout_workspaces)"
     printf 'llm:\n'
     printf '%s\n' "$llm_block"
     printf '  skippermissions: %s\n' "${SCFG_SKIP_PERMS:-false}"
@@ -1532,6 +1547,12 @@ write_systemd_unit() {
   local rw="$ARB_LIB $ARB_LOG"
   # ProtectSystem=strict leaves a custom data root read-only unless listed.
   [ "$data" = "$ARB_LIB" ] || rw="$rw $data"
+  local workspace
+  workspace="$(layout_workspaces)"
+  case "$workspace" in
+    "$ARB_LIB"|"$ARB_LIB"/*|"$data"|"$data"/*) ;;
+    *) rw="$rw $workspace" ;;
+  esac
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/arbitron-unit.XXXXXX")" || return 1
 
@@ -2080,6 +2101,210 @@ download_runner_binary() {
   log_info "installed arbitron-runner at $bin"
 }
 
+# RR-07: cross-OS canonical root; macOS /var is a symlink.
+ARBITRON_RUNNER_DEFAULT_WORKSPACE_ROOT="/opt/arbitron/workspaces"
+
+_root_has_symlink_component() {
+  local rest="${1#/}" cur="" part
+  while [ -n "$rest" ]; do
+    part="${rest%%/*}"
+    if [ "$part" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    [ -n "$part" ] || continue
+    cur="$cur/$part"
+    if [ -L "$cur" ]; then SYMLINK_COMPONENT="$cur"; return 0; fi
+    [ -e "$cur" ] || return 1
+  done
+  return 1
+}
+
+ensure_runner_workspace_root() {
+  local requested fallback user
+  fallback="$(runner_home)/workspaces"
+  requested="$(prompt_default RUNNER_WORKSPACE_ROOT 'Absolute workspace root (must equal the server workspace.path for workspace steps)' "$ARBITRON_RUNNER_DEFAULT_WORKSPACE_ROOT")"
+  case "$requested" in
+    /*) ;;
+    *) log_error "workspace root must be absolute: $requested"; return 1 ;;
+  esac
+  requested="${requested%/}"
+  if _root_has_symlink_component "$requested"; then
+    log_error "workspace root $requested has a symlinked path component ($SYMLINK_COMPONENT); choose a path with no symlinks (RR-07)"
+    return 1
+  fi
+  if mkdir -p "$requested" 2>/dev/null && [ -d "$requested" ] && [ -w "$requested" ]; then
+    CFG_RUNNER_WORKSPACE_ROOT="$requested"
+    return 0
+  fi
+  user="$(id -un)"
+  if prompt_yes_no RUNNER_ROOT_SUDO "Create $requested owned by $user with sudo (one elevated step)?" yes \
+     && sudo install -d -o "$user" -g staff -m 0750 "$requested" \
+     && [ -d "$requested" ] && [ -w "$requested" ]; then
+    CFG_RUNNER_WORKSPACE_ROOT="$requested"
+    return 0
+  fi
+  log_warn "could not create a writable $requested (RR-07)."
+  log_warn "this runner will advertise $fallback instead; the server marks it chat_only until $requested exists on this Mac."
+  mkdir -p "$fallback" || return 1
+  CFG_RUNNER_WORKSPACE_ROOT="$fallback"
+}
+
+# Preserve operator configuration on reinstall.
+write_runner_config() {
+  local cfg home
+  cfg="$(runner_config)"
+  home="$(runner_home)"
+  if [ -f "$cfg" ]; then
+    log_info "keeping existing $cfg"
+    return 0
+  fi
+  mkdir -p "$home"
+  (umask 077; cat >"$cfg" <<EOF
+# Arbitron runner configuration. Secrets live in runner.env (mode 0600).
+workspace_root: "${CFG_RUNNER_WORKSPACE_ROOT:-$home/workspaces}"
+scratch_root: "${home}/scratch"
+spool_dir: "${home}/spool"
+heartbeat_seconds: 5
+probe_interval_seconds: 60
+output_buffer_frames: 4096
+claude_binary: ""
+lunaroute:
+  connection_ref: ""
+  families: []
+EOF
+  )
+  chmod 600 "$cfg"
+}
+
+write_runner_env() {
+  local envf url key
+  envf="$(runner_env)"
+  if [ -f "$envf" ]; then
+    chmod 600 "$envf"
+    log_info "keeping existing $envf"
+    return 0
+  fi
+  url="$(prompt_default RUNNER_SERVER_URL 'Arbitron server URL (https://...)' '')"
+  key="$(prompt_secret RUNNER_KEY 'Runner key (ark_..., shown once when an admin created it)' '')"
+  mkdir -p "$(dirname "$envf")"
+  (umask 077
+    {
+      printf '# Arbitron runner secrets. Mode 0600; never commit or share.\n'
+      printf 'ARBITRON_SERVER_URL=%s\n' "$url"
+      printf 'ARBITRON_RUNNER_KEY=%s\n' "$key"
+      printf '# LUNAROUTE_API_KEY=lr_...\n'
+      printf '# ARBITRON_EXTRA_HEADERS=Name: value;Name2: value2\n'
+    } >"$envf"
+  )
+  chmod 600 "$envf"
+}
+
+render_runner_launchd_plist() {
+  local plist bin cfg logs
+  plist="$(_runner_plist_path)"
+  bin="$(runner_bin)/arbitron-runner"
+  cfg="$(runner_config)"
+  logs="$(runner_logs)"
+  mkdir -p "$(dirname "$plist")" "$logs"
+  cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${ARBITRON_RUNNER_LAUNCHD_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${bin}</string>
+    <string>run</string>
+    <string>--config</string>
+    <string>${cfg}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${logs}/arbitron-runner.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${logs}/arbitron-runner.err.log</string>
+</dict>
+</plist>
+EOF
+}
+
+register_runner_service_macos() {
+  render_runner_launchd_plist
+  local plist uid
+  plist="$(_runner_plist_path)"
+  uid="$(_uid)"
+  launchctl bootout "gui/${uid}/${ARBITRON_RUNNER_LAUNCHD_LABEL}" >/dev/null 2>&1 || true
+  if ! launchctl bootstrap "gui/${uid}" "$plist" 2>/dev/null; then
+    launchctl load -w "$plist" || return 1
+  fi
+  launchctl kickstart -k "gui/${uid}/${ARBITRON_RUNNER_LAUNCHD_LABEL}" >/dev/null 2>&1 || true
+}
+
+runner_service_remove() {
+  launchctl bootout "gui/$(_uid)/${ARBITRON_RUNNER_LAUNCHD_LABEL}" >/dev/null 2>&1 || true
+  rm -f "$(_runner_plist_path)"
+}
+
+detect_runner_state() {
+  local action="${ARBITRON_ACTION:-}"
+  if [ -z "$action" ]; then
+    if [ -f "$(runner_config)" ] || [ -f "$(_runner_plist_path)" ]; then
+      action="$(prompt_default ACTION 'Existing Arbitron runner found. Action? (upgrade/uninstall)' upgrade)"
+    else
+      printf 'Fresh\n'; return 0
+    fi
+  fi
+  case "$(printf '%s' "$action" | tr '[:upper:]' '[:lower:]')" in
+    fresh) printf 'Fresh\n' ;;
+    upgrade) printf 'Upgrade\n' ;;
+    uninstall) printf 'Uninstall\n' ;;
+    *) log_error "unknown runner ARBITRON_ACTION '$action' (want fresh|upgrade|uninstall)"; return 1 ;;
+  esac
+}
+
+print_runner_guidance() {
+  log_info "Arbitron runner installed: $(runner_bin)/arbitron-runner"
+  log_info "Config: $(runner_config); secrets: $(runner_env) (0600): ARBITRON_SERVER_URL, ARBITRON_RUNNER_KEY; optional LUNAROUTE_API_KEY, ARBITRON_EXTRA_HEADERS"
+  log_info "Service: ${ARBITRON_RUNNER_LAUNCHD_LABEL} (gui/$(_uid)); logs: $(runner_logs)"
+  log_info "Workspace root: ${CFG_RUNNER_WORKSPACE_ROOT:-$(runner_home)/workspaces}. It must equal the server's absolute workspace.path for workspace steps; otherwise this runner is chat-only."
+  log_info "Create a key as an admin (runner_key_create); paste it into runner.env, then: launchctl kickstart -k gui/$(_uid)/${ARBITRON_RUNNER_LAUNCHD_LABEL}"
+  log_info "This LaunchAgent starts with your GUI login session, including the session after you unlock FileVault at boot (RR-05)."
+  log_info "Until you log in after reboot this runner is offline; that is expected. For an unattended restart use: sudo fdesetup authrestart"
+}
+
+run_runner_install() {
+  mkdir -p "$(runner_home)" "$(runner_bin)" "$(runner_logs)" "$(runner_home)/spool" "$(runner_home)/scratch"
+  chmod 700 "$(runner_home)"
+  require_cmd claude || log_warn "claude CLI not found on PATH; no Anthropic subscription until installed and logged in"
+  download_runner_binary || die "runner download failed; nothing was installed"
+  ensure_runner_workspace_root || die "invalid workspace root"
+  write_runner_config
+  write_runner_env
+  register_runner_service_macos || die "runner service registration failed"
+  print_runner_guidance
+}
+
+run_runner_upgrade() {
+  download_runner_binary || die "runner download failed; the existing runner is unchanged"
+  launchctl kickstart -k "gui/$(_uid)/${ARBITRON_RUNNER_LAUNCHD_LABEL}" >/dev/null 2>&1 || true
+}
+
+run_runner_uninstall() {
+  runner_service_remove
+  rm -f "$(runner_bin)/arbitron-runner"
+  if prompt_yes_no REMOVE_DATA "Also remove $(runner_home) (config, runner.env, machine key, spool)? The key must then be re-created." no; then
+    rm -rf "$(runner_home)"
+  fi
+}
+
 # parse_args [--runner] selects the remote runner scenario.
 parse_args() {
   while [ "$#" -gt 0 ]; do
@@ -2093,10 +2318,22 @@ parse_args() {
 
 main() {
   local os arch itype state
+  parse_args "$@" || die "usage: install.sh [--runner]"
   os="$(detect_os)"   || die "could not detect OS"
   arch="$(detect_arch)" || die "could not detect architecture"
   itype="$(select_install_type)" || die "could not select install type"
   log_info "Arbitron installer — os=$os arch=$arch type=$itype"
+
+  if [ "$itype" = "Runner" ]; then
+    state="$(detect_runner_state)" || die "could not determine runner install action"
+    case "$state" in
+      Fresh) run_runner_install ;;
+      Upgrade) run_runner_upgrade ;;
+      Uninstall) run_runner_uninstall ;;
+      *) die "unhandled runner state: $state" ;;
+    esac
+    return
+  fi
 
   if [ "$itype" = "Shared" ]; then
     # System-wide install: switch the layout resolvers to the system paths and

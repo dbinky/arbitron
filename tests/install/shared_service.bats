@@ -62,7 +62,7 @@ _unit() { printf '%s\n' "$ARB_SYSTEMD_UNIT_PATH"; }
   grep -qE '^NoNewPrivileges=yes$' "$u"
   grep -qE '^ProtectSystem=strict$' "$u"
   grep -qE '^ProtectHome=yes$' "$u"
-  grep -qF "ReadWritePaths=$ARB_LIB $ARB_LOG" "$u"
+  grep -qF "ReadWritePaths=$ARB_LIB $ARB_LOG /opt/arbitron/workspaces" "$u"
 }
 
 # G4: under ProtectSystem=strict a data root outside $ARB_LIB is read-only unless
@@ -70,13 +70,13 @@ _unit() { printf '%s\n' "$ARB_SYSTEMD_UNIT_PATH"; }
 @test "custom SCFG_DATA_DIR is added to ReadWritePaths" {
   export SCFG_DATA_DIR="$TEST_SANDBOX/data/custom"
   write_systemd_unit
-  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG $TEST_SANDBOX/data/custom" "$(_unit)"
+  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG $TEST_SANDBOX/data/custom /opt/arbitron/workspaces" "$(_unit)"
 }
 
 @test "default data root is not listed twice in ReadWritePaths" {
   export SCFG_DATA_DIR="$ARB_LIB"
   write_systemd_unit
-  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG" "$(_unit)"
+  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG /opt/arbitron/workspaces" "$(_unit)"
 }
 
 @test "custom service account renders User/Group=svc-arb" {
@@ -250,7 +250,7 @@ EOF
   run reconfigure_shared
   [ "$status" -eq 0 ]
   grep -qxF "install -d -m 0750 -o arbitron -g arbitron $TEST_SANDBOX/data/custom" "$MOCK_LOG"
-  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG $TEST_SANDBOX/data/custom" "$(_unit)"
+  grep -qxF "ReadWritePaths=$ARB_LIB $ARB_LOG $TEST_SANDBOX/data/custom /opt/arbitron/workspaces" "$(_unit)"
   local reload restart
   reload="$(grep -n 'systemctl daemon-reload' "$MOCK_LOG" | head -1 | cut -d: -f1)"
   restart="$(grep -n 'systemctl restart arbitron' "$MOCK_LOG" | head -1 | cut -d: -f1)"

@@ -89,7 +89,7 @@ teardown() {
   # install -d (or mkdir) was called for each system dir.
   grep -qF "/etc/arbitron" "$MOCK_LOG"
   grep -qF "/var/lib/arbitron" "$MOCK_LOG"
-  grep -qF "/var/lib/arbitron/workspaces" "$MOCK_LOG"
+  grep -qF "/opt/arbitron/workspaces" "$MOCK_LOG"
   grep -qF "/var/lib/arbitron/samples" "$MOCK_LOG"
   grep -qF "/var/log/arbitron" "$MOCK_LOG"
 }
@@ -99,7 +99,7 @@ teardown() {
   run create_system_layout
   [ "$status" -eq 0 ]
   grep -qF "$TEST_SANDBOX/data/custom/samples" "$MOCK_LOG"
-  grep -qF "$TEST_SANDBOX/data/custom/workspaces" "$MOCK_LOG"
+  grep -qF "${SCFG_WORKSPACE_DIR:-/opt/arbitron/workspaces}" "$MOCK_LOG"
 }
 
 # G4: the database and its <db>.model-state.key live directly under the data
@@ -137,6 +137,7 @@ teardown() {
   export ARB_ETC="$TEST_SANDBOX/etc/arbitron"
   export ARB_LIB="$TEST_SANDBOX/var/lib/arbitron"
   export ARB_LOG="$TEST_SANDBOX/var/log/arbitron"
+  export SCFG_WORKSPACE_DIR="$TEST_SANDBOX/opt/arbitron/workspaces"
   rm -f "$MOCK_BIN/install"
   hash -r   # clear cached path so require_cmd install re-searches and fails
   run create_system_layout
@@ -145,7 +146,7 @@ teardown() {
   [ -d "$ARB_ETC" ]
   [ -d "$ARB_LIB" ]
   [ -d "$ARB_LOG" ]
-  [ -d "$ARB_LIB/workspaces" ]
+  [ -d "$SCFG_WORKSPACE_DIR" ]
   [ -d "$ARB_LIB/samples" ]
   # The fallback path calls chown; install was NOT called.
   grep -q "chown" "$MOCK_LOG"
