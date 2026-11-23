@@ -28,7 +28,9 @@ type ServiceDeps struct {
 	Monitor    *HealthMonitor
 	Telemetry  TelemetrySource
 	// Window is optional; nil yields an empty recent telemetry list.
-	Window   TelemetryWindow
+	Window TelemetryWindow
+	// Homes is optional until workspace mobility is configured.
+	Homes    HomeStore
 	Notifier *PoolNotifier
 	Clock    func() time.Time
 }
@@ -48,6 +50,7 @@ type RunnerDetail struct {
 	RunnerView
 	Assignments     []AssignmentView
 	RecentTelemetry []Telemetry
+	Homes           []HomeView
 }
 
 // AssignmentView is one active job; RunID nil + Hidden when the caller cannot view the run.
@@ -158,6 +161,9 @@ func (s *Service) Get(ctx context.Context, id RunnerID) (RunnerDetail, error) {
 		d.Assignments = append(d.Assignments, a)
 	}
 	d.RecentTelemetry = s.recentTelemetry(id)
+	if d.Homes, err = s.homeViews(ctx, id); err != nil {
+		return RunnerDetail{}, err
+	}
 	return d, nil
 }
 
