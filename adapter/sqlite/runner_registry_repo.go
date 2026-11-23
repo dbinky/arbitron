@@ -178,6 +178,13 @@ func (r *RunnerRegistryRepo) Snapshot(ctx context.Context) (runner.PoolSnapshot,
 	if err := rows.Err(); err != nil {
 		return runner.PoolSnapshot{}, err
 	}
+	if err := rows.Close(); err != nil {
+		return runner.PoolSnapshot{}, err
+	}
+	snap.Homes, err = loadHomes(ctx, tx)
+	if err != nil {
+		return runner.PoolSnapshot{}, err
+	}
 	return snap, nil
 }
 
