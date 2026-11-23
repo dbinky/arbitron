@@ -144,7 +144,7 @@ type routedChat struct {
 }
 
 func (p *routedChat) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
-	er, err := requirementsFor(ctx, p.b, OpType("chat"), p.affinity, req.RequireExecutedModel, req.ToolScope)
+	er, err := requirementsFor(ctx, p.b, OpType("chat"), hermeticCallAffinity(ctx, p.affinity, p.b, req), req.RequireExecutedModel, req.ToolScope)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (p *routedChat) Chat(ctx context.Context, req engine.ChatRequest) (*engine.
 }
 
 func (p *routedChat) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
-	er, err := requirementsFor(ctx, p.b, OpType("stream"), p.affinity, req.RequireExecutedModel, req.ToolScope)
+	er, err := requirementsFor(ctx, p.b, OpType("stream"), hermeticCallAffinity(ctx, p.affinity, p.b, req), req.RequireExecutedModel, req.ToolScope)
 	if err != nil {
 		return nil, err
 	}
