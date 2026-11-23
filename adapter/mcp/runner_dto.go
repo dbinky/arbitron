@@ -86,11 +86,19 @@ type homeJSON struct {
 	Dirty      bool    `json:"dirty"`
 }
 
+// sessionPinJSON mirrors the REST session projection.
+type sessionPinJSON struct {
+	RunID      *string `json:"runId"`
+	NodeID     string  `json:"nodeId"`
+	Hidden     bool    `json:"hidden"`
+	Generation int64   `json:"generation"`
+}
+
 type runnerDetailJSON struct {
 	runnerViewJSON
 	Assignments     []assignmentJSON      `json:"assignments"`
 	RecentTelemetry []runnerTelemetryJSON `json:"recentTelemetry"`
-	Sessions        []json.RawMessage     `json:"sessions"`
+	Sessions        []sessionPinJSON      `json:"sessions"`
 	Homes           []homeJSON            `json:"homes"`
 }
 
@@ -163,7 +171,7 @@ func toRunnerDetailJSON(d runner.RunnerDetail) runnerDetailJSON {
 		runnerViewJSON:  toRunnerViewJSON(d.RunnerView),
 		Assignments:     make([]assignmentJSON, 0, len(d.Assignments)),
 		RecentTelemetry: make([]runnerTelemetryJSON, 0, len(d.RecentTelemetry)),
-		Sessions:        []json.RawMessage{},
+		Sessions:        make([]sessionPinJSON, 0, len(d.Sessions)),
 		Homes:           make([]homeJSON, 0, len(d.Homes)),
 	}
 	for _, a := range d.Assignments {
@@ -176,6 +184,17 @@ func toRunnerDetailJSON(d runner.RunnerDetail) runnerDetailJSON {
 	}
 	for _, t := range d.RecentTelemetry {
 		out.RecentTelemetry = append(out.RecentTelemetry, toRunnerTelemetryJSON(t))
+	}
+	for _, ps := range d.Sessions {
+		sj := sessionPinJSON{Hidden: ps.Hidden, Generation: ps.Generation}
+		if !ps.Hidden {
+			sj.NodeID = ps.NodeID
+			if ps.RunID != nil {
+				id := ps.RunID.String()
+				sj.RunID = &id
+			}
+		}
+		out.Sessions = append(out.Sessions, sj)
 	}
 	for _, h := range d.Homes {
 		hj := homeJSON{Hidden: h.Hidden, Generation: h.Generation, Dirty: h.Dirty}

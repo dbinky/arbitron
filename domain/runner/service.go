@@ -31,6 +31,7 @@ type ServiceDeps struct {
 	Window TelemetryWindow
 	// Homes is optional until workspace mobility is configured.
 	Homes    HomeStore
+	Sessions RunnerSessionIndex
 	Notifier *PoolNotifier
 	Clock    func() time.Time
 }
@@ -51,6 +52,7 @@ type RunnerDetail struct {
 	Assignments     []AssignmentView
 	RecentTelemetry []Telemetry
 	Homes           []HomeView
+	Sessions        []SessionPinView
 }
 
 // AssignmentView is one active job; RunID nil + Hidden when the caller cannot view the run.
@@ -162,6 +164,9 @@ func (s *Service) Get(ctx context.Context, id RunnerID) (RunnerDetail, error) {
 	}
 	d.RecentTelemetry = s.recentTelemetry(id)
 	if d.Homes, err = s.homeViews(ctx, id); err != nil {
+		return RunnerDetail{}, err
+	}
+	if d.Sessions, err = s.sessionViews(ctx, id); err != nil {
 		return RunnerDetail{}, err
 	}
 	return d, nil
