@@ -278,6 +278,7 @@ type EnrichedInstanceSummary struct {
 	// post-authorization, so a run whose children are all invisible to the caller
 	// reports 0 and leaks no existence.
 	ChildCount int
+	Execution  []ExecutionStatus `json:"execution,omitempty"`
 }
 
 // NodeExecutionStatus represents the outcome of a single node execution.
