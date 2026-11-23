@@ -293,6 +293,9 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	}
 	ctx = ContextWithStepIdentity(ctx, StepIdentity{RunID: instanceID, NodeID: nodeID, InvocationID: inv.ID, OperationID: opID, Kind: OperationTurn, Attempt: 1})
 
+	sink := NewPlacementSink()
+	ctx = ContextWithPlacementSink(ctx, sink)
+
 	// 4. Append user message (in memory only -- not persisted until LLM succeeds).
 	messages = append(messages, map[string]any{
 		"role":    "user",
@@ -359,7 +362,13 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 
 	// 7. Call the provider with streaming.
 	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, streamProvider, req, bus)
+	applyPlacement(nodeExec, sink.Facts())
 	if err != nil {
+		if len(sink.Facts()) > 0 {
+			if persistErr := h.persistTurn(context.WithoutCancel(ctx), nodeExec, group); persistErr != nil {
+				return persistErr
+			}
+		}
 		// LLM failed -- the user message was never persisted, so there is no
 		// conversation corruption to roll back.
 		return err

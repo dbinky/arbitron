@@ -45,7 +45,12 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 		return fmt.Errorf("marshalling llm conversation: %w", err)
 	}
 
-	row, err := r.queries.CreateNodeExecution(ctx, generated.CreateNodeExecutionParams{
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	row, err := r.queries.WithTx(tx).CreateNodeExecution(ctx, generated.CreateNodeExecutionParams{
 		ID:              uuidToString(exec.ID),
 		InstanceID:      uuidToString(exec.InstanceID),
 		NodeID:          exec.NodeID,
@@ -78,7 +83,10 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 	}
 	exec.StartedAt = startedAt
 	exec.CompletedAt = completedAt
-	return r.writePlacement(ctx, exec)
+	if err := writePlacement(ctx, tx, exec); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecution) error {
@@ -95,7 +103,12 @@ func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecu
 		return fmt.Errorf("marshalling llm conversation: %w", err)
 	}
 
-	err = r.queries.UpdateNodeExecution(ctx, generated.UpdateNodeExecutionParams{
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	err = r.queries.WithTx(tx).UpdateNodeExecution(ctx, generated.UpdateNodeExecutionParams{
 		ID:              uuidToString(exec.ID),
 		Status:          string(exec.Status),
 		Output:          outputJSON,
@@ -112,7 +125,10 @@ func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecu
 	if err != nil {
 		return fmt.Errorf("updating node execution: %w", err)
 	}
-	return nil
+	if err := writePlacement(ctx, tx, exec); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 var _ instance.OpenSessionRecordUpdater = (*NodeExecutionRepo)(nil)
@@ -133,7 +149,12 @@ func (r *NodeExecutionRepo) UpdateIfSessionOpen(ctx context.Context, exec *insta
 	if err != nil {
 		return false, fmt.Errorf("marshalling llm conversation: %w", err)
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE node_executions SET status = ?, output = ?, error = ?, llm_conversation = ?, llm_model = ?, llm_tokens_in = ?, llm_tokens_out = ?, script_stdout = ?, script_stderr = ?, script_exit_code = ?, completed_at = ?
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE node_executions SET status = ?, output = ?, error = ?, llm_conversation = ?, llm_model = ?, llm_tokens_in = ?, llm_tokens_out = ?, script_stdout = ?, script_stderr = ?, script_exit_code = ?, completed_at = ?
 WHERE id = ? AND (llm_conversation IS NULL OR json_extract(llm_conversation, '$.endedAt') IS NULL)`,
 		string(exec.Status), outputJSON, errorJSON, llmConvJSON, ptrToNullString(exec.LLMModel),
 		intPtrToNullInt64(exec.LLMTokensIn), intPtrToNullInt64(exec.LLMTokensOut),
@@ -145,6 +166,14 @@ WHERE id = ? AND (llm_conversation IS NULL OR json_extract(llm_conversation, '$.
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("updating open session node execution: %w", err)
+	}
+	if n == 1 {
+		if err := writePlacement(ctx, tx, exec); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
 	}
 	return n == 1, nil
 }
@@ -347,10 +376,10 @@ func (p placementRow) applyTo(exec *instance.NodeExecution) {
 	}
 }
 
-// writePlacement persists the placement columns of a freshly created row. A
-// row with no placement (non-dispatching node) issues no statement.
-func (r *NodeExecutionRepo) writePlacement(ctx context.Context, exec *instance.NodeExecution) error {
-	if exec.RunnerID == nil && exec.SourceID == nil && exec.PlacementReason == nil && len(exec.PlacementHistory) == 0 {
+// writePlacement persists placement in the same transaction as the trace or
+// session mutation. An update carrying no runner or history preserves placement.
+func writePlacement(ctx context.Context, tx *sql.Tx, exec *instance.NodeExecution) error {
+	if exec.RunnerID == nil && len(exec.PlacementHistory) == 0 {
 		return nil
 	}
 	var hist sql.NullString
@@ -361,7 +390,7 @@ func (r *NodeExecutionRepo) writePlacement(ctx context.Context, exec *instance.N
 		}
 		hist = sql.NullString{String: string(b), Valid: true}
 	}
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE node_executions SET runner_id = ?, source_id = ?, placement_reason = ?, placement_history = ? WHERE id = ?`,
 		ptrToNullString(exec.RunnerID), ptrToNullString(exec.SourceID), ptrToNullString(exec.PlacementReason), hist, uuidToString(exec.ID),
 	); err != nil {

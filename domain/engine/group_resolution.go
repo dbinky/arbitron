@@ -245,7 +245,7 @@ func (b *GroupResolutionBridge) InvocationStore() InvocationStore { return b.inv
 // after this first turn: a resolved merge continues automatically; only a
 // still-conflicted merge needs operator end/abandon. The sentinel alone never
 // proves that file conflicts were resolved.
-func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instance.GroupRun, parent *instance.Instance, req ResolutionRequest) (*instance.ResolutionSessionRef, error) {
+func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instance.GroupRun, parent *instance.Instance, req ResolutionRequest) (refResult *instance.ResolutionSessionRef, resultErr error) {
 	if run == nil || parent == nil {
 		return nil, errors.New("group resolution: run and parent instance are required")
 	}
@@ -319,6 +319,26 @@ func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instan
 	nonce := uuid.NewString()
 	userMessage := prompt + sentinelInstruction(nonce, groupResolutionOutputSchema)
 	startedAt := b.now()
+	sink := NewPlacementSink()
+	ctx = ContextWithPlacementSink(ctx, sink)
+	traceWritten := false
+	defer func() {
+		if resultErr == nil || traceWritten || len(sink.Facts()) == 0 {
+			return
+		}
+		cleanup := context.WithoutCancel(ctx)
+		attempt, err := nextNodeAttempt(cleanup, b.nodeExecs, parent.ID, run.NodeID)
+		if err != nil {
+			resultErr = errors.Join(resultErr, err)
+			return
+		}
+		completed := b.now()
+		failed := &instance.NodeExecution{ID: uuid.New(), InstanceID: parent.ID, NodeID: run.NodeID, Attempt: attempt, Status: instance.NodeStatusFailed, StartedAt: startedAt, CompletedAt: &completed, Error: map[string]any{"error": resultErr.Error()}}
+		applyPlacement(failed, sink.Facts())
+		if err := b.nodeExecs.Create(cleanup, failed); err != nil {
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
 	stream, err := streamProvider.StreamChat(ctx, ChatRequest{
 		Prompt:    userMessage,
 		Model:     binding.Model,
@@ -407,13 +427,15 @@ func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instan
 		StartedAt:       startedAt,
 		CompletedAt:     &completedAt,
 	}
-	// Unlike InteractiveExecutor (log-only), a failed write is fatal here: the
+	applyPlacement(exec, sink.Facts())
+	// A failed write is fatal here: the
 	// record IS the session's identity, and a session nobody can address
 	// would strand the parent.
 	if err := b.nodeExecs.Create(ctx, exec); err != nil {
 		return nil, fmt.Errorf("group resolution %q: persist session: %w", run.NodeID, err)
 	}
 
+	traceWritten = true
 	publishInteractiveMessage(bus, parent.ID, "assistant", fullResponse)
 	b.bus.Publish(parent.ID, Event{
 		Type:      EventTypeGroupConflict,

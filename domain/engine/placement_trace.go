@@ -4,7 +4,7 @@ import "github.com/arbitron/arbitron/domain/instance"
 
 // applyPlacement copies an attempt's placement facts onto its trace record:
 // the LAST fact names where the attempt finally ran; every fact (re-routes
-// after exhaustion included) goes to PlacementHistory. No facts = no change.
+// after exhaustion included) is appended to PlacementHistory. No facts = no change.
 func applyPlacement(exec *instance.NodeExecution, facts []PlacementFact) {
 	if len(facts) == 0 {
 		return
@@ -28,5 +28,5 @@ func applyPlacement(exec *instance.NodeExecution, facts []PlacementFact) {
 			Outcome: f.Outcome, Generation: f.Generation, At: f.At,
 		})
 	}
-	exec.PlacementHistory = hist
+	exec.PlacementHistory = append(exec.PlacementHistory, hist...)
 }
