@@ -87,8 +87,9 @@ func (c *DispatchConfirmer) Confirm(ctx context.Context, s runner.Source) error 
 	req := runner.ExecRequirements{
 		Group: group, Model: b.Model, Op: runner.OpChat, Affinity: runner.AffinityBuiltIn,
 		RunID: id.RunID, PinnedRunner: s.RunnerID, RequiredSource: s.ID,
+		RequireExecutedModel: true,
 	}
-	chat := engine.ChatRequest{Model: b.Model, Prompt: "Reply with OK.", MaxTokens: 1, WorkDir: c.workDir, SuppressTools: true}
+	chat := engine.ChatRequest{Model: b.Model, Prompt: "Reply with OK.", MaxTokens: 1, WorkDir: c.workDir, SuppressTools: true, RequireExecutedModel: true}
 	_, err = d.Dispatch(ctx, req, runner.StepJob{Op: runner.OpChat, Binding: b, Chat: &chat})
 	return err
 }
