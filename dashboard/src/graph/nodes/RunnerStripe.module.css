@@ -1,0 +1,10 @@
+.stripe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 4px 0 0 4px;
+  pointer-events: auto;
+}
+.moved { box-shadow: 0 0 0 2px var(--accent); }

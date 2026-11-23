@@ -17,6 +17,7 @@ export interface RoutedGroupConnectorData {
   [key: string]: unknown
 }
 export interface RoutedEdgeData {
+  moveBadge?: string
   layoutInstanceId?: string
   route: EdgeRoute
   gaps: Point[]
@@ -119,6 +120,17 @@ function RoutedEdge({ data, style }: EdgeProps<RoutedEdgeType>) {
             }}
           >
             {route.text.text}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+      {route && typeof data.moveBadge === 'string' && route.points.length > 0 && (
+        <EdgeLabelRenderer>
+          <div data-move-badge={route.ordinal} data-layout-instance={layoutInstanceId}
+            className={styles.moveBadge}
+            style={{ zIndex: style?.zIndex,
+              transform: `translate(-50%, -100%) translate(${route.points[route.points.length - 1].x}px, ${route.points[route.points.length - 1].y}px)`,
+            }}>
+            {data.moveBadge}
           </div>
         </EdgeLabelRenderer>
       )}

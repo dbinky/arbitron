@@ -4,6 +4,8 @@ import type { NodeProps, Node } from '@xyflow/react'
 import type { NodeExecutionState } from '../types'
 import styles from './ArbitronNode.module.css'
 import { typeAccent } from './typeColors'
+import type { RunnerMark } from '../runnerMarks'
+import RunnerStripe from './RunnerStripe'
 
 const stateNodeClass: Record<NodeExecutionState, string> = {
   completed: styles.stateCompleted,
@@ -40,6 +42,7 @@ export interface ArbitronNodeData {
   instanceId?: string | null
   independent?: boolean
   hiddenDependency?: boolean
+  runnerMark?: RunnerMark
   [key: string]: unknown
 }
 
@@ -72,6 +75,7 @@ function ArbitronNode({ data, selected }: NodeProps<ArbitronNodeType>) {
         {data.hiddenDependency && <div className={styles.note}>hidden dependency</div>}
         {!data.hiddenDependency && data.independent && <div className={styles.note}>non-blocking</div>}
       </div>
+      <RunnerStripe mark={data.runnerMark} />
       <Handle type="source" position={Position.Bottom} />
     </div>
   )

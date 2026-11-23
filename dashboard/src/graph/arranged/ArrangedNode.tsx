@@ -7,6 +7,8 @@ import type { NodeBox, RendererContract } from './types'
 import { typeAccent } from '../nodes/typeColors'
 import styles from './ArrangedNode.module.css'
 import { GeometryHandles, type GeometryHandle } from './GeometryHandles'
+import type { RunnerMark } from '../runnerMarks'
+import RunnerStripe from '../nodes/RunnerStripe'
 
 export interface ArrangedNodeData {
   definitionNodeId?: string
@@ -19,6 +21,7 @@ export interface ArrangedNodeData {
   nodeType: string
   executionState: NodeExecutionState
   contract: RendererContract
+  runnerMark?: RunnerMark
   [key: string]: unknown
 }
 
@@ -90,6 +93,7 @@ function ArrangedNode({ data, selected }: NodeProps<ArrangedNodeType>) {
         style={{ top: contract.nodeTypeBarPx + 4 }}
         aria-hidden="true"
       />
+      <RunnerStripe mark={data.runnerMark} />
       {!data.handles && <Handle type="source" position={Position.Bottom} isConnectable={false} />}
     </div>
   )
