@@ -105,12 +105,13 @@ const (
 
 // StepDispatcher places, records, executes and classifies dispatched operations.
 type StepDispatcher struct {
-	d         DispatcherDeps
-	mu        sync.Mutex
-	wakeCh    chan struct{} // closed and replaced on every pool change
-	stop      chan struct{}
-	wakeDone  chan struct{}
-	closeOnce sync.Once
+	agentToolPolicy AgentToolPolicy
+	d               DispatcherDeps
+	mu              sync.Mutex
+	wakeCh          chan struct{} // closed and replaced on every pool change
+	stop            chan struct{}
+	wakeDone        chan struct{}
+	closeOnce       sync.Once
 }
 
 // NewStepDispatcher validates deps and starts the wake fan-out.
