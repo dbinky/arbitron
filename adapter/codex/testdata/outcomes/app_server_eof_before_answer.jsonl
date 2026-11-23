@@ -1,0 +1,2 @@
+{"id":0,"result":{"userAgent":"probe/0.171.0 (Mac OS 26.5.2; arm64) unknown (probe; 1)","codexHome":"<redacted>","platformFamily":"unix","platformOs":"macos"}}
+{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"<redacted>","installationId":"<redacted>","environmentId":null},"emittedAtMs":1795354914585}

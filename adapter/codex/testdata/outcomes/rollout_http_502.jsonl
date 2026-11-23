@@ -1,0 +1,2 @@
+{"timestamp":"2026-11-22T13:41:22.000Z","type":"session_meta","payload":{"id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b","cli_version":"0.171.0"}}
+{"timestamp":"2026-11-22T13:41:30.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a60","error":{"message":"unexpected status 502 Bad Gateway","codex_error_info":{"http_connection_failed":{"http_status_code":502}}}}}

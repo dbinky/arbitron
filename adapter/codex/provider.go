@@ -244,6 +244,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 		collected = append(collected, line)
 	}
 	if waitErr := wait(); waitErr != nil {
+		if classifiesRollout(p.binding) && runCtx.Err() == nil {
+			waitErr = attachRolloutOutcome(env, threadIDFromLines(collected), waitErr, time.Now())
+		}
 		if p.binding.Pinned || lunaroute {
 			waitErr = claudecli.SanitizeProcessError(waitErr)
 		} else {

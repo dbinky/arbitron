@@ -449,7 +449,7 @@ func runFold(t *testing.T, ctx context.Context, lines []string, waitErr error) t
 		}
 	}()
 	events := make(chan turnEvent, len(lines)+4)
-	foldExecStream(ctx, in, func() error { return waitErr }, events, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), nil)
+	foldExecStream(ctx, in, func() error { return waitErr }, events, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), nil, nil)
 	var last turnEvent
 	got := false
 	for ev := range events {

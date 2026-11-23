@@ -1,0 +1,2 @@
+{"id":0,"result":{"userAgent":"probe/0.171.0","platformFamily":"unix","platformOs":"macos"}}
+{"id":1,"result":{"ordinaryUsageAllowed":null,"rateLimits":{"limitId":"codex","primary":{"usedPercent":12.5,"windowDurationMins":300,"resetsAt":1795262400000},"secondary":{"usedPercent":30,"windowDurationMins":10080,"resetsAt":1795500000}}}}

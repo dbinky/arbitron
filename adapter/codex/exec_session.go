@@ -186,7 +186,7 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 	joined := make(chan struct{})
 	go func() {
 		defer close(joined)
-		foldExecStream(ctx, lines, wait, events, slog.Default(), verify)
+		foldExecStream(ctx, lines, wait, events, slog.Default(), verify, rolloutOutcomeAttacher(env, cfg.ResumeID))
 	}()
 	stream := newEventStream(events)
 	stream.joined = joined
@@ -299,7 +299,7 @@ func writableRootsValue(workDir string) string {
 // exit) — a failure is NEVER a silent clean done. It ALWAYS drains `lines` and calls
 // wait() so the subprocess is reaped, then closes events so the stream reaches its
 // terminal signal.
-func foldExecStream(ctx context.Context, lines <-chan string, wait func() error, events chan<- turnEvent, logger *slog.Logger, verify func(sessionID string) error) {
+func foldExecStream(ctx context.Context, lines <-chan string, wait func() error, events chan<- turnEvent, logger *slog.Logger, verify func(sessionID string) error, classify func(threadID string, err error) error) {
 	defer close(events)
 
 	acc := &parsed{}
@@ -336,6 +336,9 @@ func foldExecStream(ctx context.Context, lines <-chan string, wait func() error,
 	// A ctx cancel/timeout surfaces to the consumer via the stream's Next (ctx.Done);
 	// don't also emit a spurious turnFailed for the process the deadline just killed.
 	if waitErr != nil && ctx.Err() == nil {
+		if classify != nil {
+			waitErr = classify(acc.sessionID, waitErr)
+		}
 		if verify != nil {
 			waitErr = claudecli.SanitizeProcessError(waitErr)
 		}
@@ -355,6 +358,9 @@ func foldExecStream(ctx context.Context, lines <-chan string, wait func() error,
 		err := fmt.Errorf("%w: turn failed", ErrModelEvidence)
 		if verify == nil {
 			err = fmt.Errorf("codex exec: turn failed: %s", acc.summary)
+		}
+		if classify != nil {
+			err = classify(acc.sessionID, err)
 		}
 		sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: err}, logger)
 		return

@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/procenv"
@@ -152,13 +153,14 @@ func (p *StreamProvider) Chat(ctx context.Context, req engine.ChatRequest) (*eng
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
+		waitErr = attachRolloutOutcome(codexEnv(), out.sessionID, waitErr, time.Now())
 		return nil, fmt.Errorf("codex: stream mission failed (model %q): %w", model, waitErr)
 	}
 	if parseErr != nil {
 		return nil, fmt.Errorf("codex: parse stream output (model %q): %w", model, parseErr)
 	}
 	if out.failed {
-		return nil, fmt.Errorf("codex: turn failed (model %q): %s", model, out.summary)
+		return nil, attachRolloutOutcome(codexEnv(), out.sessionID, fmt.Errorf("codex: turn failed (model %q): %s", model, out.summary), time.Now())
 	}
 
 	return &engine.ChatResponse{
@@ -225,6 +227,9 @@ func (p *StreamProvider) StreamChat(ctx context.Context, req engine.ChatRequest)
 			return
 		}
 		if waitErr != nil {
+			if runCtx.Err() == nil {
+				waitErr = attachRolloutOutcome(codexEnv(), acc.sessionID, waitErr, time.Now())
+			}
 			sendChunk(engine.ChatChunk{
 				Error: fmt.Errorf("codex: stream exited with error: %w", waitErr),
 			})
@@ -234,7 +239,7 @@ func (p *StreamProvider) StreamChat(ctx context.Context, req engine.ChatRequest)
 			// A failed turn (error / turn.failed) is NOT a silent success: surface
 			// the failure message as the terminal error chunk, never a Done.
 			sendChunk(engine.ChatChunk{
-				Error: fmt.Errorf("codex: turn failed: %s", acc.summary),
+				Error: attachRolloutOutcome(codexEnv(), acc.sessionID, fmt.Errorf("codex: turn failed: %s", acc.summary), time.Now()),
 			})
 			return
 		}
