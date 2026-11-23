@@ -98,3 +98,6 @@ func (p *ExecutionStatusProjector) Publish(_ context.Context, job Job, state ins
 	}
 	bus.Publish(job.Key.RunID, engine.Event{Type: EventExecutionStatus, Timestamp: p.now().UTC(), Data: StatusFromJob(job, state)})
 }
+
+// Compile-time: the projector is the engine enricher's execution-status provider.
+var _ engine.ExecutionStatusProvider = (*ExecutionStatusProjector)(nil)

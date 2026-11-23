@@ -50,6 +50,7 @@ type InstanceEnricher struct {
 	// nil: NoopProfileResolver{} until the composition root wires the real one.
 	profiles            provider.ProfileResolver
 	defaultAgentBackend string // deployment-wide fallback for BackendUnset nodes
+	execStatus          ExecutionStatusProvider
 }
 
 // NewInstanceEnricher constructs the enricher with its collaborators. queuePos
@@ -78,6 +79,7 @@ func NewInstanceEnricher(
 		// the real repository via SetSpawnLinks.
 		spawnLinks: NoopSpawnLinks{},
 		profiles:   NoopProfileResolver{},
+		execStatus: NoopExecutionStatusProvider{},
 	}
 }
 
@@ -190,6 +192,11 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 
 	// One batched child-count call for the whole page (never N+1).
 	childCounts := e.batchChildCounts(ctx, ids)
+	execMap, execErr := e.execStatus.ExecutionStatuses(ctx, ids)
+	if execErr != nil {
+		slog.Warn("enricher: execution status failed", "error", execErr)
+		execMap = nil
+	}
 
 	// One profile lookup per alias for the whole page (never N+1), and one log
 	// line per failing alias.
@@ -236,6 +243,7 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 			row.ChildCount = n
 		}
 
+		row.Execution = execMap[s.ID]
 		out[i] = row
 	}
 	return out, nil
@@ -382,4 +390,28 @@ func accountIdentity(u instance.User) string {
 		return *u.Email
 	}
 	return ""
+}
+
+// ExecutionStatusProvider returns, per run, the placement status of its active
+// dispatched operations (Remote Runners). Implemented by
+// runner.ExecutionStatusProjector; the composition root wires it.
+type ExecutionStatusProvider interface {
+	ExecutionStatuses(ctx context.Context, runIDs []uuid.UUID) (map[uuid.UUID][]instance.ExecutionStatus, error)
+}
+
+// NoopExecutionStatusProvider is the Null Object: no run has execution status.
+type NoopExecutionStatusProvider struct{}
+
+// ExecutionStatuses always returns an empty map and never errors.
+func (NoopExecutionStatusProvider) ExecutionStatuses(context.Context, []uuid.UUID) (map[uuid.UUID][]instance.ExecutionStatus, error) {
+	return map[uuid.UUID][]instance.ExecutionStatus{}, nil
+}
+
+// SetExecutionStatusProvider wires the runner execution-status projector. nil
+// panics — pass NoopExecutionStatusProvider{} to opt out deliberately.
+func (e *InstanceEnricher) SetExecutionStatusProvider(p ExecutionStatusProvider) {
+	if p == nil {
+		panic("engine: SetExecutionStatusProvider requires a non-nil ExecutionStatusProvider (use NoopExecutionStatusProvider{})")
+	}
+	e.execStatus = p
 }
