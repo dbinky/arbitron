@@ -397,6 +397,10 @@ type RunnersConfig struct {
 	StagingDir              string
 	CheckpointDir           string
 	StagingRetentionSeconds int
+
+	TurnLeaseSeconds       int // 15..3600; renewed every TTL/3
+	SessionBundleRetention int // 1..16 successful turn bundles
+	RebuildMaxAttempts     int // 1..5
 }
 
 // Validate reports every violation at once (errors.Join). It is called from
@@ -426,6 +430,7 @@ func (c RunnersConfig) Validate() error {
 	}
 	errs = append(errs, c.validatePhase2()...)
 	errs = append(errs, c.validatePhase3()...)
+	errs = append(errs, c.validatePhase4()...)
 	return errors.Join(errs...)
 }
 
