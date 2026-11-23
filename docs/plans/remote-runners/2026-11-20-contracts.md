@@ -588,6 +588,14 @@ JSON DTOs use separate adapter-local mappers in `adapter/http/runner_dto.go` and
 
 - P4 T6 rebuild additions (unstick 2026-11-23): `engine.TurnCommit` also carries `RequireWorkspace bool`, `RequestID uuid.UUID`, `TurnIndex int` and `ResourceRunID uuid.UUID` (Nil = the run workspace; P4 T11 sets `ResolutionResourceID`); `engine.ErrMissingTurnReceipt`, `engine.ErrUnknownSessionBackend`; `(*SessionCheckpointDeps).commitOperation` (End/Abandon, no stream fence); `checkpoint.SessionStore.SetMaxBundleBytes(int64)`, `CollectGarbage(ctx, live func(ref string) bool, olderThan time.Time) (int, error)`, `checkpoint.DefaultMaxSessionBundleBytes`, `checkpoint.ErrSessionBundleTooLarge`; `runner.ParseTurnWorkspaceRef(string) (CheckpointRef, error)` (inverse of `FormatTurnWorkspaceRef`, format `<resourceUUID>@<version>:<manifestHash>`). `TurnWorkspaceCheckpointer` has `StageTurn` only. Native session bundles exist for `claude-code`/`codex`; `opencode`/`pi` turns commit transcript+workspace without a bundle and later moves rebuild visibly.
 
+- P4 T12 (unstick 2026-11-23):
+  - Protocol: `runnerproto.KindSessionImport`/`OpSessionImport` only, with no export kind or op. `WireChat.NativeCheckpoint`/`SessionExportToken`, `WireChatResult.Session *WireSessionBundle`, and `Dispatch.Resource *WireResource{ID, Kind, WorkDir, FenceKey, FenceOwner, FenceGeneration, FenceToken, CheckpointRef}`.
+  - Runner-agent mirror: `runneragent.ResourceJob`.
+  - Durable staging: port `runner.SessionStaging{Put, Get, Delete, Seal(f, checksum, size) (ref), Open(ref), GC(ctx, before, keep)}` and `runner.StagedBundleRef(f, checksum)` = `staged:<job>/<gen>/<sha256>`. The production store is `checkpoint.OpenSessionBlobs(dir, perBlob, total) (*checkpoint.SessionBlobs, error)` in adapter/checkpoint; `runner.NewSessionBlobs` is the memory test double.
+  - Prepared receipts: `runner.PreparedWorkspaceReceipts{PreparedFor(ctx, Fence) (engine.WorkspaceCompletion, bool, error)}`, implemented by `sqlite.NewPreparedReceiptRepo(db)`.
+  - Result fields: `RemoteResult.Completion *engine.StepCompletion` (hub-sealed). `RemoteChatResult.Session *SessionBundleMeta` with a server-only `PreparedBundleRef`.
+  - Errors: `runner.ErrMissingPreparedReceipt`, `runner.ErrSessionBundleMissing`.
+
 ## 18. Phase 5 names (dashboard)
 
 `dashboard/src/api/types.ts` additions: `RunnerView`, `RunnerDetail`, `RunnerSource`, `SourceHealth`, `RunnerTelemetry`, `PoolEvent`, `RunnerKey`, `RunnerKeyCreateResponse`, `ExecutionStatus`, `PlacementRecord`, `HomeMove`, `DrainProgress`, `SessionMove`. API fns in `dashboard/src/api/runners.ts`: `listRunners()`, `getRunner(id)`, `listPoolEvents(limit)`, `listRunnerKeys()`, `createRunnerKey(name)`, `revokeRunnerKey(id)`. Hooks `dashboard/src/hooks/usePool.ts`, `useRunner.ts`. Routes `/pool`, `/pool/runners/:id`.
