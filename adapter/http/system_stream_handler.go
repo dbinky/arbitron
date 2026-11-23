@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,7 +93,7 @@ func (h *SystemStreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Req
 				conn.Close(websocket.StatusNormalClosure, "event stream ended")
 				return
 			}
-			if !h.canSee(ctx, id, sev.InstanceID, visible) {
+			if !isSystemPoolEvent(sev) && !h.canSee(ctx, id, sev.InstanceID, visible) {
 				continue // drop events for instances this caller may not see
 			}
 			env := systemWSEnvelope{
@@ -145,4 +146,13 @@ func writeWSValue(ctx context.Context, conn *websocket.Conn, v any) error {
 // whose client already knows the instance).
 func writeWSEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
 	return writeWSValue(ctx, conn, evt)
+}
+
+// isSystemPoolEvent reports whether sev is a system-scoped runner-pool event.
+func isSystemPoolEvent(sev engine.ScopedEvent) bool {
+	if sev.InstanceID != uuid.Nil {
+		return false
+	}
+	t := sev.Event.Type
+	return strings.HasPrefix(t, "runner.") || strings.HasPrefix(t, "source.") || strings.HasPrefix(t, "pool.")
 }
