@@ -224,32 +224,37 @@ func (r *NodeExecutionRepo) ListByInstance(ctx context.Context, instanceID uuid.
 			p.applyTo(&executions[i])
 		}
 	}
+	ptrs := make([]*instance.NodeExecution, len(executions))
+	for i := range executions {
+		ptrs[i] = &executions[i]
+	}
+	if err := r.attachSessionState(ctx, instanceID, ptrs); err != nil {
+		return nil, err
+	}
 	return executions, nil
 }
 
 func (r *NodeExecutionRepo) GetByInstanceAndNode(ctx context.Context, instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
-	row, err := r.queries.GetNodeExecutionByInstanceAndNode(ctx, generated.GetNodeExecutionByInstanceAndNodeParams{
-		InstanceID: uuidToString(instanceID),
-		NodeID:     nodeID,
-	})
+	// Attempt numbers reset on a new visit, so select the latest execution by
+	// start order before loading the explicit sqlc column projection.
+	var id string
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM node_executions WHERE instance_id = ? AND node_id = ? ORDER BY started_at DESC, attempt DESC, rowid DESC LIMIT 1`, uuidToString(instanceID), nodeID).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("node execution instance=%s node=%s: %w", instanceID, nodeID, instance.ErrNotFound)
+			return nil, instance.ErrNotFound
 		}
-		return nil, fmt.Errorf("getting node execution: %w", err)
+		return nil, fmt.Errorf("finding latest node execution: %w", err)
 	}
-	exec, err := r.rowToNodeExecution(row)
+	executions, err := r.ListByInstance(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}
-	placements, err := r.readPlacements(ctx, `id = ?`, uuidToString(exec.ID))
-	if err != nil {
-		return nil, err
+	for i := range executions {
+		if uuidToString(executions[i].ID) == id {
+			return &executions[i], nil
+		}
 	}
-	if p, ok := placements[exec.ID]; ok {
-		p.applyTo(exec)
-	}
-	return exec, nil
+	return nil, instance.ErrNotFound
 }
 
 // AggregateByInstances collapses node executions for the given instance IDs

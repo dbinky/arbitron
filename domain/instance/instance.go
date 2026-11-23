@@ -38,6 +38,7 @@ var (
 	ErrCannotCancel              = errors.New("instance cannot be cancelled")
 	ErrCannotRerun               = errors.New("instance cannot be rerun")
 	ErrCannotRetry               = errors.New("instance cannot be retried")
+	ErrStaleSessionGeneration    = errors.New("instance: stale session generation")
 )
 
 // State represents the lifecycle state of a workflow instance.
@@ -292,27 +293,32 @@ const (
 
 // NodeExecution records the result of executing a single node within an instance.
 type NodeExecution struct {
-	ID               uuid.UUID
-	InstanceID       uuid.UUID
-	NodeID           string
-	Attempt          int
-	Status           NodeExecutionStatus
-	ResolvedInputs   map[string]any
-	Output           map[string]any
-	Error            map[string]any
-	LLMConversation  map[string]any
-	LLMModel         *string
-	LLMTokensIn      *int
-	LLMTokensOut     *int
-	ScriptStdout     *string
-	ScriptStderr     *string
-	ScriptExitCode   *int
-	StartedAt        time.Time
-	CompletedAt      *time.Time
-	RunnerID         *string           `json:"runnerId,omitempty"`
-	SourceID         *string           `json:"sourceId,omitempty"`
-	PlacementReason  *string           `json:"placementReason,omitempty"`
-	PlacementHistory []PlacementRecord `json:"placementHistory,omitempty"`
+	ID                   uuid.UUID
+	InstanceID           uuid.UUID
+	NodeID               string
+	Attempt              int
+	Status               NodeExecutionStatus
+	ResolvedInputs       map[string]any
+	Output               map[string]any
+	Error                map[string]any
+	LLMConversation      map[string]any
+	LLMModel             *string
+	LLMTokensIn          *int
+	LLMTokensOut         *int
+	ScriptStdout         *string
+	ScriptStderr         *string
+	ScriptExitCode       *int
+	StartedAt            time.Time
+	CompletedAt          *time.Time
+	SessionInvocationID  uuid.UUID
+	SessionCheckpointRef *string
+	SessionPinRunner     *string
+	SessionGeneration    int64
+	SessionMoves         []SessionMoveRecord
+	RunnerID             *string           `json:"runnerId,omitempty"`
+	SourceID             *string           `json:"sourceId,omitempty"`
+	PlacementReason      *string           `json:"placementReason,omitempty"`
+	PlacementHistory     []PlacementRecord `json:"placementHistory,omitempty"`
 }
 
 // PlacementRecord is one persisted placement fact of a node-execution attempt.

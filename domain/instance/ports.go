@@ -103,6 +103,15 @@ type OpenSessionRecordUpdater interface {
 	PatchSessionFields(ctx context.Context, id uuid.UUID, patch map[string]any) (bool, error)
 }
 
+// SessionStateStore persists generation-fenced interactive session state.
+// SetSessionState is an internal transaction helper; turn commits additionally
+// fence the request and prior checkpoint before calling it.
+type SessionStateStore interface {
+	SetSessionState(ctx context.Context, execID uuid.UUID, st SessionState) error
+	RecordSessionMove(ctx context.Context, execID uuid.UUID, m SessionMoveRecord) error
+	LatestSessionState(ctx context.Context, runID uuid.UUID, nodeID string) (SessionState, bool, error)
+}
+
 // VariableSnapshotRepository defines the port for persisting and querying variable snapshots.
 type VariableSnapshotRepository interface {
 	Create(ctx context.Context, snapshot *VariableSnapshot) error
