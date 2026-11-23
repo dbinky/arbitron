@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS runner_sources (
     last_outcome    TEXT NOT NULL DEFAULT '',
     detail          TEXT NOT NULL DEFAULT '',
     confirmation_model TEXT NOT NULL DEFAULT '',
+    revision        INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
     updated_at      TEXT NOT NULL,
     UNIQUE (runner_id, kind, credential_ref)
 );
