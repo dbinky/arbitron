@@ -27,4 +27,22 @@ describe('NavBar', () => {
     expect(queueIdx).toBeGreaterThanOrEqual(0)
     expect(dashIdx).toBeLessThan(queueIdx)
   })
+
+  it('renders a Pool tab linking to /pool between Queue and Workflows', () => {
+    const { container } = renderNav()
+    expect(screen.getByRole('link', { name: 'Pool' })).toHaveAttribute('href', '/pool')
+    const links = within(container).getAllByRole('link').map((a) => a.textContent)
+    expect(links.indexOf('Pool')).toBe(links.indexOf('Queue') + 1)
+    expect(links.indexOf('Workflows')).toBe(links.indexOf('Pool') + 1)
+  })
+
+  it('marks Pool active on runner detail pages', () => {
+    render(
+      <MemoryRouter initialEntries={['/pool/runners/mac-a']}>
+        <NavBar />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: 'Pool' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Queue' })).not.toHaveAttribute('aria-current')
+  })
 })

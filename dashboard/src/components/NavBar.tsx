@@ -28,6 +28,14 @@ export default function NavBar() {
           Queue
         </NavLink>
         <NavLink
+          to="/pool"
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.navLinkActive : ''}`
+          }
+        >
+          Pool
+        </NavLink>
+        <NavLink
           to="/workflows"
           className={({ isActive }) =>
             `${styles.navLink} ${isActive ? styles.navLinkActive : ''}`
