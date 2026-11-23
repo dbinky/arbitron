@@ -81,6 +81,7 @@ type Decision struct {
 type PlacementPolicy struct {
 	MoveLoadThresholdPct int
 	MoveSizeCapBytes     int64
+	TelemetryMaxAge      time.Duration
 }
 
 // lowHeadroom is the boundary below which a known headroom ranks after unknown.
@@ -95,9 +96,8 @@ type candidate struct {
 	tie      uint32
 }
 
-// Place decides where req runs, or why it must wait. Pure: no I/O, no clock.
-func Place(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Decision {
-	_ = policy // Phase 1: zero policy; P3 T4 adds tiers here.
+// placeRanked decides where req runs, or why it must wait. Pure: no I/O, no clock.
+func placeRanked(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Decision {
 
 	runners := map[RunnerID]Runner{}
 	for _, r := range snap.Runners {
@@ -219,11 +219,6 @@ func runnerEligible(r Runner, req ExecRequirements, snap PoolSnapshot) bool {
 		return true
 	}
 	switch req.Affinity {
-	case AffinityWorkspace:
-		if h, ok := snap.Homes[req.RunID]; ok && h.RunnerID != "" {
-			return r.ID == h.RunnerID
-		}
-		return r.ID == BuiltInRunnerID
 	case AffinitySession:
 		return r.ID == BuiltInRunnerID
 	}
