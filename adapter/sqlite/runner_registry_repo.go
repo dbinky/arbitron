@@ -30,7 +30,7 @@ const runnerColumns = `id, name, built_in, step_limit, labels, cordoned, drainin
 	`liveness, last_contact, os, runner_version, harness_versions, workspace_root, created_at`
 
 const sourceColumns = `id, runner_id, kind, credential_ref, unavailable_reason, families, backends, models, auth, capacity, reset_at, ` +
-	`headroom, windows, congested, congested_until, last_probe_at, last_outcome, detail, confirmation_model, revision`
+	`headroom, windows, congested, congested_until, last_probe_at, last_outcome, detail, confirmation_model, revision, capabilities`
 
 func scanRunner(s rowScanner) (runner.Runner, error) {
 	var r runner.Runner
@@ -63,12 +63,12 @@ func scanRunner(s rowScanner) (runner.Runner, error) {
 
 func scanSource(s rowScanner) (runner.Source, error) {
 	var src runner.Source
-	var id, runnerID, kind, families, backends, models, auth, capacity, windows, outcome string
+	var id, runnerID, kind, families, backends, models, auth, capacity, windows, outcome, capabilities string
 	var resetAt, congestedUntil, lastProbe sql.NullString
 	var headroom sql.NullFloat64
 	var congested int
 	if err := s.Scan(&id, &runnerID, &kind, &src.CredentialRef, &src.UnavailableReason, &families, &backends, &models, &auth, &capacity, &resetAt,
-		&headroom, &windows, &congested, &congestedUntil, &lastProbe, &outcome, &src.Health.Detail, &src.Health.ConfirmationModel, &src.Health.Revision); err != nil {
+		&headroom, &windows, &congested, &congestedUntil, &lastProbe, &outcome, &src.Health.Detail, &src.Health.ConfirmationModel, &src.Health.Revision, &capabilities); err != nil {
 		return runner.Source{}, err
 	}
 	src.ID, src.RunnerID, src.Kind = runner.SourceID(id), runner.RunnerID(runnerID), runner.CredentialKind(kind)
@@ -79,6 +79,9 @@ func scanSource(s rowScanner) (runner.Source, error) {
 		return runner.Source{}, err
 	}
 	if err := decodeList(models, &src.Models); err != nil {
+		return runner.Source{}, err
+	}
+	if err := decodeList(capabilities, &src.Capabilities); err != nil {
 		return runner.Source{}, err
 	}
 	h := &src.Health
@@ -404,18 +407,22 @@ func (r *RunnerRegistryRepo) ReplaceSources(ctx context.Context, id runner.Runne
 		if err != nil {
 			return err
 		}
+		capabilities, err := encodeList(s.Capabilities)
+		if err != nil {
+			return err
+		}
 		windows, err := encodeList(h.Windows)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO runner_sources (`+sourceColumns+`, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET unavailable_reason = excluded.unavailable_reason, families = excluded.families, backends = excluded.backends,
-				models = excluded.models, updated_at = excluded.updated_at`,
+				models = excluded.models, capabilities = excluded.capabilities, updated_at = excluded.updated_at`,
 			string(s.ID), string(id), string(s.Kind), s.CredentialRef, s.UnavailableReason, families, backends, models,
 			string(h.Auth), string(h.Capacity), timeToNullString(h.ResetAt), headroomArg(h.Headroom), windows,
 			boolToInt(h.Congested), timeToNullString(h.CongestedUntil), timeToNullString(h.LastProbeAt),
-			string(h.LastOutcome), h.Detail, h.ConfirmationModel, h.Revision, now); err != nil {
+			string(h.LastOutcome), h.Detail, h.ConfirmationModel, h.Revision, capabilities, now); err != nil {
 			return fmt.Errorf("upserting source %s: %w", s.ID, err)
 		}
 		keep[s.ID] = true

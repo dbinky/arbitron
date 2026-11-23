@@ -82,6 +82,13 @@ func defaults() map[string]interface{} {
 		"runners.transientbackoffminms": domainconfig.DefaultRunnerTransientBackoffMinMs,
 		"runners.transientbackoffmaxms": domainconfig.DefaultRunnerTransientBackoffMaxMs,
 		"runners.eventretention":        domainconfig.DefaultRunnerEventRetention,
+		"runners.heartbeatseconds":      5,
+		"runners.suspectafterseconds":   30,
+		"runners.lostafterseconds":      120,
+		"runners.offerttlseconds":       30,
+		"runners.outputbufferframes":    4096,
+		"runners.telemetrywindow":       60,
+		"runners.scratchroot":           "",
 		"script.envpassthrough":         []string{},
 		"server.tls.enabled":            false,
 		"server.tls.certfile":           "",
@@ -642,6 +649,10 @@ func normalize(cfg *domainconfig.Config) {
 	}
 	cfg.Layout.BrowserPath = strings.TrimSpace(cfg.Layout.BrowserPath)
 	cfg.Layout.ArtifactDir = strings.TrimSpace(cfg.Layout.ArtifactDir)
+	cfg.Runners.ScratchRoot = strings.TrimSpace(cfg.Runners.ScratchRoot)
+	if cfg.Runners.ScratchRoot == "" {
+		cfg.Runners.ScratchRoot = filepath.Join(cfg.Workspace.Path, ".runner-scratch")
+	}
 }
 
 // validateAuth enforces the org-mode contract: a deployment that turns on org

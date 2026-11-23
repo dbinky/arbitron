@@ -380,7 +380,14 @@ type RunnersConfig struct {
 	TransientBackoffMinMs int
 	TransientBackoffMaxMs int
 	// EventRetention is how many pool events the persisted log keeps. >= 100.
-	EventRetention int
+	EventRetention      int
+	HeartbeatSeconds    int
+	SuspectAfterSeconds int
+	LostAfterSeconds    int
+	OfferTTLSeconds     int
+	OutputBufferFrames  int
+	TelemetryWindow     int
+	ScratchRoot         string
 }
 
 // Validate reports every violation at once (errors.Join). It is called from
@@ -408,5 +415,30 @@ func (c RunnersConfig) Validate() error {
 	if c.EventRetention < 100 {
 		errs = append(errs, fmt.Errorf("runners.eventretention %d must be at least 100", c.EventRetention))
 	}
+	errs = append(errs, c.validatePhase2()...)
 	return errors.Join(errs...)
+}
+
+// validatePhase2 returns one error per Phase-2 violation, each naming its key.
+func (c RunnersConfig) validatePhase2() []error {
+	var errs []error
+	if c.HeartbeatSeconds < 1 || c.HeartbeatSeconds > 60 {
+		errs = append(errs, fmt.Errorf("runners.heartbeatseconds must be 1..60, got %d", c.HeartbeatSeconds))
+	}
+	if c.SuspectAfterSeconds <= c.HeartbeatSeconds {
+		errs = append(errs, fmt.Errorf("runners.suspectafterseconds (%d) must be greater than runners.heartbeatseconds (%d)", c.SuspectAfterSeconds, c.HeartbeatSeconds))
+	}
+	if c.LostAfterSeconds <= c.SuspectAfterSeconds {
+		errs = append(errs, fmt.Errorf("runners.lostafterseconds (%d) must be greater than runners.suspectafterseconds (%d)", c.LostAfterSeconds, c.SuspectAfterSeconds))
+	}
+	if c.OfferTTLSeconds < 1 || c.OfferTTLSeconds >= c.LostAfterSeconds {
+		errs = append(errs, fmt.Errorf("runners.offerttlseconds (%d) must be >= 1 and less than runners.lostafterseconds (%d)", c.OfferTTLSeconds, c.LostAfterSeconds))
+	}
+	if c.OutputBufferFrames < 64 || c.OutputBufferFrames > 1<<20 {
+		errs = append(errs, fmt.Errorf("runners.outputbufferframes must be 64..1048576, got %d", c.OutputBufferFrames))
+	}
+	if c.TelemetryWindow < 1 || c.TelemetryWindow > 3600 {
+		errs = append(errs, fmt.Errorf("runners.telemetrywindow must be 1..3600, got %d", c.TelemetryWindow))
+	}
+	return errs
 }
