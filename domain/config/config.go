@@ -388,6 +388,15 @@ type RunnersConfig struct {
 	OutputBufferFrames  int
 	TelemetryWindow     int
 	ScratchRoot         string
+
+	// Phase 3: workspace mobility.
+	MoveLoadThresholdPct    int
+	MoveSizeCapBytes        int64
+	RestartGraceSeconds     int
+	TransferPartBytes       int64
+	StagingDir              string
+	CheckpointDir           string
+	StagingRetentionSeconds int
 }
 
 // Validate reports every violation at once (errors.Join). It is called from
@@ -416,6 +425,7 @@ func (c RunnersConfig) Validate() error {
 		errs = append(errs, fmt.Errorf("runners.eventretention %d must be at least 100", c.EventRetention))
 	}
 	errs = append(errs, c.validatePhase2()...)
+	errs = append(errs, c.validatePhase3()...)
 	return errors.Join(errs...)
 }
 
