@@ -78,7 +78,7 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 	}
 	exec.StartedAt = startedAt
 	exec.CompletedAt = completedAt
-	return nil
+	return r.writePlacement(ctx, exec)
 }
 
 func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecution) error {
@@ -186,6 +186,15 @@ func (r *NodeExecutionRepo) ListByInstance(ctx context.Context, instanceID uuid.
 		}
 		executions = append(executions, *exec)
 	}
+	placements, err := r.readPlacements(ctx, `instance_id = ?`, uuidToString(instanceID))
+	if err != nil {
+		return nil, err
+	}
+	for i := range executions {
+		if p, ok := placements[executions[i].ID]; ok {
+			p.applyTo(&executions[i])
+		}
+	}
 	return executions, nil
 }
 
@@ -200,7 +209,18 @@ func (r *NodeExecutionRepo) GetByInstanceAndNode(ctx context.Context, instanceID
 		}
 		return nil, fmt.Errorf("getting node execution: %w", err)
 	}
-	return r.rowToNodeExecution(row)
+	exec, err := r.rowToNodeExecution(row)
+	if err != nil {
+		return nil, err
+	}
+	placements, err := r.readPlacements(ctx, `id = ?`, uuidToString(exec.ID))
+	if err != nil {
+		return nil, err
+	}
+	if p, ok := placements[exec.ID]; ok {
+		p.applyTo(exec)
+	}
+	return exec, nil
 }
 
 // AggregateByInstances collapses node executions for the given instance IDs
@@ -306,4 +326,75 @@ func (r *NodeExecutionRepo) rowToNodeExecution(row generated.NodeExecution) (*in
 		StartedAt:       startedAt,
 		CompletedAt:     completedAt,
 	}, nil
+}
+
+// placementRow is the hand-written read of migration 042's columns; the
+// sqlc-generated queries predate them and stay unchanged.
+type placementRow struct {
+	runnerID, sourceID, reason sql.NullString
+	history                    sql.NullString
+}
+
+func (p placementRow) applyTo(exec *instance.NodeExecution) {
+	exec.RunnerID = nullStringToPtr(p.runnerID)
+	exec.SourceID = nullStringToPtr(p.sourceID)
+	exec.PlacementReason = nullStringToPtr(p.reason)
+	if p.history.Valid && p.history.String != "" {
+		var hist []instance.PlacementRecord
+		if err := json.Unmarshal([]byte(p.history.String), &hist); err == nil {
+			exec.PlacementHistory = hist
+		}
+	}
+}
+
+// writePlacement persists the placement columns of a freshly created row. A
+// row with no placement (non-dispatching node) issues no statement.
+func (r *NodeExecutionRepo) writePlacement(ctx context.Context, exec *instance.NodeExecution) error {
+	if exec.RunnerID == nil && exec.SourceID == nil && exec.PlacementReason == nil && len(exec.PlacementHistory) == 0 {
+		return nil
+	}
+	var hist sql.NullString
+	if len(exec.PlacementHistory) > 0 {
+		b, err := json.Marshal(exec.PlacementHistory)
+		if err != nil {
+			return fmt.Errorf("marshalling placement history: %w", err)
+		}
+		hist = sql.NullString{String: string(b), Valid: true}
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE node_executions SET runner_id = ?, source_id = ?, placement_reason = ?, placement_history = ? WHERE id = ?`,
+		ptrToNullString(exec.RunnerID), ptrToNullString(exec.SourceID), ptrToNullString(exec.PlacementReason), hist, uuidToString(exec.ID),
+	); err != nil {
+		return fmt.Errorf("writing node execution placement: %w", err)
+	}
+	return nil
+}
+
+// readPlacements loads placement columns for the rows matching where/arg,
+// keyed by node-execution id. Rows without any placement are omitted.
+func (r *NodeExecutionRepo) readPlacements(ctx context.Context, where string, arg string) (map[uuid.UUID]placementRow, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, runner_id, source_id, placement_reason, placement_history FROM node_executions
+		 WHERE `+where+` AND (runner_id IS NOT NULL OR placement_history IS NOT NULL)`, arg)
+	if err != nil {
+		return nil, fmt.Errorf("reading node execution placement: %w", err)
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]placementRow{}
+	for rows.Next() {
+		var idStr string
+		var p placementRow
+		if err := rows.Scan(&idStr, &p.runnerID, &p.sourceID, &p.reason, &p.history); err != nil {
+			return nil, fmt.Errorf("scanning node execution placement: %w", err)
+		}
+		id, err := parseUUID(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing node execution id: %w", err)
+		}
+		out[id] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating node execution placement: %w", err)
+	}
+	return out, nil
 }

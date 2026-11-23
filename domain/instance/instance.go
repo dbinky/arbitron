@@ -292,23 +292,38 @@ const (
 
 // NodeExecution records the result of executing a single node within an instance.
 type NodeExecution struct {
-	ID              uuid.UUID
-	InstanceID      uuid.UUID
-	NodeID          string
-	Attempt         int
-	Status          NodeExecutionStatus
-	ResolvedInputs  map[string]any
-	Output          map[string]any
-	Error           map[string]any
-	LLMConversation map[string]any
-	LLMModel        *string
-	LLMTokensIn     *int
-	LLMTokensOut    *int
-	ScriptStdout    *string
-	ScriptStderr    *string
-	ScriptExitCode  *int
-	StartedAt       time.Time
-	CompletedAt     *time.Time
+	ID               uuid.UUID
+	InstanceID       uuid.UUID
+	NodeID           string
+	Attempt          int
+	Status           NodeExecutionStatus
+	ResolvedInputs   map[string]any
+	Output           map[string]any
+	Error            map[string]any
+	LLMConversation  map[string]any
+	LLMModel         *string
+	LLMTokensIn      *int
+	LLMTokensOut     *int
+	ScriptStdout     *string
+	ScriptStderr     *string
+	ScriptExitCode   *int
+	StartedAt        time.Time
+	CompletedAt      *time.Time
+	RunnerID         *string           `json:"runnerId,omitempty"`
+	SourceID         *string           `json:"sourceId,omitempty"`
+	PlacementReason  *string           `json:"placementReason,omitempty"`
+	PlacementHistory []PlacementRecord `json:"placementHistory,omitempty"`
+}
+
+// PlacementRecord is one persisted placement fact of a node-execution attempt.
+type PlacementRecord struct {
+	JobID      string    `json:"jobId"`
+	RunnerID   string    `json:"runnerId"`
+	SourceID   string    `json:"sourceId,omitempty"`
+	Reason     string    `json:"reason"`
+	Outcome    string    `json:"outcome"`
+	Generation int64     `json:"generation"`
+	At         time.Time `json:"at"`
 }
 
 // VariableSnapshot captures the state of instance variables after a node executes.
