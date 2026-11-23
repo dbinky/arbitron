@@ -238,7 +238,7 @@ func (r *NodeExecutionRepo) GetByInstanceAndNode(ctx context.Context, instanceID
 	// Attempt numbers reset on a new visit, so select the latest execution by
 	// start order before loading the explicit sqlc column projection.
 	var id string
-	err := r.db.QueryRowContext(ctx, `SELECT id FROM node_executions WHERE instance_id = ? AND node_id = ? ORDER BY started_at DESC, attempt DESC, rowid DESC LIMIT 1`, uuidToString(instanceID), nodeID).Scan(&id)
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM node_executions WHERE instance_id = ? AND node_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1`, uuidToString(instanceID), nodeID).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, instance.ErrNotFound

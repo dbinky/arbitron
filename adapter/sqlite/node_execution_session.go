@@ -105,7 +105,7 @@ func (r *NodeExecutionRepo) LatestSessionState(ctx context.Context, runID uuid.U
 	var inv, ref, pin sql.NullString
 	var gen int64
 	err := r.db.QueryRowContext(ctx, `SELECT session_invocation_id, session_checkpoint_ref, session_pin_runner, session_generation
-FROM node_executions WHERE instance_id = ? AND node_id = ? ORDER BY started_at DESC, attempt DESC, rowid DESC LIMIT 1`,
+FROM node_executions WHERE instance_id = ? AND node_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1`,
 		uuidToString(runID), nodeID).Scan(&inv, &ref, &pin, &gen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return instance.SessionState{}, false, nil

@@ -17,7 +17,7 @@ func TestSessionState_NewInvocationWinsOverOlderHigherAttempt(t *testing.T) {
 	inst, old := seedSessionExec(t, db, "chat", 9, t0)
 	oldInv, newInv := uuid.New(), uuid.New()
 	require.NoError(t, repo.SetSessionState(ctx, old.ID, instance.SessionState{InvocationID: oldInv, CheckpointRef: strp("old"), Generation: 4}))
-	newer := &instance.NodeExecution{ID: uuid.New(), InstanceID: inst.ID, NodeID: "chat", Attempt: 1, StartedAt: t0.Add(time.Minute), Status: instance.NodeStatusSucceeded}
+	newer := &instance.NodeExecution{ID: uuid.New(), InstanceID: inst.ID, NodeID: "chat", Attempt: 1, StartedAt: t0, Status: instance.NodeStatusSucceeded}
 	require.NoError(t, repo.Create(ctx, newer))
 	require.NoError(t, repo.SetSessionState(ctx, newer.ID, instance.SessionState{InvocationID: newInv, CheckpointRef: strp("new"), Generation: 1}))
 	st, ok, err := repo.LatestSessionState(ctx, inst.ID, "chat")
