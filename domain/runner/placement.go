@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/modelidentity"
@@ -107,6 +108,7 @@ func Place(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Deci
 	var eligible []candidate
 	var exhausted, loggedOut, probationBusy, matched int
 	var nextReset *time.Time
+	var blocked []string
 
 	if req.Group.Kind == CredNone {
 		for _, r := range runners {
@@ -116,7 +118,13 @@ func Place(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Deci
 		for i := range snap.Sources {
 			s := snap.Sources[i]
 			r, ok := runners[s.RunnerID]
-			if !ok || !sourceMatches(s, req) {
+			if !ok {
+				continue
+			}
+			if !sourceMatches(s, req) {
+				if s.UnavailableReason != "" && sourceRequestMatches(s, req) {
+					blocked = append(blocked, s.UnavailableReason)
+				}
 				continue
 			}
 			matched++
@@ -152,6 +160,11 @@ func Place(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Deci
 		} else {
 			detail = fmt.Sprintf("waiting · capacity: no eligible source for %s (exhausted=%d logged_out=%d probation_busy=%d)",
 				req.Group, exhausted, loggedOut, probationBusy)
+		}
+		if len(blocked) > 0 {
+			slices.Sort(blocked)
+			blocked = slices.Compact(blocked)
+			detail += fmt.Sprintf(" model=%s backend=%s blocked=%s", req.Model, req.Backend, strings.Join(blocked, ","))
 		}
 		if nextReset != nil {
 			detail += " next reset " + nextReset.UTC().Format(time.RFC3339)
@@ -193,12 +206,16 @@ func runnerEligible(r Runner, req ExecRequirements, snap PoolSnapshot) bool {
 			return false
 		}
 	}
-	if req.PinnedRunner != "" {
-		return r.ID == req.PinnedRunner
+	// Pins and built-in restrictions are cumulative; neither can relax the other.
+	if req.PinnedRunner != "" && r.ID != req.PinnedRunner {
+		return false
 	}
 	builtInOnly := req.Group.Kind == CredServerConnection || req.Group.Kind == CredLocalHarness || req.Affinity == AffinityBuiltIn
 	if builtInOnly {
 		return r.ID == BuiltInRunnerID
+	}
+	if req.PinnedRunner != "" {
+		return true
 	}
 	switch req.Affinity {
 	case AffinityWorkspace:
@@ -213,8 +230,15 @@ func runnerEligible(r Runner, req ExecRequirements, snap PoolSnapshot) bool {
 }
 
 func sourceMatches(s Source, req ExecRequirements) bool {
+	return s.UnavailableReason == "" && sourceRequestMatches(s, req)
+}
+
+func sourceRequestMatches(s Source, req ExecRequirements) bool {
+	if req.RequiredSource != "" && s.ID != req.RequiredSource {
+		return false
+	}
 	g := req.Group
-	if s.UnavailableReason != "" || s.Kind != g.Kind {
+	if s.Kind != g.Kind {
 		return false
 	}
 	switch g.Kind {
@@ -243,9 +267,38 @@ func sourceMatches(s Source, req ExecRequirements) bool {
 	return true
 }
 
-// better orders candidates. Cycle 2 replaces this with the full ranking
-// (headroom tier, utilisation, telemetry penalty, fair tie-break).
-func better(a, b candidate) bool { return candidateKey(a) < candidateKey(b) }
+func headroomTier(h *float64) int {
+	switch {
+	case h == nil:
+		return 1
+	case *h > lowHeadroom:
+		return 0
+	default:
+		return 2
+	}
+}
+
+// better ranks headroom, utilisation, machine pressure, then a per-run tie-break.
+func better(a, b candidate) bool {
+	if ta, tb := headroomTier(a.headroom), headroomTier(b.headroom); ta != tb {
+		return ta < tb
+	}
+	if a.headroom != nil && b.headroom != nil && *a.headroom != *b.headroom {
+		return *a.headroom > *b.headroom
+	}
+	ua := float64(a.used) / float64(a.runner.StepLimit)
+	ub := float64(b.used) / float64(b.runner.StepLimit)
+	if ua != ub {
+		return ua < ub
+	}
+	if a.penalty != b.penalty {
+		return a.penalty < b.penalty
+	}
+	if a.tie != b.tie {
+		return a.tie < b.tie
+	}
+	return candidateKey(a) < candidateKey(b)
+}
 
 func candidateKey(c candidate) string {
 	if c.source != nil {

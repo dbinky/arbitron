@@ -257,9 +257,159 @@ func TestPlace_LocalHarnessBuiltInOnly(t *testing.T) {
 	assert.Equal(t, runner.BuiltInRunnerID, d.Runner)
 }
 
+func TestPlace_PinNeverRelaxesBuiltInOnly(t *testing.T) {
+	for _, kind := range []runner.CredentialKind{runner.CredServerConnection, runner.CredLocalHarness, runner.CredAnthropicSubscription} {
+		t.Run(string(kind), func(t *testing.T) {
+			req := anthropicReq(runner.AffinityBuiltIn)
+			req.Group.Kind = kind
+			req.PinnedRunner = "remote"
+			src := anthropicSub("remote")
+			src.Kind = kind
+			src.ID = runner.MakeSourceID("remote", kind, "")
+			d := runner.Place(req, snap([]runner.Runner{online("remote"), online(runner.BuiltInRunnerID)}, []runner.Source{src}), runner.PlacementPolicy{})
+			require.False(t, d.Placed, "a pin cannot bypass built-in-only restrictions")
+			assert.Equal(t, runner.WaitCapacity, d.Wait.Kind)
+		})
+	}
+}
+
 func TestPlace_IsPure(t *testing.T) {
 	s := snap([]runner.Runner{online(runner.BuiltInRunnerID)}, []runner.Source{anthropicSub(runner.BuiltInRunnerID)})
 	req := anthropicReq(runner.AffinityBuiltIn)
 	assert.Equal(t, runner.Place(req, s, runner.PlacementPolicy{}), runner.Place(req, s, runner.PlacementPolicy{}))
 	assert.Empty(t, s.SlotsInUse, "the snapshot is not mutated")
+}
+
+func TestPlace_UnavailableHarnessNeverAssigned(t *testing.T) {
+	for _, reason := range []string{"harness_unsupported", "harness_missing"} {
+		t.Run(reason, func(t *testing.T) {
+			src := anthropicSub(runner.BuiltInRunnerID)
+			src.UnavailableReason = reason
+			s := snap([]runner.Runner{online(runner.BuiltInRunnerID)}, []runner.Source{src})
+			req := anthropicReq(runner.AffinityBuiltIn)
+			d := runner.Place(req, s, runner.PlacementPolicy{})
+			require.False(t, d.Placed)
+			require.NotNil(t, d.Wait)
+			assert.Equal(t, runner.WaitCapacity, d.Wait.Kind)
+			assert.Contains(t, d.Reason, reason)
+			assert.Contains(t, d.Reason, req.Model)
+			assert.Contains(t, d.Reason, req.Backend)
+			assert.Equal(t, d.Reason, d.Wait.Detail)
+
+			// Availability is per source, not a runner-wide ban.
+			other := src
+			other.ID = runner.MakeSourceID(runner.BuiltInRunnerID, src.Kind, "supported")
+			other.UnavailableReason = ""
+			s.Sources = append(s.Sources, other)
+			d = runner.Place(req, s, runner.PlacementPolicy{})
+			require.True(t, d.Placed)
+			assert.Equal(t, other.ID, d.Source)
+		})
+	}
+}
+
+func TestPlace_RequiredSourceCannotUseHealthyAlternative(t *testing.T) {
+	a := anthropicSub(runner.BuiltInRunnerID)
+	a.Health.Capacity = runner.CapacityExhausted
+	b := anthropicSub(runner.BuiltInRunnerID)
+	b.ID = runner.MakeSourceID(runner.BuiltInRunnerID, b.Kind, "alternative")
+	s := snap([]runner.Runner{online(runner.BuiltInRunnerID)}, []runner.Source{a, b})
+	req := anthropicReq(runner.AffinityBuiltIn)
+	req.RequiredSource = a.ID
+	d := runner.Place(req, s, runner.PlacementPolicy{})
+	require.False(t, d.Placed, "success on B cannot confirm exhausted A")
+	require.NotNil(t, d.Wait)
+	assert.Equal(t, runner.WaitCapacity, d.Wait.Kind)
+
+	s.Sources[0].Health.Capacity = runner.CapacityProbation
+	d = runner.Place(req, s, runner.PlacementPolicy{})
+	require.True(t, d.Placed)
+	assert.Equal(t, a.ID, d.Source)
+	s.SourceInFlight[a.ID] = 1
+	require.False(t, runner.Place(req, s, runner.PlacementPolicy{}).Placed)
+	delete(s.SourceInFlight, a.ID)
+	s.SlotsInUse[runner.BuiltInRunnerID] = 8
+	assert.Equal(t, runner.WaitSlot, runner.Place(req, s, runner.PlacementPolicy{}).Wait.Kind)
+	s.SlotsInUse[runner.BuiltInRunnerID] = 0
+	s.Sources[0].Health.Auth = runner.AuthLoggedOut
+	require.False(t, runner.Place(req, s, runner.PlacementPolicy{}).Placed)
+
+	req.RequiredSource = ""
+	d = runner.Place(req, s, runner.PlacementPolicy{})
+	require.True(t, d.Placed, "ordinary placement may use healthy B")
+	assert.Equal(t, b.ID, d.Source)
+}
+
+func headroomSource(r runner.RunnerID, h *float64) runner.Source {
+	s := anthropicSub(r)
+	s.Health.Headroom = h
+	return s
+}
+
+func TestPlace_MostHeadroomWinsAndUnknownIsExplicit(t *testing.T) {
+	ids := []runner.RunnerID{"a", "b", "c", "d"}
+	var runners []runner.Runner
+	for _, id := range ids {
+		runners = append(runners, online(id))
+	}
+	sources := []runner.Source{
+		headroomSource("a", f64(0.30)),
+		headroomSource("b", f64(0.90)),
+		headroomSource("c", nil),
+		headroomSource("d", f64(0.10)),
+	}
+	order := []runner.RunnerID{"b", "a", "c", "d"} // 0.90 > 0.30 > unknown > 0.10
+	for _, want := range order {
+		d := runner.Place(anthropicReq(runner.AffinityNone), snap(runners, sources), runner.PlacementPolicy{})
+		require.True(t, d.Placed)
+		assert.Equal(t, want, d.Runner)
+		// remove the winner and re-place
+		var rest []runner.Source
+		for _, s := range sources {
+			if s.RunnerID != want {
+				rest = append(rest, s)
+			}
+		}
+		sources = rest
+	}
+	c := runner.Place(anthropicReq(runner.AffinityNone), snap(runners, []runner.Source{headroomSource("c", nil)}), runner.PlacementPolicy{})
+	assert.Contains(t, c.Reason, "headroom=unknown", "unknown headroom is reported as unknown, never 0 or 1")
+	b := runner.Place(anthropicReq(runner.AffinityNone), snap(runners, []runner.Source{headroomSource("b", f64(0.9))}), runner.PlacementPolicy{})
+	assert.Contains(t, b.Reason, "headroom=0.90")
+}
+
+func TestPlace_LowerUtilisationWinsOnEqualHeadroom(t *testing.T) {
+	runners := []runner.Runner{online("a"), online("b")}
+	s := snap(runners, []runner.Source{headroomSource("a", f64(0.5)), headroomSource("b", f64(0.5))})
+	s.SlotsInUse["a"] = 5
+	s.SlotsInUse["b"] = 1
+	d := runner.Place(anthropicReq(runner.AffinityNone), s, runner.PlacementPolicy{})
+	assert.Equal(t, runner.RunnerID("b"), d.Runner)
+	assert.Contains(t, d.Reason, "slots=1/8")
+}
+
+func TestPlace_HealthierTelemetryWinsUnknownIsNeutral(t *testing.T) {
+	runners := []runner.Runner{online("a"), online("b")}
+	s := snap(runners, []runner.Source{anthropicSub("a"), anthropicSub("b")})
+	s.Telemetry["a"] = runner.Telemetry{MemPressure: strp("critical"), Thermal: strp("serious")}
+	// b has no telemetry at all: unknown is neutral, so b (penalty 0) beats a (penalty 3).
+	for i := 0; i < 20; i++ {
+		req := anthropicReq(runner.AffinityNone)
+		assert.Equal(t, runner.RunnerID("b"), runner.Place(req, s, runner.PlacementPolicy{}).Runner)
+	}
+}
+
+func TestPlace_DeterministicFairTieBreakSpreadsJobs(t *testing.T) {
+	runners := []runner.Runner{online("a"), online("b")}
+	s := snap(runners, []runner.Source{anthropicSub("a"), anthropicSub("b")})
+	counts := map[runner.RunnerID]int{}
+	for i := 0; i < 200; i++ {
+		req := anthropicReq(runner.AffinityNone) // fresh RunID each time
+		first := runner.Place(req, s, runner.PlacementPolicy{})
+		again := runner.Place(req, s, runner.PlacementPolicy{})
+		require.Equal(t, first, again, "same run, same snapshot => same decision")
+		counts[first.Runner]++
+	}
+	assert.Greater(t, counts["a"], 50, "equal/unknown headroom still spreads independent jobs: %v", counts)
+	assert.Greater(t, counts["b"], 50, "equal/unknown headroom still spreads independent jobs: %v", counts)
 }
