@@ -235,9 +235,172 @@ func (p *SessionPortability) Export(ctx context.Context, sessionID, workDir stri
 	}, nil
 }
 
-// Import is added in Cycle 3.
-var _ = path.Clean
+func rebuild(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", engine.ErrBundleRequiresRebuild, fmt.Sprintf(format, args...))
+}
 
+type claudeBundleContents struct {
+	meta       claudeBundleMeta
+	transcript []byte
+	sidecar    map[string][]byte // slash-relative path under <id>/
+}
+
+// readClaudeBundle unpacks Data, refusing unsafe names and unexpected entries.
+func readClaudeBundle(data []byte, max int64) (claudeBundleContents, error) {
+	var out claudeBundleContents
+	out.sidecar = map[string][]byte{}
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return out, rebuild("unreadable bundle: %v", err)
+	}
+	tr := tar.NewReader(zr)
+	var total int64
+	var sawMeta, sawTranscript bool
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return out, rebuild("unreadable bundle: %v", err)
+		}
+		if h.Typeflag != tar.TypeReg {
+			return out, rebuild("bundle entry %q is not a regular file", h.Name)
+		}
+		body, err := io.ReadAll(io.LimitReader(tr, max-total+1))
+		if err != nil {
+			return out, rebuild("unreadable bundle entry: %v", err)
+		}
+		total += int64(len(body))
+		if total > max {
+			return out, rebuild("bundle exceeds %d bytes", max)
+		}
+		switch {
+		case h.Name == bundleMetaName:
+			if err := json.Unmarshal(body, &out.meta); err != nil || out.meta.Format != claudeBundleFormat || out.meta.OriginProjectDir == "" {
+				return out, rebuild("unsupported bundle metadata")
+			}
+			sawMeta = true
+		case h.Name == bundleTranscriptName:
+			out.transcript, sawTranscript = body, true
+		case strings.HasPrefix(h.Name, bundleSidecarPrefix):
+			rel := strings.TrimPrefix(h.Name, bundleSidecarPrefix)
+			clean := path.Clean(rel)
+			if rel == "" || clean != rel || strings.HasPrefix(clean, "../") || clean == ".." || path.IsAbs(clean) {
+				return out, rebuild("unsafe sidecar path %q", h.Name)
+			}
+			out.sidecar[clean] = body
+		default:
+			return out, rebuild("unexpected bundle entry %q", h.Name)
+		}
+	}
+	if !sawMeta || !sawTranscript {
+		return out, rebuild("bundle is missing its metadata or transcript")
+	}
+	return out, nil
+}
+
+// Import implements engine.SessionPortability. It installs the transcript and
+// sidecars byte-for-byte under the target's project dir for the SAME workDir.
 func (p *SessionPortability) Import(ctx context.Context, b engine.SessionBundle, workDir string) (string, error) {
-	return "", engine.ErrBundleRequiresRebuild
+	if b.Backend != workflow.BackendClaudeCode {
+		return "", fmt.Errorf("claudecli: cannot import a %q bundle", b.Backend)
+	}
+	if err := validateSessionArgs(b.SessionID, workDir); err != nil {
+		return "", err
+	}
+	if err := b.Verify(); err != nil {
+		return "", fmt.Errorf("%w: %w", engine.ErrBundleRequiresRebuild, err)
+	}
+	version, err := p.version(ctx)
+	if err != nil {
+		return "", fmt.Errorf("claudecli: harness version unavailable: %w", err)
+	}
+	if strings.TrimSpace(version) == "" || strings.TrimSpace(b.HarnessVersion) == "" {
+		return "", rebuild("harness version is missing")
+	}
+	if strings.TrimSpace(version) != b.HarnessVersion {
+		return "", rebuild("harness version skew (bundle %s, target %s)", b.HarnessVersion, strings.TrimSpace(version))
+	}
+	if workDir != b.OriginWorkDir {
+		return "", rebuild("workspace path differs from the origin (identical paths are required)")
+	}
+	contents, err := readClaudeBundle(b.Data, p.maxBytes)
+	if err != nil {
+		return "", err
+	}
+	cfg, err := p.configDir()
+	if err != nil {
+		return "", err
+	}
+	projectDir := filepath.Join(cfg, "projects", EncodeProjectDir(workDir))
+	if filepath.Clean(projectDir) != filepath.Clean(contents.meta.OriginProjectDir) {
+		// RR-13: absolute tool-result/sidecar references would point at the
+		// origin HOME. Rewriting signed content is unsafe; refuse natively.
+		origin := []byte(contents.meta.OriginProjectDir)
+		if bytes.Contains(contents.transcript, origin) {
+			return "", rebuild("transcript references the origin session store by absolute path")
+		}
+		for name, body := range contents.sidecar {
+			if bytes.Contains(body, origin) {
+				return "", rebuild("sidecar %q references the origin session store by absolute path", name)
+			}
+		}
+	}
+	if err := installClaudeSession(projectDir, b.SessionID, contents); err != nil {
+		return "", fmt.Errorf("claudecli: install session: %w", err)
+	}
+	return b.SessionID, nil
+}
+
+// installClaudeSession writes the sidecar tree to a temp dir and swaps it in,
+// then writes the transcript via temp file + rename, so a crash never leaves a
+// half-written transcript in place.
+func installClaudeSession(projectDir, sessionID string, c claudeBundleContents) error {
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(projectDir, "."+sessionID+".import-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging)
+	for rel, body := range c.sidecar {
+		dst := filepath.Join(staging, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, body, 0o600); err != nil {
+			return err
+		}
+	}
+	sidecarDir := filepath.Join(projectDir, sessionID)
+	if err := os.RemoveAll(sidecarDir); err != nil {
+		return err
+	}
+	if len(c.sidecar) > 0 {
+		if err := os.Rename(staging, sidecarDir); err != nil {
+			return err
+		}
+	}
+	tmp, err := os.CreateTemp(projectDir, "."+sessionID+".jsonl-")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(c.transcript); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, filepath.Join(projectDir, sessionID+".jsonl"))
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -161,4 +162,136 @@ func TestClaudeExport_EnforcesSizeCap(t *testing.T) {
 	require.NoError(t, err)
 	_, err = p.Export(context.Background(), fixtureSID, fixtureWork)
 	assert.ErrorContains(t, err, "exceeds")
+}
+
+func exportFrom(t *testing.T, home, fixture, version string) engine.SessionBundle {
+	t.Helper()
+	installFixture(t, filepath.Join(home, ".claude"), EncodeProjectDir(fixtureWork), fixture)
+	b, err := newPortability(t, []string{"HOME=" + home}, version).Export(context.Background(), fixtureSID, fixtureWork)
+	require.NoError(t, err)
+	return b
+}
+
+func TestSessionPortability_MissingVersionOrDiskFailureFailsClosed(t *testing.T) {
+	b := exportFrom(t, t.TempDir(), "basic", "2.1.328")
+	for _, tc := range []struct{ name, bundleVersion, targetVersion string }{
+		{"missing target version", "2.1.328", ""},
+		{"missing bundle version", "", "2.1.328"},
+		{"both missing", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			bundle := b
+			bundle.HarnessVersion = tc.bundleVersion
+			_, err := newPortability(t, []string{"HOME=" + home}, tc.targetVersion).Import(context.Background(), bundle, fixtureWork)
+			require.Error(t, err)
+			_, err = os.Stat(filepath.Join(home, ".claude", "projects"))
+			require.True(t, os.IsNotExist(err), "unversioned state must never be installed")
+		})
+	}
+	t.Run("disk failure", func(t *testing.T) {
+		cfg := filepath.Join(t.TempDir(), "not-a-directory")
+		require.NoError(t, os.WriteFile(cfg, []byte("occupied"), 0o600))
+		_, err := newPortability(t, []string{"CLAUDE_CONFIG_DIR=" + cfg}, "2.1.328").Import(context.Background(), b, fixtureWork)
+		require.Error(t, err)
+		got, err := os.ReadFile(cfg)
+		require.NoError(t, err)
+		assert.Equal(t, "occupied", string(got))
+	})
+}
+
+func TestClaudeImport_SameHomeRestoresTranscriptAndSidecars(t *testing.T) {
+	home := t.TempDir()
+	b := exportFrom(t, home, "sidecar", "2.1.328")
+	projectDir := filepath.Join(home, ".claude", "projects", EncodeProjectDir(fixtureWork))
+	original, err := os.ReadFile(filepath.Join(projectDir, fixtureSID+".jsonl"))
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(projectDir)) // the runner lost its local copy
+
+	sid, err := newPortability(t, []string{"HOME=" + home}, "2.1.328").Import(context.Background(), b, fixtureWork)
+	require.NoError(t, err)
+	assert.Equal(t, fixtureSID, sid)
+	restored, err := os.ReadFile(filepath.Join(projectDir, fixtureSID+".jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, original, restored, "bytes are never edited")
+	tool, err := os.ReadFile(filepath.Join(projectDir, fixtureSID, "tool-results", "toolu_01.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(tool), `"exitCode":0`)
+	st, err := os.Stat(filepath.Join(projectDir, fixtureSID+".jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), st.Mode().Perm())
+}
+
+func TestClaudeImport_DifferentHomeWithoutAbsoluteRefsInstallsNatively(t *testing.T) {
+	homeA, homeB := t.TempDir(), t.TempDir()
+	b := exportFrom(t, homeA, "basic", "2.1.328")
+	sid, err := newPortability(t, []string{"HOME=" + homeB}, "2.1.328").Import(context.Background(), b, fixtureWork)
+	require.NoError(t, err)
+	assert.Equal(t, fixtureSID, sid)
+	got, err := os.ReadFile(filepath.Join(homeB, ".claude", "projects", EncodeProjectDir(fixtureWork), fixtureSID+".jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, untar(t, b.Data)["session.jsonl"], got)
+}
+
+func TestClaudeImport_DifferentHomeWithAbsoluteRefsRequiresRebuild(t *testing.T) {
+	homeA, homeB := t.TempDir(), t.TempDir()
+	b := exportFrom(t, homeA, "sidecar", "2.1.328")
+	_, err := newPortability(t, []string{"HOME=" + homeB}, "2.1.328").Import(context.Background(), b, fixtureWork)
+	assert.ErrorIs(t, err, engine.ErrBundleRequiresRebuild, "RR-13: unverified cross-HOME mapping fails closed to the visible rebuild")
+	_, statErr := os.Stat(filepath.Join(homeB, ".claude", "projects", EncodeProjectDir(fixtureWork), fixtureSID+".jsonl"))
+	assert.True(t, os.IsNotExist(statErr), "nothing is installed on refusal")
+}
+
+func TestClaudeImport_VersionSkewRequiresRebuild(t *testing.T) {
+	home := t.TempDir()
+	b := exportFrom(t, home, "basic", "2.1.328")
+	_, err := newPortability(t, []string{"HOME=" + t.TempDir()}, "2.1.400").Import(context.Background(), b, fixtureWork)
+	assert.ErrorIs(t, err, engine.ErrBundleRequiresRebuild)
+}
+
+func TestClaudeImport_DifferentWorkDirRequiresRebuild(t *testing.T) {
+	home := t.TempDir()
+	b := exportFrom(t, home, "basic", "2.1.328")
+	_, err := newPortability(t, []string{"HOME=" + home}, "2.1.328").Import(context.Background(), b, "/srv/arbitron/workspaces/run-2")
+	assert.ErrorIs(t, err, engine.ErrBundleRequiresRebuild, "D2: identical workspace paths only")
+}
+
+func TestClaudeImport_CorruptBundleRequiresRebuild(t *testing.T) {
+	home := t.TempDir()
+	b := exportFrom(t, home, "basic", "2.1.328")
+	b.Data = append([]byte{}, b.Data...)
+	b.Data[len(b.Data)-1] ^= 0xFF
+	_, err := newPortability(t, []string{"HOME=" + home}, "2.1.328").Import(context.Background(), b, fixtureWork)
+	assert.ErrorIs(t, err, engine.ErrBundleRequiresRebuild)
+	assert.ErrorIs(t, err, engine.ErrBundleChecksum)
+}
+
+func TestClaudeImport_RejectsForeignBackendAndPathTraversal(t *testing.T) {
+	home := t.TempDir()
+	p := newPortability(t, []string{"HOME=" + home}, "2.1.328")
+	b := exportFrom(t, home, "basic", "2.1.328")
+	b.Backend = "codex"
+	_, err := p.Import(context.Background(), b, fixtureWork)
+	assert.Error(t, err)
+
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	for name, body := range map[string]string{
+		"meta.json":          `{"format":1,"originConfigDir":"/x","originProjectDir":"/x/projects/p"}`,
+		"session.jsonl":      `{"type":"user"}`,
+		"sidecar/../../evil": "pwned",
+	} {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg}))
+		_, err := tw.Write([]byte(body))
+		require.NoError(t, err)
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, zw.Close())
+	evil := engine.SessionBundle{Backend: "claude-code", SessionID: fixtureSID, HarnessVersion: "2.1.328", OriginWorkDir: fixtureWork,
+		Data: buf.Bytes(), Checksum: engine.BundleChecksum(buf.Bytes())}
+	_, err = p.Import(context.Background(), evil, fixtureWork)
+	assert.ErrorIs(t, err, engine.ErrBundleRequiresRebuild)
+	_, statErr := os.Stat(filepath.Join(home, ".claude", "evil"))
+	assert.True(t, os.IsNotExist(statErr))
 }
