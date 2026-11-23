@@ -217,6 +217,11 @@ func newRunnerStack(d runnerStackDeps) *runnerStack {
 	if d.RefreshInventory == nil || d.Registry == nil || d.Factory == nil || d.Streams == nil || d.Process == nil || d.Confirmer == nil || d.Alerts == nil || d.Audit == nil || d.Instances == nil {
 		panic("arbitron: incomplete runner stack")
 	}
+	for _, kind := range []runner.CredentialKind{runner.CredAnthropicSubscription, runner.CredOpenAISubscription, runner.CredLunaRoute} {
+		if d.Probers[kind] == nil {
+			panic("arbitron: incomplete runner stack")
+		}
+	}
 	clock := d.Clock
 	if clock == nil {
 		clock = time.Now
@@ -235,7 +240,7 @@ func newRunnerStack(d runnerStackDeps) *runnerStack {
 		Interval: seconds(d.Config.ProbeIntervalSeconds), Jitter: seconds(d.Config.ProbeJitterSeconds),
 	})
 	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.Factory, Agents: d.Factory, Streams: d.Streams, Process: d.Process})
-	// The dispatcher's wake subscription lives as long as the process.
+	// Root shutdown unsubscribes after execution drains.
 	wake, stopWake := notifier.Subscribe()
 	dispatcher := runner.NewStepDispatcher(runner.DispatcherDeps{
 		Registry: d.Registry, Ledger: ledger,
