@@ -1242,3 +1242,63 @@ models and P5 hooks/browser sinks carry these actual statuses; the dashboard
 still adds no execution controls. The spec is unchanged. RR-17 is decided
 (option B, P3 T16): non-portable partial clones recover from their latest
 local checkpoint, and only a home with no base at all shows the recovery blocker.
+
+### P2 T13 fresh-health and confirmation names (unstick 2026-11-23)
+
+These names are defined by `2026-11-20-phase-2-task-13.md`. They supersede §12's "bounded 1-token exact-model chat" confirmation.
+
+**Confirmation vocabulary (`domain/runner/confirmation.go`)**
+- `OpConfirm OpType = "confirm"` and `ConfirmationPrompt`.
+- `ConfirmationRequest{WorkDir}`: server-side only, never serialized.
+- `ConfirmationResult{RequestedModel, ExecutedModel, SessionID}`.
+- `ConfirmationExecutor.Confirm(ctx, provider.ResolvedBinding, workDir) (ConfirmationResult, error)`.
+- `ErrConfirmationNoProfile`, `ErrConfirmationModelMismatch`, and `VerifyConfirmation(want, *ConfirmationResult) error`.
+- `StepJob.Confirmation` and `StepOutput.Confirmation`.
+
+**Verifier port and executor**
+- `domain/engine/model_verifier.go:ExecutedModelProber` is satisfied by `claudecli.AgentAdapter` and `codex.Provider`.
+- `adapter/runner/probe/execution.go:NewConfirmationExecutor(engine.AgentProviderSelector) *HarnessConfirmationExecutor`. It clones an agent-kind binding, calls `ProbeExecutedModel`, and never calls `RunAgent`.
+- Required dependencies: `builtin.Deps.Confirmations` (required) and the runner's `executor.Config.Confirmations`.
+
+**DispatchConfirmer**
+- It dispatches `OpConfirm` with `engine.OperationProbe`, `RequiredSource=s.ID`, `PinnedRunner=s.RunnerID` and `AffinityNone`.
+- The binding is an exact-model no-connection profile of the source's native backend: `claude-code` for `anthropic_subscription`, `codex` for `openai_subscription`.
+- `probe.ErrNoConfirmationModel == runner.ErrConfirmationNoProfile`.
+
+**Monitor (`domain/runner/health.go`)**
+- Probation reasons go in `SourceHealth.Detail` as one of the `DetailConfirm{NoProfile,Unsupported,Transport,Timeout,Mismatch,Failed}` strings.
+- Periodic remote checks run asynchronously at `Interval`, one in flight per source, and are joined by `Wait`.
+
+**Remote prober (`domain/runner/remote_prober.go`)**
+- Errors: `ErrRemoteProbeUnavailable`, `ErrRemoteProbeTimeout`, and `ErrRemoteProberNotWired` (which wraps Unavailable).
+- `NewRemoteSourceProber(*Hub) *RemoteSourceProber`.
+
+**Hub (`domain/runner`)**
+- Messages: `MsgProbe="probe"` and `MsgProbeResult="probe_result"`.
+- Payloads:
+  - `ProbePayload{RequestID uuid.UUID; HealthRevision uint64; SourceKind; CredentialRef}`
+  - `ProbeReply{RequestID; HealthRevision; Source SourceReport}`
+  - `ConfirmationDispatch{Model, Backend, Provider, EndpointFingerprint, ContextWindow, Effort}`
+- Struct additions:
+  - `SourceReport` gains `Observation *ProbeResult`, `ObservationSeq uint64` and `SampleAgeMs int64`.
+  - `DispatchPayload.Confirmation` and `RemoteResult.Confirmation`.
+  - `Outbound.Probe` and `Inbound.ProbeResult`.
+  - `HubConfig.ProbeTimeout`; 0 means `DefaultRemoteProbeTimeout` (10s).
+- `HubHealth` = `HealthTransitioner` + `ObserveProbe`. `HubDeps.Health` is a `HubHealth`, so P2 T10's `remoteRunnerInputs.Health` becomes `*runner.HealthMonitor`.
+- Methods: `Hub.ProbeSource(ctx, SourceID) (ProbeResult, error)`, `Hub.PendingProbes() int`, `Hub.Wait()`.
+- `applyReportedHealth` is removed. Only ordered, fresh, bounded-age (3×heartbeat) observations reach `ObserveProbe`, and heartbeat hints never recover capacity.
+
+**Wire (`adapter/runnerproto`)**
+- `WireConfirmation{model, backend, provider, endpointFingerprint?, contextWindow?, effort?}` on `Dispatch{op:"confirm"}`.
+- `WireConfirmationResult{requestedModel, executedModel, sessionId?}` on `Result`.
+- `ExecutionCapability.Op` accepts `"confirm"`.
+
+**Runner side**
+- `runneragent.OpConfirm`.
+- `ConfirmationJob` (the same six fields).
+- `ProbeRequest{RequestID, HealthRevision}`.
+- `Source{Observation, ObservationSeq, SampleAgeMs}`.
+- `Outbound{RequestID, HealthRevision}`.
+- `Dispatch.Confirmation` and `Result.Confirmation`.
+- `FreshSourceProber.ProbeSource(ctx, kind, ref) (Source, error)` and `ErrUnknownSource`. `sources.Inventory` implements it.
+- `cmd/arbitron-runner/build.go:buildExecutor(cfg, local *providersadapter.Factory)`.
