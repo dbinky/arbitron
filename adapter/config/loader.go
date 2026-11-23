@@ -75,26 +75,33 @@ func defaults() map[string]interface{} {
 		"queue.globalcap":         20,
 		"queue.perusercap":        5,
 		// Runner pool defaults are shared with domain validation.
-		"runners.defaultsteplimit":      domainconfig.DefaultRunnerStepLimit,
-		"runners.probeintervalseconds":  domainconfig.DefaultRunnerProbeIntervalSeconds,
-		"runners.probejitterseconds":    domainconfig.DefaultRunnerProbeJitterSeconds,
-		"runners.transientmaxattempts":  domainconfig.DefaultRunnerTransientMaxAttempts,
-		"runners.transientbackoffminms": domainconfig.DefaultRunnerTransientBackoffMinMs,
-		"runners.transientbackoffmaxms": domainconfig.DefaultRunnerTransientBackoffMaxMs,
-		"runners.eventretention":        domainconfig.DefaultRunnerEventRetention,
-		"runners.heartbeatseconds":      5,
-		"runners.suspectafterseconds":   30,
-		"runners.lostafterseconds":      120,
-		"runners.offerttlseconds":       30,
-		"runners.outputbufferframes":    4096,
-		"runners.telemetrywindow":       60,
-		"runners.scratchroot":           "",
-		"script.envpassthrough":         []string{},
-		"server.tls.enabled":            false,
-		"server.tls.certfile":           "",
-		"server.tls.keyfile":            "",
-		"server.tls.autocertdomain":     "",
-		"server.tls.autocertcachedir":   "",
+		"runners.defaultsteplimit":        domainconfig.DefaultRunnerStepLimit,
+		"runners.probeintervalseconds":    domainconfig.DefaultRunnerProbeIntervalSeconds,
+		"runners.probejitterseconds":      domainconfig.DefaultRunnerProbeJitterSeconds,
+		"runners.transientmaxattempts":    domainconfig.DefaultRunnerTransientMaxAttempts,
+		"runners.transientbackoffminms":   domainconfig.DefaultRunnerTransientBackoffMinMs,
+		"runners.transientbackoffmaxms":   domainconfig.DefaultRunnerTransientBackoffMaxMs,
+		"runners.eventretention":          domainconfig.DefaultRunnerEventRetention,
+		"runners.heartbeatseconds":        5,
+		"runners.suspectafterseconds":     30,
+		"runners.lostafterseconds":        120,
+		"runners.offerttlseconds":         30,
+		"runners.outputbufferframes":      4096,
+		"runners.telemetrywindow":         60,
+		"runners.scratchroot":             "",
+		"runners.moveloadthresholdpct":    domainconfig.DefaultMoveLoadThresholdPct,
+		"runners.movesizecapbytes":        domainconfig.DefaultMoveSizeCapBytes,
+		"runners.restartgraceseconds":     domainconfig.DefaultRestartGraceSeconds,
+		"runners.transferpartbytes":       domainconfig.DefaultTransferPartBytes,
+		"runners.stagingdir":              "",
+		"runners.checkpointdir":           "",
+		"runners.stagingretentionseconds": domainconfig.DefaultStagingRetentionSeconds,
+		"script.envpassthrough":           []string{},
+		"server.tls.enabled":              false,
+		"server.tls.certfile":             "",
+		"server.tls.keyfile":              "",
+		"server.tls.autocertdomain":       "",
+		"server.tls.autocertcachedir":     "",
 		// Auth (Phase 6): local mode by default (single auto-admin, no login).
 		// Org-mode OIDC fields are validated fail-fast in validateAuth.
 		"auth.mode":              "local",
@@ -649,6 +656,16 @@ func normalize(cfg *domainconfig.Config) {
 	}
 	cfg.Layout.BrowserPath = strings.TrimSpace(cfg.Layout.BrowserPath)
 	cfg.Layout.ArtifactDir = strings.TrimSpace(cfg.Layout.ArtifactDir)
+
+	// Keep durable workspace stores alongside the database by default.
+	cfg.Runners.StagingDir = strings.TrimSpace(cfg.Runners.StagingDir)
+	if cfg.Runners.StagingDir == "" {
+		cfg.Runners.StagingDir = filepath.Join(filepath.Dir(cfg.Database.Path), "runner-staging")
+	}
+	cfg.Runners.CheckpointDir = strings.TrimSpace(cfg.Runners.CheckpointDir)
+	if cfg.Runners.CheckpointDir == "" {
+		cfg.Runners.CheckpointDir = filepath.Join(filepath.Dir(cfg.Database.Path), "checkpoints")
+	}
 	cfg.Runners.ScratchRoot = strings.TrimSpace(cfg.Runners.ScratchRoot)
 	if cfg.Runners.ScratchRoot == "" {
 		cfg.Runners.ScratchRoot = filepath.Join(cfg.Workspace.Path, ".runner-scratch")
