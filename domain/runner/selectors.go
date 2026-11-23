@@ -56,7 +56,7 @@ func NewRoutingStreamSelector(inner engine.InteractiveStreamSelector, d *StepDis
 	if d == nil {
 		panic("runner: NewRoutingStreamSelector requires a dispatcher")
 	}
-	return newRoutingStreamSelector(inner, d)
+	return streamSelectorFor(inner, d, d.d.SessionPins)
 }
 
 // NewRoutedProcessRunner places script/tool_call processes as slot-only jobs.

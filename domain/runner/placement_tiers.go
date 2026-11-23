@@ -22,6 +22,9 @@ const MinHomeFreeDiskBytes uint64 = 1 << 30
 // other affinity uses the Phase-1 ranking unchanged.
 func Place(req ExecRequirements, snap PoolSnapshot, policy PlacementPolicy) Decision {
 	snap = freshTelemetry(snap, policy)
+	if req.Affinity == AffinitySession {
+		return placeSession(req, snap, policy)
+	}
 	if req.Affinity == AffinityWorkspace {
 		return placeWorkspace(req, snap, policy)
 	}

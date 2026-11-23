@@ -75,6 +75,9 @@ type Decision struct {
 	Reason string
 	Tier   string // Phase 3: "must_move"|"should_move"|"may_move_load"|"stay"|"" (non-workspace)
 	Wait   *WaitReason
+	// MoveRequired asks the session mover to recover continuity, never re-place.
+	MoveRequired bool
+	MoveReason   string
 }
 
 // PlacementPolicy tunes Phase 3 stay-versus-move; the zero value is Phase 1.

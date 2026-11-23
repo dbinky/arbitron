@@ -90,7 +90,8 @@ type DispatcherDeps struct {
 	TransientMaxAttempts   int
 	BackoffMin, BackoffMax time.Duration
 
-	Wake <-chan struct{} // pool-change notifications (PoolNotifier.Subscribe)
+	Wake        <-chan struct{} // pool-change notifications (PoolNotifier.Subscribe)
+	SessionPins SessionPins
 	// Sleep waits d or until ctx ends. nil => a real timer. Tests inject a fake
 	// clock's sleep so backoff is observable and time is actually gated.
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -309,6 +310,9 @@ func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequiremen
 		snap.Now = s.d.Clock()
 		snap.Telemetry = s.d.Telemetry.Latest()
 		dec := Place(req, snap, s.d.Policy)
+		if dec.MoveRequired {
+			return Assignment{}, &SessionPinMoveError{Runner: req.PinnedRunner, Reason: dec.MoveReason, Detail: dec.Reason}
+		}
 		if !dec.Placed {
 			if err := s.d.Ledger.SetWait(ctx, j.ID, dec.Wait); err != nil {
 				s.abandon(ctx, *j)
