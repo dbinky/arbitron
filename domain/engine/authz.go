@@ -25,6 +25,12 @@ func canView(ctx context.Context, inst *instance.Instance) bool {
 	return inst.Visibility == instance.VisibilityDepartment && id.InDepartment(inst.Department)
 }
 
+// CanViewInstance exposes the engine read predicate to other domain services.
+// Missing instances and missing identities fail closed.
+func CanViewInstance(ctx context.Context, inst *instance.Instance) bool {
+	return inst != nil && canView(ctx, inst)
+}
+
 // canIntervene reports whether the context identity may MUTATE an instance
 // (cancel/pause/resume/retry/rerun/priority): the owner, a lead of the run's
 // department, or an admin. A department peer (member, not owner, not lead) is

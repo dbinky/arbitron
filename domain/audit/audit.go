@@ -33,6 +33,14 @@ const (
 	// audit vocabulary, so the engine that emits it and any forensic query that
 	// filters on it reference one value.
 	ActionLeadIntervention = "instance.lead_intervention"
+
+	ActionRunnerUpdate      = "runner.update"
+	ActionRunnerCordon      = "runner.cordon"
+	ActionRunnerUncordon    = "runner.uncordon"
+	ActionRunnerSourceProbe = "runner.source_probe"
+	ActionRunnerKeyCreate   = "runner_key.create"
+	ActionRunnerKeyRevoke   = "runner_key.revoke"
+	ActionRunnerDrain       = "runner.drain"
 )
 
 // Event is one audit record. Detail is opaque JSON describing the change
