@@ -110,6 +110,7 @@ const (
 // separate observations: logged out blocks eligibility without erasing a known
 // exhaustion/reset.
 type SourceHealth struct {
+	Revision          uint64 // incremented by serialized health transitions
 	ConfirmationModel string // exact exhausted model used by confirmation probe
 	Auth              AuthState
 	Capacity          CapacityState
@@ -123,7 +124,7 @@ type SourceHealth struct {
 	Detail            string // class/reset only, never provider prose
 }
 
-// Source is a capacity source on a runner.
+// ExecutionCapability records proven execution support for a source.
 // Phase 2 populates these from actual local capability/version evidence.
 type ExecutionCapability struct {
 	Op                                     OpType
@@ -136,6 +137,7 @@ type ExecutionCapability struct {
 	ExecutedModel                          bool
 }
 
+// Source is a capacity source on a runner.
 type Source struct {
 	ID                SourceID
 	RunnerID          RunnerID

@@ -82,8 +82,11 @@ func classifyErrorAt(err error, now time.Time) SourceOutcome {
 		return SourceOutcome{Class: OutcomeNone}
 	}
 	var oe *OutcomeError
-	if errors.As(err, &oe) && oe.Outcome.Class != OutcomeNone {
-		return oe.Outcome
+	if errors.As(err, &oe) && oe != nil {
+		switch oe.Outcome.Class {
+		case OutcomeExhausted, OutcomeLoggedOut, OutcomeTransient, OutcomeRunnerLost, OutcomeOther:
+			return oe.Outcome
+		}
 	}
 	if errors.Is(err, provider.ErrLunaRouteBusy) {
 		o := SourceOutcome{Class: OutcomeTransient}

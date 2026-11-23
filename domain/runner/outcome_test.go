@@ -44,6 +44,7 @@ func TestClassifyError_Table(t *testing.T) {
 		{"plain error", errors.New("exit status 2"), runner.OutcomeOther},
 		{"context canceled", context.Canceled, runner.OutcomeOther},
 		{"outcome with empty class fails closed", runner.WithOutcome(errors.New("x"), runner.SourceOutcome{}), runner.OutcomeOther},
+		{"unknown structured class fails closed", runner.WithOutcome(errors.New("x"), runner.SourceOutcome{Class: "unrecognized"}), runner.OutcomeOther},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
