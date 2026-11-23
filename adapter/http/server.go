@@ -145,6 +145,9 @@ type RouterDeps struct {
 	SubtreeEvents SubtreeSubscriber
 	// RunnerKeys is the admin key-management service. Nil disables the routes.
 	RunnerKeys RunnerKeyService
+	// RunnerConnect is mounted outside user auth with header-only runner-key auth.
+	// Nil disables the route.
+	RunnerConnect *RunnerConnectHandler
 	// Runners serves pool reads and admin writes; nil disables the routes.
 	Runners RunnerService
 }
@@ -257,6 +260,10 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	var deviceHandler *DeviceHandler
 	if d.DeviceCodes != nil {
 		deviceHandler = NewDeviceHandler(d.DeviceCodes, strings.TrimRight(d.PublicBaseURL, "/")+"/auth/device")
+	}
+
+	if d.RunnerConnect != nil {
+		r.With(d.RunnerConnect.KeyAuth().Handler).Get("/api/v1/runners/connect", d.RunnerConnect.ServeHTTP)
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
