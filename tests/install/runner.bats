@@ -96,6 +96,7 @@ _stage_runner_release() {
   '
   run download_runner_binary
   [ "$status" -ne 0 ]
+  [[ "$output" == *"verification failed"* ]]
   [ ! -e "$(runner_bin)/arbitron-runner" ]
 }
 

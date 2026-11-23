@@ -900,7 +900,7 @@ arbitron_release_base() {
 # no artifact at <dest>) on any download or checksum failure. Shared with the
 # system install (install_binary_system) so the verify contract is identical.
 fetch_binary_to() {
-  local dest="$1" tmpdir rc
+  local dest="$1" kind="${2:-server}" tmpdir rc
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/arbitron-bin.XXXXXX")" || return 1
   # Clean the temp dir up on a SIGINT/SIGTERM mid-download (Ctrl-C during a slow
   # curl). We deliberately do NOT use a RETURN trap: callers (notably bats) may
@@ -909,7 +909,7 @@ fetch_binary_to() {
   # the temp dir before the binary is moved into place. Cleanup is centralised
   # here on the single path every return in _fetch_binary_to funnels back to.
   trap 'rm -rf "${tmpdir:-}"' INT TERM
-  _fetch_binary_to "$dest" "$tmpdir"
+  _fetch_binary_to "$dest" "$tmpdir" "$kind"
   rc=$?
   trap - INT TERM
   rm -rf "$tmpdir"
@@ -921,7 +921,7 @@ fetch_binary_to() {
 # and place the verified binary at <dest>. Returns non-zero on any failure;
 # temp-dir cleanup is the caller's (fetch_binary_to) responsibility.
 _fetch_binary_to() {
-  local dest="$1" tmpdir="$2"
+  local dest="$1" tmpdir="$2" kind="${3:-server}"
   local version os arch base artifact sumsfile tmpbin
   version="$(arbitron_resolve_version)" || return 1
   os="$(detect_os)"   || return 1
@@ -931,7 +931,10 @@ _fetch_binary_to() {
   # The release artifact uses the Go-style OS token (darwin/linux).
   local ostoken="$os"
   [ "$os" = "macos" ] && ostoken="darwin"
-  artifact="$(arbitron_artifact_name "$version" "$ostoken" "$arch")"
+  case "$kind" in
+    runner) artifact="$(arbitron_runner_artifact_name "$version" "$ostoken" "$arch")" ;;
+    *) artifact="$(arbitron_artifact_name "$version" "$ostoken" "$arch")" ;;
+  esac
 
   # Fetch SHA256SUMS (+ optional signature material) into the temp dir.
   sumsfile="$tmpdir/SHA256SUMS"
@@ -2057,6 +2060,25 @@ print_summary() {
 # ---------------------------------------------------------------------------
 # main dispatcher
 # ---------------------------------------------------------------------------
+
+# Runner paths are separate from the per-user server layout.
+ARBITRON_RUNNER_LAUNCHD_LABEL="dev.arbitron.runner"
+runner_home() { printf '%s/.arbitron-runner\n' "$HOME"; }
+runner_bin() { printf '%s/bin\n' "$(runner_home)"; }
+runner_config() { printf '%s/config.yaml\n' "$(runner_home)"; }
+runner_env() { printf '%s/runner.env\n' "$(runner_home)"; }
+runner_logs() { printf '%s/logs\n' "$(runner_home)"; }
+_runner_plist_path() { printf '%s/Library/LaunchAgents/%s.plist\n' "$HOME" "$ARBITRON_RUNNER_LAUNCHD_LABEL"; }
+arbitron_runner_artifact_name() { printf 'arbitron-runner_%s_%s_%s\n' "$1" "$2" "$3"; }
+
+download_runner_binary() {
+  local bin
+  bin="$(runner_bin)/arbitron-runner"
+  mkdir -p "$(runner_bin)"
+  fetch_binary_to "$bin" runner || return 1
+  chmod 0755 "$bin"
+  log_info "installed arbitron-runner at $bin"
+}
 
 # parse_args [--runner] selects the remote runner scenario.
 parse_args() {
