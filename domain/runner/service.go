@@ -27,8 +27,10 @@ type ServiceDeps struct {
 	Visibility RunVisibility
 	Monitor    *HealthMonitor
 	Telemetry  TelemetrySource
-	Notifier   *PoolNotifier
-	Clock      func() time.Time
+	// Window is optional; nil yields an empty recent telemetry list.
+	Window   TelemetryWindow
+	Notifier *PoolNotifier
+	Clock    func() time.Time
 }
 
 // RunnerView is one runner as the pool page lists it.
@@ -155,6 +157,7 @@ func (s *Service) Get(ctx context.Context, id RunnerID) (RunnerDetail, error) {
 		}
 		d.Assignments = append(d.Assignments, a)
 	}
+	d.RecentTelemetry = s.recentTelemetry(id)
 	return d, nil
 }
 
