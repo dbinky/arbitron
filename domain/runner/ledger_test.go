@@ -10,7 +10,7 @@ import (
 
 func TestJobState_ActiveAndHoldsSlot(t *testing.T) {
 	cases := []struct {
-		s              runner.JobState
+		s             runner.JobState
 		active, holds bool
 	}{
 		{runner.JobQueued, true, false},
