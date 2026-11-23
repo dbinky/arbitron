@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"s-warn"}
+{"type":"rate_limit_event","session_id":"s-warn","uuid":"u3","rate_limit_info":{"status":"allowed_warning","resetsAt":1795262400,"rateLimitType":"seven_day","utilization":0.85,"surpassedThreshold":0.75}}
+{"type":"assistant","session_id":"s-warn","message":{"content":[{"type":"text","text":"OK"}]}}
+{"type":"result","subtype":"success","session_id":"s-warn","is_error":false,"result":"OK","usage":{"input_tokens":3,"output_tokens":1},"modelUsage":{"claude-sonnet-4-5":{}}}

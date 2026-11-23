@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"s-5h"}
+{"type":"assistant","session_id":"s-5h","error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429,"quotaLimits":{"status":"rejected","resetsAt":1795262400000,"rateLimitType":"five_hour"},"message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your session limit · resets 5am"}]}}
+{"type":"result","subtype":"success","session_id":"s-5h","is_error":true,"api_error_status":429,"result":"You've hit your session limit · resets 5am"}

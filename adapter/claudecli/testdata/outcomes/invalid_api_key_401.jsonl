@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"s-401"}
+{"type":"result","subtype":"success","session_id":"s-401","is_error":true,"api_error_status":401,"api_error_type":"authentication_error","result":"Invalid API key · Please run /login"}

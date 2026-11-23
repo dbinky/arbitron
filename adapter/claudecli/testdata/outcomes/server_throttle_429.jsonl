@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"s-429"}
+{"type":"rate_limit_event","session_id":"s-429","uuid":"u1","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","resetsAt":1795262400}}
+{"type":"assistant","session_id":"s-429","error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429,"message":{"model":"<synthetic>","content":[{"type":"text","text":"Server is temporarily limiting requests (not your usage limit)"}]}}
+{"type":"result","subtype":"success","session_id":"s-429","is_error":true,"api_error_status":429,"result":"Server is temporarily limiting requests (not your usage limit)"}

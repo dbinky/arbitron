@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"s-warn2"}
+{"type":"rate_limit_event","session_id":"s-warn2","uuid":"u4","rate_limit_info":{"status":"allowed_warning","resetsAt":1795262400,"rateLimitType":"five_hour"}}
+{"type":"result","subtype":"success","session_id":"s-warn2","is_error":false,"result":"OK","modelUsage":{"claude-sonnet-4-5":{}}}
