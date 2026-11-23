@@ -96,6 +96,8 @@ export interface EnrichedInstanceSummary extends InstanceSummary {
   parentInstanceId?: string
   /** Number of spawned children the CALLER may see. Absent/0 renders no expander. */
   childCount?: number
+  /** Dispatched operations for this run. */
+  execution?: ExecutionStatus[]
 }
 
 /** Full instance representation returned by the get endpoint. */
@@ -125,6 +127,8 @@ export interface Instance {
   interactiveNodeId: string | null
   /** Arrangement status and best/fallback geometry for the snapshot revision. */
   layout?: LayoutView
+  workspaceMoves?: HomeMove[]
+  recovery?: RecoveryNotice[]
 }
 
 /**
@@ -164,6 +168,16 @@ export interface NodeExecution {
   scriptExitCode?: number
   startedAt: string
   completedAt?: string
+  runnerId?: string
+  sourceId?: string
+  placementReason?: string
+  placementHistory?: PlacementRecord[]
+  sessionInvocationId?: string
+  sessionPinRunnerId?: string
+  sessionGeneration?: number
+  sessionMoves?: SessionMove[]
+  recovery?: RecoveryNotice[]
+  workspaceMoves?: HomeMove[]
 }
 
 /** Variable snapshot captured at a node boundary. */
@@ -648,3 +662,255 @@ export interface GraphState {
   warnings?: string[]
 }
 
+
+// ---------------------------------------------------------------------------
+// Remote runners (Phase 5). Wire shapes of the Phase 1–4 runner DTOs and
+// system-stream payloads, AFTER api/runnerDecode.ts normalization: Go nil
+// lists are [], absent timestamps are null, unknown enums fail closed.
+// ---------------------------------------------------------------------------
+
+export type RunnerLiveness = 'online' | 'suspect' | 'lost' | 'offline'
+export type RunnerCompatState = 'compatible' | 'incompatible' | 'chat_only'
+export type SourceAuthState = 'unknown' | 'ok' | 'logged_out'
+/** 'unknown' is client-side only: an absent/unrecognized capacity is never shown as available. */
+export type SourceCapacityState = 'available' | 'exhausted' | 'probation' | 'unknown'
+export type OutcomeClass = '' | 'exhausted' | 'logged_out' | 'transient' | 'runner_lost' | 'other' | 'fenced'
+
+export interface SourceHealth {
+  auth: SourceAuthState
+  capacity: SourceCapacityState
+  /** Server-normalized absolute reset time; null = unknown. */
+  resetAt: string | null
+  /** 0..1 remaining; null = unknown (never treated as 0 or 1). */
+  headroom: number | null
+  /** Transient provider pressure (LunaRoute 429s); never exhaustion. */
+  congested: boolean
+  congestedUntil: string | null
+  lastProbeAt: string | null
+  lastOutcome: OutcomeClass
+}
+
+export interface RunnerSource {
+  id: string
+  kind: string
+  credentialRef: string
+  families: string[]
+  backends: string[]
+  models: string[]
+  health: SourceHealth
+
+  unavailableReason: string
+}
+
+/** One machine sample; every metric may be unavailable (null). */
+export interface RunnerTelemetry {
+  sampledAt: string | null
+  cpuPercent: number | null
+  memUsedBytes: number | null
+  memPressure: string | null
+  load1Pct: number | null
+  diskFreeBytes: number | null
+  thermal: string | null
+  uptimeSeconds: number | null
+  cores: number | null
+  ramBytes: number | null
+}
+
+export interface DrainBlocker {
+  kind: string
+  /** Null when the caller may not see the run. */
+  runId: string | null
+  group: string
+  reason: string
+}
+
+export interface DrainProgress {
+  activeSteps: number
+  homedWorkspaces: number
+  sessions: number
+  blocked: DrainBlocker[]
+  complete: boolean
+}
+
+export interface RunnerView {
+  id: string
+  name: string
+  builtIn: boolean
+  stepLimit: number
+  labels: Record<string, string>
+  cordoned: boolean
+  draining: boolean
+  compat: { state: RunnerCompatState; reason: string }
+  liveness: RunnerLiveness
+  lastContact: string | null
+  os: string
+  runnerVersion: string
+  harnessVersions: Record<string, string>
+  slotsUsed: number
+  queued: number
+  homedWorkspaces: number
+  sources: RunnerSource[]
+  telemetry: RunnerTelemetry | null
+  drain: DrainProgress | null
+}
+
+export interface AssignmentView {
+  jobId: string
+  /** Null (and hidden true) when the caller may not see the run. */
+  runId: string | null
+  nodeId: string
+  state: string
+  sourceId: string
+  hidden: boolean
+}
+
+/** RunnerDetail `sessions` item (P4 T14). */
+export interface SessionPinView {
+  runId: string | null
+  nodeId: string
+  hidden: boolean
+  generation: number
+}
+
+/** RunnerDetail `homes` item (P3 T14). */
+export interface HomeView {
+  runId: string | null
+  hidden: boolean
+  generation: number
+  dirty: boolean
+}
+
+export interface RunnerDetail extends RunnerView {
+  assignments: AssignmentView[]
+  recentTelemetry: RunnerTelemetry[]
+  sessions: SessionPinView[]
+  homes: HomeView[]
+}
+
+export interface PoolEventCause {
+  kind: string
+  actor: string
+  outcome: OutcomeClass
+}
+
+export interface PoolEvent {
+  id: string
+  at: string
+  kind: string
+  runnerId: string
+  sourceId: string
+  /** Null for system-scope events or runs the caller may not see. */
+  runId: string | null
+  cause: PoolEventCause
+  detail: Record<string, unknown>
+}
+
+/** P2 T3 `runnerKeyView`. */
+export interface RunnerKey {
+  id: string
+  name: string
+  runnerId: string
+  /** Non-secret display prefix of the key. */
+  prefix: string
+  claimed: boolean
+  revoked: boolean
+  createdAt: string
+  /** Null until the first machine claims the key (server omits it). */
+  claimedAt: string | null
+  lastUsedAt: string | null
+  revokedAt: string | null
+}
+
+/** P2 T3 `runnerKeyCreateResponse`. Only ever held in the Add-runner modal's local state; never cached or stored. */
+export interface RunnerKeyCreateResponse {
+  key: RunnerKey
+  /** The one-time key secret. */
+  plaintext: string
+  /** Server setup guidance (`runner.KeySetupGuidance`). */
+  setup: string
+}
+
+export type ExecutionState = 'queued_slot' | 'waiting_capacity' | 'running' | 'moving_workspace' | 'recovering'
+
+export interface MoveProgress {
+  bytesDone: number
+  bytesTotal: number
+}
+
+export interface ExecutionStatus {
+  runId: string
+  nodeId: string
+  operationId: string
+  jobId: string
+  state: ExecutionState
+  runnerId?: string
+  sourceId?: string
+  group?: string
+  model?: string
+  reason?: string
+  nextReset?: string
+  progress?: MoveProgress
+  homeRunnerId?: string
+  sessionPinRunnerId?: string
+}
+
+/** `placementHistory` item: P1 T14 `placementRecordResponse`. */
+export interface PlacementRecord {
+  jobId: string
+  runnerId: string
+  /** Omitted by the server when empty. */
+  sourceId?: string
+  reason: string
+  /** "completed" | "exhausted" | "logged_out" | "transient" | "runner_lost" | "other" | "fenced" */
+  outcome: string
+  generation: number
+  at: string
+}
+
+/** `workspaceMoves` item: P3 T12 `instance.WorkspaceMove`. */
+export interface HomeMove {
+  /** "" = server checkpoint only. */
+  from: string
+  to: string
+  reason: string
+  bytes: number
+  generation: number
+  at: string
+
+  targetJobId?: string | null
+  invocationId?: string | null
+  nodeId?: string
+  operationId?: string
+  fromGeneration?: number
+  toGeneration?: number
+}
+
+/** `sessionMoves` item on a trace node execution: P4 T1 `instance.SessionMoveRecord`. */
+export interface SessionMove {
+  requestId: string
+  turnIndex: number
+  id: string
+  runId: string
+  invocationId: string
+  nodeId: string
+  fromRunner: string
+  toRunner: string
+  /** exhausted | logged_out | drain | runner_lost */
+  reason: string
+  lossy: boolean
+  /** Omitted by the server when empty. */
+  notice?: string
+  generation: number
+  at: string
+}
+
+/** `recovery` item on instance and trace reads: P3 T10 `instance.RecoveryNotice`. */
+export interface RecoveryNotice {
+  nodeId: string
+  jobId: string
+  runnerId: string
+  reason: string
+  at: string
+  /** Server disclosure text (`instance.RecoveryNoticeText`). */
+  text: string
+}

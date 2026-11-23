@@ -18,6 +18,7 @@ import type {
   WorkflowStats,
   WorkflowSummary,
 } from './types'
+import { decodeNodeExecutionSession } from './runnerDecode'
 import type { WorkflowDefinition } from '../graph/types'
 import type { LayoutView, RetryAck } from '../graph/arranged/types'
 
@@ -92,8 +93,8 @@ export function normalizeGraphState(raw: GraphState): GraphState {
   }
 }
 
-/** Throws on non-2xx responses with a descriptive message. */
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+/** Throws on non-2xx responses with a descriptive message. A 204 resolves undefined. */
+export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {
     let detail = res.statusText
@@ -109,6 +110,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     }
     throw Object.assign(new Error(`API ${res.status}: ${detail}`), { status: res.status })
   }
+  if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
 
@@ -220,12 +222,14 @@ export const api = {
 
     /** Get the execution trace for an instance. */
     getTrace(id: string): Promise<NodeExecution[]> {
-      return request(`/api/v1/instances/${id}/trace`)
+      return request<NodeExecution[]>(`/api/v1/instances/${id}/trace`)
+        .then((rows) => rows.map(decodeNodeExecutionSession))
     },
 
     /** Get a specific node execution within an instance trace. */
     getNodeTrace(id: string, nodeId: string): Promise<NodeExecution> {
-      return request(`/api/v1/instances/${id}/trace/${nodeId}`)
+      return request<NodeExecution>(`/api/v1/instances/${id}/trace/${nodeId}`)
+        .then(decodeNodeExecutionSession)
     },
 
     /** Get current variables for an instance. */

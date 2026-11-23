@@ -1,0 +1,80 @@
+{
+  "runner": {
+    "id": "builtin",
+    "name": "server",
+    "builtIn": true,
+    "stepLimit": 8,
+    "labels": {},
+    "cordoned": false,
+    "draining": false,
+    "compat": {
+      "state": "",
+      "reason": ""
+    },
+    "liveness": "online",
+    "lastContact": null,
+    "os": "",
+    "runnerVersion": "",
+    "harnessVersions": {},
+    "slotsUsed": 0,
+    "queued": 0,
+    "homedWorkspaces": 0,
+    "sources": [
+      {
+        "id": "builtin/anthropic_subscription/-",
+        "kind": "anthropic_subscription",
+        "credentialRef": "",
+        "unavailableReason": "harness unavailable",
+        "families": [],
+        "backends": [],
+        "models": [],
+        "health": {
+          "auth": "",
+          "capacity": "",
+          "resetAt": null,
+          "headroom": null,
+          "congested": false,
+          "congestedUntil": null,
+          "lastProbeAt": null,
+          "lastOutcome": ""
+        }
+      }
+    ],
+    "telemetry": null,
+    "drain": null,
+    "assignments": [],
+    "recentTelemetry": [],
+    "sessions": [],
+    "homes": []
+  },
+  "trace": [
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "instanceId": "11111111-1111-4111-8111-111111111111",
+      "nodeId": "chat",
+      "attempt": 1,
+      "status": "succeeded",
+      "startedAt": "2026-11-20T10:00:00Z",
+      "sessionInvocationId": "22222222-2222-4222-8222-222222222222",
+      "sessionPinRunnerId": "builtin",
+      "sessionGeneration": 4,
+      "sessionMoves": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "runId": "11111111-1111-4111-8111-111111111111",
+          "invocationId": "22222222-2222-4222-8222-222222222222",
+          "nodeId": "chat",
+          "fromRunner": "mac-a",
+          "toRunner": "builtin",
+          "reason": "exhausted",
+          "lossy": true,
+          "notice": "tool details and reasoning may be lost",
+          "generation": 4,
+          "at": "2026-11-20T10:00:00Z",
+          "requestId": "33333333-3333-4333-8333-333333333333",
+          "turnIndex": 2
+        }
+      ]
+    }
+  ]
+}
