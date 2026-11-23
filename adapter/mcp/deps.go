@@ -167,4 +167,7 @@ type Deps struct {
 	BackendHealth BackendHealthChecker
 	// Layouts powers arrangement summaries and retry tools. Nil reports explicit unavailability.
 	Layouts LayoutQueryService
+	// Runners shares pool authorization, visibility and audit with REST.
+	// Nil reports explicit unavailability.
+	Runners RunnerService
 }

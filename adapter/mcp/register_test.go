@@ -121,6 +121,14 @@ var expectedTools = []string{
 	"schedule_get",
 	"schedule_update",
 	"schedule_delete",
+	// Runner pool (7).
+	"runner_list",
+	"runner_get",
+	"runner_events",
+	"runner_update",
+	"runner_cordon",
+	"runner_uncordon",
+	"runner_source_probe",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {
