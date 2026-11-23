@@ -33,6 +33,43 @@ type TurnLease struct {
 	ExpiresAt  time.Time
 }
 
+// Turn intent kinds.
+const (
+	TurnIntentFirst   = "first"
+	TurnIntentMessage = "message"
+	TurnIntentEnd     = "end"
+	TurnIntentAbandon = "abandon"
+	TurnIntentMove    = "move"
+)
+
+// TurnIntent is the immutable, durable resend source for an accepted operation.
+type TurnIntent struct {
+	ID                                   uuid.UUID
+	RequestID                            uuid.UUID
+	Binding                              AcceptedTurnBinding
+	LeaseKey                             string
+	RunID, InvocationID                  uuid.UUID
+	NodeID                               string
+	TurnIndex                            int
+	Kind                                 string
+	Prompt, SystemPrompt, Nonce, Message string
+	Model                                string
+	Tools                                []string
+	PriorCheckpointRef                   string
+	SessionGeneration                    int64
+	OperationID                          string
+	CreatedAt                            time.Time
+	CompletedAt                          *time.Time
+}
+
+// TurnIntentStore persists accepted operations before dispatch or acknowledgement.
+type TurnIntentStore interface {
+	Persist(context.Context, TurnIntent) error
+	Complete(context.Context, uuid.UUID) error
+	Pending(context.Context) ([]TurnIntent, error)
+	PendingFor(context.Context, string) (*TurnIntent, error)
+}
+
 // TurnLeaseStore is the durable lease port.
 type TurnLeaseStore interface {
 	Acquire(ctx context.Context, key string, ttl time.Duration) (TurnLease, error)
