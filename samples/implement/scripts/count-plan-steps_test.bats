@@ -51,6 +51,38 @@ run_uncommitted() {
   [ "$status" -eq 0 ]
   [ "$(jq -r .all_tasks_complete <<<"$output")" = "false" ]
   [ "$(jq -r .no_checkboxes <<<"$output")" = "true" ]
+  [ "$(jq -c .stepless <<<"$output")" = '["docs/plans/a.md"]' ]
+}
+
+@test "one plan without checkboxes among stepped plans is named in stepless and blocks completion" {
+  printf -- '- [x] a\n' > "$WORK/docs/plans/a.md"
+  printf 'prose rewrite, no steps\n' > "$WORK/docs/plans/b.md"
+  printf -- '- [x] c\n' > "$WORK/docs/plans/c.md"
+  run_it '["docs/plans/a.md","docs/plans/b.md","docs/plans/c.md"]'
+  [ "$status" -eq 0 ]
+  [ "$(jq -c .stepless <<<"$output")" = '["docs/plans/b.md"]' ]
+  [ "$(jq -r .all_tasks_complete <<<"$output")" = "false" ]
+  [ "$(jq -r .no_checkboxes <<<"$output")" = "false" ]
+}
+
+@test "a plan whose only checkbox sits in a code fence is stepless" {
+  printf -- '- [x] a\n' > "$WORK/docs/plans/a.md"
+  printf -- '```\n- [ ] example\n```\n' > "$WORK/docs/plans/b.md"
+  run_it '["docs/plans/a.md","docs/plans/b.md"]'
+  [ "$(jq -c .stepless <<<"$output")" = '["docs/plans/b.md"]' ]
+}
+
+@test "every plan stepped means stepless is empty" {
+  printf -- '- [x] a\n' > "$WORK/docs/plans/a.md"
+  printf -- '- [ ] b\n' > "$WORK/docs/plans/b.md"
+  run_it '["docs/plans/a.md","docs/plans/b.md"]'
+  [ "$(jq -c .stepless <<<"$output")" = '[]' ]
+}
+
+@test "an unreadable plan is not also reported stepless" {
+  printf -- '- [x] a\n' > "$WORK/docs/plans/a.md"
+  run_it '["docs/plans/a.md","docs/plans/gone.md"]'
+  [ "$(jq -c .stepless <<<"$output")" = '[]' ]
 }
 
 @test "empty plan list is incomplete" {
