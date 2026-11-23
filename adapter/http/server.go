@@ -143,6 +143,8 @@ type RouterDeps struct {
 	// SubtreeEvents enables ?subtree=1 only when GraphState is also set.
 	// Otherwise subtree requests return 501; per-instance mode is unchanged.
 	SubtreeEvents SubtreeSubscriber
+	// Runners serves pool reads and admin writes; nil disables the routes.
+	Runners RunnerService
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -405,6 +407,19 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Route("/users", func(r chi.Router) {
 				r.Get("/", uh.List)
 				r.Put("/{id}/role", uh.SetRole)
+			})
+		}
+
+		if d.Runners != nil {
+			rh := NewRunnerHandler(d.Runners)
+			r.Route("/runners", func(r chi.Router) {
+				r.Get("/", rh.List)
+				r.Get("/events", rh.Events)
+				r.Post("/sources/{sourceId}/probe", rh.ProbeSource)
+				r.Get("/{id}", rh.Get)
+				r.Patch("/{id}", rh.Update)
+				r.Post("/{id}/cordon", rh.Cordon)
+				r.Post("/{id}/uncordon", rh.Uncordon)
 			})
 		}
 	})
