@@ -212,20 +212,34 @@ func (m *HealthMonitor) ProbeNow(ctx context.Context, id SourceID) (SourceHealth
 	return m.probe(ctx, src, m.d.Clock(), true)
 }
 
+// RemoteProbeError indicates a missing or failed fresh remote probe transport.
+type RemoteProbeError struct{ Err error }
+
+func (e *RemoteProbeError) Error() string { return "runner: remote probe: " + e.Err.Error() }
+func (e *RemoteProbeError) Unwrap() error { return e.Err }
+
+func probesLocally(s Source) bool { return s.RunnerID == BuiltInRunnerID }
+
 func (m *HealthMonitor) probe(ctx context.Context, s Source, now time.Time, force bool) (SourceHealth, error) {
+	if !probesLocally(s) && !force {
+		return s.Health, nil
+	}
 	m.mu.Lock()
 	prober := m.d.Probers[s.Kind]
-	if s.RunnerID != BuiltInRunnerID {
+	if !probesLocally(s) {
 		prober = m.remote
 	}
 	m.mu.Unlock()
 	if prober == nil {
+		if !probesLocally(s) {
+			return SourceHealth{}, &RemoteProbeError{Err: errors.New("transport unavailable")}
+		}
 		return s.Health, nil
 	}
 	m.mu.Lock()
 	last, seen := m.lastProbe[s.ID]
 	due := force || !seen || now.Sub(last) >= m.d.Interval
-	if due {
+	if due && probesLocally(s) {
 		m.lastProbe[s.ID] = now
 	}
 	m.mu.Unlock()
@@ -234,6 +248,9 @@ func (m *HealthMonitor) probe(ctx context.Context, s Source, now time.Time, forc
 	}
 	res, perr := prober.Probe(ctx, s)
 	if perr != nil {
+		if !probesLocally(s) {
+			return SourceHealth{}, &RemoteProbeError{Err: perr}
+		}
 		res = ProbeResult{}
 	}
 	res.HealthRevision = s.Health.Revision
