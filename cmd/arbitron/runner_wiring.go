@@ -2,13 +2,22 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"runtime"
 	"sync"
 	"time"
 
+	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
+	providersadapter "github.com/arbitron/arbitron/adapter/provider"
+	builtinrunner "github.com/arbitron/arbitron/adapter/runner/builtin"
 	runnerinventory "github.com/arbitron/arbitron/adapter/runner/inventory"
+	runnerprobe "github.com/arbitron/arbitron/adapter/runner/probe"
+	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
+	"github.com/arbitron/arbitron/domain/config"
+	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
 )
@@ -130,4 +139,130 @@ func (s syncingConnStore) resync(ctx context.Context) error {
 		return fmt.Errorf("connection change saved, but the built-in runner's sources were not refreshed (repeat the change to retry): %w", err)
 	}
 	return nil
+}
+
+func (s *runnerStack) startInventory(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTicker(s.inventoryInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := s.refreshInventory(ctx); err != nil {
+					if ctx.Err() == nil {
+						slog.Warn("runner inventory refresh failed", "error", err)
+					}
+				} else {
+					s.notifier.Notify()
+				}
+			}
+		}
+	}()
+}
+
+// runnerStackDeps are the root values the runner pool is assembled from.
+type runnerStackDeps struct {
+	Config              config.RunnersConfig
+	RefreshInventory    func(context.Context) error
+	DB                  *sql.DB
+	Bus                 engine.EventBus
+	Registry            runner.Registry
+	Factory             *providersadapter.Factory        // undecorated chat + agent selectors
+	Streams             engine.InteractiveStreamSelector // undecorated interactive selector
+	DefaultAgentBackend string
+	Process             engine.ProcessRunner // the local process runner
+	Probers             map[runner.CredentialKind]runner.SourceProber
+	Confirmer           *runnerprobe.DispatchConfirmer
+	Alerts              *adaptnotif.SourceAlerts
+	Audit               runner.AuditRecorder
+	Instances           instance.InstanceRepository
+	Clock               func() time.Time
+}
+
+// runnerStack is the assembled Phase 1 pool: one built-in runner behind the
+// dispatcher, plus the routed ports the executors use.
+type runnerStack struct {
+	refreshInventory  func(context.Context) error
+	inventoryInterval time.Duration
+	stopWake          func()
+	registry          runner.Registry
+	ledger            *adaptsqlite.RunnerLedgerRepo
+	recorder          *runner.EventRecorder
+	notifier          *runner.PoolNotifier
+	projector         *runner.ExecutionStatusProjector
+	monitor           *runner.HealthMonitor
+	dispatcher        *runner.StepDispatcher
+	service           *runner.Service
+	alerts            *adaptnotif.SourceAlerts
+	// Routed: every model/process step the executors run goes through the dispatcher.
+	chats   engine.ChatProviderSelector
+	agents  engine.AgentProviderSelector
+	streams engine.InteractiveStreamSelector
+	process engine.ProcessRunner
+	// Undecorated: the built-in runner executes with these, and read-only
+	// probe/inventory/refresh paths keep them (they never consume a slot).
+	innerChats   engine.ChatProviderSelector
+	innerAgents  engine.AgentProviderSelector
+	innerStreams engine.InteractiveStreamSelector
+}
+
+func newRunnerStack(d runnerStackDeps) *runnerStack {
+	if err := d.Config.Validate(); err != nil {
+		panic(err)
+	}
+	if d.RefreshInventory == nil || d.Registry == nil || d.Factory == nil || d.Streams == nil || d.Process == nil || d.Confirmer == nil || d.Alerts == nil || d.Audit == nil || d.Instances == nil {
+		panic("arbitron: incomplete runner stack")
+	}
+	clock := d.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	seconds := func(n int) time.Duration { return time.Duration(n) * time.Second }
+	millis := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+
+	ledger := adaptsqlite.NewRunnerLedgerRepo(d.DB)
+	poolEvents := adaptsqlite.NewPoolEventRepo(d.DB)
+	recorder := runner.NewEventRecorder(poolEvents, d.Bus, d.Config.EventRetention, clock)
+	notifier := runner.NewPoolNotifier()
+	projector := runner.NewExecutionStatusProjector(ledger)
+	monitor := runner.NewHealthMonitor(runner.MonitorDeps{
+		Registry: d.Registry, Probers: d.Probers, Confirm: d.Confirmer, Alerts: d.Alerts,
+		Events: recorder, Notifier: notifier, Clock: clock,
+		Interval: seconds(d.Config.ProbeIntervalSeconds), Jitter: seconds(d.Config.ProbeJitterSeconds),
+	})
+	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.Factory, Agents: d.Factory, Streams: d.Streams, Process: d.Process})
+	// The dispatcher's wake subscription lives as long as the process.
+	wake, stopWake := notifier.Subscribe()
+	dispatcher := runner.NewStepDispatcher(runner.DispatcherDeps{
+		Registry: d.Registry, Ledger: ledger,
+		Runners: runner.NewHealthReportingRunnerSet(runner.StaticRunnerSet{runner.BuiltInRunnerID: builtin}, monitor),
+		Events:  recorder, Status: projector, Health: monitor,
+		Telemetry: runner.EmptyTelemetry{}, Policy: runner.PlacementPolicy{}, Clock: clock,
+		TransientMaxAttempts: d.Config.TransientMaxAttempts,
+		BackoffMin:           millis(d.Config.TransientBackoffMinMs),
+		BackoffMax:           millis(d.Config.TransientBackoffMaxMs),
+		Wake:                 wake,
+	})
+	d.Confirmer.Attach(dispatcher)
+	service := runner.NewService(runner.ServiceDeps{
+		Registry: d.Registry, Ledger: ledger, Events: poolEvents, Recorder: recorder, Audit: d.Audit,
+		Visibility: runner.NewInstanceVisibility(d.Instances), Monitor: monitor,
+		Telemetry: runner.EmptyTelemetry{}, Notifier: notifier, Clock: clock,
+	})
+	return &runnerStack{
+		refreshInventory: d.RefreshInventory, inventoryInterval: seconds(d.Config.ProbeIntervalSeconds), stopWake: stopWake,
+		registry: d.Registry, ledger: ledger, recorder: recorder, notifier: notifier, projector: projector,
+		monitor: monitor, dispatcher: dispatcher, service: service, alerts: d.Alerts,
+		chats:        runner.NewRoutingChatSelector(d.Factory, dispatcher, runner.BuiltInAffinity),
+		agents:       runner.NewRoutingAgentSelector(d.Factory, dispatcher),
+		streams:      runner.WithDefaultAgentBackend(runner.NewRoutingStreamSelector(d.Streams, dispatcher), d.DefaultAgentBackend),
+		process:      runner.NewRoutedProcessRunner(dispatcher),
+		innerChats:   d.Factory,
+		innerAgents:  d.Factory,
+		innerStreams: d.Streams,
+	}
 }

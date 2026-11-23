@@ -39,6 +39,8 @@ import (
 	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
+	runnerinventory "github.com/arbitron/arbitron/adapter/runner/inventory"
+	runnerprobe "github.com/arbitron/arbitron/adapter/runner/probe"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/config"
@@ -50,6 +52,7 @@ import (
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
+	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/arbitron/arbitron/domain/schedule"
 	settingsdomain "github.com/arbitron/arbitron/domain/settings"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -348,6 +351,7 @@ type domainStack struct {
 	subtreeEvents   *engine.SubtreeEventBridge
 	invocations     engine.InvocationStore
 	groupResolution *engine.GroupResolutionBridge
+	runners         *runnerStack
 }
 
 // Close cancels and joins startup, refresh and sweeps before draining execution,
@@ -419,6 +423,14 @@ func (ds *domainStack) close(ctx context.Context) {
 			logger.Error("tracing shutdown error", "error", err)
 		}
 	}
+	// Source alerts deliver external notifications in the background; join
+	// them before their notification store closes.
+	if ds.runners != nil {
+		ds.runners.stopWake()
+		ds.runners.dispatcher.Close()
+		ds.runners.monitor.Wait()
+		ds.runners.alerts.Wait()
+	}
 	if ds.db != nil {
 		ds.db.Close()
 	}
@@ -469,6 +481,10 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 	if q := ds.layoutQuery(); q != nil {
 		deps.Layouts = q
 	}
+	// Assign Runners only for a built pool, avoiding a typed-nil interface.
+	if ds.runners != nil {
+		deps.Runners = ds.runners.service
+	}
 	return deps
 }
 
@@ -517,6 +533,9 @@ func (ds *domainStack) httpDeps() adapthttp.RouterDeps {
 	}
 	if ds.subtreeEvents != nil {
 		deps.SubtreeEvents = ds.subtreeEvents
+	}
+	if ds.runners != nil {
+		deps.Runners = ds.runners.service
 	}
 	return deps
 }
@@ -995,7 +1014,35 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// in-use check: deleting a connection a profile still references is rejected
 	// fail-closed, so an orphaned reference surfaces at delete time rather than at
 	// a far-removed workflow run/validate failure.
-	connSvc := provider.NewConnectionService(connStore, profileRepo)
+	// Remote runners (Phase 1): register the built-in runner and its sources
+	// (harness presence + connections) before anything can execute, and
+	// re-sync after every admin connection write, so a new connection is a
+	// placeable source immediately. The sync runs inside the connection
+	// service's exclusive execution lease.
+	runnerRegistry := adaptsqlite.NewRunnerRegistryRepo(db)
+	claudeRunner := modelDeps.Runner
+	if claudeRunner == nil {
+		claudeRunner = claudecli.NewExecRunner()
+	}
+	codexCfg := codex.Config{
+		Runner:           modelDeps.Runner,
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+	}
+	sourceSync := newBuiltinSourceSync(builtinSourceSyncDeps{
+		Registry: runnerRegistry,
+		Inventory: runnerinventory.Config{
+			ClaudeBinary: cfg.LLM.BinaryPath, Codex: codexCfg, Runner: claudeRunner, Connections: connStore,
+		},
+		StepLimit:     cfg.Runners.DefaultStepLimit,
+		RunnerVersion: version,
+		WorkspaceRoot: wsRoot,
+		Logger:        logger,
+	})
+	if err := sourceSync.Sync(ctx); err != nil {
+		return nil, fmt.Errorf("registering the built-in runner: %w", err)
+	}
+	connSvc := provider.NewConnectionService(newSyncingConnStore(connStore, sourceSync.Sync), profileRepo)
 
 	// 8e. Build the connection-existence checker for workflow validation over the
 	// loaded profiles + the connection store. It confirms a profile's non-empty
@@ -1076,14 +1123,105 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	})
 	modelDiscovery := provider.NewModelDiscoveryService(connStore, probeFactory, capabilityRules)
 
-	// 9. Create all node executors and build the executor map.
-	modelConsumers := newRunModelConsumers(fileReader, providerFactory, pinningResolver, cfg.LLM.DefaultAgentBackend)
+	// 9r. Remote runners (Phase 1). The pool is assembled before the
+	// executors: its source alerts need the notification store and external
+	// notifier, and its built-in runner executes interactive turns with the
+	// undecorated interactive selector, so those are built here.
+
+	// 12b. Create the synchronized SettingsStore that owns the runtime-mutable
+	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
+	// Teams notifier so all three route reads/writes through one mutex.
+	settings := config.NewSettingsStore(&cfg.Notifications.Teams)
+	// 12c. Create the fan-out external notifier (log + best-effort Teams). The
+	// Teams child reads the live webhook config through the store, so an admin
+	// toggle via the dashboard / MCP takes effect on the next notification.
+	externalNotifier := adaptnotif.NewDefaultExternalNotifier(settings, cfg.Server.PublicBaseURL, logger)
+	notifRepo := adaptsqlite.NewNotificationRepo(db)
+
+	// 12c. Build the profile-aware interactive stream selector: chat profiles
+	// route to the tool-suppressed chat stream (via the provider factory), agent
+	// profiles route by BACKEND to the matching streaming provider. The tool/
+	// sandbox POSTURE is backend-defined (each provider's own implementation
+	// detail), NOT uniformly tool-enabled: claude-code → the claude-cli stream
+	// adapter (tool-enabled / autonomous), codex → the codex INTERACTIVE provider
+	// (`codex exec` / `codex exec resume`, subscription-only): a workspace-write
+	// sandbox with writable_roots pinned to the run's WorkDir worktree and network
+	// egress off (the autonomous batch arm runs the SAME `codex exec` binary under
+	// the fully-open bypass posture). An empty agent backend is floored to the SAME deployment default the
+	// batch AgentCallExecutor uses (cfg.LLM.DefaultAgentBackend); opencode and
+	// unknown backends fail closed.
+	codexInteractiveConfig := codex.InteractiveConfig{
+		Runner: modelDeps.Runner,
+		// Codex (subscription-only): each interactive turn runs `codex exec --json`
+		// (fresh) / `codex exec resume --json` (resume); binary auto-resolved from
+		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
+		// wedged turn). The interactive posture is codex's workspace-write sandbox with
+		// writable_roots pinned to the turn's WorkDir worktree and network egress off
+		// (see buildInteractiveExecArgs), so codex's sandbox is the write/egress
+		// containment, with no per-mutation approval loop (reads are NOT confined).
+		// MaxResponseBytes caps the exec stdout pipe.
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// profile-editing Phase 3: the binding's resolved effort rides the protocol
+		// body via these rules on the interactive_agent streaming path too.
+		CapabilityRules: capabilityRules,
+	}
+	// The codex exec protocol (sandbox posture, event vocabulary, exec-resume) is
+	// VERIFIED against codex-cli 0.139. The codex interactive arm stays behind an
+	// explicit operator opt-in
+	// (ARBITRON_CODEX_INTERACTIVE_VERIFIED): default off → the codex backend is
+	// absent from the stream map and the selector fails closed
+	// (ErrUnsupportedAgentBackend), so a host without a compatible codex binary
+	// cannot accidentally route interactive_agent turns to it.
+	agentStreams := map[string]providersadapter.AgentStreamFactory{
+		workflow.BackendClaudeCode: func(b provider.ResolvedBinding) engine.ChatProvider {
+			return claudecli.NewStreamAgentAdapterForBinding(agentCfg, b)
+		},
+	}
+	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
+		agentStreams[workflow.BackendCodex] = func(b provider.ResolvedBinding) engine.ChatProvider {
+			cfg := codexInteractiveConfig
+			cfg.Binding = b
+			return codex.NewInteractiveProvider(cfg)
+		}
+		logger.Warn("codex interactive provider ENABLED via " + codexInteractiveVerifiedEnv +
+			" — codex exec protocol verified against codex-cli 0.139 (workspace-write sandbox, writable_roots pinned to WorkDir, network egress off; reads NOT confined — transcripts may contain host secrets)")
+	} else {
+		logger.Info("codex interactive provider disabled; set " + codexInteractiveVerifiedEnv +
+			"=true to enable the codex interactive_agent backend")
+	}
+	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
+		providerFactory,
+		agentStreams,
+		cfg.LLM.DefaultAgentBackend,
+	)
+
+	// The executing machine's process port; only the built-in runner calls it.
 	localProcess := process.NewLocalProcessRunner()
+	runnerPool := newRunnerStack(runnerStackDeps{
+		Config: cfg.Runners, DB: db, Bus: bus, Registry: runnerRegistry, RefreshInventory: sourceSync.Sync,
+		Factory: providerFactory, Streams: interactiveStreamSel, DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
+		Process: localProcess,
+		Probers: map[runner.CredentialKind]runner.SourceProber{
+			runner.CredAnthropicSubscription: runnerprobe.NewClaudeAuthProber(cfg.LLM.BinaryPath, claudeRunner),
+			runner.CredOpenAISubscription:    runnerprobe.NewCodexProber(codexCfg),
+			runner.CredLunaRoute:             runnerprobe.NewLunaRouteProber(connStore, probeFactory),
+		},
+		Confirmer: runnerprobe.NewDispatchConfirmer(profileRepo, filepath.Join(wsRoot, ".runner-confirm"), 2*time.Minute),
+		Alerts:    adaptnotif.NewSourceAlerts(notifRepo, externalNotifier, logger, time.Now),
+		Audit:     auditSvc,
+		Instances: instanceRepo,
+		Clock:     time.Now,
+	})
+
+	// 9. Create all node executors and build the executor map. Model and
+	// process steps run through the runner pool's routed ports.
+	modelConsumers := newRunModelConsumers(fileReader, runnerPool.chats, runnerPool.agents, pinningResolver, cfg.LLM.DefaultAgentBackend)
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     modelConsumers.llm,
 		workflow.NodeTypeAgentCall:   modelConsumers.agent,
-		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough, localProcess),
-		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough, localProcess),
+		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough, runnerPool.process),
+		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough, runnerPool.process),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 	}
@@ -1138,6 +1276,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// Live, not pinningResolver: each row overlays the pins InstanceRepo.List
 	// carries, so a page needs no per-row pin load (G23).
 	instanceEnricher.SetProfileResolver(profileResolver)
+	instanceEnricher.SetExecutionStatusProvider(runnerPool.projector)
 
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
 	scheduler := queue.NewScheduler(queueMgr)
@@ -1173,8 +1312,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		instanceRepo, nodeExecRepo, webhookRegistry, scheduler, queueMgr,
 	))
 
-	// 12a. Create notification repo and wire it to the engine.
-	notifRepo := adaptsqlite.NewNotificationRepo(db)
+	// 12a. Wire the notification repo built with the runner pool.
 	eng.SetNotifications(notifRepo)
 
 	// 12a-bis. Create the intervention audit repo and wire it to the engine so
@@ -1211,10 +1349,6 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// Shared authorized layout reads/retries use manifest and snapshot policies.
 	ls.attachQuery(workflowSvc, eng)
 
-	// 12b. Create the synchronized SettingsStore that owns the runtime-mutable
-	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
-	// Teams notifier so all three route reads/writes through one mutex.
-	settings := config.NewSettingsStore(&cfg.Notifications.Teams)
 	systemSettings := settingsdomain.NewService(adaptsqlite.NewSettingsRepo(db))
 	identityPolicy := modelidentity.NewPolicyService(adaptsqlite.NewModelIdentityPolicyRepo(db))
 	executionGate := provider.NewExecutionGate()
@@ -1233,11 +1367,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// A trigger snapshots its model pins under the gate's shared lease, so an
 	// admin edit cannot land halfway through one run's alias capture.
 	eng.SetModelPinGate(executionGate)
-	// 12c. Create the fan-out external notifier (log + best-effort Teams) and
-	// wire it to the engine. The Teams child reads the live webhook config
-	// through the store, so an admin toggle via the dashboard / MCP takes effect
-	// on the next notification.
-	externalNotifier := adaptnotif.NewDefaultExternalNotifier(settings, cfg.Server.PublicBaseURL, logger)
+	// 12c. Wire the external notifier built with the runner pool.
 	eng.SetExternalNotifier(externalNotifier)
 
 	// 12c-sched. Recurring schedules (org-readiness Phase 3): the persistence
@@ -1327,64 +1457,6 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		schedule.WithResolverID(identityRepo),
 	)
 
-	// 12c. Build the profile-aware interactive stream selector: chat profiles
-	// route to the tool-suppressed chat stream (via the provider factory), agent
-	// profiles route by BACKEND to the matching streaming provider. The tool/
-	// sandbox POSTURE is backend-defined (each provider's own implementation
-	// detail), NOT uniformly tool-enabled: claude-code → the claude-cli stream
-	// adapter (tool-enabled / autonomous), codex → the codex INTERACTIVE provider
-	// (`codex exec` / `codex exec resume`, subscription-only): a workspace-write
-	// sandbox with writable_roots pinned to the run's WorkDir worktree and network
-	// egress off (the autonomous batch arm runs the SAME `codex exec` binary under
-	// the fully-open bypass posture). An empty agent backend is floored to the SAME deployment default the
-	// batch AgentCallExecutor uses (cfg.LLM.DefaultAgentBackend); opencode and
-	// unknown backends fail closed.
-	codexInteractiveConfig := codex.InteractiveConfig{
-		Runner: modelDeps.Runner,
-		// Codex (subscription-only): each interactive turn runs `codex exec --json`
-		// (fresh) / `codex exec resume --json` (resume); binary auto-resolved from
-		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
-		// wedged turn). The interactive posture is codex's workspace-write sandbox with
-		// writable_roots pinned to the turn's WorkDir worktree and network egress off
-		// (see buildInteractiveExecArgs), so codex's sandbox is the write/egress
-		// containment, with no per-mutation approval loop (reads are NOT confined).
-		// MaxResponseBytes caps the exec stdout pipe.
-		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
-		// profile-editing Phase 3: the binding's resolved effort rides the protocol
-		// body via these rules on the interactive_agent streaming path too.
-		CapabilityRules: capabilityRules,
-	}
-	// The codex exec protocol (sandbox posture, event vocabulary, exec-resume) is
-	// VERIFIED against codex-cli 0.139. The codex interactive arm stays behind an
-	// explicit operator opt-in
-	// (ARBITRON_CODEX_INTERACTIVE_VERIFIED): default off → the codex backend is
-	// absent from the stream map and the selector fails closed
-	// (ErrUnsupportedAgentBackend), so a host without a compatible codex binary
-	// cannot accidentally route interactive_agent turns to it.
-	agentStreams := map[string]providersadapter.AgentStreamFactory{
-		workflow.BackendClaudeCode: func(b provider.ResolvedBinding) engine.ChatProvider {
-			return claudecli.NewStreamAgentAdapterForBinding(agentCfg, b)
-		},
-	}
-	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
-		agentStreams[workflow.BackendCodex] = func(b provider.ResolvedBinding) engine.ChatProvider {
-			cfg := codexInteractiveConfig
-			cfg.Binding = b
-			return codex.NewInteractiveProvider(cfg)
-		}
-		logger.Warn("codex interactive provider ENABLED via " + codexInteractiveVerifiedEnv +
-			" — codex exec protocol verified against codex-cli 0.139 (workspace-write sandbox, writable_roots pinned to WorkDir, network egress off; reads NOT confined — transcripts may contain host secrets)")
-	} else {
-		logger.Info("codex interactive provider disabled; set " + codexInteractiveVerifiedEnv +
-			"=true to enable the codex interactive_agent backend")
-	}
-	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
-		providerFactory,
-		agentStreams,
-		cfg.LLM.DefaultAgentBackend,
-	)
-
 	// The probes launch from this directory; the inventory binds what Claude
 	// reads from it, so both must name the same path.
 	probeDir := filepath.Join(wsRoot, ".model-probe")
@@ -1445,14 +1517,14 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// turn rather than silently resolve a live model after a profile edit.
 	interactiveResolver := pinningResolver.ForRun()
 	interactiveExec := engine.NewInteractiveExecutor(
-		instanceRepo, nodeExecRepo, interactiveStreamSel, interactiveResolver, fileReader, bus, queueMgr,
+		instanceRepo, nodeExecRepo, runnerPool.streams, interactiveResolver, fileReader, bus, queueMgr,
 	)
 	eng.RegisterExecutor(workflow.NodeTypeInteractiveLLM, interactiveExec)
 	eng.RegisterExecutor(workflow.NodeTypeInteractiveAgent, interactiveExec)
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
-		instanceRepo, nodeExecRepo, interactiveStreamSel, interactiveResolver, bus, queueMgr,
+		instanceRepo, nodeExecRepo, runnerPool.streams, interactiveResolver, bus, queueMgr,
 	)
 	invocationSetter, ok := conversationHandler.(interface{ SetInvocationStore(engine.InvocationStore) })
 	if !ok {
@@ -1492,7 +1564,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// handler.
 	groupResolution := engine.NewGroupResolutionBridge(
 		groupRunRepo, instanceRepo, nodeExecRepo, interactiveResolver,
-		interactiveStreamSel, fileReader, eng, bus, queueRepo, queueMgr,
+		runnerPool.streams, fileReader, eng, bus, queueRepo, queueMgr,
 		time.Duration(cfg.LLM.TimeoutSeconds)*time.Second,
 	)
 	groupResolution.SetInvocationStore(invocationStore)
@@ -1611,6 +1683,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		subtreeEvents:         subtreeEvents,
 		invocations:           invocationStore,
 		groupResolution:       groupResolution,
+		runners:               runnerPool,
 	}
 	skipSeed := func(alias string, cause error) {
 		logger.Warn("skipped config profile", "alias", alias, "error", cause)

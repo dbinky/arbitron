@@ -97,7 +97,7 @@ func TestModelPinsBatchConsumersRequireRunContext(t *testing.T) {
 				pins := provider.NewPinningResolver(liveResolver, lookup, engine.InstanceIDFromContext)
 				sink := &consumerModelSink{}
 				factory := providersadapter.NewFactory(providersadapter.Deps{ClaudeChat: sink, ClaudeAgent: sink})
-				consumers := newRunModelConsumers(filesystem.NewFileReader(root), factory, pins, workflow.BackendClaudeCode)
+				consumers := newRunModelConsumers(filesystem.NewFileReader(root), factory, factory, pins, workflow.BackendClaudeCode)
 				node := workflow.Node{ID: "node", Type: workflow.NodeTypeLLMCall,
 					Config: workflow.NodeConfig{ModelProfile: "worker", TemplateFile: "p.md"}}
 				var err error

@@ -82,6 +82,12 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 	if err := ds.eng.RecoverCrashedInstancesContext(ctx); err != nil {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
+	// Source health probing starts after crash recovery, so its first tick
+	// sees the recovered runs' placements. It stops with the lifecycle context.
+	if ds.runners != nil {
+		ds.runners.monitor.Start(ctx)
+		ds.runners.startInventory(ctx, &ds.background)
+	}
 	if err := spawn.Reconcile(ctx); err != nil {
 		ds.logger.Error("spawn-wait reconciliation incomplete", "error", err)
 	}
