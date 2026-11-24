@@ -355,6 +355,8 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
 g() { git -C "$WORK" -c core.quotepath=off "$@"; }
 TAB="$(printf '\t')"
+# Longest added line the hardcoded-literal warning scans (longer = generated).
+MAX_LIT_LINE=2000
 
 if [ "$MODE" = check ]; then
   mkdir -p "$WS/tamper"
@@ -537,10 +539,14 @@ if [ "$RW" = false ]; then
 
   # Warning hardcoded_expected_value: a literal (string of 8+ chars, number of
   # 4+ digits) on an added source line that also appears in a test file at head.
-  jq -r --argjson T "$LANG_TABLE" --argjson CS "$CSDIRS" --slurpfile NS "$TMP/ns.json" "$JQ_LIB"'
+  # Lines over MAX_LIT_LINE chars are generated (minified bundles) and skipped:
+  # the regex scan over them takes minutes and timed the whole gate out.
+  jq -r --argjson T "$LANG_TABLE" --argjson CS "$CSDIRS" --slurpfile NS "$TMP/ns.json" \
+    --argjson max "$MAX_LIT_LINE" "$JQ_LIB"'
     ($NS[0] | map(select(.rs_role == "test") | .path)) as $rt
     | . as $c
-    | select($c.side == "+" and role($c.file) == "source" and (($rt | index($c.file)) == null))
+    | select($c.side == "+" and ($c.text | length) <= $max)
+    | select(role($c.file) == "source" and (($rt | index($c.file)) == null))
     | ( [ ($c.text | scan("\"((?:[^\"\\\\]|\\\\.)*)\"|\u0027((?:[^\u0027\\\\]|\\\\.)*)\u0027|`([^`]*)`") | map(select(. != null)) | .[0] | select(length >= 8)),
           ($c.text | scan("(?<![A-Za-z0-9_.])[0-9]{4,}(?![A-Za-z0-9_])")) ] | unique )[]
     | [$c.file, ($c.line | tostring), .] | join("\t")' "$TMP/changes.ndjson" > "$TMP/lits.tsv"

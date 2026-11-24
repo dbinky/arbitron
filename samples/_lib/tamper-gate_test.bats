@@ -1060,6 +1060,28 @@ sed_replace_tests_line() {
   [ "$(j '.warn_count')" = "0" ]
 }
 
+@test "literal on an over-long generated line does not warn" {
+  # Minified bundles (e.g. dashboard dist assets) carry 100K+ char lines whose
+  # regex scan took minutes and timed the gate out; such lines are generated,
+  # not hand-written expectations, so the literal scan skips them.
+  pad="$(printf '%04000d' 0 | tr 0 x)"
+  printf 'var K = "abcdefghij"; var P = "%s"\n' "$pad" >> "$WORK/pkg/a.go"
+  printf '%s\n' '	_ = "abcdefghij"' >> "$WORK/pkg/a_test.go"
+  change
+  gate
+  [ "$status" -eq 0 ]
+  [ "$(j '.warnings|length')" = "0" ]
+}
+
+@test "literal on a long but normal line still warns" {
+  pad="$(printf '%0900d' 0 | tr 0 x)"
+  printf 'var K = "abcdefghij"; var P = "%s"\n' "$pad" >> "$WORK/pkg/a.go"
+  printf '%s\n' '	_ = "abcdefghij"' >> "$WORK/pkg/a_test.go"
+  change
+  gate
+  [ "$(j '.warnings|length')" = "1" ]
+}
+
 @test "4-digit number shared with a test warns" {
   printf '%s\n' 'var N = 4242' >> "$WORK/pkg/a.go"
   printf '%s\n' '	_ = 4242' >> "$WORK/pkg/a_test.go"
