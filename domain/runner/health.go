@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,18 +71,20 @@ var ErrConfirmationUnsupported = errors.New("runner: confirmation probe unsuppor
 // HealthMonitor owns per-source health transitions. All read-modify-write of a
 // source's health happens under mu; probes and confirmations run outside it.
 type HealthMonitor struct {
-	d           MonitorDeps
-	mu          sync.Mutex
-	lastProbe   map[SourceID]time.Time
-	lastConfirm map[SourceID]time.Time
-	exhaustedAt map[SourceID]time.Time
-	jitter      map[SourceID]time.Duration
-	held        map[SourceID]bool // ordinaryUsageAllowed=false: keep exhausted past reset
-	confirming  map[SourceID]bool
-	wg          sync.WaitGroup
-	loop        sync.WaitGroup
-	startOnce   sync.Once
-	remote      SourceProber
+	d             MonitorDeps
+	mu            sync.Mutex
+	remoteAttempt map[SourceID]time.Time
+	remoteBusy    map[SourceID]bool
+	lastProbe     map[SourceID]time.Time
+	lastConfirm   map[SourceID]time.Time
+	exhaustedAt   map[SourceID]time.Time
+	jitter        map[SourceID]time.Duration
+	held          map[SourceID]bool // ordinaryUsageAllowed=false: keep exhausted past reset
+	confirming    map[SourceID]bool
+	wg            sync.WaitGroup
+	loop          sync.WaitGroup
+	startOnce     sync.Once
+	remote        SourceProber
 }
 
 // NewHealthMonitor validates the wiring; any missing dependency panics at boot.
@@ -102,6 +105,7 @@ func NewHealthMonitor(d MonitorDeps) *HealthMonitor {
 		d: d, lastProbe: map[SourceID]time.Time{}, lastConfirm: map[SourceID]time.Time{},
 		exhaustedAt: map[SourceID]time.Time{}, jitter: map[SourceID]time.Duration{},
 		held: map[SourceID]bool{}, confirming: map[SourceID]bool{},
+		remoteAttempt: map[SourceID]time.Time{}, remoteBusy: map[SourceID]bool{},
 	}
 }
 
@@ -150,6 +154,7 @@ func (m *HealthMonitor) ApplyOutcome(ctx context.Context, id SourceID, o SourceO
 		h.Auth = AuthOK
 		if h.Capacity == CapacityProbation && (h.ConfirmationModel == "" || o.Model == h.ConfirmationModel) {
 			h.Capacity, h.ResetAt = CapacityAvailable, nil
+			clearConfirmDetail(&h)
 			m.clearEpisode(id)
 		}
 		h.Congested, h.CongestedUntil = false, nil
@@ -222,6 +227,7 @@ func probesLocally(s Source) bool { return s.RunnerID == BuiltInRunnerID }
 
 func (m *HealthMonitor) probe(ctx context.Context, s Source, now time.Time, force bool) (SourceHealth, error) {
 	if !probesLocally(s) && !force {
+		m.scheduleRemote(ctx, s, now)
 		return s.Health, nil
 	}
 	m.mu.Lock()
@@ -232,7 +238,7 @@ func (m *HealthMonitor) probe(ctx context.Context, s Source, now time.Time, forc
 	m.mu.Unlock()
 	if prober == nil {
 		if !probesLocally(s) {
-			return SourceHealth{}, &RemoteProbeError{Err: errors.New("transport unavailable")}
+			return SourceHealth{}, &RemoteProbeError{Err: ErrRemoteProberNotWired}
 		}
 		return s.Health, nil
 	}
@@ -255,6 +261,28 @@ func (m *HealthMonitor) probe(ctx context.Context, s Source, now time.Time, forc
 	}
 	res.HealthRevision = s.Health.Revision
 	return m.ObserveProbe(ctx, s.ID, res)
+}
+
+// scheduleRemote runs periodic checks off the tick loop, at most one per source.
+// Attempts use their own cadence so they never fabricate local probe evidence.
+func (m *HealthMonitor) scheduleRemote(ctx context.Context, s Source, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.remote == nil || m.remoteBusy[s.ID] {
+		return
+	}
+	if last, ok := m.remoteAttempt[s.ID]; ok && now.Sub(last) < m.d.Interval {
+		return
+	}
+	m.remoteAttempt[s.ID], m.remoteBusy[s.ID] = now, true
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer func() { m.mu.Lock(); delete(m.remoteBusy, s.ID); m.mu.Unlock() }()
+		if _, err := m.probe(ctx, s, now, true); err != nil && ctx.Err() == nil {
+			slog.Debug("runner remote health check failed", "source", string(s.ID), "error", err)
+		}
+	}()
 }
 
 // SetRemoteProber installs the transport-backed read-only probe producer.
@@ -299,6 +327,7 @@ func (m *HealthMonitor) ObserveProbe(ctx context.Context, id SourceID, res Probe
 				delete(m.held, id)
 				if h.Capacity != CapacityAvailable {
 					h.Capacity, h.ResetAt = CapacityAvailable, nil
+					clearConfirmDetail(&h)
 					m.clearEpisode(id)
 				}
 			case hmIsSubscription(cur.Kind):
@@ -371,13 +400,58 @@ func (m *HealthMonitor) finishConfirm(ctx context.Context, src Source, err error
 	switch {
 	case err == nil:
 		_ = m.ApplyOutcome(ctx, src.ID, SourceOutcome{Class: OutcomeNone, Model: src.Health.ConfirmationModel})
-	case errors.Is(err, ErrConfirmationUnsupported):
-		// probation stays; the next real step decides
 	default:
 		if o := ClassifyError(err); o.Class == OutcomeExhausted || o.Class == OutcomeLoggedOut {
 			_ = m.ApplyOutcome(ctx, src.ID, o)
+		} else {
+			m.noteProbation(ctx, src.ID, confirmationDetail(err))
 		}
 	}
+}
+
+// Probation reasons are stable classes, never provider error prose.
+const (
+	DetailConfirmNoProfile   = "confirmation_unavailable:no_matching_profile"
+	DetailConfirmUnsupported = "confirmation_unavailable:unsupported_verifier"
+	DetailConfirmTransport   = "confirmation_unavailable:transport"
+	DetailConfirmTimeout     = "confirmation_unavailable:timeout"
+	DetailConfirmMismatch    = "confirmation_failed:executed_model_differs"
+	DetailConfirmFailed      = "confirmation_failed:other"
+)
+
+func confirmationDetail(err error) string {
+	switch {
+	case errors.Is(err, ErrConfirmationNoProfile):
+		return DetailConfirmNoProfile
+	case errors.Is(err, ErrConfirmationUnsupported):
+		return DetailConfirmUnsupported
+	case errors.Is(err, ErrConfirmationModelMismatch):
+		return DetailConfirmMismatch
+	case errors.Is(err, ErrRemoteProbeUnavailable), errors.Is(err, ErrRemoteProbeTimeout), ClassifyError(err).Class == OutcomeRunnerLost:
+		return DetailConfirmTransport
+	case errors.Is(err, context.DeadlineExceeded):
+		return DetailConfirmTimeout
+	}
+	return DetailConfirmFailed
+}
+
+func clearConfirmDetail(h *SourceHealth) {
+	if strings.HasPrefix(h.Detail, "confirmation_") {
+		h.Detail = ""
+	}
+}
+
+// noteProbation persists a reason without claiming a material health transition.
+func (m *HealthMonitor) noteProbation(ctx context.Context, id SourceID, detail string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, err := m.d.Registry.GetSource(ctx, id)
+	if err != nil || cur.Health.Capacity != CapacityProbation {
+		return
+	}
+	h := cur.Health
+	h.Detail = detail
+	_ = m.commit(ctx, cur, h, Cause{Kind: CauseSystem}, m.d.Clock())
 }
 
 // markExhausted starts (or refreshes) an exhaustion episode. held=true comes
