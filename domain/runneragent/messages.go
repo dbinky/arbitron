@@ -131,6 +131,9 @@ type Dispatch struct {
 	Generation   int64
 	Op           string
 	Chat         *ChatJob
+	Process      *ProcessJob
+	Agent        *AgentJob
+	Workspace    *WorkspaceJob
 	LeaseUntil   time.Time
 }
 
@@ -155,6 +158,8 @@ type Result struct {
 	Confirmation *runner.ConfirmationResult
 	OK           bool
 	Chat         *ChatResult
+	Process      *ProcessResult
+	Agent        *AgentResult
 	Outcome      runner.SourceOutcome
 	ErrorText    string
 }
