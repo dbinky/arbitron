@@ -28,6 +28,19 @@ func NewNodeExecutionRepo(db *sql.DB) *NodeExecutionRepo {
 }
 
 func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecution) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := insertNodeExecutionTx(ctx, tx, exec); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// insertNodeExecutionTx includes placement evidence in the caller's transaction.
+func insertNodeExecutionTx(ctx context.Context, tx *sql.Tx, exec *instance.NodeExecution) error {
 	resolvedInputsJSON, err := toNullJSONString(exec.ResolvedInputs)
 	if err != nil {
 		return fmt.Errorf("marshalling resolved inputs: %w", err)
@@ -45,12 +58,7 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 		return fmt.Errorf("marshalling llm conversation: %w", err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	row, err := r.queries.WithTx(tx).CreateNodeExecution(ctx, generated.CreateNodeExecutionParams{
+	row, err := generated.New(tx).CreateNodeExecution(ctx, generated.CreateNodeExecutionParams{
 		ID:              uuidToString(exec.ID),
 		InstanceID:      uuidToString(exec.InstanceID),
 		NodeID:          exec.NodeID,
@@ -83,10 +91,7 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 	}
 	exec.StartedAt = startedAt
 	exec.CompletedAt = completedAt
-	if err := writePlacement(ctx, tx, exec); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return writePlacement(ctx, tx, exec)
 }
 
 func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecution) error {
