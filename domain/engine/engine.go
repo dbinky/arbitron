@@ -1232,6 +1232,34 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			e.failInstance(ctx, instanceID, currentNodeID)
 			return
 		}
+		// RR-10: adopt durable variables and continuation without executing
+		// the open invocation's already committed effect a second time.
+		if committer := e.committer(); committer != nil {
+			replay, rerr := e.committedReplay(ctx, committer, instanceID, currentNodeID)
+			if rerr != nil {
+				slog.Error("committed-result lookup failed", "instanceID", instanceID, "nodeID", currentNodeID, "error", rerr)
+				e.publishStepPersistenceFailure(instanceID, node, rerr)
+				e.failInstance(context.WithoutCancel(ctx), instanceID, currentNodeID)
+				return
+			}
+			if replay != nil {
+				if replay.Variables != nil {
+					vars = variable.FromSnapshotWithNodeIDs(replay.Variables, nodeIDs)
+				}
+				e.eventBus.Publish(instanceID, Event{
+					Type: EventTypeNodeCompleted, Timestamp: time.Now(),
+					Data: map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "replayed": true},
+				})
+				lastNodeID = currentNodeID
+				if replay.NextNodeID == "" {
+					terminalInvocation = replay.InvocationID
+				} else if !e.commitVisit(ctx, instanceID, currentNodeID, replay.InvocationID) {
+					return
+				}
+				currentNodeID = replay.NextNodeID
+				continue
+			}
+		}
 
 		// Snapshot variables before execution (diagnostic; log-only on error).
 		if err := e.snapshots.Create(ctx, &instance.VariableSnapshot{

@@ -169,6 +169,13 @@ func sameCommitTx(ctx context.Context, tx *sql.Tx, c engine.StepCommit, varsJSON
 			return false, conflict
 		}
 	}
+	var consumed int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM step_commit_operations WHERE invocation_id = ?`, inv).Scan(&consumed); err != nil {
+		return false, fmt.Errorf("step commit: counting prior operations: %w", err)
+	}
+	if consumed != len(c.Completions) {
+		return false, conflict
+	}
 	for _, comp := range c.Completions {
 		prev, found, err := readOperationTx(ctx, tx, c.InvocationID, comp.JobFence.JobID)
 		if err != nil {

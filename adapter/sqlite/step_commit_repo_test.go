@@ -263,6 +263,18 @@ func TestStepCommitRepo_MissingWorkspaceCandidateFailsClosed(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestStepCommitRepo_ReplayCannotOmitConsumedReceipt(t *testing.T) {
+	ctx := context.Background()
+	fx := newStepFixture(t, setupTestDB(t).DB)
+	_, fence := fx.job(t, "node", runner.AffinityBuiltIn)
+	c := fx.advance("B", engine.StepCompletion{JobFence: jobRef(fence)})
+	require.NoError(t, fx.repo.CommitStep(ctx, c))
+	before := fx.snapshot(t)
+	c.Completions = nil
+	require.ErrorIs(t, fx.repo.CommitStep(ctx, c), engine.ErrInvalidStepCompletion)
+	assert.Equal(t, before, fx.snapshot(t))
+}
+
 func TestStepCommitRepo_BuiltInCandidateIsLinked(t *testing.T) {
 	ctx := context.Background()
 	fx := newStepFixture(t, setupTestDB(t).DB)

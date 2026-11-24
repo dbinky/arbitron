@@ -580,3 +580,61 @@ func TestEngine_SuspendCommitFailureCreatesNoDuplicateChild(t *testing.T) {
 	assert.Equal(t, 1, prepared)
 	assert.Equal(t, 1, spawned)
 }
+
+// suspendOnlyCommitter reports a suspension record for every invocation.
+type suspendOnlyCommitter struct{ *memCommitter }
+
+func (s suspendOnlyCommitter) CommittedResult(_ context.Context, inv uuid.UUID) (*engine.StepCommit, bool, error) {
+	child := uuid.New()
+	return &engine.StepCommit{Mode: engine.StepCommitSuspend, InvocationID: inv,
+		Suspension: &engine.StepSuspension{Kind: "spawn_workflow", ChildLinkID: &child}}, true, nil
+}
+
+func TestEngine_ReplayExecutesSuspendedInvocation(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+	invs := engine.NewMemoryInvocationStore()
+	f.engine.SetInvocationStore(invs)
+	f.engine.SetStepCommitter(suspendOnlyCommitter{newMemCommitter(f, invs)})
+
+	id, _, err := f.engine.Trigger(context.Background(), "single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Len(t, f.executor.getCalls(), 1, "a suspension record is not a completion: the node re-enters and executes")
+}
+
+func TestEngine_StepCommit_NewLoopVisitExecutes(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(&workflow.Workflow{
+		Name: "loop-wf",
+		Nodes: []workflow.Node{
+			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
+			{ID: "B", Type: workflow.NodeTypeScript},
+		},
+		Edges: []workflow.Edge{{Source: "A", Target: "B"}, {Source: "B", Target: "A", Output: "again"}},
+	})
+	invs := engine.NewMemoryInvocationStore()
+	f.engine.SetInvocationStore(invs)
+	mc := newMemCommitter(f, invs)
+	f.engine.SetStepCommitter(mc)
+	bVisits := 0
+	f.executor.onNode("B", func(context.Context, workflow.Node, *variable.VariableStore) (*engine.NodeResult, error) {
+		bVisits++
+		if bVisits == 1 {
+			return &engine.NodeResult{OutputPort: "again"}, nil
+		}
+		return &engine.NodeResult{OutputPort: "done"}, nil
+	})
+
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	var aRuns int
+	for _, c := range f.executor.getCalls() {
+		if c.NodeID == "A" {
+			aRuns++
+		}
+	}
+	assert.Equal(t, 2, aRuns, "the replay key is the invocation: a new loop visit still executes")
+	assert.Len(t, mc.committed(), 4)
+}

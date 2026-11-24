@@ -252,3 +252,25 @@ func (e *Engine) publishStepPersistenceFailure(instanceID uuid.UUID, node workfl
 		Data: map[string]any{"nodeId": node.ID, "nodeType": string(node.Type), "error": err.Error()},
 	})
 }
+
+// committedReplay returns the committed ADVANCE result of the node's open
+// invocation, or nil. Begin returns the same open invocation executeWithRetry
+// reuses, so asking never creates a second visit. A suspension record is not a
+// completion: the node re-enters (an awaited spawn short-circuits on its link).
+func (e *Engine) committedReplay(ctx context.Context, committer StepCommitter, instanceID uuid.UUID, nodeID string) (*StepCommit, error) {
+	inv, err := e.invocationStore().Begin(ctx, instanceID, nodeID)
+	if err != nil {
+		return nil, &stepPersistenceError{fmt.Errorf("%w: open invocation of node %q: %w", ErrStepPersistence, nodeID, err)}
+	}
+	c, ok, err := committer.CommittedResult(ctx, inv.ID)
+	if err != nil {
+		return nil, &stepPersistenceError{fmt.Errorf("%w: committed result of node %q: %w", ErrStepPersistence, nodeID, err)}
+	}
+	if !ok || c == nil || c.Mode == StepCommitSuspend {
+		return nil, nil
+	}
+	if c.InvocationID == uuid.Nil {
+		c.InvocationID = inv.ID
+	}
+	return c, nil
+}
