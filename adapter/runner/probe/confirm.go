@@ -12,6 +12,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
 
@@ -26,17 +27,15 @@ type ProfileLister interface {
 }
 
 var (
-	ErrNoConfirmationModel  = errors.New("probe: no subscription profile to confirm with")
+	ErrNoConfirmationModel  = runner.ErrConfirmationNoProfile
 	ErrConfirmerNotAttached = errors.New("probe: confirmer has no dispatcher")
 )
 
 // confirmNamespace derives the synthetic per-source run id for probe jobs.
 var confirmNamespace = uuid.MustParse("3b2f7d64-5f0e-4c3a-9f61-7b1f0c2d8e4a")
 
-// DispatchConfirmer sends a 1-token exact-model chat THROUGH the dispatcher,
-// pinned to the source's runner, so it reserves a slot like any step and can
-// never oversubscribe. Phase 1: Anthropic subscriptions only (OpenAI ones are
-// confirmed read-only via ordinaryUsageAllowed).
+// DispatchConfirmer sends a native exact-model confirmation through the dispatcher,
+// pinned to the exact source and runner, reserving a slot like any step.
 type DispatchConfirmer struct {
 	mu       sync.RWMutex
 	d        Dispatcher
@@ -60,8 +59,19 @@ func (c *DispatchConfirmer) Attach(d Dispatcher) {
 	c.d = d
 }
 
+func confirmBackend(k runner.CredentialKind) (string, bool) {
+	switch k {
+	case runner.CredAnthropicSubscription:
+		return workflow.BackendClaudeCode, true
+	case runner.CredOpenAISubscription:
+		return workflow.BackendCodex, true
+	}
+	return "", false
+}
+
 func (c *DispatchConfirmer) Confirm(ctx context.Context, s runner.Source) error {
-	if s.Kind != runner.CredAnthropicSubscription {
+	backend, ok := confirmBackend(s.Kind)
+	if !ok {
 		return runner.ErrConfirmationUnsupported
 	}
 	c.mu.RLock()
@@ -70,7 +80,7 @@ func (c *DispatchConfirmer) Confirm(ctx context.Context, s runner.Source) error 
 	if d == nil {
 		return ErrConfirmerNotAttached
 	}
-	b, group, err := c.pick(ctx, s)
+	b, group, err := c.pick(ctx, s, backend)
 	if err != nil {
 		return err
 	}
@@ -85,18 +95,20 @@ func (c *DispatchConfirmer) Confirm(ctx context.Context, s runner.Source) error 
 	}
 	ctx = engine.ContextWithStepIdentity(ctx, id)
 	req := runner.ExecRequirements{
-		Group: group, Model: b.Model, Op: runner.OpChat, Affinity: runner.AffinityBuiltIn,
-		RunID: id.RunID, PinnedRunner: s.RunnerID, RequiredSource: s.ID,
-		RequireExecutedModel: true,
+		Provider: b.Provider, ContextWindow: b.ContextWindow, Effort: b.Effort, Group: group, Model: b.Model, Backend: b.Backend,
+		Op: runner.OpConfirm, Affinity: runner.AffinityNone, RunID: id.RunID,
+		PinnedRunner: s.RunnerID, RequiredSource: s.ID, RequireExecutedModel: true,
 	}
-	chat := engine.ChatRequest{Model: b.Model, Prompt: "Reply with OK.", MaxTokens: 1, WorkDir: c.workDir, SuppressTools: true, RequireExecutedModel: true}
-	_, err = d.Dispatch(ctx, req, runner.StepJob{Op: runner.OpChat, Binding: b, Chat: &chat})
-	return err
+	out, err := d.Dispatch(ctx, req, runner.StepJob{Op: runner.OpConfirm, Binding: b, Confirmation: &runner.ConfirmationRequest{WorkDir: c.workDir}})
+	if err != nil {
+		return err
+	}
+	return runner.VerifyConfirmation(b.Model, out.Confirmation)
 }
 
 // pick chooses the first (alias-sorted) no-connection profile whose exact model
-// is the source's persisted ConfirmationModel and whose group matches the source.
-func (c *DispatchConfirmer) pick(ctx context.Context, s runner.Source) (provider.ResolvedBinding, runner.ModelGroup, error) {
+// is the source's persisted ConfirmationModel and whose native backend matches.
+func (c *DispatchConfirmer) pick(ctx context.Context, s runner.Source, backend string) (provider.ResolvedBinding, runner.ModelGroup, error) {
 	ps, err := c.profiles.List(ctx)
 	if err != nil {
 		return provider.ResolvedBinding{}, runner.ModelGroup{}, fmt.Errorf("probe: list profiles: %w", err)
@@ -106,8 +118,15 @@ func (c *DispatchConfirmer) pick(ctx context.Context, s runner.Source) (provider
 		if p.ConnectionRef != "" || p.Model == "" || s.Health.ConfirmationModel == "" || p.Model != s.Health.ConfirmationModel {
 			continue
 		}
-		b := provider.ResolvedBinding{Kind: provider.ProfileKindChat, Provider: "claude-cli", Model: p.Model, AllowedTools: append([]string(nil), p.AllowedTools...), ContextWindow: p.ContextWindow, Effort: p.Effort}
-		g, err := runner.GroupFor(b, runner.OpChat)
+		eff := p.Backend
+		if eff == "" {
+			eff = workflow.BackendClaudeCode
+		}
+		if eff != backend {
+			continue
+		}
+		b := provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "claude-cli", Backend: backend, Model: p.Model, ContextWindow: p.ContextWindow, Effort: p.Effort}
+		g, err := runner.GroupFor(b, runner.OpConfirm)
 		if err != nil || g.Kind != s.Kind {
 			continue
 		}

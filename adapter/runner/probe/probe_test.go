@@ -245,6 +245,7 @@ type cfDispatcher struct {
 	ids  []engine.StepIdentity
 	err  error
 	wait time.Duration
+	out  *runner.ConfirmationResult
 }
 
 func (d *cfDispatcher) Dispatch(ctx context.Context, req runner.ExecRequirements, job runner.StepJob) (runner.StepOutput, error) {
@@ -262,6 +263,13 @@ func (d *cfDispatcher) Dispatch(ctx context.Context, req runner.ExecRequirements
 	if d.err != nil {
 		return runner.StepOutput{}, d.err
 	}
+	if job.Op == runner.OpConfirm {
+		res := d.out
+		if res == nil {
+			res = &runner.ConfirmationResult{RequestedModel: job.Binding.Model, ExecutedModel: job.Binding.Model, SessionID: "s"}
+		}
+		return runner.StepOutput{Confirmation: res}, nil
+	}
 	return runner.StepOutput{Chat: &engine.ChatResponse{Output: "OK"}}, nil
 }
 
@@ -274,7 +282,8 @@ func (p cfProfiles) List(context.Context) ([]provider.Profile, error) { return p
 func TestDispatchConfirmer(t *testing.T) {
 	profiles := cfProfiles{ps: []provider.Profile{
 		{Alias: "zz-opus", Kind: provider.ProfileKindChat, Model: "claude-opus-4-1"},
-		{Alias: "gpt", Kind: provider.ProfileKindAgent, Backend: "codex", Model: "gpt-5.2-codex"},
+		{Alias: "gpt", Kind: provider.ProfileKindAgent, Backend: "codex", Model: "gpt-5.2-codex", ContextWindow: provider.Context1M, Effort: provider.EffortHigh},
+		{Alias: "opencode-sonnet", Kind: provider.ProfileKindAgent, Backend: "opencode", Model: "claude-sonnet-4-5"},
 		{Alias: "azure", Kind: provider.ProfileKindChat, ConnectionRef: "azure", Model: "claude-sonnet-4-5"},
 		{Alias: "aa-sonnet", Kind: provider.ProfileKindChat, Model: "claude-sonnet-4-5"},
 	}}
@@ -291,19 +300,45 @@ func TestDispatchConfirmer(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4-5", req.Model, "exact persisted exhausted model, with deterministic profile selection")
 	assert.Equal(t, runner.CredAnthropicSubscription, req.Group.Kind)
 	assert.Equal(t, runner.BuiltInRunnerID, req.PinnedRunner)
-	assert.Equal(t, runner.OpType("chat"), req.Op)
-	require.NotNil(t, job.Chat)
-	assert.Equal(t, 1, job.Chat.MaxTokens)
-	assert.Equal(t, dir, job.Chat.WorkDir)
+	assert.Equal(t, runner.OpConfirm, req.Op)
+	assert.Equal(t, runner.OpConfirm, job.Op)
+	assert.Equal(t, runner.AffinityNone, req.Affinity)
+	assert.Equal(t, anthSource().ID, req.RequiredSource)
+	assert.True(t, req.RequireExecutedModel)
+	assert.Equal(t, "claude-code", req.Backend)
+	assert.Equal(t, provider.ProfileKindAgent, job.Binding.Kind)
+	assert.Equal(t, "claude-code", job.Binding.Backend)
+	require.NotNil(t, job.Confirmation)
+	assert.Equal(t, dir, job.Confirmation.WorkDir)
+	assert.Nil(t, job.Chat)
 	assert.Equal(t, engine.OperationProbe, id.Kind)
 	assert.True(t, id.Valid())
 	assert.Equal(t, "probe:"+string(anthSource().ID), id.NodeID)
 
+	oa := runner.Source{ID: runner.MakeSourceID("mac-a", runner.CredOpenAISubscription, ""), RunnerID: "mac-a", Kind: runner.CredOpenAISubscription,
+		Families: []modelidentity.Family{"openai"}, Health: runner.SourceHealth{ConfirmationModel: "gpt-5.2-codex"}}
+	require.NoError(t, c.Confirm(context.Background(), oa))
+	req, job = d.reqs[1], d.jobs[1]
+	assert.Equal(t, runner.RunnerID("mac-a"), req.PinnedRunner)
+	assert.Equal(t, oa.ID, req.RequiredSource)
+	assert.Equal(t, "codex", job.Binding.Backend)
+	assert.Equal(t, runner.CredOpenAISubscription, req.Group.Kind)
+	assert.Equal(t, provider.Context1M, req.ContextWindow)
+	assert.Equal(t, provider.EffortHigh, job.Binding.Effort)
+
+	d.out = &runner.ConfirmationResult{RequestedModel: "claude-sonnet-4-5", ExecutedModel: "claude-opus-4-1", SessionID: "s"}
+	assert.ErrorIs(t, c.Confirm(context.Background(), anthSource()), runner.ErrConfirmationModelMismatch)
+	d.out = nil
 	d.err = runner.WithOutcome(errors.New("quota"), runner.SourceOutcome{Class: runner.OutcomeExhausted})
 	err := c.Confirm(context.Background(), anthSource())
 	assert.Equal(t, runner.OutcomeExhausted, runner.ClassifyError(err).Class)
 
-	assert.ErrorIs(t, c.Confirm(context.Background(), runner.Source{Kind: runner.CredOpenAISubscription}), runner.ErrConfirmationUnsupported)
+	d.err = nil
+	assert.ErrorIs(t, c.Confirm(context.Background(), runner.Source{Kind: runner.CredLunaRoute}), runner.ErrConfirmationUnsupported)
+	assert.ErrorIs(t, ErrNoConfirmationModel, runner.ErrConfirmationNoProfile)
+	swapped := anthSource()
+	swapped.Health.ConfirmationModel = "gpt-5.2-codex"
+	assert.ErrorIs(t, c.Confirm(context.Background(), swapped), ErrNoConfirmationModel)
 	assert.ErrorIs(t, NewDispatchConfirmer(cfProfiles{}, dir, time.Second).withDispatcher(d).Confirm(context.Background(), anthSource()), ErrNoConfirmationModel)
 
 	slow := &cfDispatcher{wait: time.Minute}
