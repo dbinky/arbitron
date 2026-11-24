@@ -65,6 +65,7 @@ type Engine struct {
 	profiles           provider.ProfileResolver
 	invocations        InvocationStore
 	stepCommitter      StepCommitter
+	retryProgress      RetryProgressStore
 	completionReleaser StepCompletionReleaser
 	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
 	// onto node events when a node has BackendUnset. It is deployment config,
@@ -1560,8 +1561,8 @@ type stepPersistenceError struct{ error }
 func (e *stepPersistenceError) Unwrap() error { return e.error }
 
 // executeWithRetry executes a node, applying retry logic from the error behavior.
-// Failed attempts are recorded directly; committed successes carry their exact
-// receipts to the caller for atomic persistence.
+// A retry journal resumes the open invocation's persisted attempt and delay.
+// Committed successes carry their exact receipts for atomic persistence.
 func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, *instance.NodeExecution, uuid.UUID, []StepCompletion, error) {
 	executor, ok := e.executorFor(node.Type)
 	if !ok {
@@ -1579,15 +1580,39 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 
 	committing := e.committer() != nil
+	delay := time.Duration(eb.RetryDelaySeconds) * time.Second
+	retries := e.retryStore()
+	first := 1
+	var notBefore *time.Time
+	if retries != nil {
+		p, err := retries.LoadRetryProgress(ctx, inv.ID)
+		if err != nil {
+			return nil, nil, inv.ID, nil, &stepPersistenceError{fmt.Errorf("%w: load retry progress of node %q: %w", ErrStepPersistence, node.ID, err)}
+		}
+		if p.Exhausted {
+			return nil, p.LastExecution, inv.ID, nil, exhaustedRetryError(node.ID, p)
+		}
+		if p.Attempt < 1 || p.Attempt > maxAttempts {
+			return nil, p.LastExecution, inv.ID, nil, &stepPersistenceError{fmt.Errorf("%w: node %q retry position %d outside 1..%d", ErrStepPersistence, node.ID, p.Attempt, maxAttempts)}
+		}
+		first, notBefore = p.Attempt, p.RetryNotBefore
+	}
 	var lastErr error
 	var lastExec *instance.NodeExecution
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if attempt > 1 && eb.RetryDelaySeconds > 0 {
+	for attempt := first; attempt <= maxAttempts; attempt++ {
+		var wait time.Duration
+		switch {
+		case attempt == first && notBefore != nil:
+			wait = time.Until(*notBefore)
+		case attempt > first:
+			wait = delay
+		}
+		if wait > 0 {
 			select {
 			case <-ctx.Done():
 				return nil, lastExec, inv.ID, nil, ctx.Err()
-			case <-time.After(time.Duration(eb.RetryDelaySeconds) * time.Second):
+			case <-time.After(wait):
 			}
 		}
 
@@ -1638,8 +1663,24 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 				return nil, nodeExec, inv.ID, nil, rerr
 			}
 		}
+		var pendingGather *pendingFileGatherError
+		var pendingWait *pendingGroupWaitError
+		suspended := err != nil && (errors.As(err, &pendingGather) || errors.As(err, &pendingWait))
 		isWait := result != nil && result.IsWait
-		if !isWait && !(err == nil && committing) {
+		switch {
+		case err != nil && !suspended && retries != nil:
+			var retryAt *time.Time
+			if attempt < maxAttempts {
+				at := time.Now().Add(delay).UTC()
+				retryAt = &at
+			}
+			pctx, cancel := persistenceContext(ctx)
+			_, cerr := retries.CommitRetryFailure(pctx, inv.ID, attempt, nodeExec, retryAt)
+			cancel()
+			if cerr != nil {
+				return nil, nodeExec, inv.ID, nil, &stepPersistenceError{fmt.Errorf("%w: journal retry of node %q attempt %d: %w", ErrStepPersistence, node.ID, attempt, cerr)}
+			}
+		case !isWait && !(err == nil && committing):
 			if persistErr := e.nodeExecutions.Create(ctx, nodeExec); persistErr != nil {
 				return nil, nodeExec, inv.ID, nil, &stepPersistenceError{fmt.Errorf("%w: persist node execution %q: %w", ErrStepPersistence, node.ID, persistErr)}
 			}
@@ -1649,9 +1690,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		if err == nil {
 			return result, nodeExec, inv.ID, receipts.Completions(), nil
 		}
-		var pendingGather *pendingFileGatherError
-		var pendingWait *pendingGroupWaitError
-		if errors.As(err, &pendingGather) || errors.As(err, &pendingWait) {
+		if suspended {
 			return nil, nodeExec, inv.ID, nil, err
 		}
 		lastErr = err
