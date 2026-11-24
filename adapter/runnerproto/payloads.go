@@ -122,7 +122,7 @@ type ExecutionCapability struct {
 }
 
 func (c *ExecutionCapability) Validate() error {
-	if c.Op != "chat" && c.Op != "stream" && c.Op != "agent" && c.Op != "process" {
+	if c.Op != "chat" && c.Op != "stream" && c.Op != "agent" && c.Op != "process" && c.Op != "confirm" {
 		return errors.New("unknown capability op")
 	}
 	if c.Provider == "" {
@@ -276,25 +276,31 @@ func (h *Heartbeat) Validate() error {
 	return nil
 }
 
-// Dispatch offers one job to the runner. Protocol v1 carries chat/stream only.
+// Dispatch offers one chat, stream or native confirmation job to the runner.
 type Dispatch struct {
-	Op         string       `json:"op"` // "chat" | "stream" (v1); "agent" | "process" arrive with Phase 3
-	Chat       *WireChat    `json:"chat,omitempty"`
-	Agent      *WireAgent   `json:"agent,omitempty"`
-	Process    *WireProcess `json:"process,omitempty"`
-	LeaseUntil time.Time    `json:"leaseUntil"` // offer deadline; unaccepted offers are re-offered with generation+1
+	Op           string            `json:"op"` // chat, stream, confirm; agent/process arrive with Phase 3
+	Confirmation *WireConfirmation `json:"confirmation,omitempty"`
+	Chat         *WireChat         `json:"chat,omitempty"`
+	Agent        *WireAgent        `json:"agent,omitempty"`
+	Process      *WireProcess      `json:"process,omitempty"`
+	LeaseUntil   time.Time         `json:"leaseUntil"` // offer deadline; unaccepted offers are re-offered with generation+1
 }
 
 func (d *Dispatch) Validate() error {
 	switch d.Op {
 	case "chat", "stream":
+		if d.Chat == nil || d.Agent != nil || d.Process != nil || d.Confirmation != nil {
+			return errors.New("chat/stream dispatch carries exactly the chat payload")
+		}
+		return d.Chat.Validate()
+	case "confirm":
+		if d.Confirmation == nil || d.Chat != nil || d.Agent != nil || d.Process != nil {
+			return errors.New("confirm dispatch carries exactly the confirmation descriptor")
+		}
+		return d.Confirmation.Validate()
 	default:
 		return fmt.Errorf("op %q is not supported by protocol v%d", d.Op, ProtocolVersion)
 	}
-	if d.Chat == nil || d.Agent != nil || d.Process != nil {
-		return errors.New("chat/stream dispatch carries exactly the chat payload")
-	}
-	return d.Chat.Validate()
 }
 
 // WireChat is the allowlisted, hermetic chat descriptor. It carries NO server
@@ -362,17 +368,18 @@ func (o *Output) Validate() error {
 
 // Result is the terminal outcome of one (jobId, generation).
 type Result struct {
-	OK        bool               `json:"ok"`
-	Chat      *WireChatResult    `json:"chat,omitempty"`
-	Agent     *WireAgentResult   `json:"agent,omitempty"`
-	Process   *WireProcessResult `json:"process,omitempty"`
-	Outcome   WireOutcome        `json:"outcome"`
-	ErrorText string             `json:"errorText,omitempty"` // sanitized by the runner; never provider prose with secrets
+	Confirmation *WireConfirmationResult `json:"confirmation,omitempty"`
+	OK           bool                    `json:"ok"`
+	Chat         *WireChatResult         `json:"chat,omitempty"`
+	Agent        *WireAgentResult        `json:"agent,omitempty"`
+	Process      *WireProcessResult      `json:"process,omitempty"`
+	Outcome      WireOutcome             `json:"outcome"`
+	ErrorText    string                  `json:"errorText,omitempty"` // sanitized by the runner; never provider prose with secrets
 }
 
 func (r *Result) Validate() error {
 	n := 0
-	for _, set := range []bool{r.Chat != nil, r.Agent != nil, r.Process != nil} {
+	for _, set := range []bool{r.Chat != nil, r.Agent != nil, r.Process != nil, r.Confirmation != nil} {
 		if set {
 			n++
 		}
@@ -382,6 +389,11 @@ func (r *Result) Validate() error {
 	}
 	if r.Agent != nil || r.Process != nil {
 		return fmt.Errorf("agent/process results are not supported by protocol v%d", ProtocolVersion)
+	}
+	if r.Confirmation != nil {
+		if err := r.Confirmation.Validate(); err != nil {
+			return err
+		}
 	}
 	if !outcomeClasses[r.Outcome.Class] {
 		return fmt.Errorf("outcome class %q unknown", r.Outcome.Class)
