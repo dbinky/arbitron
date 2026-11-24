@@ -227,9 +227,12 @@ func TestPlanTemplatesWireInputs(t *testing.T) {
 			"./work/{{resolve-inputs.inputs.spec_path}}", "{{resolve-inputs.inputs.design_paths}}",
 			"./work/{{plan_dir}}/{{run_date}}-phase-*-task-*.md",
 		},
-		"plan/templates/deps-assess.md":   {"{{align-plans.response}}"},
-		"plan/templates/deps-assess-2.md": {"{{align-plans-2.response}}"},
-		"plan/templates/resolve-deps.md":  {"{{deps-assess.gaps}}"},
+		"plan/templates/deps-assess.md":    {"{{align-plans.response}}"},
+		"plan/templates/deps-assess-2.md":  {"{{align-plans-2.response}}"},
+		"plan/templates/deps-assess-3.md":  {"{{align-plans-3.response}}"},
+		"plan/templates/resolve-deps.md":   {"{{deps-count.gaps}}", "{{deps-assess.notes}}"},
+		"plan/templates/resolve-deps-2.md": {"{{deps-count-2.gaps}}", "{{deps-assess-2.notes}}"},
+		"plan/templates/restore-steps.md":  {"./work/{{plan_dir}}/{{run_date}}-phase-*-task-*.md"},
 	}
 	for f, needles := range want {
 		data, err := os.ReadFile(f)
@@ -257,28 +260,41 @@ func TestPlanTemplatesWireInputs(t *testing.T) {
 	}
 }
 
-// deps-assess-2 is deps-assess pointed at the second alignment report. The two
-// templates may differ only in that reference, so the gate cannot drift.
-func TestPlanSecondAssessIsTheFirstReadingAlignPlans2(t *testing.T) {
-	a, err := os.ReadFile("plan/templates/deps-assess.md")
-	if err != nil {
-		t.Fatal(err)
+// deps-assess-2 and -3 are deps-assess pointed at the later alignment reports,
+// and resolve-deps-2 is resolve-deps pointed at the second pass. Each pair may
+// differ only in those references, so the gates and the human rounds cannot
+// drift apart.
+func TestPlanLaterPassesMirrorTheFirst(t *testing.T) {
+	read := func(f string) string {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
 	}
-	b, err := os.ReadFile("plan/templates/deps-assess-2.md")
-	if err != nil {
-		t.Fatal(err)
+	assess := read("plan/templates/deps-assess.md")
+	for _, sfx := range []string{"-2", "-3"} {
+		want := strings.ReplaceAll(assess, "{{align-plans.response}}", "{{align-plans"+sfx+".response}}")
+		if read("plan/templates/deps-assess"+sfx+".md") != want {
+			t.Errorf("deps-assess%s.md differs from deps-assess.md beyond the align-plans%s reference", sfx, sfx)
+		}
 	}
-	if got := strings.ReplaceAll(string(a), "{{align-plans.response}}", "{{align-plans-2.response}}"); got != string(b) {
-		t.Error("deps-assess-2.md differs from deps-assess.md beyond the align-plans-2 reference")
+	resolve := strings.NewReplacer("{{deps-assess.", "{{deps-assess-2.", "{{deps-count.", "{{deps-count-2.").
+		Replace(read("plan/templates/resolve-deps.md"))
+	if read("plan/templates/resolve-deps-2.md") != resolve {
+		t.Error("resolve-deps-2.md differs from resolve-deps.md beyond the -2 references")
 	}
 	wf := loadSample(t, "plan")
-	n1, n2 := nodeByID(wf, "deps-assess"), nodeByID(wf, "deps-assess-2")
-	if n1.Config.ModelProfile != n2.Config.ModelProfile || !reflect.DeepEqual(n1.Config.OutputSchema, n2.Config.OutputSchema) {
-		t.Error("deps-assess-2 must share deps-assess's profile and schema")
-	}
-	p1, p2 := nodeByID(wf, "align-plans"), nodeByID(wf, "align-plans-2")
-	if p1.Config.TemplateFile != p2.Config.TemplateFile || p1.Config.ModelProfile != p2.Config.ModelProfile || p1.Config.TimeoutSeconds != p2.Config.TimeoutSeconds {
-		t.Error("align-plans-2 must share align-plans's config")
+	for _, sfx := range []string{"-2", "-3"} {
+		n1, n2 := nodeByID(wf, "deps-assess"), nodeByID(wf, "deps-assess"+sfx)
+		if n2.Config.TemplateFile != "templates/deps-assess"+sfx+".md" || n1.Config.ModelProfile != n2.Config.ModelProfile ||
+			!reflect.DeepEqual(n1.Config.OutputSchema, n2.Config.OutputSchema) {
+			t.Errorf("deps-assess%s must share deps-assess's profile and schema and read its own template", sfx)
+		}
+		p1, p2 := nodeByID(wf, "align-plans"), nodeByID(wf, "align-plans"+sfx)
+		if p1.Config.TemplateFile != p2.Config.TemplateFile || p1.Config.ModelProfile != p2.Config.ModelProfile || p1.Config.TimeoutSeconds != p2.Config.TimeoutSeconds {
+			t.Errorf("align-plans%s must share align-plans's config", sfx)
+		}
 	}
 }
 
