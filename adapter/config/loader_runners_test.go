@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
-	domainconfig "github.com/arbitron/arbitron/domain/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,15 +33,14 @@ func TestLoad_Runners_DefaultsWhenBlockAbsent(t *testing.T) {
 	isolateRunnersEnv(t)
 	cfg, err := adapterconfig.Load(writeConfigFile(t, "server:\n  port: 9999\n"))
 	require.NoError(t, err)
-	assert.Equal(t, domainconfig.RunnersConfig{
-		DefaultStepLimit:      8,
-		ProbeIntervalSeconds:  60,
-		ProbeJitterSeconds:    10,
-		TransientMaxAttempts:  3,
-		TransientBackoffMinMs: 1000,
-		TransientBackoffMaxMs: 30000,
-		EventRetention:        1000,
-	}, cfg.Runners)
+	r := cfg.Runners
+	assert.Equal(t, 8, r.DefaultStepLimit)
+	assert.Equal(t, 60, r.ProbeIntervalSeconds)
+	assert.Equal(t, 10, r.ProbeJitterSeconds)
+	assert.Equal(t, 3, r.TransientMaxAttempts)
+	assert.Equal(t, 1000, r.TransientBackoffMinMs)
+	assert.Equal(t, 30000, r.TransientBackoffMaxMs)
+	assert.Equal(t, 1000, r.EventRetention)
 }
 
 func TestLoad_Runners_GeneratedDefaultFileLoads(t *testing.T) {
@@ -66,11 +64,14 @@ func TestLoad_Runners_YAMLOverrides(t *testing.T) {
 		"  transientbackoffmaxms: 4000\n"+
 		"  eventretention: 500\n"))
 	require.NoError(t, err)
-	assert.Equal(t, domainconfig.RunnersConfig{
-		DefaultStepLimit: 4, ProbeIntervalSeconds: 30, ProbeJitterSeconds: 0,
-		TransientMaxAttempts: 5, TransientBackoffMinMs: 250, TransientBackoffMaxMs: 4000,
-		EventRetention: 500,
-	}, cfg.Runners)
+	r := cfg.Runners
+	assert.Equal(t, 4, r.DefaultStepLimit)
+	assert.Equal(t, 30, r.ProbeIntervalSeconds)
+	assert.Equal(t, 0, r.ProbeJitterSeconds)
+	assert.Equal(t, 5, r.TransientMaxAttempts)
+	assert.Equal(t, 250, r.TransientBackoffMinMs)
+	assert.Equal(t, 4000, r.TransientBackoffMaxMs)
+	assert.Equal(t, 500, r.EventRetention)
 }
 
 func TestLoad_Runners_EnvOverridesYAML(t *testing.T) {
