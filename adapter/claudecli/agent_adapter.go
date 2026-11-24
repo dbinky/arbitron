@@ -129,7 +129,8 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 	}
 
 	var evidence []engine.ModelEvidence
-	if provider.IsLunaRoute(a.binding.Provider) {
+	// Return the native record when execution had to prove the model.
+	if provider.IsLunaRoute(a.binding.Provider) || wantModel != "" {
 		evidence = result.modelEvidence()
 	}
 	return &engine.AgentResult{

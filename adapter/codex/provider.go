@@ -329,6 +329,10 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 			}
 		} else if err := verifier.afterTurn(res.sessionID, model, 0); err != nil {
 			return nil, err
+		} else {
+			// Unlike gateway routing intent, the subscription turn_context proves
+			// the model executed by this local Codex thread.
+			evidence = []engine.ModelEvidence{{Model: model, Source: "codex_rollout", Kind: engine.EvidenceReportedExecution}}
 		}
 	}
 	engineSteps := make([]engine.AgentStep, 0, len(res.steps))
