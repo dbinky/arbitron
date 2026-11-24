@@ -241,6 +241,82 @@ func TestImplMarksRecordTheStageOutcome(t *testing.T) {
 	}
 }
 
+// stallOut is a stall-check output.
+func stallOut(stalled bool, passes float64) map[string]any {
+	return map[string]any{
+		"stalled": stalled, "passes_without_progress": passes, "window": float64(3),
+		"unchecked_steps": float64(16), "checked_steps": float64(4),
+		"blocked_tasks": []any{map[string]any{
+			"plan": "docs/plans/x/p.md", "task": "Task 3: sas", "step": "Step 2", "note": "no SAS producer",
+		}},
+		"blocked_summary": "docs/plans/x/p.md / Task 3: sas / Step 2: no SAS producer",
+	}
+}
+
+// A loop whose plan checkboxes stop moving ends as blocked instead of running
+// to the iteration cap (lunaroute 2026-11: 39 passes, 12.7h, unchecked_steps
+// frozen at 16, every pass a "partial slice" so the assessor never said
+// blocked). stall-check runs after count-plan-steps on both pass tails, and
+// impl-gate routes its stalled fact before the assessor's claim and the cap;
+// a finished or unusable plan still wins over a stall.
+func TestImplGateStopsAStalledLoop(t *testing.T) {
+	wf := loadSample(t, "implement")
+	if n := nodeByID(wf, "stall-check"); n.Config.ScriptFile != "scripts/stall-check.sh" {
+		t.Errorf("stall-check runs %v, want scripts/stall-check.sh", n.Config.ScriptFile)
+	}
+	if !hasEdge(wf, "count-plan-steps", "stall-check") || !hasEdge(wf, "stall-check", "impl-inc") {
+		t.Error("stall-check must sit between count-plan-steps and impl-inc")
+	}
+	if reachableAvoiding(wf, "count-plan-steps", "impl-gate", "stall-check") {
+		t.Error("count-plan-steps reaches impl-gate without stall-check")
+	}
+
+	under := map[string]any{"impl_iteration": float64(5), "max_impl_iterations": float64(200)}
+	atCap := map[string]any{"impl_iteration": float64(200), "max_impl_iterations": float64(200)}
+	working := planSteps(false, 16, []any{}, false)
+	pass := func(steps, stall, assess map[string]any) map[string]any {
+		return map[string]any{"count-plan-steps": steps, "stall-check": stall, "impl-assess": assess}
+	}
+	partial := map[string]any{"all_remaining_blocked": false, "notes": "partial slice of task 3"}
+
+	if got := implGate(t, wf, "lift-assess", pass(working, stallOut(true, 3), partial), under); got != "mark-stalled" {
+		t.Errorf("stalled pass -> %s, want mark-stalled", got)
+	}
+	if got := implGate(t, wf, "skip-assess", pass(working, stallOut(true, 3), partial), under); got != "mark-stalled" {
+		t.Errorf("stalled voided pass -> %s, want mark-stalled", got)
+	}
+	if got := implGate(t, wf, "lift-assess", pass(working, stallOut(false, 0), partial), under); got != "pass-mark" {
+		t.Errorf("progressing pass -> %s, want pass-mark", got)
+	}
+	if got := implGate(t, wf, "lift-assess", pass(working, stallOut(false, 2), partial), under); got != "pass-mark" {
+		t.Errorf("two passes without progress -> %s, want pass-mark", got)
+	}
+	blocked := map[string]any{"all_remaining_blocked": true, "notes": "task 3 blocked"}
+	if got := implGate(t, wf, "lift-assess", pass(working, stallOut(true, 3), blocked), atCap); got != "mark-stalled" {
+		t.Errorf("stalled beside an assessor block at the cap -> %s, want mark-stalled (first-match)", got)
+	}
+	if got := implGate(t, wf, "lift-assess", pass(planSteps(true, 0, []any{}, false), stallOut(true, 3), partial), under); got != "mark-done" {
+		t.Errorf("complete plan that also looks stalled -> %s, want mark-done", got)
+	}
+	if got := implGate(t, wf, "lift-assess", pass(withStepless(planSteps(false, 16, []any{}, false), "docs/plans/x/prose.md"), stallOut(true, 3), partial), under); got != "mark-unusable" {
+		t.Errorf("stepless plan that also looks stalled -> %s, want mark-unusable", got)
+	}
+
+	vars := variable.NewStore()
+	vars.SetNodeOutput("stall-check", stallOut(true, 3))
+	if _, err := engine.NewTransformExecutor().Execute(context.Background(), nodeByID(wf, "mark-stalled"), vars, wf.Name); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := vars.Get("impl_status")
+	why, _ := vars.Get("blocked_reason")
+	if want := "no plan progress for 3 passes (window 3); 16 unchecked plan steps remain; blocked: docs/plans/x/p.md / Task 3: sas / Step 2: no SAS producer"; st != "blocked" || why != want {
+		t.Errorf("mark-stalled: %v / %q, want blocked / %q", st, why, want)
+	}
+	if !hasEdge(wf, "mark-stalled", "finish") {
+		t.Error("mark-stalled does not go to finish")
+	}
+}
+
 // The implement loop holds only agent, chat, script and routing nodes.
 func TestImplLoopHasNoInteractiveNode(t *testing.T) {
 	wf := loadSample(t, "implement")

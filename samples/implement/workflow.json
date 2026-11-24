@@ -1,7 +1,7 @@
 {
   "id": "1a460201-d8b7-49ba-9666-a8b26a8b63b1",
   "name": "implement",
-  "description": "Standalone implementation stage. Checks out an existing pipeline branch, reuses or measures and commits the branch-point test baseline, then implements the plan one task per pass with strict TDD. Every pass crosses a deterministic tamper gate with a cross-family judge before it is pushed. Completion is decided by counting plan checkboxes; a blocked plan or the iteration cap records the stage as blocked. Records status, blocked_reason and baseline_path in the pipeline manifest.",
+  "description": "Standalone implementation stage. Checks out an existing pipeline branch, reuses or measures and commits the branch-point test baseline, then implements the plan one task per pass with strict TDD. Every pass crosses a deterministic tamper gate with a cross-family judge before it is pushed. Completion is decided by counting plan checkboxes; a blocked plan, a loop that stops ticking boxes, or the iteration cap records the stage as blocked. Records status, blocked_reason and baseline_path in the pipeline manifest.",
   "author": "arbitron",
   "inputs": [
     {
@@ -301,7 +301,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1750
+        "y": 1820
       }
     },
     {
@@ -321,7 +321,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1820
+        "y": 1960
       }
     },
     {
@@ -349,7 +349,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1960
+        "y": 2100
       }
     },
     {
@@ -371,7 +371,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 2100
+        "y": 2240
       }
     },
     {
@@ -391,7 +391,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2100
+        "y": 2240
       }
     },
     {
@@ -407,7 +407,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2240
+        "y": 2380
       }
     },
     {
@@ -428,7 +428,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2380
+        "y": 2520
       }
     },
     {
@@ -450,7 +450,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2520
+        "y": 2660
       }
     },
     {
@@ -467,7 +467,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 2660
+        "y": 2800
       }
     },
     {
@@ -487,7 +487,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 2800
+        "y": 2940
       }
     },
     {
@@ -504,7 +504,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2660
+        "y": 2800
       }
     },
     {
@@ -541,7 +541,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2800
+        "y": 2940
       }
     },
     {
@@ -561,7 +561,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2940
+        "y": 3080
       }
     },
     {
@@ -578,7 +578,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3080
+        "y": 3220
       }
     },
     {
@@ -598,7 +598,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3220
+        "y": 3500
       }
     },
     {
@@ -631,6 +631,12 @@
             "output": "unusable"
           },
           {
+            "field": "stall-check.stalled",
+            "operator": "eq",
+            "value": true,
+            "output": "stalled"
+          },
+          {
             "field": "assess_blocked",
             "operator": "eq",
             "value": true,
@@ -646,11 +652,11 @@
         "defaultOutput": "loop"
       },
       "label": "Impl loop or exit",
-      "description": "First-match, deterministic evidence first: count-plan-steps.all_tasks_complete ends the stage done, even if the assessor also says blocked, and an assessor claiming completion over unticked boxes cannot end it. An unreadable plan or plans with no checkboxes can never complete, so they stop the stage on the first count instead of spinning to the cap. Then the advisory assess_blocked (absent or voided reads as false) stops a loop stuck on a missing producer. Then the cap, which with work left is blocked. Otherwise the next pass.",
+      "description": "First-match, deterministic evidence first: count-plan-steps.all_tasks_complete ends the stage done, even if the assessor also says blocked, and an assessor claiming completion over unticked boxes cannot end it. An unreadable plan or plans with no checkboxes can never complete, so they stop the stage on the first count instead of spinning to the cap. Then stall-check.stalled (no checkbox progress for the stall window) stops a loop that keeps committing partial slices without ticking a box. Then the advisory assess_blocked (absent or voided reads as false) stops a loop stuck on a missing producer. Then the cap, which with work left is blocked. Otherwise the next pass.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3360
+        "y": 3640
       }
     },
     {
@@ -675,7 +681,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3500
+        "y": 3780
       }
     },
     {
@@ -700,7 +706,7 @@
       "errorBehavior": {},
       "position": {
         "x": -840,
-        "y": 3500
+        "y": 3780
       }
     },
     {
@@ -728,7 +734,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 3500
+        "y": 3780
       }
     },
     {
@@ -753,7 +759,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 3640
+        "y": 3920
       }
     },
     {
@@ -778,7 +784,7 @@
       "errorBehavior": {},
       "position": {
         "x": 840,
-        "y": 3640
+        "y": 3920
       }
     },
     {
@@ -803,7 +809,7 @@
       "errorBehavior": {},
       "position": {
         "x": -420,
-        "y": 3500
+        "y": 3780
       }
     },
     {
@@ -826,7 +832,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3780
+        "y": 4060
       }
     },
     {
@@ -904,6 +910,50 @@
         "x": -840,
         "y": 1540
       }
+    },
+    {
+      "id": "stall-check",
+      "type": "script",
+      "label": "Stall check",
+      "position": {
+        "x": 0,
+        "y": 3360
+      },
+      "config": {
+        "scriptFile": "scripts/stall-check.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "3"
+        ],
+        "timeoutSeconds": 60
+      },
+      "description": "Keeps a per-pass history of the plan checkbox counts in {{workspace}}/impl-progress.json and reports stalled once 3 consecutive passes made no progress (fewer unchecked or more checked steps than the best seen). Lists the unresolved > BLOCKED notes in the plans at HEAD so the stop reason explains itself. Fails safe: a missing or corrupt history restarts the count and is never a stall.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "mark-stalled",
+      "type": "transform",
+      "label": "Mark stalled",
+      "position": {
+        "x": -1260,
+        "y": 3780
+      },
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_status",
+            "operation": "set",
+            "value": "blocked"
+          },
+          {
+            "variable": "blocked_reason",
+            "operation": "set",
+            "value": "no plan progress for {{stall-check.passes_without_progress}} passes (window {{stall-check.window}}); {{stall-check.unchecked_steps}} unchecked plan steps remain; blocked: {{stall-check.blocked_summary}}"
+          }
+        ]
+      },
+      "description": "The loop made no plan progress for the stall window, so more passes will not help: the stage is blocked, naming the pass count, the unticked steps and the unresolved BLOCKED notes.",
+      "errorBehavior": {}
     }
   ],
   "edges": [
@@ -1029,10 +1079,6 @@
       "target": "count-plan-steps"
     },
     {
-      "source": "count-plan-steps",
-      "target": "impl-inc"
-    },
-    {
       "source": "impl-inc",
       "target": "impl-gate"
     },
@@ -1117,6 +1163,24 @@
     },
     {
       "source": "mark-unusable-preflight",
+      "target": "finish"
+    },
+    {
+      "source": "count-plan-steps",
+      "target": "stall-check"
+    },
+    {
+      "source": "stall-check",
+      "target": "impl-inc"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-stalled",
+      "output": "stalled",
+      "label": "no progress"
+    },
+    {
+      "source": "mark-stalled",
       "target": "finish"
     }
   ],

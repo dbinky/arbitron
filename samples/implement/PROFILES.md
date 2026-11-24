@@ -35,7 +35,9 @@ pass is voided without one.
 
 Completion is decided by `scripts/count-plan-steps.sh`, never by `impl-assess`:
 `llm_call` `outputSchema` is not enforced, so only `all_remaining_blocked` is
-read, and only when present and true.
+read, and only when present and true. Before it, `scripts/stall-check.sh`
+stops the loop as blocked once 3 consecutive passes tick no checkbox, naming
+the unresolved `> BLOCKED` notes in the plans.
 
 - **Following vs pinned** is an admin profile property. A following profile
   tracks its model family's newest release; a pinned one stays on its model id.
