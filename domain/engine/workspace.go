@@ -39,7 +39,7 @@ func (e *Engine) prepareWorkspace(
 		e.failInstance(ctx, instanceID, currentNodeID)
 		return false
 	}
-	return true
+	return e.ensureWorkspaceBaseline(ctx, instanceID, workspacePath, currentNodeID)
 }
 
 // cleanupWorkspace removes the per-instance workspace. Symmetric with

@@ -24,23 +24,24 @@ import (
 // Engine is the core workflow execution engine. It orchestrates the loading,
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
-	workflows        workflow.Repository
-	instances        instance.InstanceRepository
-	nodeExecutions   instance.NodeExecutionRepository
-	snapshots        instance.VariableSnapshotRepository
-	users            instance.UserRepository
-	executors        map[workflow.NodeType]NodeExecutor
-	eventBus         EventBus
-	queueManager     QueueManager
-	queueRepo        instance.QueueRepository
-	scheduler        TimerScheduler
-	webhookRegistry  WebhookRegistrar
-	notifications    notification.Repository
-	dismissals       instance.DismissalRepository
-	externalNotifier notification.ExternalNotifier
-	interventions    instance.InterventionRepository
-	auditRecorder    AuditRecorder // optional; emits lead_intervention/admin.override audit events
-	workspaceManager WorkspaceManager
+	workflows         workflow.Repository
+	instances         instance.InstanceRepository
+	nodeExecutions    instance.NodeExecutionRepository
+	snapshots         instance.VariableSnapshotRepository
+	users             instance.UserRepository
+	executors         map[workflow.NodeType]NodeExecutor
+	eventBus          EventBus
+	queueManager      QueueManager
+	queueRepo         instance.QueueRepository
+	scheduler         TimerScheduler
+	webhookRegistry   WebhookRegistrar
+	notifications     notification.Repository
+	dismissals        instance.DismissalRepository
+	externalNotifier  notification.ExternalNotifier
+	interventions     instance.InterventionRepository
+	auditRecorder     AuditRecorder // optional; emits lead_intervention/admin.override audit events
+	workspaceManager  WorkspaceManager
+	workspaceBaseline WorkspaceBaselineInitializer
 	// groupFinalizer is the optional group-task terminal hook; nil keeps the
 	// plain completion path. Configured before starting instances.
 	groupFinalizer   GroupTaskFinalizer

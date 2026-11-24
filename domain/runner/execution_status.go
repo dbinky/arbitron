@@ -40,6 +40,17 @@ func (p *ExecutionStatusProjector) attachedBus() engine.EventBus {
 	return p.bus
 }
 
+// PublishMove emits moving_workspace with the destination and byte progress.
+func (p *ExecutionStatusProjector) PublishMove(_ context.Context, job Job, home RunnerID, progress instance.MoveProgress) {
+	bus := p.attachedBus()
+	if bus == nil {
+		return
+	}
+	st := StatusFromJob(job, instance.ExecMovingWorkspace)
+	st.Progress, st.HomeRunnerID = &progress, string(home)
+	bus.Publish(job.Key.RunID, engine.Event{Type: EventExecutionStatus, Timestamp: p.now().UTC(), Data: st})
+}
+
 // StatusFromJob projects one job in the given state.
 func StatusFromJob(j Job, state instance.ExecutionState) instance.ExecutionStatus {
 	s := instance.ExecutionStatus{RunID: j.Key.RunID, NodeID: j.NodeID, OperationID: j.Key.OperationID, JobID: j.ID, State: state,
