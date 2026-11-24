@@ -9,6 +9,7 @@ import (
 )
 
 var _ runner.PinnedSessionIndex = (*SessionPinIndex)(nil)
+var _ runner.RunnerSessionIndex = (*SessionPinIndex)(nil)
 
 // activeSessionExecSQL selects the active record of the outer ne row's node
 // in its open visit. Attempts reset on back-edges and are not session identity.
@@ -24,6 +25,41 @@ type SessionPinIndex struct{ db *sql.DB }
 
 // NewSessionPinIndex creates a SessionPinIndex.
 func NewSessionPinIndex(db *sql.DB) *SessionPinIndex { return &SessionPinIndex{db: db} }
+
+// ListByRunner lists live pins at the run's current node for runner detail.
+// Only the active record of the open visit counts, never an older attempt or visit.
+func (x *SessionPinIndex) ListByRunner(ctx context.Context, id runner.RunnerID) ([]runner.RunnerSession, error) {
+	rows, err := x.db.QueryContext(ctx, `
+SELECT ne.instance_id, ne.node_id, ne.session_generation
+FROM node_executions ne
+JOIN instances i ON i.id = ne.instance_id
+WHERE ne.session_pin_runner = ?
+  AND i.state NOT IN ('completed', 'failed', 'cancelled')
+  AND i.current_node_id = ne.node_id
+  AND ne.id = (`+activeSessionExecSQL+`)
+ORDER BY ne.instance_id, ne.node_id`, string(id))
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions pinned to %s: %w", id, err)
+	}
+	defer rows.Close()
+	out := []runner.RunnerSession{}
+	for rows.Next() {
+		var run, node string
+		var gen int64
+		if err := rows.Scan(&run, &node, &gen); err != nil {
+			return nil, fmt.Errorf("scanning session pinned to %s: %w", id, err)
+		}
+		runID, err := parseUUID(run)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, runner.RunnerSession{RunID: runID, NodeID: node, Generation: gen})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing sessions pinned to %s: %w", id, err)
+	}
+	return out, nil
+}
 
 // ListPinned returns active pins at waiting runs' current nodes. Sources left
 // over from a previous runner are unknown, not evidence for the new pin.
