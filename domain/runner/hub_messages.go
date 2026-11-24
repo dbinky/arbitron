@@ -90,6 +90,9 @@ type HelloInfo struct {
 
 // SourceReport is one credential source a runner advertises.
 type SourceReport struct {
+	Observation       *ProbeResult // Fresh sample; Health is only a projection.
+	ObservationSeq    uint64       // Monotonic per runner process.
+	SampleAgeMs       int64        // Monotonic sample age at send time.
 	UnavailableReason string
 	Capabilities      []ExecutionCapability
 	Kind              CredentialKind
@@ -184,6 +187,7 @@ type AckPayload struct {
 
 // Outbound is a hub -> runner message.
 type Outbound struct {
+	Probe      *ProbePayload
 	Kind       string
 	JobID      uuid.UUID
 	Generation int64
@@ -193,6 +197,7 @@ type Outbound struct {
 
 // Inbound is a runner -> hub message after admission.
 type Inbound struct {
+	ProbeResult  *ProbeReply
 	Kind         string
 	JobID        uuid.UUID
 	Generation   int64
@@ -222,6 +227,7 @@ type Session struct {
 
 // HubConfig holds the hub's timing and admission settings.
 type HubConfig struct {
+	ProbeTimeout        time.Duration // Zero uses DefaultRemoteProbeTimeout.
 	Heartbeat           time.Duration
 	SuspectAfter        time.Duration
 	LostAfter           time.Duration

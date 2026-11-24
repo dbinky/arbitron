@@ -61,9 +61,10 @@ type HealthCall struct {
 // registry exactly as the real HealthMonitor would for these two classes, so
 // subsequent heartbeats see the transitioned health.
 type FakeHealth struct {
-	reg   runner.Registry
-	mu    sync.Mutex
-	calls []HealthCall
+	reg      runner.Registry
+	mu       sync.Mutex
+	calls    []HealthCall
+	observed []ObserveCall
 }
 
 func (f *FakeHealth) ApplyOutcome(ctx context.Context, src runner.SourceID, o runner.SourceOutcome) error {

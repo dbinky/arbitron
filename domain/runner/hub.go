@@ -21,7 +21,7 @@ type HubDeps struct {
 	Registry Registry
 	Ledger   Ledger
 	Events   *EventRecorder
-	Health   HealthTransitioner
+	Health   HubHealth
 	Notifier *PoolNotifier
 	Clock    func() time.Time
 	Config   HubConfig
@@ -33,7 +33,7 @@ type Hub struct {
 	reg      Registry
 	ledger   Ledger
 	events   *EventRecorder
-	health   HealthTransitioner
+	health   HubHealth
 	notifier *PoolNotifier
 	now      func() time.Time
 	cfg      HubConfig
@@ -49,6 +49,10 @@ type Hub struct {
 	telemetry map[RunnerID][]Telemetry
 	jobs      map[uuid.UUID]*remoteJob
 	serial    uint64
+	probes    map[uuid.UUID]*pendingProbe
+	observed  map[SourceID]observationMark
+	closed    bool
+	loop      sync.WaitGroup
 }
 
 // remoteJob is a waiter for one offered generation; all fields except emission
@@ -85,6 +89,7 @@ func NewHub(d HubDeps) *Hub {
 		inbox: d.Inbox, reg: d.Registry, ledger: d.Ledger, events: d.Events, health: d.Health, notifier: d.Notifier, now: d.Clock, cfg: c,
 		sessions: map[RunnerID]*Session{}, contact: map[RunnerID]time.Time{}, revoked: map[RunnerID]bool{},
 		telemetry: map[RunnerID][]Telemetry{}, jobs: map[uuid.UUID]*remoteJob{},
+		probes: map[uuid.UUID]*pendingProbe{}, observed: map[SourceID]observationMark{},
 	}
 }
 
@@ -296,6 +301,7 @@ func (h *Hub) Admit(ctx context.Context, key RunnerKey, conn RunnerConn, hello H
 	h.serial++
 	s := &Session{RunnerID: id, KeyID: key.ID, conn: conn, serial: h.serial}
 	h.sessions[id] = s
+	h.failProbesLocked(func(p *pendingProbe) bool { return p.runner == id && p.serial != s.serial }, fmt.Errorf("%w: session replaced", ErrRemoteProbeUnavailable))
 	h.contact[id] = now
 	h.mu.Unlock()
 	if old != nil {
@@ -327,6 +333,7 @@ func (h *Hub) Disconnect(s *Session) {
 	defer h.mu.Unlock()
 	if h.sessions[s.RunnerID] == s {
 		delete(h.sessions, s.RunnerID)
+		h.failProbesLocked(func(p *pendingProbe) bool { return p.runner == s.RunnerID && p.serial == s.serial }, ErrRemoteProbeUnavailable)
 	}
 }
 
@@ -347,6 +354,8 @@ func (h *Hub) Handle(ctx context.Context, s *Session, in Inbound) error {
 	h.contact[s.RunnerID] = now
 	h.mu.Unlock()
 	switch in.Kind {
+	case MsgProbeResult:
+		return h.handleProbeResult(ctx, s, in.ProbeResult, now)
 	case MsgHeartbeat:
 		if in.Heartbeat == nil {
 			return fmt.Errorf("%w: heartbeat without payload", ErrMalformedMessage)

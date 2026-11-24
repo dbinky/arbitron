@@ -12,7 +12,10 @@ import (
 
 // Start runs Tick every Heartbeat until ctx ends.
 func (h *Hub) Start(ctx context.Context) {
+	h.loop.Add(1)
 	go func() {
+		defer h.loop.Done()
+		defer h.closeProbes()
 		t := time.NewTicker(h.cfg.Heartbeat)
 		defer t.Stop()
 		for {
@@ -85,6 +88,7 @@ func (h *Hub) markLost(ctx context.Context, id RunnerID, at time.Time, code int,
 	h.mu.Lock()
 	s := h.sessions[id]
 	delete(h.sessions, id)
+	h.failProbesLocked(func(p *pendingProbe) bool { return p.runner == id }, ErrRemoteProbeUnavailable)
 	var waiters []*remoteJob
 	for _, j := range h.jobs {
 		if j.a.Fence.RunnerID == id && !j.finished {
