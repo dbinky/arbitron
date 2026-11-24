@@ -106,6 +106,44 @@ func TestRoutedChat_HermeticAffinityUnchanged(t *testing.T) {
 	assert.Empty(t, begun, "chat and interactive turns never run the workspace protocol in Phase 3")
 }
 
+// Portable process routing must carry the workspace attempt through to its
+// completion receipt, while unflagged scripts retain built-in-only execution.
+func TestRoutedProcess_WorkspaceAffinity(t *testing.T) {
+	r := &scriptedRunner{id: builtin, fallback: func(_ context.Context, _ runner.Assignment, job runner.StepJob) (runner.StepOutput, error) {
+		require.Equal(t, runner.OpProcess, job.Op)
+		require.NotNil(t, job.Process)
+		return runner.StepOutput{Process: &engine.ProcessResult{Stdout: job.Process.Command + ":" + job.Process.WorkDir}}, nil
+	}}
+	f := builtinOnly(t, anthropicSub(builtin), r)
+	ws := &recWorkspace{bytes: 2048}
+	f.d.SetWorkspace(ws)
+	pr := runner.NewRoutedProcessRunner(f.d)
+	run := uuid.New()
+	dir := "/srv/ws/instances/" + run.String()
+
+	ctx, sink := sinkCtx(run)
+	res, err := pr.RunProcess(ctx, engine.ProcessSpec{Kind: engine.ProcessToolCall, Command: "jq", Portable: true, WorkDir: dir})
+	require.NoError(t, err)
+	assert.Equal(t, "jq:"+dir, res.Stdout)
+	begun, reqs := ws.attempts()
+	require.Len(t, begun, 1)
+	assert.Equal(t, dir, begun[0].WorkDir)
+	assert.Equal(t, runner.AffinityWorkspace, reqs[0].Affinity)
+	assert.Equal(t, run, reqs[0].RunID)
+	assert.Equal(t, int64(2048), reqs[0].WorkspaceBytes)
+	require.Len(t, sink.Completions(), 1)
+	require.NotNil(t, sink.Completions()[0].Workspace)
+	assert.Equal(t, begun[0].Resource, sink.Completions()[0].Workspace.Resource)
+	assert.NotEmpty(t, sink.Completions()[0].Workspace.Ref)
+
+	ctx2, _ := sinkCtx(run)
+	res, err = pr.RunProcess(ctx2, engine.ProcessSpec{Kind: engine.ProcessScript, Command: "/bin/sh", Args: []string{"/s.sh"}, WorkDir: dir})
+	require.NoError(t, err)
+	assert.Equal(t, "/bin/sh:"+dir, res.Stdout)
+	begun, _ = ws.attempts()
+	assert.Len(t, begun, 1, "an unflagged script stays built-in with no workspace protocol")
+}
+
 // SetWorkspace installs the service and ends legacy mode; nil is refused.
 func TestSetWorkspace_InstallsServiceAndEndsLegacyMode(t *testing.T) {
 	r := &scriptedRunner{id: builtin, fallback: func(context.Context, runner.Assignment, runner.StepJob) (runner.StepOutput, error) {
