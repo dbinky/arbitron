@@ -1522,3 +1522,8 @@ These are settled by the spec/design or by a user decision. The owning task carr
   - It runs once at boot, after recovery, and then hourly.
   - Held runs, committed and prepared artifacts, and the run's highest version
     marker are never removed.
+
+- **Claude tool vocabulary (P2 T9 Cycle 7 Step 7, P3 T15 Cycle 3b; lead decision 2026-11-23).**
+  - `sources.ClaudeCodeTools` = `Bash, Edit, Glob, Grep, LS, Read, WebFetch, WebSearch, Write`. It is advertised on claude-code capabilities (`allowlist`).
+  - `runner.ToolScopeSatisfied` accepts a requested `Tool(<non-empty pattern>)` (e.g. `Bash(gh:*)`) when an allowlist capability lists `Tool`. Claude Code enforces the pattern natively.
+  - Unset and unrestricted policies never expand patterns.
