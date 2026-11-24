@@ -24,6 +24,7 @@ var _ NodeExecutor = (*InteractiveExecutor)(nil)
 // then picks the streaming backend via the InteractiveStreamSelector (chat
 // profile -> tool-suppressed chat stream; agent profile -> tool-enabled stream).
 type InteractiveExecutor struct {
+	bindings   TurnBindingRestorer
 	instances  instance.InstanceRepository
 	nodeExecs  instance.NodeExecutionRepository
 	selector   InteractiveStreamSelector
@@ -33,6 +34,14 @@ type InteractiveExecutor struct {
 	queueMgr   QueueManager
 	leases     TurnLeaseStore
 	leaseTTL   time.Duration
+}
+
+// SetTurnBindingRestorer installs the accepted policy restorer for replay and recovery.
+func (e *InteractiveExecutor) SetTurnBindingRestorer(r TurnBindingRestorer) {
+	if r == nil {
+		panic("engine: interactive SetTurnBindingRestorer requires a restorer")
+	}
+	e.bindings = r
 }
 
 // NewInteractiveExecutor constructs a new InteractiveExecutor with all required dependencies.

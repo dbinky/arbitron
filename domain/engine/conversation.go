@@ -42,6 +42,14 @@ type ConversationHandler interface {
 // ErrNotResolutionSession distinguishes ordinary sessions from group resolution.
 var ErrNotResolutionSession = errors.New("conversation: not a group conflict-resolution session")
 
+// SetTurnBindingRestorer installs the accepted policy restorer for replay and recovery.
+func (h *conversationHandler) SetTurnBindingRestorer(r TurnBindingRestorer) {
+	if r == nil {
+		panic("engine: conversation SetTurnBindingRestorer requires a restorer")
+	}
+	h.bindings = r
+}
+
 // conversationHandler implements ConversationHandler. It is profile-aware: a
 // resumed turn resolves the waiting node's model_profile to a binding and
 // selects the streaming backend via the InteractiveStreamSelector (chat profile
@@ -53,6 +61,7 @@ var ErrNotResolutionSession = errors.New("conversation: not a group conflict-res
 // group's OPEN session record, with completion dispatched to a
 // GroupResolutionCompleter instead of writing node variables.
 type conversationHandler struct {
+	bindings      TurnBindingRestorer
 	instances     instance.InstanceRepository
 	nodeExecs     instance.NodeExecutionRepository
 	selector      InteractiveStreamSelector

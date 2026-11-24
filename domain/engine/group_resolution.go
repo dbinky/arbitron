@@ -170,11 +170,20 @@ var groupResolutionOutputSchema = map[string]any{
 	"required": []any{"summary"},
 }
 
+// SetTurnBindingRestorer installs the accepted policy restorer for replay and recovery.
+func (b *GroupResolutionBridge) SetTurnBindingRestorer(r TurnBindingRestorer) {
+	if r == nil {
+		panic("engine: group resolution SetTurnBindingRestorer requires a restorer")
+	}
+	b.bindings = r
+}
+
 // GroupResolutionBridge opens group conflict-resolution sessions and receives
 // their completion. It implements GroupResolutionStarter (for the gatherer),
 // GroupResolutionCompleter (for the conversation handler) and
 // GroupSessionCloser (for the reconciler).
 type GroupResolutionBridge struct {
+	bindings    TurnBindingRestorer
 	groups      instance.GroupRunRepository
 	instances   instance.InstanceRepository
 	nodeExecs   instance.NodeExecutionRepository
