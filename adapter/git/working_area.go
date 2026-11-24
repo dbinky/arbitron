@@ -56,6 +56,11 @@ type WorkingArea struct {
 	backing string // root/.group-backing
 	git     *Runner
 	locks   keyedMutex
+	// portableGit is the checkpoint object materializer supplied by the root.
+	// A missing materializer refuses resolution export.
+	portableGit func(context.Context, string, string) error
+	// resolutionMaxBytes bounds expanded resolution copies; nonpositive uses the default.
+	resolutionMaxBytes int64
 }
 
 var _ engine.GroupWorkspace = (*WorkingArea)(nil)
