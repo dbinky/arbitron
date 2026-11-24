@@ -225,7 +225,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 700
+        "y": 980
       }
     },
     {
@@ -251,7 +251,7 @@
       },
       "position": {
         "x": 420,
-        "y": 770
+        "y": 1050
       }
     },
     {
@@ -273,7 +273,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 840
+        "y": 1120
       }
     },
     {
@@ -299,7 +299,7 @@
       },
       "position": {
         "x": 0,
-        "y": 980
+        "y": 1260
       }
     },
     {
@@ -369,7 +369,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1120
+        "y": 1400
       }
     },
     {
@@ -393,7 +393,7 @@
       },
       "position": {
         "x": 0,
-        "y": 1260
+        "y": 1540
       }
     },
     {
@@ -413,7 +413,7 @@
       },
       "position": {
         "x": 0,
-        "y": 1400
+        "y": 1680
       }
     },
     {
@@ -438,7 +438,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1540
+        "y": 1820
       }
     },
     {
@@ -464,7 +464,7 @@
       },
       "position": {
         "x": 0,
-        "y": 1680
+        "y": 1960
       }
     },
     {
@@ -490,7 +490,7 @@
       },
       "position": {
         "x": 0,
-        "y": 1820
+        "y": 2100
       }
     },
     {
@@ -518,7 +518,7 @@
       },
       "position": {
         "x": 0,
-        "y": 1960
+        "y": 2240
       }
     },
     {
@@ -545,7 +545,7 @@
       },
       "position": {
         "x": 0,
-        "y": 2100
+        "y": 2380
       }
     },
     {
@@ -569,7 +569,7 @@
       },
       "position": {
         "x": 0,
-        "y": 2240
+        "y": 2520
       }
     },
     {
@@ -596,7 +596,7 @@
       },
       "position": {
         "x": 0,
-        "y": 2380
+        "y": 2940
       }
     },
     {
@@ -618,7 +618,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2520
+        "y": 3080
       }
     },
     {
@@ -642,7 +642,7 @@
       },
       "position": {
         "x": 0,
-        "y": 2660
+        "y": 3220
       }
     },
     {
@@ -668,7 +668,7 @@
       },
       "position": {
         "x": 0,
-        "y": 2800
+        "y": 3640
       }
     },
     {
@@ -690,7 +690,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2940
+        "y": 3780
       }
     },
     {
@@ -718,7 +718,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3080
+        "y": 3920
       }
     },
     {
@@ -745,7 +745,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3220
+        "y": 4340
       }
     },
     {
@@ -775,7 +775,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3360
+        "y": 4480
       }
     },
     {
@@ -803,7 +803,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3500
+        "y": 4900
       }
     },
     {
@@ -830,7 +830,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3640
+        "y": 5040
       }
     },
     {
@@ -854,7 +854,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3780
+        "y": 5180
       }
     },
     {
@@ -878,7 +878,7 @@
       },
       "position": {
         "x": 0,
-        "y": 3920
+        "y": 5600
       }
     },
     {
@@ -905,7 +905,7 @@
       },
       "position": {
         "x": 0,
-        "y": 4060
+        "y": 5740
       }
     },
     {
@@ -927,7 +927,7 @@
       },
       "position": {
         "x": 0,
-        "y": 4200
+        "y": 5880
       }
     },
     {
@@ -957,7 +957,7 @@
       },
       "position": {
         "x": 0,
-        "y": 4340
+        "y": 6020
       }
     },
     {
@@ -977,7 +977,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 4480
+        "y": 6160
       }
     },
     {
@@ -999,6 +999,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{ideate.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1007,7 +1012,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 1260
+        "y": 1540
       }
     },
     {
@@ -1029,6 +1034,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{spec.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1037,7 +1047,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 1820
+        "y": 2100
       }
     },
     {
@@ -1059,6 +1069,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{design.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1067,7 +1082,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2100
+        "y": 2380
       }
     },
     {
@@ -1089,6 +1104,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{plan.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1097,7 +1117,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2380
+        "y": 2940
       }
     },
     {
@@ -1119,6 +1139,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{implement.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1127,7 +1152,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2800
+        "y": 3640
       }
     },
     {
@@ -1149,6 +1174,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{harden.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1157,7 +1187,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 3220
+        "y": 4340
       }
     },
     {
@@ -1179,6 +1209,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{refine.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1187,7 +1222,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 3500
+        "y": 4900
       }
     },
     {
@@ -1209,6 +1244,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "child workflow ended {{review.childState}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "failed"
           }
         ]
       },
@@ -1217,7 +1257,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 3920
+        "y": 5600
       }
     },
     {
@@ -1239,6 +1279,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "unresolved plan dependencies: {{plan.childOutput.finish.outputs.deps_gaps}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
           }
         ]
       },
@@ -1247,7 +1292,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2520
+        "y": 3080
       }
     },
     {
@@ -1269,6 +1314,11 @@
             "variable": "failed_reason",
             "operation": "set",
             "value": "{{implement.childOutput.finish.outputs.blocked_reason}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
           }
         ]
       },
@@ -1277,7 +1327,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 2940
+        "y": 3780
       }
     },
     {
@@ -1302,7 +1352,7 @@
       },
       "position": {
         "x": -420,
-        "y": 1120
+        "y": 1400
       }
     },
     {
@@ -1316,6 +1366,7 @@
           "{{failed_reason}}",
           "error",
           "Stage={{failed_stage}}",
+          "Outcome={{failed_outcome}}",
           "Child=/instances/{{failed_child}}",
           "Repo={{repo_url}}",
           "Branch={{branch}}"
@@ -1329,7 +1380,7 @@
       },
       "position": {
         "x": -420,
-        "y": 1260
+        "y": 1540
       }
     },
     {
@@ -1348,7 +1399,487 @@
       },
       "position": {
         "x": -420,
-        "y": 1400
+        "y": 1680
+      }
+    },
+    {
+      "id": "auth-start",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/auth-preflight.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "claude",
+          "codex"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Auth preflight: start",
+      "description": "Checks that the agent CLIs ideate, spec and design (which follow at once) uses (claude, codex) are logged in, so an expired login stops here with a named reason instead of failing the stage as an opaque harness error that is retried for hours (run 68225980). Always exits 0; the gate routes on its ok.",
+      "errorBehavior": {
+        "type": "route",
+        "errorNodeId": "notify-step-failed"
+      },
+      "position": {
+        "x": 0,
+        "y": 700
+      }
+    },
+    {
+      "id": "auth-start-ok?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "auth-start.ok",
+            "operator": "eq",
+            "value": true,
+            "output": "ok"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Logged in for start?",
+      "description": "ok is the preflight script's own finding. Anything else, an absent output included, stops the pipeline (fail closed).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "fail-auth-start",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "failed_stage",
+            "operation": "set",
+            "value": "start"
+          },
+          {
+            "variable": "failed_child",
+            "operation": "set",
+            "value": "not started"
+          },
+          {
+            "variable": "failed_reason",
+            "operation": "set",
+            "value": "{{auth-start.summary}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Blocked: auth (start)",
+      "description": "An agent CLI the next stage uses is not logged in. Log in as the server user, then resume.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 840
+      }
+    },
+    {
+      "id": "auth-plan",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/auth-preflight.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "claude",
+          "codex"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Auth preflight: plan",
+      "description": "Checks that the agent CLIs plan uses (claude, codex) are logged in, so an expired login stops here with a named reason instead of failing the stage as an opaque harness error that is retried for hours (run 68225980). Always exits 0; the gate routes on its ok.",
+      "errorBehavior": {
+        "type": "route",
+        "errorNodeId": "notify-step-failed"
+      },
+      "position": {
+        "x": 0,
+        "y": 2660
+      }
+    },
+    {
+      "id": "auth-plan-ok?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "auth-plan.ok",
+            "operator": "eq",
+            "value": true,
+            "output": "ok"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Logged in for plan?",
+      "description": "ok is the preflight script's own finding. Anything else, an absent output included, stops the pipeline (fail closed).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2800
+      }
+    },
+    {
+      "id": "fail-auth-plan",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "failed_stage",
+            "operation": "set",
+            "value": "plan"
+          },
+          {
+            "variable": "failed_child",
+            "operation": "set",
+            "value": "not started"
+          },
+          {
+            "variable": "failed_reason",
+            "operation": "set",
+            "value": "{{auth-plan.summary}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Blocked: auth (plan)",
+      "description": "An agent CLI the next stage uses is not logged in. Log in as the server user, then resume.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 2800
+      }
+    },
+    {
+      "id": "auth-implement",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/auth-preflight.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "claude",
+          "pi:openai-codex"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Auth preflight: implement",
+      "description": "Checks that the agent CLIs implement uses (claude, pi:openai-codex) are logged in, so an expired login stops here with a named reason instead of failing the stage as an opaque harness error that is retried for hours (run 68225980). Always exits 0; the gate routes on its ok.",
+      "errorBehavior": {
+        "type": "route",
+        "errorNodeId": "notify-step-failed"
+      },
+      "position": {
+        "x": 0,
+        "y": 3360
+      }
+    },
+    {
+      "id": "auth-implement-ok?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "auth-implement.ok",
+            "operator": "eq",
+            "value": true,
+            "output": "ok"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Logged in for implement?",
+      "description": "ok is the preflight script's own finding. Anything else, an absent output included, stops the pipeline (fail closed).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3500
+      }
+    },
+    {
+      "id": "fail-auth-implement",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "failed_stage",
+            "operation": "set",
+            "value": "implement"
+          },
+          {
+            "variable": "failed_child",
+            "operation": "set",
+            "value": "not started"
+          },
+          {
+            "variable": "failed_reason",
+            "operation": "set",
+            "value": "{{auth-implement.summary}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Blocked: auth (implement)",
+      "description": "An agent CLI the next stage uses is not logged in. Log in as the server user, then resume.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 3500
+      }
+    },
+    {
+      "id": "auth-harden",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/auth-preflight.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "claude",
+          "codex"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Auth preflight: harden",
+      "description": "Checks that the agent CLIs harden uses (claude, codex) are logged in, so an expired login stops here with a named reason instead of failing the stage as an opaque harness error that is retried for hours (run 68225980). Always exits 0; the gate routes on its ok.",
+      "errorBehavior": {
+        "type": "route",
+        "errorNodeId": "notify-step-failed"
+      },
+      "position": {
+        "x": 0,
+        "y": 4060
+      }
+    },
+    {
+      "id": "auth-harden-ok?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "auth-harden.ok",
+            "operator": "eq",
+            "value": true,
+            "output": "ok"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Logged in for harden?",
+      "description": "ok is the preflight script's own finding. Anything else, an absent output included, stops the pipeline (fail closed).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 4200
+      }
+    },
+    {
+      "id": "fail-auth-harden",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "failed_stage",
+            "operation": "set",
+            "value": "harden"
+          },
+          {
+            "variable": "failed_child",
+            "operation": "set",
+            "value": "not started"
+          },
+          {
+            "variable": "failed_reason",
+            "operation": "set",
+            "value": "{{auth-harden.summary}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Blocked: auth (harden)",
+      "description": "An agent CLI the next stage uses is not logged in. Log in as the server user, then resume.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 4200
+      }
+    },
+    {
+      "id": "auth-refine",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/auth-preflight.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "claude",
+          "codex"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Auth preflight: refine",
+      "description": "Checks that the agent CLIs refine uses (claude, codex) are logged in, so an expired login stops here with a named reason instead of failing the stage as an opaque harness error that is retried for hours (run 68225980). Always exits 0; the gate routes on its ok.",
+      "errorBehavior": {
+        "type": "route",
+        "errorNodeId": "notify-step-failed"
+      },
+      "position": {
+        "x": 0,
+        "y": 4620
+      }
+    },
+    {
+      "id": "auth-refine-ok?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "auth-refine.ok",
+            "operator": "eq",
+            "value": true,
+            "output": "ok"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Logged in for refine?",
+      "description": "ok is the preflight script's own finding. Anything else, an absent output included, stops the pipeline (fail closed).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 4760
+      }
+    },
+    {
+      "id": "fail-auth-refine",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "failed_stage",
+            "operation": "set",
+            "value": "refine"
+          },
+          {
+            "variable": "failed_child",
+            "operation": "set",
+            "value": "not started"
+          },
+          {
+            "variable": "failed_reason",
+            "operation": "set",
+            "value": "{{auth-refine.summary}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Blocked: auth (refine)",
+      "description": "An agent CLI the next stage uses is not logged in. Log in as the server user, then resume.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 4760
+      }
+    },
+    {
+      "id": "auth-review",
+      "type": "script",
+      "config": {
+        "scriptFile": "@lib/auth-preflight.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "claude",
+          "codex"
+        ],
+        "timeoutSeconds": 120
+      },
+      "label": "Auth preflight: review",
+      "description": "Checks that the agent CLIs review uses (claude, codex) are logged in, so an expired login stops here with a named reason instead of failing the stage as an opaque harness error that is retried for hours (run 68225980). Always exits 0; the gate routes on its ok.",
+      "errorBehavior": {
+        "type": "route",
+        "errorNodeId": "notify-step-failed"
+      },
+      "position": {
+        "x": 0,
+        "y": 5320
+      }
+    },
+    {
+      "id": "auth-review-ok?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "auth-review.ok",
+            "operator": "eq",
+            "value": true,
+            "output": "ok"
+          }
+        ],
+        "defaultOutput": "blocked"
+      },
+      "label": "Logged in for review?",
+      "description": "ok is the preflight script's own finding. Anything else, an absent output included, stops the pipeline (fail closed).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 5460
+      }
+    },
+    {
+      "id": "fail-auth-review",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "failed_stage",
+            "operation": "set",
+            "value": "review"
+          },
+          {
+            "variable": "failed_child",
+            "operation": "set",
+            "value": "not started"
+          },
+          {
+            "variable": "failed_reason",
+            "operation": "set",
+            "value": "{{auth-review.summary}}"
+          },
+          {
+            "variable": "failed_outcome",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Blocked: auth (review)",
+      "description": "An agent CLI the next stage uses is not logged in. Log in as the server user, then resume.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 5460
       }
     }
   ],
@@ -1368,10 +1899,6 @@
     {
       "source": "intake-check",
       "target": "promote-check"
-    },
-    {
-      "source": "promote-check",
-      "target": "record-idea?"
     },
     {
       "source": "record-idea?",
@@ -1510,10 +2037,6 @@
       "target": "notify-failed"
     },
     {
-      "source": "pre-plan",
-      "target": "plan"
-    },
-    {
       "source": "plan",
       "target": "plan-ok?",
       "output": "success"
@@ -1526,10 +2049,6 @@
     {
       "source": "fail-plan",
       "target": "notify-failed"
-    },
-    {
-      "source": "pre-implement",
-      "target": "implement"
     },
     {
       "source": "implement",
@@ -1546,10 +2065,6 @@
       "target": "notify-failed"
     },
     {
-      "source": "pre-harden",
-      "target": "harden"
-    },
-    {
       "source": "harden",
       "target": "pre-refine",
       "output": "success"
@@ -1564,10 +2079,6 @@
       "target": "notify-failed"
     },
     {
-      "source": "pre-refine",
-      "target": "refine"
-    },
-    {
       "source": "refine",
       "target": "record-refine",
       "output": "success"
@@ -1580,10 +2091,6 @@
     {
       "source": "fail-refine",
       "target": "notify-failed"
-    },
-    {
-      "source": "pre-review",
-      "target": "review"
     },
     {
       "source": "review",
@@ -1650,6 +2157,138 @@
     {
       "source": "notify-failed",
       "target": "halt"
+    },
+    {
+      "source": "promote-check",
+      "target": "auth-start"
+    },
+    {
+      "source": "auth-start",
+      "target": "auth-start-ok?"
+    },
+    {
+      "source": "auth-start-ok?",
+      "target": "record-idea?",
+      "output": "ok"
+    },
+    {
+      "source": "auth-start-ok?",
+      "target": "fail-auth-start",
+      "output": "blocked"
+    },
+    {
+      "source": "fail-auth-start",
+      "target": "notify-failed"
+    },
+    {
+      "source": "pre-plan",
+      "target": "auth-plan"
+    },
+    {
+      "source": "auth-plan",
+      "target": "auth-plan-ok?"
+    },
+    {
+      "source": "auth-plan-ok?",
+      "target": "plan",
+      "output": "ok"
+    },
+    {
+      "source": "auth-plan-ok?",
+      "target": "fail-auth-plan",
+      "output": "blocked"
+    },
+    {
+      "source": "fail-auth-plan",
+      "target": "notify-failed"
+    },
+    {
+      "source": "pre-implement",
+      "target": "auth-implement"
+    },
+    {
+      "source": "auth-implement",
+      "target": "auth-implement-ok?"
+    },
+    {
+      "source": "auth-implement-ok?",
+      "target": "implement",
+      "output": "ok"
+    },
+    {
+      "source": "auth-implement-ok?",
+      "target": "fail-auth-implement",
+      "output": "blocked"
+    },
+    {
+      "source": "fail-auth-implement",
+      "target": "notify-failed"
+    },
+    {
+      "source": "pre-harden",
+      "target": "auth-harden"
+    },
+    {
+      "source": "auth-harden",
+      "target": "auth-harden-ok?"
+    },
+    {
+      "source": "auth-harden-ok?",
+      "target": "harden",
+      "output": "ok"
+    },
+    {
+      "source": "auth-harden-ok?",
+      "target": "fail-auth-harden",
+      "output": "blocked"
+    },
+    {
+      "source": "fail-auth-harden",
+      "target": "notify-failed"
+    },
+    {
+      "source": "pre-refine",
+      "target": "auth-refine"
+    },
+    {
+      "source": "auth-refine",
+      "target": "auth-refine-ok?"
+    },
+    {
+      "source": "auth-refine-ok?",
+      "target": "refine",
+      "output": "ok"
+    },
+    {
+      "source": "auth-refine-ok?",
+      "target": "fail-auth-refine",
+      "output": "blocked"
+    },
+    {
+      "source": "fail-auth-refine",
+      "target": "notify-failed"
+    },
+    {
+      "source": "pre-review",
+      "target": "auth-review"
+    },
+    {
+      "source": "auth-review",
+      "target": "auth-review-ok?"
+    },
+    {
+      "source": "auth-review-ok?",
+      "target": "review",
+      "output": "ok"
+    },
+    {
+      "source": "auth-review-ok?",
+      "target": "fail-auth-review",
+      "output": "blocked"
+    },
+    {
+      "source": "fail-auth-review",
+      "target": "notify-failed"
     }
   ]
 }
