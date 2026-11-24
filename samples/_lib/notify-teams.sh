@@ -61,7 +61,7 @@ local_notify() {
   wd=$!
   rc=0
   wait "$pid" || rc=$?
-  kill "$wd" 2>/dev/null || true
+  { kill "$wd"; wait "$wd"; } > /dev/null 2>&1 || true
   if [ "$rc" -eq 0 ]; then echo true; else echo false; fi
 }
 
