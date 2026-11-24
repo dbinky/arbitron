@@ -284,6 +284,7 @@ type Dispatch struct {
 	Chat         *WireChat         `json:"chat,omitempty"`
 	Agent        *WireAgent        `json:"agent,omitempty"`
 	Process      *WireProcess      `json:"process,omitempty"`
+	Workspace    *WireWorkspace    `json:"workspace,omitempty"`
 	LeaseUntil   time.Time         `json:"leaseUntil"` // offer deadline; unaccepted offers are re-offered with generation+1
 }
 
@@ -346,13 +347,6 @@ func (c *WireChat) Validate() error {
 	}
 	return nil
 }
-
-// WireAgent and WireProcess are reserved for Phase 3 (agent/process jobs);
-// protocol v1 rejects any dispatch that sets them.
-type WireAgent struct{}
-
-// WireProcess is reserved for Phase 3; see WireAgent.
-type WireProcess struct{}
 
 // Output is one sequenced output token for (jobId, generation).
 type Output struct {
@@ -417,12 +411,6 @@ type WireChatResult struct {
 	TokensOut    int             `json:"tokensOut,omitempty"`
 	SessionID    string          `json:"sessionId,omitempty"`
 }
-
-// WireAgentResult is reserved for Phase 3.
-type WireAgentResult struct{}
-
-// WireProcessResult is reserved for Phase 3.
-type WireProcessResult struct{}
 
 // WireOutcome mirrors runner.SourceOutcome.
 type WireOutcome struct {
