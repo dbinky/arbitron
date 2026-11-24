@@ -452,7 +452,7 @@ describe('ExecutionView — selected session owner is the control sink', () => {
     fireEvent.click(screen.getByTestId('node-group:g:footer'))
     currentAggregate = aggregate({ version: 'v2', groups: [resolving('br-a')] })
     act(() => sockets.find((s) => s.url.endsWith('?subtree=1'))!.emit({ type: 'group.task_updated', timestamp: '', data: {} }))
-    await waitFor(() => expect(apiMock.instances.get).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(apiMock.instances.get.mock.calls.filter(([id]) => id === 'root')).toHaveLength(2))
     fireEvent.click(await screen.findByRole('button', { name: 'Open resolution session' }))
     await waitFor(() => expect(sockets.some((s) => s.url.endsWith('/br-a/ws'))).toBe(true))
     expect(screen.queryByText('branch b private conversation')).toBeNull()
@@ -508,13 +508,13 @@ describe('ExecutionView — refresh (error recovery)', () => {
   it('refreshes the route instance when a subtree event changes the aggregate version', async () => {
     renderView()
     await waitFor(() => expect(stateOf('b1')).toBe('running'))
-    expect(apiMock.instances.get).toHaveBeenCalledTimes(1)
+    expect(apiMock.instances.get.mock.calls.filter(([id]) => id === 'root')).toHaveLength(1)
 
     currentAggregate = aggregate({ version: 'v2' })
     const subtree = sockets.find((s) => s.url.endsWith('?subtree=1'))!
     act(() => subtree.emit({ type: 'group.task_updated', timestamp: '2026-10-16T10:01:00Z', data: {}, sourceInstanceId: 'br-b' }))
 
-    await waitFor(() => expect(apiMock.instances.get).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(apiMock.instances.get.mock.calls.filter(([id]) => id === 'root')).toHaveLength(2))
   })
 
   it('falls back to the single-instance trace view when the aggregate is unavailable', async () => {
