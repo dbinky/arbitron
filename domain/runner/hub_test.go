@@ -238,42 +238,43 @@ func TestHubHeartbeat_SourceHealthTransitions(t *testing.T) {
 	ctx := context.Background()
 	sid := runner.MakeSourceID("mac-a", runner.CredAnthropicSubscription, "")
 	s, _, _ := admit(t, p, h, "mac-a", hubtest.DarwinHello(hubtest.AnthropicSource()))
-	beat := func(hl runner.SourceHealth) {
+	require.Len(t, p.Health.Observations(), 1, "the hello observation is merged once")
+	beat := func(hl runner.SourceHealth, obs *runner.ProbeResult, seq uint64) {
 		t.Helper()
 		src := hubtest.AnthropicSource()
-		src.Health = hl
+		src.Health, src.Observation, src.ObservationSeq = hl, obs, seq
 		require.NoError(t, h.Handle(ctx, s, heartbeat(src)))
 	}
 
-	beat(runner.SourceHealth{Auth: runner.AuthLoggedOut, Capacity: runner.CapacityAvailable})
-	beat(runner.SourceHealth{Auth: runner.AuthLoggedOut, Capacity: runner.CapacityAvailable})
-	calls := p.Health.Calls()
-	require.Len(t, calls, 1, "a persisting logged_out is applied once")
-	assert.Equal(t, sid, calls[0].Source)
-	assert.Equal(t, runner.OutcomeLoggedOut, calls[0].Outcome.Class)
-	assert.False(t, place(t, p, anthropicChat(runner.AffinityNone)).Placed, "logged-out source gets no work")
+	beat(runner.SourceHealth{Auth: runner.AuthLoggedOut, Capacity: runner.CapacityExhausted}, nil, 0)
+	assert.Len(t, p.Health.Observations(), 1, "a projection without an observation never changes server health")
+	assert.Empty(t, p.Health.Calls())
 
-	beat(runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable})
+	beat(runner.SourceHealth{}, &runner.ProbeResult{Auth: runner.AuthLoggedOut}, 2)
+	beat(runner.SourceHealth{}, &runner.ProbeResult{Auth: runner.AuthLoggedOut}, 2)
+	obs := p.Health.Observations()
+	require.Len(t, obs, 2, "a repeated observation sequence is applied once")
+	assert.Equal(t, sid, obs[1].Source)
+	assert.Equal(t, runner.AuthLoggedOut, obs[1].Result.Auth)
 	src, err := p.Registry.GetSource(ctx, sid)
 	require.NoError(t, err)
-	assert.Equal(t, runner.AuthOK, src.Health.Auth)
-	assert.Len(t, p.EventsOf(t, "source.recovered"), 1)
+	assert.Equal(t, src.Health.Revision, obs[1].Result.HealthRevision, "stamped with the current revision")
+	assert.False(t, place(t, p, anthropicChat(runner.AffinityNone)).Placed, "logged-out source gets no work")
 
-	reset := p.Clock.Now().Add(3 * time.Hour)
-	beat(runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityExhausted, ResetAt: &reset})
-	calls = p.Health.Calls()
-	require.Len(t, calls, 2)
-	assert.Equal(t, runner.OutcomeExhausted, calls[1].Outcome.Class)
-	require.NotNil(t, calls[1].Outcome.ResetAt)
-	assert.True(t, calls[1].Outcome.ResetAt.Equal(reset))
+	held, reset := false, p.Clock.Now().Add(3*time.Hour)
+	beat(runner.SourceHealth{}, &runner.ProbeResult{Auth: runner.AuthOK, Capacity: &runner.CapacityObservation{
+		State: runner.CapacityExhausted, OrdinaryUsageAllowed: &held, ResetAt: &reset}}, 3)
+	obs = p.Health.Observations()
+	require.Len(t, obs, 3)
+	require.NotNil(t, obs[2].Result.Capacity, "exhaustion hints pass through")
 
-	beat(runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable, Headroom: hubFloat(0.4)})
-	src, err = p.Registry.GetSource(ctx, sid)
-	require.NoError(t, err)
-	assert.Equal(t, runner.CapacityProbation, src.Health.Capacity, "recovery from exhaustion goes through probation")
-	assert.Nil(t, src.Health.ResetAt)
-	require.NotNil(t, src.Health.Headroom)
-	assert.Equal(t, 0.4, *src.Health.Headroom)
+	allowed := true
+	beat(runner.SourceHealth{}, &runner.ProbeResult{Auth: runner.AuthOK, Capacity: &runner.CapacityObservation{OrdinaryUsageAllowed: &allowed}}, 4)
+	obs = p.Health.Observations()
+	require.Len(t, obs, 4)
+	assert.Nil(t, obs[3].Result.Capacity, "an uncorrelated heartbeat can never recover capacity")
+	beat(runner.SourceHealth{}, &runner.ProbeResult{Auth: runner.AuthOK}, 3)
+	assert.Len(t, p.Health.Observations(), 4, "an older sequence is ignored")
 }
 
 func TestHubHeartbeat_SourceSetChangeReplacesSources(t *testing.T) {

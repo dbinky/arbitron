@@ -129,8 +129,7 @@ func remoteKind(k CredentialKind) bool {
 }
 
 // reportedSources converts reports to registry sources: remote kinds only,
-// de-duplicated by source id, with neutral health (applyReportedHealth then
-// records the reported state through the proper transitions).
+// de-duplicated by source id, with neutral health. Health comes from observations.
 func reportedSources(id RunnerID, reps []SourceReport) []Source {
 	out := make([]Source, 0, len(reps))
 	seen := map[SourceID]bool{}
@@ -182,65 +181,53 @@ func sameSourceSet(a, b []Source) bool {
 	return reflect.DeepEqual(sa, sb)
 }
 
-// applyReportedHealth maps runner-reported health onto the registry. New
-// logged_out / exhausted states go through the HealthTransitioner (which owns
-// alerts and events); other observations are merged directly. Recovery from
-// exhaustion passes through probation; clearing logged_out emits source.recovered.
-func (h *Hub) applyReportedHealth(ctx context.Context, id RunnerID, reps []SourceReport, now time.Time) error {
+// applyObservations merges fresh, ordered samples through the monitor. Health
+// projections never change server health; heartbeat hints cannot recover capacity.
+func (h *Hub) applyObservations(ctx context.Context, s *Session, reps []SourceReport) error {
+	maxAge := 3 * h.cfg.Heartbeat
 	for _, rep := range reps {
-		if !remoteKind(rep.Kind) {
+		if !remoteKind(rep.Kind) || rep.Observation == nil || rep.ObservationSeq == 0 {
 			continue
 		}
-		sid := MakeSourceID(id, rep.Kind, rep.CredentialRef)
+		if rep.SampleAgeMs < 0 || rep.SampleAgeMs > maxAge.Milliseconds() {
+			continue
+		}
+		sid := MakeSourceID(s.RunnerID, rep.Kind, rep.CredentialRef)
+		if !h.advanceObservation(sid, s.serial, rep.ObservationSeq) {
+			continue
+		}
 		cur, err := h.reg.GetSource(ctx, sid)
 		if err != nil {
 			return fmt.Errorf("hub: read source %s: %w", sid, err)
 		}
-		rh := rep.Health
-		switch {
-		case rh.Auth == AuthLoggedOut && cur.Health.Auth != AuthLoggedOut:
-			if err := h.health.ApplyOutcome(ctx, sid, SourceOutcome{Class: OutcomeLoggedOut}); err != nil {
-				return err
-			}
-		case rh.Capacity == CapacityExhausted && cur.Health.Capacity != CapacityExhausted:
-			if err := h.health.ApplyOutcome(ctx, sid, SourceOutcome{Class: OutcomeExhausted, ResetAt: rh.ResetAt, Windows: rh.Windows, HeadroomHint: rh.Headroom}); err != nil {
-				return err
-			}
-		default:
-			next := cur.Health
-			recovered := false
-			if rh.Auth == AuthOK && cur.Health.Auth != AuthOK {
-				recovered = cur.Health.Auth == AuthLoggedOut
-				next.Auth = AuthOK
-			}
-			if rh.Capacity == CapacityAvailable && cur.Health.Capacity == CapacityExhausted {
-				next.Capacity = CapacityProbation
-				next.ResetAt = nil
-			}
-			if rh.Headroom != nil {
-				next.Headroom = rh.Headroom
-			}
-			if rh.Windows != nil {
-				next.Windows = rh.Windows
-			}
-			probed := now
-			if rh.LastProbeAt != nil {
-				probed = *rh.LastProbeAt
-			}
-			changed := !reflect.DeepEqual(next, cur.Health)
-			next.LastProbeAt = &probed
-			if changed {
-				if err := h.reg.RecordHealth(ctx, sid, next); err != nil {
-					return err
-				}
-				h.notifier.Notify()
-			}
-			if recovered {
-				h.record(ctx, evtSourceRecovered, id, sid, Cause{Kind: "outcome", Actor: string(id)}, map[string]any{"kind": string(rep.Kind)})
-			}
+		if _, err := h.health.ObserveProbe(ctx, sid, heartbeatHint(*rep.Observation, cur.Health)); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (h *Hub) advanceObservation(sid SourceID, serial, seq uint64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m, ok := h.observed[sid]
+	if ok && (m.serial > serial || m.serial == serial && seq <= m.seq) {
+		return false
+	}
+	h.observed[sid] = observationMark{serial: serial, seq: seq}
+	return true
+}
+
+func heartbeatHint(o ProbeResult, cur SourceHealth) ProbeResult {
+	out := ProbeResult{Auth: o.Auth, HealthRevision: cur.Revision}
+	if c := o.Capacity; c != nil {
+		recovering := c.OrdinaryUsageAllowed != nil && *c.OrdinaryUsageAllowed && cur.Capacity != CapacityAvailable
+		if !recovering {
+			cc := *c
+			out.Capacity = &cc
+		}
+	}
+	return out
 }
 
 // Admit admits an authenticated, machine-proven runner (the endpoint has
@@ -288,9 +275,6 @@ func (h *Hub) Admit(ctx context.Context, key RunnerKey, conn RunnerConn, hello H
 	if err := h.reg.ReplaceSources(ctx, id, reportedSources(id, hello.Sources)); err != nil {
 		return nil, fmt.Errorf("admit %s: %w", id, err)
 	}
-	if err := h.applyReportedHealth(ctx, id, hello.Sources, now); err != nil {
-		return nil, fmt.Errorf("admit %s: %w", id, err)
-	}
 	if err := h.reg.SetLiveness(ctx, id, LivenessOnline, now); err != nil {
 		return nil, fmt.Errorf("admit %s: %w", id, err)
 	}
@@ -313,6 +297,10 @@ func (h *Hub) Admit(ctx context.Context, key RunnerKey, conn RunnerConn, hello H
 	}
 	claimed := h.reconcileHeld(ctx, s, hello.Held, now)
 	h.resendOffers(ctx, s, claimed)
+	if err := h.applyObservations(ctx, s, hello.Sources); err != nil {
+		h.Disconnect(s)
+		return nil, fmt.Errorf("admit %s: %w", id, err)
+	}
 	kind := evtRunnerConnected
 	if seen || prevLiveness == LivenessSuspect || prevLiveness == LivenessLost {
 		kind = evtRunnerReconnected
@@ -399,7 +387,7 @@ func (h *Hub) handleHeartbeat(ctx context.Context, s *Session, hb HeartbeatInfo,
 			}
 			h.notifier.Notify()
 		}
-		if err := h.applyReportedHealth(ctx, s.RunnerID, hb.Sources, now); err != nil {
+		if err := h.applyObservations(ctx, s, hb.Sources); err != nil {
 			return err
 		}
 	}

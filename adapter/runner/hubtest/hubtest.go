@@ -254,7 +254,8 @@ func Capability(op runner.OpType, b provider.ResolvedBinding, families ...modeli
 func AnthropicSource() runner.SourceReport {
 	return runner.SourceReport{Kind: runner.CredAnthropicSubscription, Families: []modelidentity.Family{"anthropic"},
 		Capabilities: []runner.ExecutionCapability{Capability(runner.OpChat, ChatJob("claude-opus-5-5", runner.OpChat).Binding, "anthropic"), Capability(runner.OpStream, ChatJob("claude-opus-5-5", runner.OpStream).Binding, "anthropic")},
-		Health:       runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
+		Observation:  &runner.ProbeResult{Auth: runner.AuthOK}, ObservationSeq: 1,
+		Health: runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
 }
 
 // LunaRouteSource is a healthy LunaRoute source report keyed by the server's
@@ -263,7 +264,8 @@ func LunaRouteSource(ref string, families ...modelidentity.Family) runner.Source
 	b := provider.ResolvedBinding{Provider: provider.CanonicalLunaRoute, BaseURL: provider.LunaRouteHostedRoot, Model: "glm-5.3", ConnectionRef: ref}
 	return runner.SourceReport{Kind: runner.CredLunaRoute, CredentialRef: ref, Families: families,
 		Capabilities: []runner.ExecutionCapability{Capability(runner.OpChat, b, families...), Capability(runner.OpStream, b, families...)},
-		Health:       runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
+		Observation:  &runner.ProbeResult{Auth: runner.AuthOK}, ObservationSeq: 1,
+		Health: runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
 }
 
 // ChatJob is a chat or stream StepJob on the no-connection subscription path.
