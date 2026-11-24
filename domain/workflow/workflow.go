@@ -232,31 +232,36 @@ type Node struct {
 
 // NodeConfig holds the type-specific configuration for a node.
 type NodeConfig struct {
-	TemplateFile       string            `json:"templateFile,omitempty"`
-	Model              string            `json:"model,omitempty"`
-	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
-	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" | "codex" (agent_call/interactive_agent only)
-	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
-	ChildWorkflow      string            `json:"childWorkflow,omitempty"` // spawn_workflow: the child workflow's name
-	Inputs             map[string]any    `json:"inputs,omitempty"`        // spawn_workflow: child input name -> literal or template
-	SpawnMode          string            `json:"spawnMode,omitempty"`     // spawn_workflow: "fire_and_forget" | "wait_for_child"
-	OutputSchema       any               `json:"outputSchema,omitempty"`
-	MaxTokens          int               `json:"maxTokens,omitempty"`
-	Temperature        float64           `json:"temperature,omitempty"`
-	SystemPrompt       string            `json:"systemPrompt,omitempty"`
-	OrchestrationFile  string            `json:"orchestrationFile,omitempty"`
-	ScriptFile         string            `json:"scriptFile,omitempty"`
-	Interpreter        string            `json:"interpreter,omitempty"`
-	Command            string            `json:"command,omitempty"`
-	Args               []string          `json:"args,omitempty"`
-	Env                map[string]string `json:"env,omitempty"`
-	TimeoutSeconds     int               `json:"timeoutSeconds,omitempty"`
-	Conditions         []Condition       `json:"conditions,omitempty"`
-	DefaultOutput      string            `json:"defaultOutput,omitempty"`
-	Operations         []Operation       `json:"operations,omitempty"`
-	DurationSeconds    string            `json:"durationSeconds,omitempty"`
-	Secret             string            `json:"secret,omitempty"`
-	WaitTimeoutSeconds string            `json:"waitTimeoutSeconds,omitempty"`
+	TemplateFile      string            `json:"templateFile,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	ModelProfile      string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
+	Backend           string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" | "codex" (agent_call/interactive_agent only)
+	ToolScope         []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
+	ChildWorkflow     string            `json:"childWorkflow,omitempty"` // spawn_workflow: the child workflow's name
+	Inputs            map[string]any    `json:"inputs,omitempty"`        // spawn_workflow: child input name -> literal or template
+	SpawnMode         string            `json:"spawnMode,omitempty"`     // spawn_workflow: "fire_and_forget" | "wait_for_child"
+	OutputSchema      any               `json:"outputSchema,omitempty"`
+	MaxTokens         int               `json:"maxTokens,omitempty"`
+	Temperature       float64           `json:"temperature,omitempty"`
+	SystemPrompt      string            `json:"systemPrompt,omitempty"`
+	OrchestrationFile string            `json:"orchestrationFile,omitempty"`
+	ScriptFile        string            `json:"scriptFile,omitempty"`
+	Interpreter       string            `json:"interpreter,omitempty"`
+	Command           string            `json:"command,omitempty"`
+	Args              []string          `json:"args,omitempty"`
+	Env               map[string]string `json:"env,omitempty"`
+	TimeoutSeconds    int               `json:"timeoutSeconds,omitempty"`
+	// TimeoutRetryScale multiplies timeoutSeconds for the next retry attempt
+	// after an attempt fails because its node timeout expired (script,
+	// tool_call, agent_call). 0 (unset) means the default of 2; 1 keeps the
+	// timeout unchanged. The scaled timeout is capped at 4x timeoutSeconds.
+	TimeoutRetryScale  int         `json:"timeoutRetryScale,omitempty"`
+	Conditions         []Condition `json:"conditions,omitempty"`
+	DefaultOutput      string      `json:"defaultOutput,omitempty"`
+	Operations         []Operation `json:"operations,omitempty"`
+	DurationSeconds    string      `json:"durationSeconds,omitempty"`
+	Secret             string      `json:"secret,omitempty"`
+	WaitTimeoutSeconds string      `json:"waitTimeoutSeconds,omitempty"`
 	// Group is the parallel_group configuration (parallel_group only). Read it
 	// through ParseGroupConfig, which checks it and returns a deep copy.
 	Group *GroupConfig `json:"group,omitempty"`

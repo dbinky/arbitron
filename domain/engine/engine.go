@@ -1539,6 +1539,12 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	var lastErr error
 	var lastExec *instance.NodeExecution
 
+	// attemptNode carries the per-attempt timeout: after an attempt runs out
+	// of its own node timeout, the next one gets a scaled timeout. NodeConfig
+	// is a value, so changing TimeoutSeconds on this copy leaves the manifest
+	// node untouched.
+	attemptNode := node
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 && eb.RetryDelaySeconds > 0 {
 			select {
@@ -1550,14 +1556,35 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 
 		resolvedInputs := vars.Snapshot()
 		startedAt := time.Now()
-		result, err := executor.Execute(ctx, node, vars, wf.Name)
+		result, err := executor.Execute(ctx, attemptNode, vars, wf.Name)
 		completedAt := time.Now()
+
+		var nextTimeout int
+		timedOut := isNodeTimeout(ctx, attemptNode, err)
+		if timedOut {
+			nextTimeout = nextTimeoutSeconds(attemptNode.Config.TimeoutSeconds, node.Config.TimeoutSeconds, node.Config.TimeoutRetryScale)
+			err = &nodeTimeoutError{
+				node:        attemptNode,
+				timeoutSecs: attemptNode.Config.TimeoutSeconds,
+				attempt:     attempt,
+				maxAttempts: maxAttempts,
+				nextSecs:    nextTimeout,
+				err:         err,
+			}
+		}
 
 		execStatus := instance.NodeStatusSucceeded
 		var execError map[string]any
 		if err != nil {
 			execStatus = instance.NodeStatusFailed
 			execError = map[string]any{"error": err.Error()}
+			if timedOut {
+				execError["timedOut"] = true
+				execError["timeoutSeconds"] = attemptNode.Config.TimeoutSeconds
+			}
+		}
+		if timedOut {
+			attemptNode.Config.TimeoutSeconds = nextTimeout
 		}
 
 		var execOutput map[string]any

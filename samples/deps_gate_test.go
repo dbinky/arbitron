@@ -105,10 +105,11 @@ func TestPlanDepsGateSeesBadlyFormattedGaps(t *testing.T) {
 		{"clean", `{"gaps":["NON-BLOCKING: provisioned outside the repo"],"has_unresolved":false,"unresolved_count":0}`, "proceed"},
 		{"empty", `{"gaps":[],"has_unresolved":false,"unresolved_count":0}`, "proceed"},
 	}
-	// Gate 1 asks the person; gate 2 (after the one resolve pass) blocks instead.
-	for _, pair := range []struct{ assess, count, gate, open string }{
-		{"deps-assess", "deps-count", "deps-gate", "resolve"},
-		{"deps-assess-2", "deps-count-2", "deps-gate-2", "blocked"},
+	// Gates 1 and 2 ask the person; gate 3 (after two human rounds) blocks instead.
+	for _, pair := range []struct{ assess, audit, count, gate, open string }{
+		{"deps-assess", "plan-audit", "deps-count", "deps-gate", "resolve"},
+		{"deps-assess-2", "plan-audit-2", "deps-count-2", "deps-gate-2", "resolve"},
+		{"deps-assess-3", "plan-audit-3", "deps-count-3", "deps-gate-3", "blocked"},
 	} {
 		var gate workflow.Node
 		for _, n := range wf.Nodes {
@@ -121,8 +122,9 @@ func TestPlanDepsGateSeesBadlyFormattedGaps(t *testing.T) {
 		}
 		for _, c := range cases {
 			t.Run(pair.gate+"/"+c.name, func(t *testing.T) {
-				in := `{"` + pair.assess + `":` + c.assess + `}`
-				cmd := exec.Command("sh", "plan/scripts/deps-count.sh", pair.assess)
+				// A clean plan audit, so only the assessment decides the route.
+				in := `{"` + pair.assess + `":` + c.assess + `,"` + pair.audit + `":{"ok":true,"human_only":0,"human_only_lines":[]}}`
+				cmd := exec.Command("sh", append([]string{"plan/scripts/deps-count.sh"}, nodeByID(wf, pair.count).Config.Args...)...)
 				cmd.Stdin = strings.NewReader(in)
 				out, err := cmd.Output()
 				if err != nil {

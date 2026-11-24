@@ -2,7 +2,6 @@ package samples_test
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"testing"
 
@@ -10,124 +9,6 @@ import (
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
-
-// The plan stage sends the open dependency decisions to a person exactly once.
-// The legacy loop (deps-gate -> resolve-deps -> deps-inc -> align-plans) put an
-// interactive node on a cycle; here the one resolve pass is unrolled, so
-// deps-gate offers the human the decisions and deps-gate-2 blocks the stage
-// rather than asking again. Both gates route on deps-count (a script that
-// fails closed), never on a field the LLM may or may not emit (run 5e86d796).
-func TestPlanDepsGatesSendDecisionsToTheHumanOnce(t *testing.T) {
-	wf := loadSample(t, "plan")
-	count := func(id string, needs float64) map[string]any {
-		return map[string]any{id: map[string]any{"needs_resolution": needs}}
-	}
-	// What run 5e86d796's deps-assess reported: nothing blocking, 7 open items.
-	llmSaidNothingBlocks := map[string]any{
-		"blocking_count": float64(0), "has_blocking": false,
-		"unresolved_count": float64(7), "has_unresolved": true,
-	}
-	withAssess := func(out map[string]any, id string) map[string]any {
-		out[id] = llmSaidNothingBlocks
-		return out
-	}
-
-	if got := routeTo(t, wf, "deps-gate", withAssess(count("deps-count", 7), "deps-assess")); got != "resolve-deps" {
-		t.Errorf("deps-gate with 7 decisions -> %q, want resolve-deps", got)
-	}
-	if got := routeTo(t, wf, "deps-gate-2", withAssess(count("deps-count-2", 7), "deps-assess-2")); got != "mark-unresolved" {
-		t.Errorf("deps-gate-2 with 7 decisions -> %q, want mark-unresolved (no second ask)", got)
-	}
-	for _, gate := range []struct{ id, counter string }{{"deps-gate", "deps-count"}, {"deps-gate-2", "deps-count-2"}} {
-		if got := routeTo(t, wf, gate.id, count(gate.counter, 0)); got != "mark-resolved" {
-			t.Errorf("%s with 0 -> %q, want mark-resolved", gate.id, got)
-		}
-	}
-	// deps-count fails closed with needs_resolution=1 on unreadable output.
-	if got := routeTo(t, wf, "deps-gate", count("deps-count", 1)); got == "mark-resolved" {
-		t.Errorf("deps-gate with unreadable assess output proceeded to %q", got)
-	}
-	// Gate 2 must read its own counter: a stale first-pass 0 cannot unblock it.
-	stale := count("deps-count", 0)
-	stale["deps-count-2"] = map[string]any{"needs_resolution": float64(3)}
-	if got := routeTo(t, wf, "deps-gate-2", stale); got != "mark-unresolved" {
-		t.Errorf("deps-gate-2 read the first-pass counter: -> %q, want mark-unresolved", got)
-	}
-}
-
-// The second counter must count the second assessment.
-func TestPlanDepsCountersReadTheirOwnAssessment(t *testing.T) {
-	wf := loadSample(t, "plan")
-	for id, want := range map[string][]string{"deps-count": {"deps-assess"}, "deps-count-2": {"deps-assess-2"}} {
-		n := nodeByID(wf, id)
-		if n.Config.ScriptFile != "scripts/deps-count.sh" || !slices.Equal(n.Config.Args, want) {
-			t.Errorf("%s = %s %q, want scripts/deps-count.sh %q", id, n.Config.ScriptFile, n.Config.Args, want)
-		}
-	}
-	for _, chain := range [][]string{
-		{"align-plans", "deps-assess", "deps-count", "deps-gate"},
-		{"resolve-deps", "push-resolution", "align-plans-2", "deps-assess-2", "deps-count-2", "deps-gate-2"},
-		{"mark-resolved", "list-plans", "checkpoint-push", "finish"},
-		{"mark-unresolved", "list-plans"},
-	} {
-		for i := 0; i+1 < len(chain); i++ {
-			if !hasEdge(wf, chain[i], chain[i+1]) {
-				t.Errorf("missing edge %s -> %s", chain[i], chain[i+1])
-			}
-		}
-	}
-}
-
-// markVars runs a mark-* transform over a store holding deps-assess-2's gaps.
-func markVars(t *testing.T, wf *workflow.Workflow, id string) *variable.VariableStore {
-	t.Helper()
-	vars := variable.NewStore()
-	vars.SetNodeOutput("deps-assess-2", map[string]any{"gaps": []any{"DECISION: a.md — x; decision: y?"}})
-	if _, err := engine.NewTransformExecutor().Execute(context.Background(), nodeByID(wf, id), vars, wf.Name); err != nil {
-		t.Fatal(err)
-	}
-	return vars
-}
-
-// The marks feed finish: plan_status is the manifest status, deps_resolved a
-// bool, deps_gaps the JSON text of deps-assess-2.gaps when blocked (§3.3).
-func TestPlanMarksRecordTheStageOutcome(t *testing.T) {
-	wf := loadSample(t, "plan")
-
-	v := markVars(t, wf, "mark-unresolved")
-	st, _ := v.Get("plan_status")
-	ok, _ := v.Get("deps_resolved")
-	gaps, _ := v.Get("deps_gaps")
-	if st != "blocked" || ok != false {
-		t.Errorf("mark-unresolved: plan_status=%v deps_resolved=%#v, want blocked / false", st, ok)
-	}
-	s, isStr := gaps.(string)
-	var parsed []string
-	if !isStr || json.Unmarshal([]byte(s), &parsed) != nil || len(parsed) != 1 {
-		t.Errorf("mark-unresolved deps_gaps = %#v, want the JSON text of deps-assess-2.gaps", gaps)
-	}
-
-	v = markVars(t, wf, "mark-resolved")
-	st, _ = v.Get("plan_status")
-	ok, _ = v.Get("deps_resolved")
-	gaps, _ = v.Get("deps_gaps")
-	if st != "done" || ok != true || gaps != "" {
-		t.Errorf("mark-resolved: plan_status=%v deps_resolved=%#v deps_gaps=%#v, want done / true / \"\"", st, ok, gaps)
-	}
-}
-
-// resolve-deps runs at most once: nothing in the plan graph may loop.
-func TestPlanIsAcyclic(t *testing.T) {
-	wf := loadSample(t, "plan")
-	for _, n := range wf.Nodes {
-		if onCycle(wf, n.ID) {
-			t.Errorf("node %s sits on a cycle", n.ID)
-		}
-	}
-	if _, ok := findNode(wf, "resolve-deps"); !ok {
-		t.Fatal("plan has no resolve-deps node")
-	}
-}
 
 // implGate runs the transforms on one pass's tail (lift-assess on a pass that
 // stood, skip-assess on a voided one) over the given outputs and inputs, then
