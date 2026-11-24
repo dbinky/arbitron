@@ -38,6 +38,17 @@ func toInbound(e runnerproto.Envelope) (runner.Inbound, error) {
 			return runner.Inbound{}, err
 		}
 		return runner.Inbound{Kind: runner.MsgHeartbeat, Heartbeat: &info}, nil
+	case runnerproto.KindProbeResult:
+		var pr runnerproto.ProbeResult
+		if err := runnerproto.DecodePayload(e, &pr); err != nil {
+			return runner.Inbound{}, malformedf("probe_result: %v", err)
+		}
+		id, err := uuid.Parse(pr.RequestID)
+		if err != nil || id == uuid.Nil {
+			return runner.Inbound{}, malformedf("probe_result needs a request id")
+		}
+		src := sourcesToDomain([]runnerproto.WireSource{pr.Source})[0]
+		return runner.Inbound{Kind: runner.MsgProbeResult, ProbeResult: &runner.ProbeReply{RequestID: id, HealthRevision: pr.HealthRevision, Source: src}}, nil
 	case runnerproto.KindAccept:
 		id, err := parseJob(e)
 		if err != nil {
@@ -133,6 +144,7 @@ func sourcesToDomain(in []runnerproto.WireSource) []runner.SourceReport {
 		}
 		out = append(out, runner.SourceReport{Kind: runner.CredentialKind(s.Kind), CredentialRef: s.CredentialRef,
 			Families: fam, Backends: s.Backends, Models: s.Models, Health: healthToDomain(s.Health),
+			Observation: observationToDomain(s.Observation), ObservationSeq: s.ObservationSeq, SampleAgeMs: s.SampleAgeMs,
 			UnavailableReason: s.UnavailableReason, Capabilities: capabilitiesToDomain(s.Capabilities)})
 	}
 	return out
@@ -152,6 +164,21 @@ func capabilitiesToDomain(in []runnerproto.ExecutionCapability) []runner.Executi
 			cap.Efforts = append(cap.Efforts, provider.Effort(e))
 		}
 		out = append(out, cap)
+	}
+	return out
+}
+
+func observationToDomain(o *runnerproto.WireProbeObservation) *runner.ProbeResult {
+	if o == nil {
+		return nil
+	}
+	out := &runner.ProbeResult{HealthRevision: o.HealthRevision, Auth: runner.AuthState(o.Auth)}
+	if c := o.Capacity; c != nil {
+		out.Capacity = &runner.CapacityObservation{ModelScope: c.ModelScope, State: runner.CapacityState(c.State), ResetAt: c.ResetAt, Headroom: c.Headroom, Windows: windowsToDomain(c.Windows)}
+		if c.OrdinaryUsageAllowed != nil {
+			v := *c.OrdinaryUsageAllowed
+			out.Capacity.OrdinaryUsageAllowed = &v
+		}
 	}
 	return out
 }
@@ -193,6 +220,9 @@ func resultToDomain(r runnerproto.Result) runner.RemoteResult {
 		Class: runner.OutcomeClass(r.Outcome.Class), ResetAt: r.Outcome.ResetAt,
 		RetryAfter: time.Duration(r.Outcome.RetryAfterMs) * time.Millisecond,
 		Windows:    windowsToDomain(r.Outcome.Windows), HeadroomHint: r.Outcome.HeadroomHint}}
+	if r.Confirmation != nil {
+		out.Confirmation = &runner.ConfirmationResult{RequestedModel: r.Confirmation.RequestedModel, ExecutedModel: r.Confirmation.ExecutedModel, SessionID: r.Confirmation.SessionID}
+	}
 	if r.Chat != nil {
 		out.Chat = &runner.RemoteChatResult{Output: r.Chat.Output, Conversation: r.Chat.Conversation, Model: r.Chat.Model,
 			TokensIn: r.Chat.TokensIn, TokensOut: r.Chat.TokensOut, SessionID: r.Chat.SessionID}
@@ -207,6 +237,11 @@ func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (
 	case runner.MsgAdmitted:
 		return runnerproto.NewEnvelope(runnerproto.KindAdmitted, &runnerproto.Admitted{RunnerID: string(id),
 			HeartbeatSeconds: heartbeatSeconds, ProtocolVersion: runnerproto.ProtocolVersion})
+	case runner.MsgProbe:
+		if m.Probe == nil {
+			return runnerproto.Envelope{}, fmt.Errorf("runner connect: probe without payload")
+		}
+		return runnerproto.NewEnvelope(runnerproto.KindProbe, &runnerproto.Probe{RequestID: m.Probe.RequestID.String(), HealthRevision: m.Probe.HealthRevision, SourceKind: string(m.Probe.SourceKind), CredentialRef: m.Probe.CredentialRef})
 	case runner.MsgDispatch:
 		if m.Dispatch == nil {
 			return runnerproto.Envelope{}, fmt.Errorf("runner connect: dispatch without payload")
@@ -230,6 +265,9 @@ func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (
 // carries no secrets, and neither does the wire type (P2 T1 reflection test).
 func dispatchToWire(d runner.DispatchPayload) *runnerproto.Dispatch {
 	out := &runnerproto.Dispatch{Op: string(d.Op), LeaseUntil: d.LeaseUntil}
+	if c := d.Confirmation; c != nil {
+		out.Confirmation = &runnerproto.WireConfirmation{Model: c.Model, Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, ContextWindow: c.ContextWindow, Effort: c.Effort}
+	}
 	if c := d.Chat; c != nil {
 		out.Chat = &runnerproto.WireChat{Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens,
 			Temperature: c.Temperature, OutputSchema: c.OutputSchema, SessionID: c.SessionID,

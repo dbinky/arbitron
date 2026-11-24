@@ -130,9 +130,11 @@ func TestToEnvelopeResultOKAndFailure(t *testing.T) {
 }
 
 func TestToEnvelopeProbeResult(t *testing.T) {
-	env := roundTrip(t, runneragent.Outbound{Kind: runneragent.KindProbeResult, ProbeResult: &runneragent.Source{Kind: runner.CredLunaRoute, CredentialRef: "lr-main", Health: runner.SourceHealth{Auth: "logged_out"}}})
+	env := roundTrip(t, runneragent.Outbound{Kind: runneragent.KindProbeResult, RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", HealthRevision: 3, ProbeResult: &runneragent.Source{Kind: runner.CredLunaRoute, CredentialRef: "lr-main", Health: runner.SourceHealth{Auth: "logged_out"}}})
 	var pr runnerproto.ProbeResult
 	require.NoError(t, runnerproto.DecodePayload(env, &pr))
+	assert.Equal(t, "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", pr.RequestID)
+	assert.Equal(t, uint64(3), pr.HealthRevision)
 	assert.Equal(t, "lunaroute", pr.Source.Kind)
 	assert.Equal(t, "logged_out", pr.Source.Health.Auth)
 }
@@ -192,9 +194,9 @@ func TestFromEnvelopeCancelFencedProbe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, runneragent.KindCancel, in.Kind)
 
-	in, err = fromEnvelope(mustEnv(t, runnerproto.KindProbe, "", 0, runnerproto.Probe{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", SourceKind: "lunaroute", CredentialRef: "lr-main"}))
+	in, err = fromEnvelope(mustEnv(t, runnerproto.KindProbe, "", 0, runnerproto.Probe{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", HealthRevision: 3, SourceKind: "lunaroute", CredentialRef: "lr-main"}))
 	require.NoError(t, err)
-	assert.Equal(t, &runneragent.ProbeRequest{SourceKind: runner.CredLunaRoute, CredentialRef: "lr-main"}, in.Probe)
+	assert.Equal(t, &runneragent.ProbeRequest{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", HealthRevision: 3, SourceKind: runner.CredLunaRoute, CredentialRef: "lr-main"}, in.Probe)
 }
 
 func TestFromEnvelopeRejectsInvalidPayload(t *testing.T) {

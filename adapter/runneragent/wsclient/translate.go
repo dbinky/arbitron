@@ -28,6 +28,21 @@ func wireHealth(h runner.SourceHealth) runnerproto.WireHealth {
 	}
 }
 
+func wireObservation(o *runner.ProbeResult) *runnerproto.WireProbeObservation {
+	if o == nil {
+		return nil
+	}
+	out := &runnerproto.WireProbeObservation{HealthRevision: o.HealthRevision, Auth: string(o.Auth)}
+	if c := o.Capacity; c != nil {
+		out.Capacity = &runnerproto.WireCapacityObservation{ModelScope: c.ModelScope, State: string(c.State), ResetAt: c.ResetAt, Headroom: c.Headroom, Windows: wireWindows(c.Windows)}
+		if c.OrdinaryUsageAllowed != nil {
+			v := *c.OrdinaryUsageAllowed
+			out.Capacity.OrdinaryUsageAllowed = &v
+		}
+	}
+	return out
+}
+
 func wireSource(s runneragent.Source) runnerproto.WireSource {
 	fams := make([]string, len(s.Families))
 	for i, f := range s.Families {
@@ -49,7 +64,7 @@ func wireSource(s runneragent.Source) runnerproto.WireSource {
 		}
 		caps[i] = runnerproto.ExecutionCapability{ToolPolicy: string(c.ToolPolicy), Op: string(c.Op), Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, Families: families, Models: c.Models, ContextWindows: windows, Efforts: efforts, Tools: c.Tools, ExecutedModel: c.ExecutedModel}
 	}
-	return runnerproto.WireSource{UnavailableReason: s.UnavailableReason, Capabilities: caps, Kind: string(s.Kind), CredentialRef: s.CredentialRef, Families: fams, Backends: s.Backends, Models: s.Models, Health: wireHealth(s.Health)}
+	return runnerproto.WireSource{Observation: wireObservation(s.Observation), ObservationSeq: s.ObservationSeq, SampleAgeMs: s.SampleAgeMs, UnavailableReason: s.UnavailableReason, Capabilities: caps, Kind: string(s.Kind), CredentialRef: s.CredentialRef, Families: fams, Backends: s.Backends, Models: s.Models, Health: wireHealth(s.Health)}
 }
 
 func wireSources(ss []runneragent.Source) []runnerproto.WireSource {
@@ -130,6 +145,10 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 			break
 		}
 		r := runnerproto.Result{OK: m.Result.OK, Outcome: wireOutcome(m.Result.Outcome), ErrorText: m.Result.ErrorText}
+		if m.Result.OK && m.Result.Confirmation != nil {
+			c := m.Result.Confirmation
+			r.Confirmation = &runnerproto.WireConfirmationResult{RequestedModel: c.RequestedModel, ExecutedModel: c.ExecutedModel, SessionID: c.SessionID}
+		}
 		if m.Result.OK && m.Result.Chat != nil {
 			c := m.Result.Chat
 			r.Chat = &runnerproto.WireChatResult{Output: c.Output, Model: c.Model, TokensIn: c.TokensIn, TokensOut: c.TokensOut, SessionID: c.SessionID}
@@ -139,7 +158,7 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 		if m.ProbeResult == nil {
 			break
 		}
-		return runnerproto.NewEnvelope(runnerproto.KindProbeResult, runnerproto.ProbeResult{Source: wireSource(*m.ProbeResult)})
+		return runnerproto.NewEnvelope(runnerproto.KindProbeResult, runnerproto.ProbeResult{RequestID: m.RequestID, HealthRevision: m.HealthRevision, Source: wireSource(*m.ProbeResult)})
 	}
 	return runnerproto.Envelope{}, fmt.Errorf("wsclient: cannot encode %q message", m.Kind)
 }
@@ -177,13 +196,18 @@ func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 		if err := runnerproto.DecodePayload(e, &d); err != nil {
 			return runneragent.Inbound{}, err
 		}
-		c := d.Chat
-		in.Dispatch = &runneragent.Dispatch{JobID: e.JobID, Generation: e.Generation, Op: d.Op, LeaseUntil: d.LeaseUntil, Chat: &runneragent.ChatJob{
-			Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint,
-			Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
-			OutputSchema: c.OutputSchema, SessionID: c.SessionID, RequireExecutedModel: c.RequireExecutedModel, Stream: c.Stream,
-			CredentialKind: c.CredentialKind, Backend: c.Backend, ContextWindow: c.ContextWindow, Effort: c.Effort, Tools: c.Tools,
-		}}
+		in.Dispatch = &runneragent.Dispatch{JobID: e.JobID, Generation: e.Generation, Op: d.Op, LeaseUntil: d.LeaseUntil}
+		if c := d.Confirmation; c != nil {
+			in.Dispatch.Confirmation = &runneragent.ConfirmationJob{Model: c.Model, Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, ContextWindow: c.ContextWindow, Effort: c.Effort}
+		}
+		if c := d.Chat; c != nil {
+			in.Dispatch.Chat = &runneragent.ChatJob{
+				Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint,
+				Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
+				OutputSchema: c.OutputSchema, SessionID: c.SessionID, RequireExecutedModel: c.RequireExecutedModel, Stream: c.Stream,
+				CredentialKind: c.CredentialKind, Backend: c.Backend, ContextWindow: c.ContextWindow, Effort: c.Effort, Tools: c.Tools,
+			}
+		}
 	case runnerproto.KindAck:
 		var a runnerproto.Ack
 		if err := runnerproto.DecodePayload(e, &a); err != nil {
@@ -195,7 +219,7 @@ func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 		if err := runnerproto.DecodePayload(e, &p); err != nil {
 			return runneragent.Inbound{}, err
 		}
-		in.Probe = &runneragent.ProbeRequest{SourceKind: runner.CredentialKind(p.SourceKind), CredentialRef: p.CredentialRef}
+		in.Probe = &runneragent.ProbeRequest{RequestID: p.RequestID, HealthRevision: p.HealthRevision, SourceKind: runner.CredentialKind(p.SourceKind), CredentialRef: p.CredentialRef}
 	}
 	return in, nil
 }

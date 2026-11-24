@@ -33,10 +33,11 @@ const (
 	KindRefused           = "refused"
 )
 
-// Operations Phase 2 runners execute (runnerproto Dispatch.Op "chat" | "stream").
+// Operations Phase 2 runners execute, including native confirmation probes.
 const (
-	OpChat   = "chat"
-	OpStream = "stream"
+	OpChat    = "chat"
+	OpStream  = "stream"
+	OpConfirm = "confirm"
 )
 
 // Held job states reported in hello and heartbeats.
@@ -54,6 +55,9 @@ type JobRef struct {
 // Source is one locally usable capacity source. Vendor credentials never
 // appear here: only kind, reference names and health.
 type Source struct {
+	Observation       *runner.ProbeResult
+	ObservationSeq    uint64
+	SampleAgeMs       int64
 	UnavailableReason string
 	Capabilities      []runner.ExecutionCapability
 	Kind              runner.CredentialKind
@@ -114,13 +118,20 @@ type ChatJob struct {
 	Tools                         []string
 }
 
+// ConfirmationJob describes a native confirmation using the runner's own login.
+// It contains no prompt, credentials, path or environment.
+type ConfirmationJob struct {
+	Model, Backend, Provider, EndpointFingerprint, ContextWindow, Effort string
+}
+
 // Dispatch is one job offer.
 type Dispatch struct {
-	JobID      string
-	Generation int64
-	Op         string
-	Chat       *ChatJob
-	LeaseUntil time.Time
+	Confirmation *ConfirmationJob
+	JobID        string
+	Generation   int64
+	Op           string
+	Chat         *ChatJob
+	LeaseUntil   time.Time
 }
 
 // OutputFrame is one streamed token, numbered per (job, generation) from 1.
@@ -141,10 +152,11 @@ type ChatResult struct {
 // Result is a job's terminal result with its classified outcome. ErrorText is
 // already sanitized by the executor (no provider prose, no secrets).
 type Result struct {
-	OK        bool
-	Chat      *ChatResult
-	Outcome   runner.SourceOutcome
-	ErrorText string
+	Confirmation *runner.ConfirmationResult
+	OK           bool
+	Chat         *ChatResult
+	Outcome      runner.SourceOutcome
+	ErrorText    string
 }
 
 // Challenge is the server's machine-binding challenge.
@@ -175,8 +187,10 @@ type Admission struct {
 // ProbeRequest asks for a fresh read-only probe of one source (mirrors
 // runnerproto.Probe).
 type ProbeRequest struct {
-	SourceKind    runner.CredentialKind
-	CredentialRef string
+	RequestID      string
+	HealthRevision uint64
+	SourceKind     runner.CredentialKind
+	CredentialRef  string
 }
 
 // Inbound is a server-to-runner message.
@@ -195,6 +209,8 @@ type Inbound struct {
 
 // Outbound is a runner-to-server message.
 type Outbound struct {
+	RequestID         string
+	HealthRevision    uint64
 	Kind              string
 	JobID             string
 	Generation        int64
