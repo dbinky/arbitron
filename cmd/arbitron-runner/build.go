@@ -14,6 +14,7 @@ import (
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adapterprobe "github.com/arbitron/arbitron/adapter/probe"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
+	runnerprobe "github.com/arbitron/arbitron/adapter/runner/probe"
 	"github.com/arbitron/arbitron/adapter/runneragent/config"
 	"github.com/arbitron/arbitron/adapter/runneragent/executor"
 	"github.com/arbitron/arbitron/adapter/runneragent/identity"
@@ -32,6 +33,15 @@ const (
 	probeHTTPTimeout = 30 * time.Second
 )
 
+// buildExecutor uses this machine's native verifier and local credentials.
+func buildExecutor(cfg config.Config, local *providersadapter.Factory) (*executor.Executor, error) {
+	var lr *executor.LunaRoute
+	if cfg.LunaRoute.Enabled() {
+		lr = &executor.LunaRoute{ConnectionRef: cfg.LunaRoute.ConnectionRef, APIKey: cfg.LunaRoute.APIKey}
+	}
+	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: runnerprobe.NewConfirmationExecutor(local)})
+}
+
 // buildAgent is the runner's composition root: every adapter is constructed
 // here and handed to the domain agent.
 func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*runneragent.Agent, error) {
@@ -48,28 +58,27 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 	claudeRunner := claudecli.NewExecRunner()
 	claudeBin, _ := claudecli.ResolveBinary(cfg.ClaudeBinary)
 	factory := providersadapter.NewFactory(providersadapter.Deps{
-		ClaudeChatConfig: claudecli.Config{BinaryPath: claudeBin, WorkspaceRoot: cfg.ScratchRoot, MaxResponseBytes: maxResponseBytes, Runner: claudeRunner, CapabilityRules: rules},
-		HTTPClient:       httpClient,
-		HTTPTimeout:      chatHTTPTimeout,
-		MaxResponseBytes: maxResponseBytes,
-		CapabilityRules:  rules,
+		ClaudeChatConfig:  claudecli.Config{BinaryPath: claudeBin, WorkspaceRoot: cfg.ScratchRoot, MaxResponseBytes: maxResponseBytes, Runner: claudeRunner, CapabilityRules: rules},
+		ClaudeAgentConfig: claudecli.Config{BinaryPath: claudeBin, WorkspaceRoot: cfg.ScratchRoot, MaxResponseBytes: maxResponseBytes, Runner: claudeRunner, CapabilityRules: rules},
+		HTTPClient:        httpClient,
+		HTTPTimeout:       chatHTTPTimeout,
+		MaxResponseBytes:  maxResponseBytes,
+		CapabilityRules:   rules,
 	})
 
-	var lr *executor.LunaRoute
 	var lrProbe provider.ConnectionProbe
 	if cfg.LunaRoute.Enabled() {
-		lr = &executor.LunaRoute{ConnectionRef: cfg.LunaRoute.ConnectionRef, APIKey: cfg.LunaRoute.APIKey}
 		lrProbe, err = adapterprobe.NewProbeFactory(adapterprobe.Deps{HTTPClient: httpClient, Timeout: probeHTTPTimeout, MaxResponseBytes: 1 << 20}).
 			ProbeFor(provider.ResolvedBinding{Provider: provider.CanonicalLunaRoute})
 		if err != nil {
 			return nil, fmt.Errorf("arbitron-runner: lunaroute probe: %w", err)
 		}
 	}
-	exec, err := executor.New(factory, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr})
+	exec, err := buildExecutor(cfg, factory)
 	if err != nil {
 		return nil, err
 	}
-	specs, harness := sources.Discover(ctx, sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules})
+	specs, harness := sources.Discover(ctx, sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules, Confirmations: runnerprobe.NewConfirmationExecutor(factory)})
 	inv := sources.New(specs, harness, time.Now)
 
 	sp, err := spool.Open(cfg.SpoolDir, cfg.OutputBufferFrames)

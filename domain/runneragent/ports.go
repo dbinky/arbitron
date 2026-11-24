@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"time"
+
+	"github.com/arbitron/arbitron/domain/runner"
 )
 
 // Clock is the agent's time seam; tests inject a gating fake.
@@ -53,6 +55,13 @@ type LocalSources interface {
 	Sources(ctx context.Context) []Source
 	Probe(ctx context.Context) []Source
 }
+
+// FreshSourceProber checks exactly one local source now, never a cached sample.
+type FreshSourceProber interface {
+	ProbeSource(context.Context, runner.CredentialKind, string) (Source, error)
+}
+
+var ErrUnknownSource = errors.New("runneragent: no such local source")
 
 // SpooledJob is a job's retained unacknowledged state.
 type SpooledJob struct {

@@ -49,6 +49,9 @@ type Agent struct {
 	sessionConn Session
 	sessionCtx  context.Context
 	runCtx      context.Context
+	probeMu     sync.Mutex
+	probing     map[string]bool
+	probeWG     sync.WaitGroup
 }
 
 func New(cfg Config, deps Deps) (*Agent, error) {
@@ -88,7 +91,7 @@ func New(cfg Config, deps Deps) (*Agent, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
 	}
-	return &Agent{cfg: cfg, deps: deps, jobs: make(map[JobRef]*localJob), fenced: make(map[string]int64), wake: make(chan struct{})}, nil
+	return &Agent{cfg: cfg, deps: deps, jobs: make(map[JobRef]*localJob), fenced: make(map[string]int64), wake: make(chan struct{}), probing: make(map[string]bool)}, nil
 }
 
 // Run reconnects until the caller cancels. Successful admission resets backoff.
@@ -151,6 +154,7 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 		cancel()
 		_ = s.Close()
 		<-done
+		a.probeWG.Wait()
 		a.mu.Lock()
 		a.sessionConn = nil
 		a.mu.Unlock()
@@ -237,16 +241,7 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 				if !admitted || in.Probe == nil {
 					continue
 				}
-				found := Source{Kind: in.Probe.SourceKind, CredentialRef: in.Probe.CredentialRef, Health: runner.SourceHealth{Auth: "unknown"}}
-				for _, src := range a.deps.Sources.Probe(ctx) {
-					if src.Kind == found.Kind && src.CredentialRef == found.CredentialRef {
-						found = src
-						break
-					}
-				}
-				if err := s.Send(ctx, Outbound{Kind: KindProbeResult, ProbeResult: &found}); err != nil {
-					return admitted, err
-				}
+				a.startProbe(ctx, s, *in.Probe)
 			}
 		case <-heartbeat:
 			sample, err := a.deps.Telemetry.Sample(ctx)

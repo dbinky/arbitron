@@ -26,6 +26,8 @@ type Spec struct {
 // Inventory implements runneragent.LocalSources.
 type Inventory struct {
 	mu      sync.Mutex
+	seq     uint64
+	samples []*sample
 	specs   []Spec
 	last    []runneragent.Source
 	harness map[string]string
@@ -45,7 +47,7 @@ func New(specs []Spec, harness map[string]string, now func() time.Time) *Invento
 	for k, v := range harness {
 		h[k] = v
 	}
-	return &Inventory{specs: specs, last: last, harness: h, now: now}
+	return &Inventory{specs: specs, last: last, harness: h, now: now, samples: make([]*sample, len(specs))}
 }
 
 // HarnessVersions are the detected local harness versions.
@@ -61,7 +63,11 @@ func (i *Inventory) HarnessVersions() map[string]string {
 func (i *Inventory) Sources(ctx context.Context) []runneragent.Source {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	return append([]runneragent.Source(nil), i.last...)
+	out := make([]runneragent.Source, len(i.last))
+	for idx, src := range i.last {
+		out[idx] = i.withObservation(idx, src)
+	}
+	return out
 }
 
 // Probe refreshes every source with its own prober.
@@ -82,6 +88,9 @@ func (i *Inventory) Probe(ctx context.Context) []runneragent.Source {
 		if err != nil {
 			h.Detail = "probe failed"
 		} else {
+			i.mu.Lock()
+			i.record(idx, res)
+			i.mu.Unlock()
 			h.Auth = res.Auth
 			if h.Auth == "" {
 				h.Auth = "unknown"
@@ -96,7 +105,70 @@ func (i *Inventory) Probe(ctx context.Context) []runneragent.Source {
 	i.mu.Lock()
 	i.last = next
 	i.mu.Unlock()
-	return append([]runneragent.Source(nil), next...)
+	return i.Sources(ctx)
+}
+
+type sample struct {
+	obs runner.ProbeResult
+	seq uint64
+	at  time.Time
+}
+
+func cloneProbe(r runner.ProbeResult) runner.ProbeResult {
+	if r.Capacity != nil {
+		c := *r.Capacity
+		if c.OrdinaryUsageAllowed != nil {
+			v := *c.OrdinaryUsageAllowed
+			c.OrdinaryUsageAllowed = &v
+		}
+		r.Capacity = &c
+	}
+	return r
+}
+
+// record and withObservation require i.mu.
+func (i *Inventory) record(idx int, res runner.ProbeResult) {
+	i.seq++
+	i.samples[idx] = &sample{obs: cloneProbe(res), seq: i.seq, at: i.now()}
+}
+
+func (i *Inventory) withObservation(idx int, s runneragent.Source) runneragent.Source {
+	if sm := i.samples[idx]; sm != nil {
+		o := cloneProbe(sm.obs)
+		s.Observation, s.ObservationSeq = &o, sm.seq
+		s.SampleAgeMs = i.now().Sub(sm.at).Milliseconds()
+		if s.SampleAgeMs < 0 {
+			s.SampleAgeMs = 0
+		}
+	}
+	return s
+}
+
+var _ runneragent.FreshSourceProber = (*Inventory)(nil)
+
+// ProbeSource probes exactly the named source without consulting cached health.
+func (i *Inventory) ProbeSource(ctx context.Context, kind runner.CredentialKind, ref string) (runneragent.Source, error) {
+	idx := -1
+	for n, sp := range i.specs {
+		if sp.Source.Kind == kind && sp.Source.CredentialRef == ref {
+			idx = n
+			break
+		}
+	}
+	if idx < 0 {
+		return runneragent.Source{}, runneragent.ErrUnknownSource
+	}
+	sp := i.specs[idx]
+	res, err := sp.Prober.Probe(ctx, runner.Source{Kind: sp.Source.Kind, CredentialRef: sp.Source.CredentialRef, Families: sp.Source.Families, Backends: sp.Source.Backends, Models: sp.Source.Models})
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	src := i.last[idx]
+	if err != nil {
+		src.Observation = nil
+		return src, err
+	}
+	i.record(idx, res)
+	return i.withObservation(idx, src), nil
 }
 
 // ClaudeAuth probes the Claude subscription login with `claude auth status`.
