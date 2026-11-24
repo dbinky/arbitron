@@ -26,6 +26,11 @@ type fakeSpawnWaits struct {
 	findErr    error
 	candidates []instance.SpawnWaitCandidate
 	listErr    error
+	// runningCandidates and runningListErr serve ListRunningOnTerminalChild;
+	// runningListCalls counts calls so a test can assert the pass was skipped.
+	runningCandidates []instance.SpawnWaitCandidate
+	runningListErr    error
+	runningListCalls  int
 	// instances, when set, makes ClaimWaitingParent a REAL compare-and-set over
 	// the mock repository — the same waiting->running transition the SQL
 	// performs — so a test can assert the parent's resulting state.
@@ -71,6 +76,16 @@ func (f *fakeSpawnWaits) FindChildBySpawnNode(_ context.Context, parentID uuid.U
 		return nil, f.findErr
 	}
 	return f.byKey[spawnKey(parentID, nodeID, mode)], nil
+}
+
+func (f *fakeSpawnWaits) ListRunningOnTerminalChild(context.Context) ([]instance.SpawnWaitCandidate, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runningListCalls++
+	if f.runningListErr != nil {
+		return nil, f.runningListErr
+	}
+	return f.runningCandidates, nil
 }
 
 func (f *fakeSpawnWaits) ListWaitingOnTerminalChild(context.Context) ([]instance.SpawnWaitCandidate, error) {
@@ -125,6 +140,28 @@ func (f *fakeSpawnWaits) SuspendRunning(ctx context.Context, id uuid.UUID) (bool
 		return false, err
 	}
 	return true, repo.UpdateState(ctx, id, instance.StateWaiting)
+}
+
+// SuspendStrandedAt models the real predicate
+// (state = 'running' AND current_node_id = ?) atomically over the mock
+// repository. A nil current node never matches, exactly as NULL never equals a
+// bound parameter in SQL: a fake looser than that would let a test pin a race
+// on a row shape production can never adopt.
+func (f *fakeSpawnWaits) SuspendStrandedAt(_ context.Context, id uuid.UUID, nodeID string) (bool, error) {
+	f.mu.Lock()
+	repo := f.instances
+	f.mu.Unlock()
+	if repo == nil {
+		return false, nil
+	}
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	inst, ok := repo.instances[id]
+	if !ok || inst.State != instance.StateRunning || inst.CurrentNodeID == nil || *inst.CurrentNodeID != nodeID {
+		return false, nil
+	}
+	inst.State = instance.StateWaiting
+	return true, nil
 }
 
 var _ instance.SpawnWaitRepository = (*fakeSpawnWaits)(nil)

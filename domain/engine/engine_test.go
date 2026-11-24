@@ -104,6 +104,10 @@ type mockInstanceRepo struct {
 	// waiting — so a test can assert event-emission happened at-or-after the
 	// transition.
 	onUpdateState func(id uuid.UUID, state instance.State)
+	// onSetFailed, when set, runs after SetFailed commits and releases the
+	// lock, while the failing walker is still inside failInstance (its exit
+	// defers have not run yet).
+	onSetFailed func(id uuid.UUID)
 	// corruptRunning, when set, names running rows ListRunning reports as
 	// *instance.CorruptPinsError instead of returning them.
 	corruptRunning map[uuid.UUID]bool
@@ -261,9 +265,9 @@ func (r *mockInstanceRepo) UpdateCurrentNode(_ context.Context, id uuid.UUID, no
 
 func (r *mockInstanceRepo) SetFailed(_ context.Context, id uuid.UUID, failedNodeID string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("instance not found: %s", id)
 	}
 	inst.State = instance.StateFailed
@@ -271,6 +275,11 @@ func (r *mockInstanceRepo) SetFailed(_ context.Context, id uuid.UUID, failedNode
 	now := time.Now()
 	inst.CompletedAt = &now
 	inst.UpdatedAt = now
+	hook := r.onSetFailed
+	r.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
 	return nil
 }
 
@@ -660,6 +669,38 @@ type mockQueueRepo struct {
 	instRepo        *mockInstanceRepo
 	setQueuedErr    error
 	setQueuedErrFor map[uuid.UUID]error
+	// beforeNodeWake, when set, runs at the top of SetQueuedIfWaitingAtNode,
+	// BEFORE the predicate is evaluated: a test uses it to move the parent on
+	// between a caller's validation/adoption and its queue write.
+	beforeNodeWake func(id uuid.UUID)
+}
+
+var _ instance.NodeAddressedWaker = (*mockQueueRepo)(nil)
+
+// SetQueuedIfWaitingAtNode mirrors the real conditional UPDATE
+// (state = 'waiting' AND current_node_id = ?): a NULL current node never
+// matches, exactly as in SQL.
+func (r *mockQueueRepo) SetQueuedIfWaitingAtNode(ctx context.Context, id uuid.UUID, nodeID string, queuedAt time.Time) (bool, error) {
+	r.mu.Lock()
+	hook := r.beforeNodeWake
+	r.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
+	if r.instRepo == nil {
+		return false, nil
+	}
+	r.instRepo.mu.Lock()
+	inst, ok := r.instRepo.instances[id]
+	match := ok && inst.State == instance.StateWaiting && inst.CurrentNodeID != nil && *inst.CurrentNodeID == nodeID
+	r.instRepo.mu.Unlock()
+	if !match {
+		return false, nil
+	}
+	if err := r.SetQueued(ctx, id, queuedAt); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error) { return 0, nil }
