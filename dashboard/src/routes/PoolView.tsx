@@ -1,7 +1,9 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { telemetryFresh } from '../api/runnerDecode'
-import type { PoolEvent, RunnerView } from '../api/types'
+import { api } from '../api/client'
+import type { Me, PoolEvent, RunnerView } from '../api/types'
+import RunnerKeysSection from '../components/RunnerKeysSection'
 import DrainProgressView from '../components/DrainProgressView'
 import SourceChip from '../components/SourceChip'
 import {
@@ -172,6 +174,21 @@ function EventItem({ ev, names, now }: { ev: PoolEvent; names: Map<string, strin
 export default function PoolView() {
   const { state, loading, error, stale, connected, refetch } = usePool()
   const now = useNow(1000)
+  const [me, setMe] = useState<Me | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api
+      .me()
+      .then((identity) => {
+        if (!cancelled) setMe(identity)
+      })
+      .catch(() => {
+        // Unknown identity keeps key management hidden; the pool still renders.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const groups = useMemo(() => (state ? buildModelGroups(state.runners, state.executions) : []), [state])
   const alerts = useMemo(() => (state ? buildAlerts(state.runners, state.executions) : []), [state])
   const names = useMemo(() => new Map((state?.runners ?? []).map((r) => [r.id, r.name])), [state])
@@ -255,6 +272,8 @@ export default function PoolView() {
           </ol>
         )}
       </section>
+
+      <RunnerKeysSection me={me} />
     </div>
   )
 }
