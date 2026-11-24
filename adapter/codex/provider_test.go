@@ -543,3 +543,58 @@ func TestRunAgent_NonZeroExitCauseKeepsWaitErrUnwrappable(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sentinel, "the wait error must remain in the chain via %w")
 }
+
+func TestRunAgent_ToolScopeNarrowsLaunchAndContextRidesArgv(t *testing.T) {
+	rules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"codex": {Backend: "codex", ContextTiers: []provider.ContextWindow{provider.Context200K}},
+	})
+	b := codexBinding("gpt-5-codex", nil)
+	b.Backend, b.ContextWindow = "codex", provider.Context200K
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{`[{"name":"github"}]`}}, happyMission()}}
+	p := New(Config{Binding: b, BinaryPath: "codex", Runner: mr, CapabilityRules: rules})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "inspect", WorkDir: "/tmp/ws", Model: "gpt-5-codex",
+		ToolScope: []string{"Read", "Grep", "Glob", "Bash"}})
+	require.NoError(t, err)
+	require.Len(t, mr.calls, 3, "version probe, MCP enumeration, then exactly one launch")
+	assert.Equal(t, []string{"features.plugins=false", "-c", "features.apps=false", "-c", `web_search="disabled"`, "-c", "sandbox_workspace_write.network_access=false", "mcp", "list", "--json"}, mr.calls[1].Args[1:])
+	args := mr.calls[2].Args
+	assert.Equal(t, []string{"exec", "--sandbox", "read-only", "-m", "gpt-5-codex"}, args[:5], "no write tool: read-only sandbox replaces the bypass posture")
+	assert.NotContains(t, args, bypassFlag)
+	for _, want := range []string{"--strict-config", "features.plugins=false", "features.apps=false", `web_search="disabled"`,
+		`mcp_servers={"github"={enabled=false}}`, "model_context_window=200000"} {
+		assert.Contains(t, args, want)
+	}
+}
+
+func TestRunAgent_EmptyToolScopeKeepsTodaysArgv(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
+	p := New(Config{Binding: codexBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "x", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"exec", bypassFlag, "-m", "gpt-5-codex", "--cd", "/tmp/ws", "--json"}, mr.calls[1].Args)
+}
+
+func TestRunAgent_UnenforceableScopeOrOldBinaryRefusesBeforeLaunch(t *testing.T) {
+	for name, tc := range map[string]struct {
+		probe runScript
+		scope []string
+	}{
+		"no shell":      {compatibleProbe(), []string{"Read", "Write"}},
+		"mcp tool":      {compatibleProbe(), []string{"Bash", "mcp__x__y"}},
+		"codex too old": {runScript{lines: []string{"codex-cli 0.162.0"}}, []string{"Read", "Bash"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mr := &multiRunner{scripts: []runScript{tc.probe, happyMission()}}
+			p := New(Config{Binding: codexBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+			_, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "x", WorkDir: "/tmp/ws", Model: "gpt-5-codex", ToolScope: tc.scope})
+			require.Error(t, err)
+			if name != "codex too old" {
+				require.ErrorIs(t, err, ErrToolScopeUnsupported)
+			}
+			for _, c := range mr.calls {
+				assert.NotEqual(t, "exec", c.Args[0], "no codex exec launch on a refused scope")
+			}
+		})
+	}
+}

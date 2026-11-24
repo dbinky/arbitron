@@ -41,6 +41,8 @@ type turnSession interface {
 // inherit the engine launch directory, which holds arbitron.db / config.yaml —
 // the same invariant ErrWorkDirRequired guards on the exec path).
 type turnConfig struct {
+	Tools       toolPolicy
+	ContextArgs []string
 	// Model is the codex model id for this turn.
 	Model string
 	// Prompt is the turn's user prompt, delivered via stdin (RunSpec.Stdin).

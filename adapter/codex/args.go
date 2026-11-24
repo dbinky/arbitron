@@ -67,11 +67,7 @@ const (
 // SECURITY: only the model and working-dir strings reach argv here; the prompt
 // is stdin-only and secrets are env-only (env.go) — never argv or logs.
 //
-// ToolScope narrowing is intentionally NOT wired into argv: `codex exec` exposes
-// no per-tool allowlist flag (see buildExecArgs), so the bypass posture stays fully
-// open regardless of ChatRequest/AgentMission.ToolScope. This is the permanent v1
-// posture — the same posture as opencode's --allow-all-tools and claudecli's
-// --dangerously-skip-permissions. See also: docs/specs/codex-backend-spec.md §8.
+// Launch callers enforce ToolScope through launch_policy.go before execution.
 func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding) ([]string, error) {
 	return buildExecArgs(binding.Model, mission.WorkDir, nil)
 }
@@ -94,7 +90,11 @@ func buildArgsWithRules(mission engine.AgentMission, binding provider.ResolvedBi
 	if err != nil {
 		return nil, err
 	}
-	return buildExecArgs(binding.Model, mission.WorkDir, extra)
+	contextArgs, err := codexContextArgs(binding, rules)
+	if err != nil {
+		return nil, err
+	}
+	return buildExecArgs(binding.Model, mission.WorkDir, append(extra, contextArgs...))
 }
 
 // codexEffortConfigKey is the codex `-c` config key carrying the reasoning effort
@@ -127,8 +127,7 @@ func codexEffortGrade(binding provider.ResolvedBinding, rules provider.Capabilit
 	if effort == "" {
 		effort = provider.EffortDefault
 	}
-	// Context is inapplicable to codex (rejected at write); pass ContextDefault so
-	// Emit never trips the context-axis check and only the effort emission comes back.
+	// Context is emitted separately by codexContextArgs; resolve only effort here.
 	em, err := rules.Emit(backend, binding.Model, provider.ContextDefault, effort)
 	if err != nil {
 		return "", err
@@ -182,11 +181,7 @@ func codexEffortArgs(binding provider.ResolvedBinding, rules provider.Capability
 // SECURITY: only the model and working-dir strings reach argv here; the prompt is
 // stdin-only and secrets are env-only (env.go) — never argv or logs.
 //
-// ToolScope narrowing is intentionally NOT wired into argv: `codex exec` exposes
-// no per-tool allowlist flag, so the bypass posture stays fully open. Per-request
-// ToolScope precedence is honoured at the request boundary (the stream provider
-// prefers a non-empty ChatRequest.ToolScope over its global scope), matching
-// claudecli's precedence shape even though codex has no flag to emit it through.
+// ToolScope restrictions are applied by applyToolPolicy (launch_policy.go).
 // extra carries optional `-c <key=value>` config overrides (profile-editing
 // Phase 3: `-c model_reasoning_effort=<v>`) appended AFTER the model flag and
 // BEFORE --cd/--json, so the effort override rides the same exec contract on both

@@ -81,11 +81,19 @@ func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (li
 	// Effort rides argv as `-c model_reasoning_effort=<v>`, computed via the SAME
 	// codexEffortArgs helper the batch path uses so stream and batch never diverge.
 	// A default/empty effort or an Empty ruleset appends nothing.
+	pol, err := codexToolPolicy(req.ToolScope)
+	if err != nil {
+		return nil, nil, nil, nil, model, err
+	}
 	extra, err := codexEffortArgs(p.binding, p.rules)
 	if err != nil {
 		return nil, nil, nil, nil, model, fmt.Errorf("codex stream (model %q): %w", model, err)
 	}
-	args, err := buildExecArgs(model, req.WorkDir, extra)
+	contextArgs, err := codexContextArgs(p.binding, p.rules)
+	if err != nil {
+		return nil, nil, nil, nil, model, err
+	}
+	args, err := buildExecArgs(model, req.WorkDir, append(extra, contextArgs...))
 	if err != nil {
 		return nil, nil, nil, nil, model, fmt.Errorf("codex stream (model %q): %w", model, err)
 	}
@@ -98,6 +106,14 @@ func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (li
 	// before any run launches.
 	if perr := p.ensureCompatible(ctx); perr != nil {
 		return nil, nil, nil, nil, model, perr
+	}
+
+	if pol.Restricted {
+		override, err := p.probeMCPOverride(ctx, req.WorkDir)
+		if err != nil {
+			return nil, nil, nil, nil, model, fmt.Errorf("%w: %v", ErrToolScopeUnsupported, err)
+		}
+		args = applyToolPolicy(args, pol, override)
 	}
 
 	// ChatRequest carries no per-request timeout (unlike AgentMission); the

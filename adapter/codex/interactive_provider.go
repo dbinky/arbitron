@@ -25,7 +25,7 @@ import (
 // key ever reaches env or argv.
 type InteractiveConfig struct {
 	// Binding is the resolved backend selection. Only Binding.Model / Backend /
-	// Effort are consumed (the codex path is subscription-only, so RevealKey /
+	// Effort / ContextWindow are consumed (the codex path is subscription-only, so RevealKey /
 	// BaseURL / provider-keyed env are deliberately NOT used).
 	Binding provider.ResolvedBinding
 	// Runner replaces only subprocess I/O; nil uses the production launcher.
@@ -176,6 +176,18 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 		return nil, nil, nil, model, fmt.Errorf("codex interactive (model %q): %w", model, err)
 	}
 
+	var pol toolPolicy
+	if !req.SuppressTools {
+		pol, err = codexToolPolicy(req.ToolScope)
+		if err != nil {
+			return nil, nil, nil, model, err
+		}
+	}
+	contextArgs, err := codexContextArgs(p.binding, p.rules)
+	if err != nil {
+		return nil, nil, nil, model, err
+	}
+
 	// Per-turn deadline: derive a turn context honouring p.timeout. This is the
 	// only deadline in the conversation.go → StreamChat → startTurn path, so a
 	// wedged codex turn that never emits a terminal frame is bounded here.
@@ -188,11 +200,13 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 	}
 
 	stream, err := p.newSession().Start(turnCtx, turnConfig{
-		Model:    model,
-		Prompt:   req.Prompt,
-		WorkDir:  req.WorkDir,
-		ResumeID: req.SessionID,
-		Effort:   effort,
+		Tools:       pol,
+		ContextArgs: contextArgs,
+		Model:       model,
+		Prompt:      req.Prompt,
+		WorkDir:     req.WorkDir,
+		ResumeID:    req.SessionID,
+		Effort:      effort,
 		// A pinned run (binding.Pinned or the request flag) must prove the
 		// executed model.
 		VerifyModel: verify,

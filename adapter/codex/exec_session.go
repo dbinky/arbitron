@@ -138,7 +138,7 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 		}
 	}
 
-	if cfg.ReadOnly {
+	if cfg.ReadOnly || cfg.Tools.Restricted {
 		override, err := s.core.probeMCPOverride(ctx, cfg.WorkDir)
 		if err != nil {
 			return nil, err
@@ -243,6 +243,16 @@ func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 			posture = append(posture, execConfigFlag, cfg.MCPOverride)
 		}
 	}
+	if cfg.Tools.Restricted {
+		if cfg.Tools.ReadOnly {
+			sandbox = execSandboxReadOnly
+			posture = nil
+		}
+		posture = append(posture, "--strict-config")
+		posture = append(posture, cfg.Tools.Overrides...)
+		posture = append(posture, execConfigFlag, cfg.MCPOverride)
+	}
+	posture = append(posture, cfg.ContextArgs...)
 	model := strings.TrimSpace(cfg.Model)
 	if cfg.ResumeID != "" {
 		// Hygiene guard (Consider #3): ResumeID is a codex-issued conversation id

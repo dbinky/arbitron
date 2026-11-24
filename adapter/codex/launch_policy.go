@@ -65,6 +65,25 @@ func codexToolPolicy(scope []string) (toolPolicy, error) {
 	return p, nil
 }
 
+// applyToolPolicy replaces the unrestricted sandbox posture and disables surfaces
+// that have no equivalent in the supplied scope. MCP enumeration is mandatory.
+func applyToolPolicy(args []string, pol toolPolicy, mcpOverride string) []string {
+	if !pol.Restricted {
+		return args
+	}
+	if pol.ReadOnly {
+		for i, a := range args {
+			if a == bypassFlag {
+				args = append(args[:i], append([]string{sandboxFlag, readOnlySandbox}, args[i+1:]...)...)
+				break
+			}
+		}
+	}
+	args = append(args, "--strict-config")
+	args = append(args, pol.Overrides...)
+	return append(args, "-c", mcpOverride)
+}
+
 func codexContextArgs(b provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
 	tier := b.ContextWindow
 	if tier == "" || tier == provider.ContextDefault {

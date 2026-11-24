@@ -557,3 +557,23 @@ func TestBuildInteractiveExecArgs_ReadOnlyTurnGrantsNoWritableRoot(t *testing.T)
 	assert.NotContains(t, joined, "workspace-write")
 	assert.NotContains(t, joined, "writable_roots")
 }
+
+func TestBuildInteractiveExecArgs_RestrictedTurnReassertsPostureOnResume(t *testing.T) {
+	pol, err := codexToolPolicy([]string{"Read", "Bash"})
+	require.NoError(t, err)
+	cfg := turnConfig{Model: "gpt-5", WorkDir: "/work", Tools: pol, MCPOverride: `mcp_servers={"a"={enabled=false}}`,
+		ContextArgs: []string{"-c", "model_context_window=200000"}}
+	fresh, err := buildInteractiveExecArgs(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, fresh, "read-only")
+	cfg.ResumeID = "conv-1"
+	resume, err := buildInteractiveExecArgs(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, resume, `sandbox_mode="read-only"`)
+	for _, args := range [][]string{fresh, resume} {
+		for _, want := range []string{"--strict-config", "features.plugins=false", "features.apps=false", `web_search="disabled"`,
+			`mcp_servers={"a"={enabled=false}}`, "model_context_window=200000"} {
+			assert.Contains(t, args, want)
+		}
+	}
+}

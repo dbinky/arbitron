@@ -488,3 +488,29 @@ func TestSubscriptionEnvInvariant_AllThreePaths(t *testing.T) {
 	// RevealKey must never have been called on ANY path (subscription-only).
 	assert.False(t, revealed, "RevealKey must never be called on ANY codex subprocess path")
 }
+
+func TestStream_ToolScopeNarrowsLaunch(t *testing.T) {
+	for _, scope := range [][]string{{"Read", "Bash"}, {"Write"}} {
+		b := codexBinding("gpt-5-codex", nil)
+		b.ContextWindow = provider.Context200K
+		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{`[{"name":"github"}]`}}, streamHappyMission()}}
+		p := NewStreamProvider(Config{Binding: b, BinaryPath: "codex", Runner: mr})
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "inspect", WorkDir: "/tmp/ws", ToolScope: scope})
+		if scope[0] == "Write" {
+			require.ErrorIs(t, err, ErrToolScopeUnsupported)
+			for _, c := range mr.calls {
+				assert.NotEqual(t, "exec", c.Args[0])
+			}
+			continue
+		}
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+		require.NotEmpty(t, chunks)
+		require.Len(t, mr.calls, 3)
+		args := mr.calls[2].Args
+		for _, want := range []string{"--strict-config", "read-only", `mcp_servers={"github"={enabled=false}}`, "model_context_window=200000"} {
+			assert.Contains(t, args, want)
+		}
+		assert.NotContains(t, args, bypassFlag)
+	}
+}

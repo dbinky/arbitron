@@ -682,3 +682,19 @@ func TestInteractive_PinnedBindingDemandsVerificationAndItsOwnModel(t *testing.T
 		assert.False(t, fake.startCalled)
 	})
 }
+
+func TestInteractive_ToolScopeAndContextReachTurnConfig(t *testing.T) {
+	b := codexBinding("gpt-5-codex", nil)
+	b.Backend, b.ContextWindow = "codex", provider.Context1M
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	p := newInteractiveProviderWithSession(InteractiveConfig{Binding: b}, func() turnSession { return fake })
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", ToolScope: []string{"Read", "Bash"}})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+	assert.True(t, fake.gotCfg.Tools.Restricted)
+	assert.True(t, fake.gotCfg.Tools.ReadOnly)
+	assert.Equal(t, []string{"-c", "model_context_window=1000000"}, fake.gotCfg.ContextArgs)
+
+	_, err = p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", ToolScope: []string{"Read"}})
+	require.ErrorIs(t, err, ErrToolScopeUnsupported, "refused before any turn starts")
+}

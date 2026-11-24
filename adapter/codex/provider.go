@@ -175,12 +175,24 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 	// model context here. The binding's resolved Effort rides argv as `-c
 	// model_reasoning_effort=<v>` (profile-editing Phase 3); a default/empty effort
 	// or an Empty ruleset appends nothing.
+	pol, err := codexToolPolicy(mission.ToolScope)
+	if err != nil {
+		return nil, fmt.Errorf("codex agent (model %q): %w", model, err)
+	}
 	var args, env []string
 	if lunaroute {
+		if pol.Restricted {
+			return nil, fmt.Errorf("%w: LunaRoute private-home MCP configuration cannot be enumerated by the subscription probe", ErrToolScopeUnsupported)
+		}
 		extra, xerr := lunaRouteExecExtra(p.binding)
 		if xerr != nil {
 			return nil, provider.LocalLunaRouteError("arguments", xerr)
 		}
+		contextArgs, cerr := codexContextArgs(p.binding, p.rules)
+		if cerr != nil {
+			return nil, cerr
+		}
+		extra = append(extra, contextArgs...)
 		args, err = buildExecArgs(model, mission.WorkDir, extra)
 		if err != nil {
 			return nil, provider.LocalLunaRouteError("arguments", err)
@@ -213,6 +225,13 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (r
 		env = codexEnv()
 		if err := p.ensureCompatible(ctx); err != nil {
 			return nil, err
+		}
+		if pol.Restricted {
+			override, err := p.probeMCPOverride(ctx, mission.WorkDir)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrToolScopeUnsupported, err)
+			}
+			args = applyToolPolicy(args, pol, override)
 		}
 	}
 
