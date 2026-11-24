@@ -163,6 +163,7 @@ func TestModelPinsWiringChildInputSink(t *testing.T) {
 	require.NoError(t, err)
 	fixtureConns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
 	require.NoError(t, fixtureConns.Create(ctx, provider.Connection{Name: "sink", Provider: "openrouter", BaseURL: sink.srv.URL}, "k"))
+	require.NoError(t, ds.runners.refreshInventory(ctx))
 	chat := func(model string) provider.Profile {
 		return provider.Profile{Alias: "pin-alias", Kind: provider.ProfileKindChat, ConnectionRef: "sink", Model: model}
 	}

@@ -87,6 +87,7 @@ func TestModelPinsWiringBatchAgentAdminEditThroughMCP(t *testing.T) {
 	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "conn-a", Provider: "anthropic", BaseURL: "https://a.gateway.test"}, "key-a"))
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "conn-b", Provider: "anthropic", BaseURL: "https://b.gateway.test"}, "key-b"))
+	require.NoError(t, ds.runners.refreshInventory(ctx))
 
 	call := mcpToolCaller(t, ctx, ds)
 	res, text := call("profile_create", map[string]any{
