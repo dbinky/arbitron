@@ -1290,7 +1290,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				return
 			}
 			currentNodeID = nextNodeID
-		} else if committer := e.committer(); committer != nil && (result == nil || !result.IsWait) {
+		} else if committer := e.committer(); committer != nil && result != nil && result.IsWait && len(completions) > 0 {
+			if err := e.commitSuspension(ctx, committer, instanceID, node, invocationID, result, completions); err != nil {
+				slog.Error("suspension commit failed", "instanceID", instanceID, "nodeID", currentNodeID, "error", err)
+				e.publishStepPersistenceFailure(instanceID, node, err)
+				e.failInstance(context.WithoutCancel(ctx), instanceID, currentNodeID)
+				return
+			}
+			e.handleNodeSuccess(ctx, instanceID, workflowName, currentNodeID, node, result, vars, adj, &capacityFreed)
+			return
+		} else if committer != nil && (result == nil || !result.IsWait) {
 			nextNodeID, cerr := e.commitNodeSuccess(ctx, committer, instanceID, node, result, nodeExec, invocationID, completions, vars, adj)
 			if cerr != nil {
 				e.publishStepPersistenceFailure(instanceID, node, cerr)

@@ -413,3 +413,170 @@ func TestEngine_ReleaseFailureIsStepPersistence(t *testing.T) {
 	assert.Contains(t, msg, engine.ErrStepPersistence.Error())
 	assert.Contains(t, msg, "ledger unavailable")
 }
+
+func TestEngine_SuspendMissingChildLinkReleasesReceipts(t *testing.T) {
+	f, mc, rel := releaserFixture(t)
+	f.workflowRepo.add(awaitedSpawnWorkflow())
+	f.engine.RegisterExecutor(workflow.NodeTypeSpawnWorkflow, f.executor)
+	job := testJobFence(1)
+	f.executor.onNode("S", func(ctx context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		if err := recordReceipt(ctx, job); err != nil {
+			return nil, err
+		}
+		return &engine.NodeResult{IsWait: true, Output: map[string]any{"spawnMode": "wait_for_child"}}, nil
+	})
+	id, _, err := f.engine.Trigger(context.Background(), "await-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	assert.Empty(t, mc.committed())
+	calls, causes := rel.snapshot()
+	require.Equal(t, [][]engine.StepCompletion{{{JobFence: job}}}, calls)
+	require.Len(t, causes, 1)
+	assert.ErrorIs(t, causes[0], engine.ErrInvalidStepCompletion)
+}
+
+// fakeAwaitedSpawn models the durable child-link short circuit on re-entry.
+type fakeAwaitedSpawn struct {
+	mu                         sync.Mutex
+	insts                      *mockInstanceRepo
+	prepJob                    engine.JobFenceRef
+	links                      map[uuid.UUID]uuid.UUID
+	finished                   map[uuid.UUID]bool
+	entries, prepared, spawned int
+}
+
+func newFakeAwaitedSpawn(f *testFixtures) *fakeAwaitedSpawn {
+	return &fakeAwaitedSpawn{insts: f.instanceRepo, prepJob: testJobFence(1), links: map[uuid.UUID]uuid.UUID{}, finished: map[uuid.UUID]bool{}}
+}
+func (s *fakeAwaitedSpawn) Execute(ctx context.Context, _ workflow.Node, _ *variable.VariableStore, _ string) (*engine.NodeResult, error) {
+	parent, _ := engine.InstanceIDFromContext(ctx)
+	s.mu.Lock()
+	s.entries++
+	child, linked := s.links[parent]
+	done := s.finished[parent]
+	s.mu.Unlock()
+	if linked {
+		out := map[string]any{"childInstanceId": child.String(), "spawnMode": "wait_for_child"}
+		if done {
+			out["childState"] = "completed"
+			return &engine.NodeResult{OutputPort: "success", Output: out}, nil
+		}
+		return &engine.NodeResult{IsWait: true, Output: out}, nil
+	}
+	receipts, ok := engine.StepCompletionSinkFromContext(ctx)
+	if !ok {
+		return nil, errors.New("no completion sink on the attempt context")
+	}
+	if err := receipts.Record(engine.StepCompletion{JobFence: s.prepJob}); err != nil {
+		return nil, err
+	}
+	child = uuid.New()
+	s.mu.Lock()
+	s.prepared++
+	s.spawned++
+	s.links[parent] = child
+	s.mu.Unlock()
+	if err := s.insts.UpdateState(ctx, parent, instance.StateWaiting); err != nil {
+		return nil, err
+	}
+	return &engine.NodeResult{IsWait: true, Output: map[string]any{"childInstanceId": child.String(), "spawnMode": "wait_for_child"}}, nil
+}
+func (s *fakeAwaitedSpawn) finish(parent uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finished[parent] = true
+}
+func (s *fakeAwaitedSpawn) child(parent uuid.UUID) uuid.UUID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.links[parent]
+}
+func (s *fakeAwaitedSpawn) counts() (int, int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entries, s.prepared, s.spawned
+}
+func awaitedSpawnWorkflow() *workflow.Workflow {
+	return &workflow.Workflow{Name: "await-wf", Nodes: []workflow.Node{{ID: "S", Type: workflow.NodeTypeSpawnWorkflow, Entrypoint: true}, {ID: "D", Type: workflow.NodeTypeScript}}, Edges: []workflow.Edge{{Source: "S", Target: "D", Output: "success"}}}
+}
+func suspendFixture(t *testing.T) (*testFixtures, *fakeAwaitedSpawn, engine.InvocationStore, *memCommitter) {
+	t.Helper()
+	f := newTestFixtures()
+	f.workflowRepo.add(awaitedSpawnWorkflow())
+	spawn := newFakeAwaitedSpawn(f)
+	f.engine.RegisterExecutor(workflow.NodeTypeSpawnWorkflow, spawn)
+	invs := engine.NewMemoryInvocationStore()
+	f.engine.SetInvocationStore(invs)
+	mc := newMemCommitter(f, invs)
+	f.engine.SetStepCommitter(mc)
+	return f, spawn, invs, mc
+}
+func TestEngine_SuspendCommitReleasesSuboperationSlotKeepsInvocationOpen(t *testing.T) {
+	ctx := context.Background()
+	f, spawn, invs, mc := suspendFixture(t)
+	id, _, err := f.engine.Trigger(ctx, "await-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
+	require.Eventually(t, func() bool { return len(mc.committed()) == 1 }, 5*time.Second, 10*time.Millisecond, "the wait must commit the preparation receipt")
+	s := mc.committed()[0]
+	assert.Equal(t, engine.StepCommitSuspend, s.Mode)
+	assert.Equal(t, "S", s.NodeID)
+	assert.Nil(t, s.Execution)
+	assert.Empty(t, s.NextNodeID)
+	assert.Equal(t, []engine.StepCompletion{{JobFence: spawn.prepJob}}, s.Completions)
+	require.NotNil(t, s.Suspension)
+	assert.Equal(t, string(workflow.NodeTypeSpawnWorkflow), s.Suspension.Kind)
+	require.NotNil(t, s.Suspension.ChildLinkID)
+	assert.Equal(t, spawn.child(id), *s.Suspension.ChildLinkID)
+	inv, err := invs.Get(ctx, s.InvocationID)
+	require.NoError(t, err)
+	assert.Nil(t, inv.CommittedAt)
+	inst, err := f.instanceRepo.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "S", *inst.CurrentNodeID)
+	spawn.finish(id)
+	require.NoError(t, f.engine.StartInstance(ctx, id))
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	commits := mc.committed()
+	require.Len(t, commits, 3)
+	assert.Equal(t, engine.StepCommitAdvance, commits[1].Mode)
+	assert.Equal(t, s.InvocationID, commits[1].InvocationID)
+	assert.Empty(t, commits[1].Completions)
+	assert.Equal(t, "D", commits[1].NextNodeID)
+	_, prepared, spawned := spawn.counts()
+	assert.Equal(t, 1, prepared)
+	assert.Equal(t, 1, spawned)
+}
+func TestEngine_SuspendRestartReusesChildAndPreparedInputs(t *testing.T) {
+	ctx := context.Background()
+	f, spawn, invs, mc := suspendFixture(t)
+	id, _, err := f.engine.Trigger(ctx, "await-wf", nil, "normal")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(mc.committed()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	eng2 := restartedEngine(f, map[workflow.NodeType]engine.NodeExecutor{workflow.NodeTypeSpawnWorkflow: spawn, workflow.NodeTypeScript: f.executor}, invs)
+	eng2.SetStepCommitter(mc)
+	require.NoError(t, eng2.StartInstance(ctx, id))
+	require.Eventually(t, func() bool { e, _, _ := spawn.counts(); return e == 2 }, 5*time.Second, 10*time.Millisecond)
+	_, prepared, spawned := spawn.counts()
+	assert.Equal(t, 1, prepared)
+	assert.Equal(t, 1, spawned)
+	require.Len(t, mc.committed(), 1)
+	assert.Equal(t, spawn.child(id), *mc.committed()[0].Suspension.ChildLinkID)
+}
+func TestEngine_SuspendCommitFailureCreatesNoDuplicateChild(t *testing.T) {
+	ctx := context.Background()
+	f, spawn, _, mc := suspendFixture(t)
+	mc.failWith("", engine.StepCommitSuspend, errors.New("disk I/O error"))
+	id, _, err := f.engine.Trigger(ctx, "await-wf", nil, "normal")
+	require.NoError(t, err)
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	assert.Equal(t, "S", *inst.FailedNodeID)
+	require.Len(t, f.eventBus.eventsOfType(id, engine.EventTypeNodeFailed), 1)
+	assert.Empty(t, mc.committed())
+	mc.failWith("", "", nil)
+	require.NoError(t, f.engine.StartInstance(ctx, id))
+	require.Eventually(t, func() bool { e, _, _ := spawn.counts(); return e == 2 }, 5*time.Second, 10*time.Millisecond)
+	_, prepared, spawned := spawn.counts()
+	assert.Equal(t, 1, prepared)
+	assert.Equal(t, 1, spawned)
+}

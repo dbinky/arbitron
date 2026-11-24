@@ -218,6 +218,33 @@ func (e *Engine) commitNodeSuccess(ctx context.Context, committer StepCommitter,
 	return next, nil
 }
 
+// commitSuspension consumes a waiting node's suboperation receipts without
+// closing its invocation or advancing the current node.
+func (e *Engine) commitSuspension(ctx context.Context, committer StepCommitter, instanceID uuid.UUID, node workflow.Node,
+	invocationID uuid.UUID, result *NodeResult, completions []StepCompletion) error {
+	state := map[string]any{}
+	if out, ok := result.Output.(map[string]any); ok {
+		for k, v := range out {
+			state[k] = v
+		}
+	}
+	s := &StepSuspension{Kind: string(node.Type), State: state}
+	if node.Type == workflow.NodeTypeSpawnWorkflow {
+		raw, _ := state["childInstanceId"].(string)
+		id, err := uuid.Parse(raw)
+		if err != nil || id == uuid.Nil {
+			return e.releaseAfter(ctx, node.ID, completions, &stepPersistenceError{fmt.Errorf("%w: %w: awaited spawn %q suspended without a durable child link", ErrStepPersistence, ErrInvalidStepCompletion, node.ID)})
+		}
+		s.ChildLinkID = &id
+	}
+	pctx, cancel := persistenceContext(ctx)
+	defer cancel()
+	if err := committer.CommitStep(pctx, StepCommit{Mode: StepCommitSuspend, RunID: instanceID, InvocationID: invocationID, NodeID: node.ID, Completions: completions, Suspension: s}); err != nil {
+		return e.releaseAfter(ctx, node.ID, completions, &stepPersistenceError{fmt.Errorf("%w: suspending node %q: %w", ErrStepPersistence, node.ID, err)})
+	}
+	return nil
+}
+
 // publishStepPersistenceFailure makes a persistence failure visible.
 func (e *Engine) publishStepPersistenceFailure(instanceID uuid.UUID, node workflow.Node, err error) {
 	e.eventBus.Publish(instanceID, Event{
