@@ -23,6 +23,14 @@
 #      has_unresolved / unresolved_count fields are a backstop when no gap counted.
 #   E. The assess node id is $1 (default deps-assess), so the plan stage's second
 #      gate counts deps-assess-2 and never the stale first-pass output.
+#   H. Work no implement agent can do is a DECISION for the human (lunaroute
+#      implement runs a5259bec / c028678b / 8fc37529 stalled for hours on
+#      operator observations, live vendor evidence and plan steps that
+#      contradicted retained tests): such DECISION lines count, and the
+#      plan-audit backstop's human_only steps add to needs_resolution.
+#   I. Audit ids are $2.. (optional): the LAST one present in the snapshot is
+#      read (a re-audit after a step restore supersedes the first audit); a
+#      named audit that is absent or malformed fails closed.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -121,6 +129,41 @@ OUT="$(run '{"deps-assess":{"gaps":["NON-BLOCKING: a"],"has_unresolved":true,"un
 check "G: a claimed count above the NON-BLOCKING lines still blocks" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "1"
 OUT="$(run '{"deps-assess":{"gaps":["NON-BLOCKING: a"],"unresolved_count":2}}')"
 check "G: unresolved_count alone above the NON-BLOCKING lines still blocks" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "1"
+
+# --- H: work no implement agent can do reaches the human ---
+OUT="$(run '{"deps-assess":{"gaps":[
+  "DECISION: p1-t9.md — step 4 needs operator observations of the completion banner; decision: who observes, or is it out of scope?",
+  "DECISION: p1-t10.md — plan requires save/pin to overwrite, but retained test TestPinKeepsAlias asserts it does not, and the plan does not authorize changing it; decision: which behaviour wins?",
+  "DECISION: p3-t2.md — needs live vendor evidence captured from production; decision: who supplies the fixture?"]}}')"
+check "H: human-only work counts as decisions" "$(printf '%s' "$OUT" | jq -r .decisions)" "3"
+check "H: ...and needs resolution" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "3"
+AUDIT='"plan-audit":{"ok":true,"human_only":2,"human_only_lines":["docs/p1.md:4: - [ ] Record operator observations","docs/p2.md:9: - [ ] Manually verify the banner"]}'
+OUT="$(printf '%s' '{"deps-assess":{"gaps":["NON-BLOCKING: a.md — provisioned outside the repo"]},'"$AUDIT"'}' | sh "$SCRIPT" deps-assess plan-audit)"
+check "H: plan-audit human_only steps need resolution even when the assessor saw none" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "2"
+check "H: ...reported as human_only" "$(printf '%s' "$OUT" | jq -r .human_only)" "2"
+check "H: ...and listed in gaps with a HUMAN-ONLY: prefix" "$(printf '%s' "$OUT" | jq -r '.gaps[1]')" "HUMAN-ONLY: docs/p1.md:4: - [ ] Record operator observations"
+check "H: gaps keep the assessor's lines first" "$(printf '%s' "$OUT" | jq -r '.gaps[0]')" "NON-BLOCKING: a.md — provisioned outside the repo"
+OUT="$(printf '%s' '{"deps-assess":{"gaps":[]},"plan-audit":{"ok":true,"human_only":0,"human_only_lines":[]}}' | sh "$SCRIPT" deps-assess plan-audit)"
+check "H: a clean audit and clean assessment proceed" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "0"
+OUT="$(run '{"deps-assess":{"gaps":["DECISION: x"]}}')"
+check "H: without an audit id, human_only is 0" "$(printf '%s' "$OUT" | jq -r .human_only)" "0"
+check "H: ...and gaps mirror the assessment" "$(printf '%s' "$OUT" | jq -c .gaps)" '["DECISION: x"]'
+
+# --- I: which audit is read ---
+BOTH_AUDITS='{"deps-assess-2":{"gaps":[]},
+  "plan-audit-2":{"ok":false,"human_only":3,"human_only_lines":["a:1: x","b:2: y","c:3: z"]},
+  "recheck-plans-2":{"ok":true,"human_only":0,"human_only_lines":[]}}'
+OUT="$(printf '%s' "$BOTH_AUDITS" | sh "$SCRIPT" deps-assess-2 plan-audit-2 recheck-plans-2)"
+check "I: the last audit present (the re-check) wins" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "0"
+OUT="$(printf '%s' '{"deps-assess-2":{"gaps":[]},"plan-audit-2":{"ok":true,"human_only":1,"human_only_lines":["a:1: x"]}}' | sh "$SCRIPT" deps-assess-2 plan-audit-2 recheck-plans-2)"
+check "I: an absent later audit falls back to the earlier one" "$(printf '%s' "$OUT" | jq -r .human_only)" "1"
+OUT="$(printf '%s' '{"deps-assess":{"gaps":[]}}' | sh "$SCRIPT" deps-assess plan-audit)"
+check "I: no named audit present fails closed" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "1"
+check "I: ...and says so in gaps" "$(printf '%s' "$OUT" | jq -r '.gaps[0]' | cut -c1-11)" "UNREADABLE:"
+OUT="$(printf '%s' '{"deps-assess":{"gaps":[]},"plan-audit":{"human_only":"two"}}' | sh "$SCRIPT" deps-assess plan-audit)"
+check "I: a non-numeric human_only fails closed" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "1"
+OUT="$(printf '%s' '{"deps-assess":{"notes":"no gaps"},"plan-audit":{"ok":true,"human_only":1,"human_only_lines":["a:1: x"]}}' | sh "$SCRIPT" deps-assess plan-audit)"
+check "I: unreadable assessment plus human-only steps adds both" "$(printf '%s' "$OUT" | jq -r .needs_resolution)" "2"
 
 echo "---"
 if [ "$fails" -eq 0 ]; then echo "PASS"; else echo "$fails check(s) FAILED"; exit 1; fi
