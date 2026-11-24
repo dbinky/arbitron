@@ -278,6 +278,10 @@ const filesBadRepoManifest = `{
 // result reports the pinned model it ran as (modelUsage), the executed-model
 // evidence every pinned Claude mission must carry.
 const fakeResolverScript = `#!/bin/sh
+case "$1" in
+  --version) echo "2.1.330 (Claude Code)"; exit 0 ;;
+  auth) echo '{"loggedIn":true}'; exit 0 ;;
+esac
 cat >/dev/null
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"fake-resolver"}'
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"All conflicts resolved."}]}}'
@@ -905,7 +909,7 @@ func TestGroupFilesE2E_RestartRestoresAnInterruptedResolution(t *testing.T) {
 	paths := writeFilesStack(t, map[string]string{"grp-files-conflict": filesConflictManifest})
 	gates := newGroupProcessGates(t)
 	resolver := strings.Replace(fakeResolverScript, "cat >/dev/null", "cat >/dev/null\n"+strings.ReplaceAll(groupGateScript, `printf '{"key":"%s"}' "$2"`, ":"), 1)
-	resolver = strings.Replace(resolver, "#!/bin/sh", "#!/bin/sh\nset -- '"+gates.dir+"' resolver", 1)
+	resolver = strings.Replace(resolver, "#!/bin/sh", "#!/bin/sh\ncase \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\nset -- '"+gates.dir+"' resolver", 1)
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(resolver), 0o700))
 	ctx := context.Background()
 

@@ -17,6 +17,7 @@ import (
 // the turn (pinned verification checks modelUsage).
 func recordingResolverScript(argvLog string) string {
 	return "#!/bin/sh\n" +
+		"case \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\n" +
 		"echo \"$*\" >> '" + argvLog + "'\n" +
 		"cat >/dev/null\n" +
 		"m=$(echo \"$*\" | sed -n 's/.*--model \\([^ ]*\\).*/\\1/p')\n" +

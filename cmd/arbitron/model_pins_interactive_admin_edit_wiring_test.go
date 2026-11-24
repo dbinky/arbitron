@@ -24,6 +24,7 @@ func fakeClaudeEnvBinary(t *testing.T, dir, argvLog string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "fake-claude-env.sh")
 	script := "#!/bin/sh\n" +
+		"case \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\n" +
 		"echo \"$* BASE=$ANTHROPIC_BASE_URL KEY=$ANTHROPIC_API_KEY\" >> '" + argvLog + "'\n" +
 		"cat > /dev/null\n" +
 		"m=$(echo \"$*\" | sed -n 's/.*--model \\([^ ]*\\).*/\\1/p')\n" +

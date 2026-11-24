@@ -23,6 +23,10 @@ import (
 // the real CLI it reports the model that served the turn: the resolver alias is
 // pinned at trigger, so the pinned-call verification requires modelUsage.
 const repairingResolverScript = `#!/bin/sh
+case "$1" in
+  --version) echo "2.1.330 (Claude Code)"; exit 0 ;;
+  auth) echo '{"loggedIn":true}'; exit 0 ;;
+esac
 set -eu
 prompt=$(cat)
 printf '%s' "$prompt" | grep 'MERGE_HEAD' >/dev/null

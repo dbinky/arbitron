@@ -22,6 +22,10 @@ func TestModelPinsWiringInteractiveLiveBinding(t *testing.T) {
 	argvLog := filepath.Join(dir, "argv")
 	bin := filepath.Join(dir, "claude")
 	require.NoError(t, os.WriteFile(bin, []byte(fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  --version) echo "2.1.330 (Claude Code)"; exit 0 ;;
+  auth) echo '{"loggedIn":true}'; exit 0 ;;
+esac
 cat >/dev/null
 echo "$*" >> %q
 actual="$ANTHROPIC_BASE_URL|$ANTHROPIC_API_KEY|$CLAUDE_CODE_EFFORT_LEVEL|$CLAUDE_CODE_AUTO_COMPACT_WINDOW|$CLAUDE_CODE_DISABLE_1M_CONTEXT"

@@ -29,6 +29,10 @@ func TestAdvanceWiringPublishesNewRun(t *testing.T) {
 	releaseFile := filepath.Join(root, "release")
 	binary := filepath.Join(root, "claude")
 	require.NoError(t, os.WriteFile(binary, []byte(`#!/bin/sh
+case "$1" in
+  --version) echo "2.1.330 (Claude Code)"; exit 0 ;;
+  auth) echo '{"loggedIn":true}'; exit 0 ;;
+esac
 printf '%s\n' "$PWD $*" >> '`+argvLog+`'
 prompt=$(cat)
 [ "$prompt" = hello ] || exit 1

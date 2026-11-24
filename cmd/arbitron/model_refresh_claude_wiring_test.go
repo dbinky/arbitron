@@ -46,6 +46,7 @@ func TestModelRefreshRootClaudeSubscriptionRouteProvesCandidateFromModelUsage(t 
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "executed-model"), []byte(tc.fallback), 0o600))
 			}
 			script := "#!/bin/sh\n" +
+				"case \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\n" +
 				"echo \"$PWD $*\" >> '" + argvLog + "'\n" +
 				"cat > /dev/null\n" +
 				"m=$(echo \"$*\" | sed -n 's/.*--model \\([^ ]*\\).*/\\1/p')\n" +

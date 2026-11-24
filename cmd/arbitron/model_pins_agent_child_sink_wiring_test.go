@@ -24,6 +24,7 @@ func fakeClaudeBinary(t *testing.T, dir, argvLog, goFile string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "fake-claude.sh")
 	script := "#!/bin/sh\n" +
+		"case \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\n" +
 		"echo \"$*\" >> '" + argvLog + "'\n" +
 		"n=$(wc -l < '" + argvLog + "' | tr -d ' ')\n" +
 		"if [ \"$n\" -eq 1 ]; then while [ ! -f '" + goFile + "' ]; do sleep 0.05; done; fi\n" +

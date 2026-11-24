@@ -30,6 +30,7 @@ func refreshTalkRoot(t *testing.T) (ds *domainStack, closeStack func(), ctx cont
 	argvLog = filepath.Join(dir, "argv")
 	bin := filepath.Join(dir, "claude")
 	script := "#!/bin/sh\n" +
+		"case \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\n" +
 		"echo \"$PWD $*\" >> '" + argvLog + "'\n" +
 		"cat > /dev/null\n" +
 		"m=$(echo \"$*\" | sed -n 's/.*--model \\([^ ]*\\).*/\\1/p')\n" +

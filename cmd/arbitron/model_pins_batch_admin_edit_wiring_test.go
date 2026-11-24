@@ -29,6 +29,7 @@ func fakeClaudeGatedEnvBinary(t *testing.T, dir, argvLog string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "fake-claude-gated.sh")
 	script := "#!/bin/sh\n" +
+		"case \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\n" +
 		"echo \"$* BASE=$ANTHROPIC_BASE_URL KEY=$ANTHROPIC_API_KEY\" >> '" + argvLog + "'\n" +
 		"n=$(wc -l < '" + argvLog + "' | tr -d ' ')\n" +
 		"if [ -f '" + dir + "'/gate-$n ]; then while [ ! -f '" + dir + "'/go-$n ]; do sleep 0.05; done; fi\n" +

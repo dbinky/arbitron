@@ -18,7 +18,7 @@ func TestGroupFilesE2E_ParentCancelledDuringAutonomousResolution(t *testing.T) {
 	// The marker is written from inside the real staging area, only after the
 	// CLI adapter launched the autonomous turn. Cancellation must kill the
 	// process and roll back without ever publishing an interactive session.
-	script := "#!/bin/sh\nset -eu\ncat >/dev/null\nprintf ready > resolver-ready\nexec sleep 60\n"
+	script := "#!/bin/sh\ncase \"$1\" in --version) echo '2.1.330 (Claude Code)'; exit 0 ;; auth) echo '{\"loggedIn\":true}'; exit 0 ;; esac\nset -eu\ncat >/dev/null\nprintf ready > resolver-ready\nexec sleep 60\n"
 	require.NoError(t, os.WriteFile(filepath.Join(paths.root, "fake-claude"), []byte(script), 0o700))
 	ds, err := initStartedDomain(context.Background(), paths.configPath)
 	require.NoError(t, err)
