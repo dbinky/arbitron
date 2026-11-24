@@ -33,7 +33,7 @@ func (c CompatTable) Check(h HelloInfo, serverRoot string) Compatibility {
 	if h.ProtocolVersion < c.ProtocolMin || h.ProtocolVersion > c.ProtocolMax {
 		return Compatibility{State: CompatIncompatible, Reason: fmt.Sprintf("protocol version %d outside supported range %d-%d", h.ProtocolVersion, c.ProtocolMin, c.ProtocolMax)}
 	}
-	if c.RunnerMin == "" || c.RunnerMaxExclusive == "" || !versionAtLeast(h.RunnerVersion, c.RunnerMin) || versionAtLeast(h.RunnerVersion, c.RunnerMaxExclusive) {
+	if !runnerVersionAllowed(h.RunnerVersion, c.RunnerMin, c.RunnerMaxExclusive) {
 		return Compatibility{State: CompatIncompatible, Reason: fmt.Sprintf("runner version %q is older than the minimum %q", h.RunnerVersion, c.RunnerMin)}
 	}
 	names := make([]string, 0, len(c.Harness))
