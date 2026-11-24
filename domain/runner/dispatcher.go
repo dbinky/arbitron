@@ -38,6 +38,8 @@ type StepOutput struct {
 	Agent        *engine.AgentResult
 	Process      *engine.ProcessResult
 	Confirmation *ConfirmationResult
+	// Completion is the exact operation receipt, not an output payload.
+	Completion *engine.StepCompletion
 }
 
 // StepRunner executes an assignment on one runner. Errors carry a classified
@@ -94,6 +96,9 @@ type DispatcherDeps struct {
 
 	Wake        <-chan struct{} // pool-change notifications (PoolNotifier.Subscribe)
 	SessionPins SessionPins
+	Workspace   StepWorkspace
+	// LegacyBuiltInWorkspace explicitly permits pre-Phase-3 built-in execution.
+	LegacyBuiltInWorkspace bool
 	// Sleep waits d or until ctx ends. nil => a real timer. Tests inject a fake
 	// clock's sleep so backoff is observable and time is actually gated.
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -115,6 +120,7 @@ type StepDispatcher struct {
 	stop            chan struct{}
 	wakeDone        chan struct{}
 	closeOnce       sync.Once
+	pending         map[uuid.UUID]pendingStep // guarded by mu
 }
 
 // NewStepDispatcher validates deps and starts the wake fan-out.
@@ -206,6 +212,10 @@ func (s *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job
 	if req.RunID != id.RunID || req.Op != job.Op {
 		return StepOutput{}, errors.New("runner: request identity/operation mismatch")
 	}
+	req, err := s.normalizeWorkspace(ctx, req, job)
+	if err != nil {
+		return StepOutput{}, err
+	}
 	key := JobKey{RunID: id.RunID, InvocationID: id.InvocationID, OperationID: id.OperationID, Attempt: id.Attempt}
 	j, err := s.d.Ledger.EnsureIntent(ctx, key, id.NodeID, req)
 	if err != nil {
@@ -221,7 +231,7 @@ func (s *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job
 	}
 	sink, _ := engine.PlacementSinkFromContext(ctx)
 	tries := 0
-	a, out, err := s.runOnce(ctx, &j, req, job, sink, &tries)
+	a, out, att, err := s.runOnce(ctx, &j, req, job, sink, &tries)
 	if err != nil {
 		return StepOutput{}, err
 	}
@@ -230,7 +240,7 @@ func (s *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job
 		go s.pump(ctx, j, a, req, job, out.Stream, sink, ch, tries)
 		return StepOutput{Stream: ch}, nil
 	}
-	if err := s.complete(ctx, a, sink); err != nil {
+	if err := s.completeStep(ctx, a, att, &out, sink); err != nil {
 		return StepOutput{}, err
 	}
 	return out, nil
@@ -238,25 +248,31 @@ func (s *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job
 
 // runOnce places and runs until a runner call returns without error (the
 // assignment is returned, still running) or the operation fails terminally.
-func (s *StepDispatcher) runOnce(ctx context.Context, j *Job, req ExecRequirements, job StepJob, sink *engine.PlacementSink, tries *int) (Assignment, StepOutput, error) {
+func (s *StepDispatcher) runOnce(ctx context.Context, j *Job, req ExecRequirements, job StepJob, sink *engine.PlacementSink, tries *int) (Assignment, StepOutput, *WorkspaceAttempt, error) {
 	bg := context.WithoutCancel(ctx)
 outer:
 	for {
-		a, err := s.acquire(ctx, j, req)
+		a, dec, err := s.acquire(ctx, j, req)
 		if err != nil {
-			return Assignment{}, StepOutput{}, err
+			return Assignment{}, StepOutput{}, nil, err
 		}
 		r, ok := s.d.Runners.For(a.Job.RunnerID)
 		if !ok {
 			s.fact(sink, a, string(OutcomeOther))
 			s.release(bg, a, OutcomeOther)
-			return Assignment{}, StepOutput{}, fmt.Errorf("runner: no step runner for %q", a.Job.RunnerID)
+			return Assignment{}, StepOutput{}, nil, fmt.Errorf("runner: no step runner for %q", a.Job.RunnerID)
 		}
 		if err := s.d.Ledger.MarkRunning(ctx, a.Fence); err != nil {
 			s.release(bg, a, OutcomeOther)
-			return Assignment{}, StepOutput{}, fmt.Errorf("runner: mark running %s: %w", a.Job.ID, err)
+			return Assignment{}, StepOutput{}, nil, fmt.Errorf("runner: mark running %s: %w", a.Job.ID, err)
 		}
 		s.d.Status.Publish(ctx, a.Job, instance.ExecRunning)
+		att, err := s.beginWorkspace(ctx, a, req, dec, &job)
+		if err != nil {
+			s.fact(sink, a, string(OutcomeOther))
+			s.release(bg, a, OutcomeOther)
+			return Assignment{}, StepOutput{}, nil, err
+		}
 
 		for try := 1; ; try++ {
 			*tries = try
@@ -264,10 +280,11 @@ outer:
 			if runErr == nil {
 				if !validOutput(job.Op, out) {
 					s.fact(sink, a, string(OutcomeOther))
+					s.failWorkspace(bg, a, att)
 					s.release(bg, a, OutcomeOther)
-					return Assignment{}, StepOutput{}, errors.New("runner: malformed step output")
+					return Assignment{}, StepOutput{}, nil, errors.New("runner: malformed step output")
 				}
-				return a, out, nil
+				return a, out, att, nil
 			}
 			o := ClassifyError(runErr)
 			o.Model = req.Model
@@ -275,31 +292,39 @@ outer:
 			case OutcomeTransient:
 				s.fact(sink, a, string(OutcomeTransient))
 				if try >= s.d.TransientMaxAttempts {
+					s.failWorkspace(bg, a, att)
 					s.release(bg, a, OutcomeTransient)
-					return Assignment{}, StepOutput{}, runErr
+					return Assignment{}, StepOutput{}, nil, runErr
 				}
 				if err := s.d.Sleep(ctx, s.backoff(try, o.RetryAfter)); err != nil {
+					s.failWorkspace(bg, a, att)
 					s.release(bg, a, OutcomeOther)
-					return Assignment{}, StepOutput{}, err
+					return Assignment{}, StepOutput{}, nil, err
+				}
+				if att, err = s.retryWorkspace(ctx, a, req, dec, &job, att); err != nil {
+					s.release(bg, a, OutcomeOther)
+					return Assignment{}, StepOutput{}, nil, err
 				}
 				continue
 			case OutcomeExhausted, OutcomeLoggedOut, OutcomeRunnerLost:
 				s.fact(sink, a, string(o.Class))
+				s.failWorkspace(bg, a, att)
 				if err := s.reroute(ctx, j, a, o); err != nil {
-					return Assignment{}, StepOutput{}, err
+					return Assignment{}, StepOutput{}, nil, err
 				}
 				continue outer
 			default:
 				s.fact(sink, a, string(OutcomeOther))
+				s.failWorkspace(bg, a, att)
 				s.release(bg, a, OutcomeOther)
-				return Assignment{}, StepOutput{}, runErr
+				return Assignment{}, StepOutput{}, nil, runErr
 			}
 		}
 	}
 }
 
 // acquire places the job, waiting visibly until it can be reserved.
-func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequirements) (Assignment, error) {
+func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequirements) (Assignment, Decision, error) {
 	var lastState instance.ExecutionState
 	var lastDetail string
 	for {
@@ -307,18 +332,18 @@ func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequiremen
 		snap, err := s.d.Registry.Snapshot(ctx)
 		if err != nil {
 			s.abandon(ctx, *j)
-			return Assignment{}, fmt.Errorf("runner: read pool: %w", err)
+			return Assignment{}, Decision{}, fmt.Errorf("runner: read pool: %w", err)
 		}
 		snap.Now = s.d.Clock()
 		snap.Telemetry = s.d.Telemetry.Latest()
 		dec := Place(req, snap, s.d.Policy)
 		if dec.MoveRequired {
-			return Assignment{}, &SessionPinMoveError{Runner: req.PinnedRunner, Reason: dec.MoveReason, Detail: dec.Reason}
+			return Assignment{}, Decision{}, &SessionPinMoveError{Runner: req.PinnedRunner, Reason: dec.MoveReason, Detail: dec.Reason}
 		}
 		if !dec.Placed {
 			if err := s.d.Ledger.SetWait(ctx, j.ID, dec.Wait); err != nil {
 				s.abandon(ctx, *j)
-				return Assignment{}, fmt.Errorf("runner: record wait: %w", err)
+				return Assignment{}, Decision{}, fmt.Errorf("runner: record wait: %w", err)
 			}
 			j.Wait = dec.Wait
 			state := instance.ExecQueuedSlot
@@ -336,7 +361,7 @@ func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequiremen
 			case <-ctx.Done():
 				t.Stop()
 				s.abandon(ctx, *j)
-				return Assignment{}, ctx.Err()
+				return Assignment{}, Decision{}, ctx.Err()
 			}
 			t.Stop()
 			continue
@@ -347,10 +372,10 @@ func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequiremen
 		}
 		if err != nil {
 			s.abandon(ctx, *j)
-			return Assignment{}, fmt.Errorf("runner: reserve slot: %w", err)
+			return Assignment{}, Decision{}, fmt.Errorf("runner: reserve slot: %w", err)
 		}
 		*j = reserved
-		return Assignment{Job: reserved, Fence: reserved.Fence()}, nil
+		return Assignment{Job: reserved, Fence: reserved.Fence()}, dec, nil
 	}
 }
 
@@ -559,7 +584,7 @@ func (s *StepDispatcher) pump(ctx context.Context, j Job, a Assignment, req Exec
 					send(ctx, out, engine.ChatChunk{Error: err, Done: true})
 					return
 				}
-				na, nout, err := s.runOnce(ctx, &j, req, job, sink, &tries)
+				na, nout, _, err := s.runOnce(ctx, &j, req, job, sink, &tries)
 				if err != nil {
 					send(ctx, out, engine.ChatChunk{Error: err, Done: true})
 					return
