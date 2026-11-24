@@ -111,9 +111,10 @@ type HeldJobInfo struct {
 // HeartbeatInfo is the domain mirror of runnerproto.Heartbeat. A nil Sources
 // slice means "unchanged"; an empty non-nil slice means "no sources".
 type HeartbeatInfo struct {
-	Telemetry Telemetry
-	Sources   []SourceReport
-	Jobs      []HeldJobInfo
+	TelemetryAgeMs int64
+	Telemetry      Telemetry
+	Sources        []SourceReport
+	Jobs           []HeldJobInfo
 }
 
 // OutputFrame is one streamed token with its per-(job,generation) sequence.
@@ -144,20 +145,21 @@ type RemoteResult struct {
 // no WorkDir, BaseURL, ConnectionRef or key material; the runner uses its own
 // credentials for CredentialKind.
 type ChatDispatch struct {
-	Model                string
-	SystemPrompt         string
-	Prompt               string
-	MaxTokens            int
-	Temperature          float64
-	OutputSchema         json.RawMessage
-	SessionID            string
-	RequireExecutedModel bool
-	Stream               bool
-	CredentialKind       CredentialKind
-	Backend              string
-	ContextWindow        string
-	Effort               string
-	Tools                []string
+	Provider, EndpointFingerprint string
+	Model                         string
+	SystemPrompt                  string
+	Prompt                        string
+	MaxTokens                     int
+	Temperature                   float64
+	OutputSchema                  json.RawMessage
+	SessionID                     string
+	RequireExecutedModel          bool
+	Stream                        bool
+	CredentialKind                CredentialKind
+	Backend                       string
+	ContextWindow                 string
+	Effort                        string
+	Tools                         []string
 }
 
 // DispatchPayload is an offer of one job generation.

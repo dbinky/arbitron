@@ -124,6 +124,16 @@ type SourceHealth struct {
 	Detail            string // class/reset only, never provider prose
 }
 
+// ToolPolicy describes how an agent harness enforces its tool scope.
+type ToolPolicy string
+
+const (
+	// ToolPolicyAllowlist launches with exactly the requested allowed tools.
+	ToolPolicyAllowlist ToolPolicy = "allowlist"
+	// ToolPolicyUnrestricted cannot narrow tools and requires an empty scope.
+	ToolPolicyUnrestricted ToolPolicy = "unrestricted"
+)
+
 // ExecutionCapability records proven execution support for a source.
 // Phase 2 populates these from actual local capability/version evidence.
 type ExecutionCapability struct {
@@ -135,6 +145,7 @@ type ExecutionCapability struct {
 	Efforts                                []provider.Effort
 	Tools                                  []string
 	ExecutedModel                          bool
+	ToolPolicy                             ToolPolicy
 }
 
 // Source is a capacity source on a runner.

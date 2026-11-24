@@ -364,8 +364,11 @@ func (h *Hub) handleHeartbeat(ctx context.Context, s *Session, hb HeartbeatInfo,
 		return err
 	}
 	t := hb.Telemetry
-	if t.SampledAt.IsZero() {
-		t.SampledAt = now
+	// Compare in milliseconds before converting to Duration to avoid overflow.
+	if hb.TelemetryAgeMs < 0 || hb.TelemetryAgeMs > (3*h.cfg.Heartbeat).Milliseconds() {
+		t = Telemetry{SampledAt: now}
+	} else {
+		t.SampledAt = now.Add(-time.Duration(hb.TelemetryAgeMs) * time.Millisecond)
 	}
 	h.RecordTelemetry(s.RunnerID, t)
 	r, cur, err := h.reg.GetRunner(ctx, s.RunnerID)

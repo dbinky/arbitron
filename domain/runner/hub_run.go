@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 const streamBuffer = 64
@@ -124,6 +125,10 @@ func buildDispatch(a Assignment, job StepJob, leaseUntil time.Time) (DispatchPay
 	if !remoteKind(kind) {
 		return DispatchPayload{}, fmt.Errorf("%w: %s", ErrRemoteCredential, kind)
 	}
+	fp, err := EndpointFingerprint(job.Binding)
+	if err != nil {
+		return DispatchPayload{}, fmt.Errorf("%w: %v", ErrRemoteCredential, err)
+	}
 	c := job.Chat
 	var schema json.RawMessage
 	if c.OutputSchema != nil {
@@ -145,6 +150,7 @@ func buildDispatch(a Assignment, job StepJob, leaseUntil time.Time) (DispatchPay
 		model = job.Binding.Model
 	}
 	return DispatchPayload{Op: job.Op, LeaseUntil: leaseUntil, Chat: &ChatDispatch{
+		Provider: provider.Canonicalize(job.Binding.Provider), EndpointFingerprint: fp,
 		Model: model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
 		OutputSchema: schema, SessionID: c.SessionID, RequireExecutedModel: c.RequireExecutedModel || job.Binding.RequiresModelEvidence(), Stream: job.Op == OpStream,
 		CredentialKind: kind, Backend: job.Binding.Backend, ContextWindow: string(job.Binding.ContextWindow),

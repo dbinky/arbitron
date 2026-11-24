@@ -54,12 +54,14 @@ type JobRef struct {
 // Source is one locally usable capacity source. Vendor credentials never
 // appear here: only kind, reference names and health.
 type Source struct {
-	Kind          runner.CredentialKind
-	CredentialRef string
-	Families      []modelidentity.Family
-	Backends      []string
-	Models        []string
-	Health        runner.SourceHealth
+	UnavailableReason string
+	Capabilities      []runner.ExecutionCapability
+	Kind              runner.CredentialKind
+	CredentialRef     string
+	Families          []modelidentity.Family
+	Backends          []string
+	Models            []string
+	Health            runner.SourceHealth
 }
 
 // HeldJob is a job the runner still owns: running, or terminal and not yet
@@ -87,27 +89,29 @@ type Hello struct {
 
 // Heartbeat carries liveness, telemetry, source health and held jobs.
 type Heartbeat struct {
-	Telemetry runner.Telemetry
-	Sources   []Source
-	Jobs      []HeldJob
+	TelemetryAgeMs int64
+	Telemetry      runner.Telemetry
+	Sources        []Source
+	Jobs           []HeldJob
 }
 
 // ChatJob is the allowlisted chat descriptor (no server credentials).
 type ChatJob struct {
-	Model                string
-	SystemPrompt         string
-	Prompt               string
-	MaxTokens            int
-	Temperature          float64
-	OutputSchema         json.RawMessage
-	SessionID            string
-	RequireExecutedModel bool
-	Stream               bool
-	CredentialKind       string
-	Backend              string
-	ContextWindow        string
-	Effort               string
-	Tools                []string
+	Provider, EndpointFingerprint string
+	Model                         string
+	SystemPrompt                  string
+	Prompt                        string
+	MaxTokens                     int
+	Temperature                   float64
+	OutputSchema                  json.RawMessage
+	SessionID                     string
+	RequireExecutedModel          bool
+	Stream                        bool
+	CredentialKind                string
+	Backend                       string
+	ContextWindow                 string
+	Effort                        string
+	Tools                         []string
 }
 
 // Dispatch is one job offer.

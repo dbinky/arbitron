@@ -108,6 +108,7 @@ func (j *HeldJob) Validate() error {
 // WireSource is one capacity source the runner advertises.
 // ExecutionCapability is allowlisted execution evidence, never a local binding.
 type ExecutionCapability struct {
+	ToolPolicy          string   `json:"toolPolicy,omitempty"`
 	Op                  string   `json:"op"`
 	Backend             string   `json:"backend,omitempty"`
 	Provider            string   `json:"provider"`
@@ -301,6 +302,8 @@ func (d *Dispatch) Validate() error {
 // no environment and no working directory (the runner uses a per-job scratch
 // directory). The runner resolves CredentialKind to its OWN local credential.
 type WireChat struct {
+	Provider             string          `json:"provider,omitempty"`
+	EndpointFingerprint  string          `json:"endpointFingerprint,omitempty"`
 	Model                string          `json:"model"`
 	SystemPrompt         string          `json:"systemPrompt,omitempty"`
 	Prompt               string          `json:"prompt"`
@@ -318,6 +321,12 @@ type WireChat struct {
 }
 
 func (c *WireChat) Validate() error {
+	if c.EndpointFingerprint != "" {
+		fp, err := hex.DecodeString(c.EndpointFingerprint)
+		if err != nil || len(fp) != sha256.Size {
+			return errors.New("chat.endpointFingerprint must be a SHA-256 hex digest")
+		}
+	}
 	switch {
 	case c.Model == "":
 		return errors.New("chat.model is required (exact model, never substituted)")

@@ -33,7 +33,23 @@ func wireSource(s runneragent.Source) runnerproto.WireSource {
 	for i, f := range s.Families {
 		fams[i] = string(f)
 	}
-	return runnerproto.WireSource{Kind: string(s.Kind), CredentialRef: s.CredentialRef, Families: fams, Backends: s.Backends, Models: s.Models, Health: wireHealth(s.Health)}
+	caps := make([]runnerproto.ExecutionCapability, len(s.Capabilities))
+	for i, c := range s.Capabilities {
+		families := make([]string, len(c.Families))
+		for j, f := range c.Families {
+			families[j] = string(f)
+		}
+		windows := make([]string, len(c.ContextWindows))
+		for j, w := range c.ContextWindows {
+			windows[j] = string(w)
+		}
+		efforts := make([]string, len(c.Efforts))
+		for j, e := range c.Efforts {
+			efforts[j] = string(e)
+		}
+		caps[i] = runnerproto.ExecutionCapability{ToolPolicy: string(c.ToolPolicy), Op: string(c.Op), Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, Families: families, Models: c.Models, ContextWindows: windows, Efforts: efforts, Tools: c.Tools, ExecutedModel: c.ExecutedModel}
+	}
+	return runnerproto.WireSource{UnavailableReason: s.UnavailableReason, Capabilities: caps, Kind: string(s.Kind), CredentialRef: s.CredentialRef, Families: fams, Backends: s.Backends, Models: s.Models, Health: wireHealth(s.Health)}
 }
 
 func wireSources(ss []runneragent.Source) []runnerproto.WireSource {
@@ -95,8 +111,10 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 		if m.Heartbeat == nil {
 			break
 		}
+		telemetry := wireTelemetry(m.Heartbeat.Telemetry)
+		telemetry.SampleAgeMs = m.Heartbeat.TelemetryAgeMs
 		return runnerproto.NewEnvelope(runnerproto.KindHeartbeat, runnerproto.Heartbeat{
-			Telemetry: wireTelemetry(m.Heartbeat.Telemetry), Sources: wireSources(m.Heartbeat.Sources), Jobs: wireHeld(m.Heartbeat.Jobs),
+			Telemetry: telemetry, Sources: wireSources(m.Heartbeat.Sources), Jobs: wireHeld(m.Heartbeat.Jobs),
 		})
 	case runneragent.KindAccept:
 		return runnerproto.NewJobEnvelope(runnerproto.KindAccept, m.JobID, m.Generation, 0, nil)
@@ -161,6 +179,7 @@ func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 		}
 		c := d.Chat
 		in.Dispatch = &runneragent.Dispatch{JobID: e.JobID, Generation: e.Generation, Op: d.Op, LeaseUntil: d.LeaseUntil, Chat: &runneragent.ChatJob{
+			Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint,
 			Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
 			OutputSchema: c.OutputSchema, SessionID: c.SessionID, RequireExecutedModel: c.RequireExecutedModel, Stream: c.Stream,
 			CredentialKind: c.CredentialKind, Backend: c.Backend, ContextWindow: c.ContextWindow, Effort: c.Effort, Tools: c.Tools,

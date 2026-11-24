@@ -91,7 +91,7 @@ func heartbeatInfo(hb runnerproto.Heartbeat) (runner.HeartbeatInfo, error) {
 	if err != nil {
 		return runner.HeartbeatInfo{}, err
 	}
-	info := runner.HeartbeatInfo{Telemetry: telemetryToDomain(hb.Telemetry), Jobs: jobs}
+	info := runner.HeartbeatInfo{Telemetry: telemetryToDomain(hb.Telemetry), TelemetryAgeMs: hb.Telemetry.SampleAgeMs, Jobs: jobs}
 	if hb.Sources != nil {
 		info.Sources = sourcesToDomain(hb.Sources)
 	}
@@ -141,7 +141,7 @@ func sourcesToDomain(in []runnerproto.WireSource) []runner.SourceReport {
 func capabilitiesToDomain(in []runnerproto.ExecutionCapability) []runner.ExecutionCapability {
 	var out []runner.ExecutionCapability
 	for _, c := range in {
-		cap := runner.ExecutionCapability{Op: runner.OpType(c.Op), Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, Models: c.Models, Tools: c.Tools, ExecutedModel: c.ExecutedModel}
+		cap := runner.ExecutionCapability{ToolPolicy: runner.ToolPolicy(c.ToolPolicy), Op: runner.OpType(c.Op), Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, Models: c.Models, Tools: c.Tools, ExecutedModel: c.ExecutedModel}
 		for _, f := range c.Families {
 			cap.Families = append(cap.Families, modelidentity.Family(f))
 		}
@@ -231,7 +231,7 @@ func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (
 func dispatchToWire(d runner.DispatchPayload) *runnerproto.Dispatch {
 	out := &runnerproto.Dispatch{Op: string(d.Op), LeaseUntil: d.LeaseUntil}
 	if c := d.Chat; c != nil {
-		out.Chat = &runnerproto.WireChat{Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens,
+		out.Chat = &runnerproto.WireChat{Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens,
 			Temperature: c.Temperature, OutputSchema: c.OutputSchema, SessionID: c.SessionID,
 			RequireExecutedModel: c.RequireExecutedModel, Stream: c.Stream, CredentialKind: string(c.CredentialKind),
 			Backend: c.Backend, ContextWindow: c.ContextWindow, Effort: c.Effort, Tools: c.Tools}
