@@ -85,6 +85,8 @@ type conversationHandler struct {
 	// The zero value is ready to use.
 	turnInProgress sync.Map // map[uuid.UUID]struct{}
 	invocations    InvocationStore
+	leases         TurnLeaseStore
+	leaseTTL       time.Duration
 }
 
 // groupSessionTarget holds the validated session record and its staging directory.
@@ -111,6 +113,7 @@ func NewConversationHandler(
 		eventBus:    eventBus,
 		queueMgr:    queueMgr,
 		invocations: NewMemoryInvocationStore(),
+		leaseTTL:    DefaultTurnLeaseTTL,
 	}
 }
 
@@ -164,6 +167,37 @@ func (h *conversationHandler) SetGroupResolution(groups instance.GroupRunReposit
 	h.groups = groups
 	h.groupCompleter = completer
 	h.groupSessions = sessions
+}
+
+// SetTurnLeases installs the durable overlap guard before serving turns.
+func (h *conversationHandler) SetTurnLeases(store TurnLeaseStore, ttl time.Duration) {
+	if store == nil || ttl <= 0 {
+		panic("engine: conversation SetTurnLeases requires a store and a positive TTL")
+	}
+	h.leases, h.leaseTTL = store, ttl
+}
+
+func sessionLeaseKey(instanceID uuid.UUID, group *groupSessionTarget) string {
+	if group != nil {
+		if id, ok := GroupResolutionIdentityOf(group.exec.LLMConversation); ok {
+			return ResolutionLeaseKey(id)
+		}
+	}
+	return RunLeaseKey(instanceID)
+}
+
+func (h *conversationHandler) acquireTurn(ctx context.Context, instanceID uuid.UUID, group *groupSessionTarget) (context.Context, *turnLeaseHold, error) {
+	if h.leases == nil {
+		if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
+			return ctx, nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+		}
+		return ctx, localTurnHold(sessionLeaseKey(instanceID, group), func() { h.turnInProgress.Delete(instanceID) }), nil
+	}
+	turnCtx, hold, err := holdTurnLease(ctx, h.leases, sessionLeaseKey(instanceID, group), h.leaseTTL)
+	if err != nil {
+		return ctx, nil, fmt.Errorf("conversation: instance %s: acquire turn lease: %w", instanceID, err)
+	}
+	return turnCtx, hold, nil
 }
 
 // persistGroupSession writes a group session record read before this
@@ -244,17 +278,12 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// the run's trigger-time model pins when the profile is resolved below.
 	ctx = ContextWithInstanceID(ctx, instanceID)
 
-	// 1a. Reject an overlapping turn for this instance. A turn resumes a single
-	// stateful provider session (claude --resume); a second concurrent send would
-	// drive that session concurrently, which claude-cli mishandles (it queues the
-	// prompt and the session no-ops), permanently wedging the node. Acquired only
-	// after the auth/state gate above and released when this turn returns, so
-	// sequential turns are unaffected. NOTE: this covers HandleMessage only;
-	// EndSession acquires the same guard separately.
-	if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
-		return fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	// Acquire after authorization; reject overlapping operations across processes.
+	ctx, hold, err := h.acquireTurn(ctx, instanceID, group)
+	if err != nil {
+		return err
 	}
-	defer h.turnInProgress.Delete(instanceID)
+	defer hold.Release()
 
 	// The preliminary read can become stale before the guard is acquired (for
 	// example, EndSession may have completed). Reload authorization, state and
@@ -371,7 +400,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		}
 		// LLM failed -- the user message was never persisted, so there is no
 		// conversation corruption to roll back.
-		return err
+		return turnLeaseErr(ctx, err)
 	}
 
 	// claude returns a session id on each turn; if the stream did not carry
@@ -404,10 +433,13 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		"content": fullResponse,
 	})
 
-	if completed {
-		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput, group)
+	if err := turnLeaseErr(ctx, nil); err != nil {
+		return err
 	}
-	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, persistSessionID, fullResponse, group)
+	if completed {
+		return turnLeaseErr(ctx, h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput, group))
+	}
+	return turnLeaseErr(ctx, h.handleNormalResponse(ctx, instanceID, nodeExec, messages, persistSessionID, fullResponse, group))
 }
 
 // EndSession handles user-initiated session termination. It captures existing
@@ -426,13 +458,11 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 		return nil, err
 	}
 
-	// 1a. Reject if a turn is in flight: ending mid-turn would race HandleMessage's
-	// pending state transition + persist (a double-completion). Acquire the same
-	// per-instance guard HandleMessage uses, released when EndSession returns.
-	if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
-		return nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	ctx, hold, err := h.acquireTurn(ctx, instanceID, group)
+	if err != nil {
+		return nil, err
 	}
-	defer h.turnInProgress.Delete(instanceID)
+	defer hold.Release()
 
 	// Another operation may have completed between the first read and guard
 	// acquisition. Use current authorization/state and variables, so a stale
@@ -477,10 +507,11 @@ func (h *conversationHandler) AbandonSession(ctx context.Context, instanceID uui
 	if group == nil {
 		return fmt.Errorf("conversation: instance %s node %s: %w", instanceID, nodeID, ErrNotResolutionSession)
 	}
-	if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
-		return fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	ctx, hold, err := h.acquireTurn(ctx, instanceID, group)
+	if err != nil {
+		return err
 	}
-	defer h.turnInProgress.Delete(instanceID)
+	defer hold.Release()
 
 	output := group.exec.Output
 	if output == nil {
