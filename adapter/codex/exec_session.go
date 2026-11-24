@@ -141,6 +141,9 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 	if cfg.ReadOnly || cfg.Tools.Restricted {
 		override, err := s.core.probeMCPOverride(ctx, cfg.WorkDir)
 		if err != nil {
+			if cfg.Tools.Restricted {
+				return nil, fmt.Errorf("%w: %v", ErrToolScopeUnsupported, err)
+			}
 			return nil, err
 		}
 		cfg.MCPOverride = override

@@ -558,6 +558,16 @@ func TestBuildInteractiveExecArgs_ReadOnlyTurnGrantsNoWritableRoot(t *testing.T)
 	assert.NotContains(t, joined, "writable_roots")
 }
 
+func TestExecSession_RestrictedOldBinaryRefusesWithToolScopeError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{{lines: []string{"codex-cli 0.162.0"}}}}
+	c := newCore(Config{Binding: codexBinding("gpt-5", nil), BinaryPath: "codex", Runner: mr})
+	pol, err := codexToolPolicy([]string{"Read", "Bash"})
+	require.NoError(t, err)
+	_, err = newExecSession(&c).Start(context.Background(), turnConfig{Model: "gpt-5", WorkDir: "/work", Tools: pol})
+	require.ErrorIs(t, err, ErrToolScopeUnsupported)
+	require.Len(t, mr.calls, 1, "only the version probe may launch")
+}
+
 func TestBuildInteractiveExecArgs_RestrictedTurnReassertsPostureOnResume(t *testing.T) {
 	pol, err := codexToolPolicy([]string{"Read", "Bash"})
 	require.NoError(t, err)

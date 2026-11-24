@@ -483,7 +483,7 @@ func TestRunnerWiring_DecoratorRemovalBreaksRouting(t *testing.T) {
 		})
 		p, err := sel.ChatProviderFor(b)
 		require.NoError(t, err)
-		resp, err := p.Chat(stepCtx, engine.ChatRequest{Model: b.Model, Prompt: "hello"})
+		resp, err := p.Chat(stepCtx, engine.ChatRequest{Model: b.Model, Prompt: "hello", WorkDir: t.TempDir()})
 		require.NoError(t, err)
 		assert.Equal(t, "hello", resp.Output, "routing never changes the provider's output")
 		return inv.String()
