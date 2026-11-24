@@ -24,6 +24,7 @@ check() { # desc actual expected
 
 # --- Case A: no URL anywhere => no-op, never fails the run ---
 unset ARBITRON_TEAMS_WEBHOOK_URL 2>/dev/null || true
+export ARBITRON_NOTIFY_LOCAL=0 # no real desktop notifications from a test run
 out="$(printf '{}' | sh "$SCRIPT" "Title" "Summary" "info" "K=V" 2>/dev/null)"
 rc=$?
 skipped="$(printf '%s' "$out" | jq -r '.skipped')"

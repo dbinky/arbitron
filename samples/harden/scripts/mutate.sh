@@ -65,6 +65,18 @@ rm -rf "$RUN"
 mkdir -p "$RUN"
 : > "$RUN/all.ndjson"
 : > "$RUN/rescored.ndjson"
+# Each adapter's output goes to its own log, replayed to stderr at exit (after
+# any failure summary), so a short summary can lead the node error.
+LOGS="$RUN/logs.list"
+: > "$LOGS"
+replay_logs() {
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    echo "mutate: --- $f ---"
+    cat "$f"
+  done < "$LOGS" >&2
+}
+trap replay_logs EXIT
 printf '%s' "$IN" | jq -c '(.detect.languages // [])[] | select(.status == "runnable")' > "$RUN/langs.ndjson"
 
 while IFS= read -r entry; do
@@ -89,9 +101,14 @@ while IFS= read -r entry; do
     printf '%s\n' "$ONLY" >> "$RUN/rescored.ndjson"
   fi
 
-  echo "mutate: running $TOOL for $L" >&2
-  printf '%s' "$IN" | sh "$ADAPTER" "$RUN/$L.targets.json" "$CMD" "$RUN/$L.out.json" >&2 \
-    || die "the $L adapter ($TOOL) failed"
+  echo "mutate: running $TOOL for $L (output: $RUN/$L.log)" >&2
+  echo "$RUN/$L.log" >> "$LOGS"
+  if ! printf '%s' "$IN" | sh "$ADAPTER" "$RUN/$L.targets.json" "$CMD" "$RUN/$L.out.json" > "$RUN/$L.log" 2>&1; then
+    # Lead the error with the failing tests: the engine keeps only the first
+    # 1MB of stderr, and a sandbox-only failure sits at the end of the log.
+    sh "$HERE/suite-summary.sh" "$RUN/$L.log" >&2 || true
+    die "the $L adapter ($TOOL) failed; its full output follows"
+  fi
   jq -e 'type == "array"' "$RUN/$L.out.json" >/dev/null 2>&1 || die "the $L adapter wrote no result list"
   # A repeated key within one tool's results is a different mutant (the same
   # replacement at another column, say), not a duplicate: number repeats in

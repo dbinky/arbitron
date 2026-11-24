@@ -189,12 +189,12 @@ func TestParentGates(t *testing.T) {
 		})
 	}
 	for _, chain := range [][]string{
-		{"intake", "promote-intake", "clone", "intake-check", "promote-check", "record-idea?"},
+		{"intake", "promote-intake", "clone", "intake-check", "promote-check", "auth-start", "auth-start-ok?"},
 		{"record-provided-idea", "detect", "route"},
 		{"adopt-ideate", "promote-ideate", "pre-spec", "spec"},
-		{"pre-design", "design"}, {"pre-plan", "plan"}, {"pre-implement", "implement"},
-		{"pre-harden", "harden"}, {"pre-refine", "refine"},
-		{"record-refine", "pre-review", "review"},
+		{"pre-design", "design"}, {"pre-plan", "auth-plan"}, {"pre-implement", "auth-implement"},
+		{"pre-harden", "auth-harden"}, {"pre-refine", "auth-refine"},
+		{"record-refine", "pre-review", "auth-review"},
 		{"record-review", "final-read", "notify-done", "done"},
 		{"fail-plan-blocked", "notify-failed"}, {"fail-impl-blocked", "notify-failed"},
 	} {
