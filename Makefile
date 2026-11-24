@@ -9,9 +9,11 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v/
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 DATE    ?= $(shell git show -s --format=%cI HEAD 2>/dev/null)
 
-# The os/arch matrix for release artifacts (6 targets). Pure-Go (CGO_ENABLED=0)
+# The os/arch matrix for server artifacts (4 targets). Pure-Go (CGO_ENABLED=0)
 # cross-compiles every target from a single host — no per-OS runner needed.
 DIST_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
+# Remote-runner agent targets: macOS only.
+RUNNER_PLATFORMS := darwin/amd64 darwin/arm64
 
 # Reproducible build flags: -trimpath strips local paths; -buildid= zeroes the
 # build id; -s -w drop symbol/debug tables; -X stamps the version vars consumed
@@ -128,11 +130,10 @@ install-samples:
 	for d in samples/*/; do cp -R "$${d%/}" $(DEST)/; done
 	@echo "installed samples into $(DEST)"
 
-# Cross-compile the 4 release binaries named arbitron_<version>_<os>_<arch>
-# into dist/, then emit dist/SHA256SUMS with basename-only entries (so
-# `sha256sum -c SHA256SUMS` works from inside dist/). The artifact is the raw
-# binary (no tar/zip). This target builds from the CURRENT adapter/dashboard/dist
-# — CI runs `make ui` first to rebuild the SPA from source before calling it.
+# Cross-compile 4 server and 2 darwin runner binaries into dist/, then hash both
+# artifact families and the samples tarball with basename-only SHA256SUMS entries.
+# The release signature covers these checksums; artifacts are raw binaries.
+# Builds from CURRENT adapter/dashboard/dist — CI runs `make ui` first.
 dist: clean-dist samples-tarball
 	@mkdir -p dist
 	@for platform in $(DIST_PLATFORMS); do \
@@ -142,7 +143,14 @@ dist: clean-dist samples-tarball
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
 			-ldflags "$(DIST_LDFLAGS)" -o $$out ./cmd/arbitron || exit 1; \
 	done
-	@cd dist && (sha256sum arbitron_* > SHA256SUMS 2>/dev/null || shasum -a 256 arbitron_* > SHA256SUMS)
+	@for platform in $(RUNNER_PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		out=dist/arbitron-runner_$(VERSION)_$${os}_$${arch}; \
+		echo "building $$out"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
+			-ldflags "$(DIST_LDFLAGS)" -o $$out ./cmd/arbitron-runner || exit 1; \
+	done
+	@cd dist && (sha256sum arbitron_* arbitron-runner_* > SHA256SUMS 2>/dev/null || shasum -a 256 arbitron_* arbitron-runner_* > SHA256SUMS)
 	@echo "wrote dist/SHA256SUMS:"; cat dist/SHA256SUMS
 
 # Release = dist plus a detached cosign keyless signature over SHA256SUMS. Signing

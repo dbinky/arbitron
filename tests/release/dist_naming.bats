@@ -27,12 +27,14 @@ teardown() {
   make clean-dist >/dev/null 2>&1 || true
 }
 
-@test "dist produces exactly the 4 expected binaries plus SHA256SUMS" {
+@test "dist produces the 4 server binaries, the 2 darwin runner binaries and SHA256SUMS" {
   for name in \
     "arbitron_${TEST_VERSION}_darwin_amd64" \
     "arbitron_${TEST_VERSION}_darwin_arm64" \
     "arbitron_${TEST_VERSION}_linux_amd64" \
-    "arbitron_${TEST_VERSION}_linux_arm64"; do
+    "arbitron_${TEST_VERSION}_linux_arm64" \
+    "arbitron-runner_${TEST_VERSION}_darwin_amd64" \
+    "arbitron-runner_${TEST_VERSION}_darwin_arm64"; do
     [ -f "${REPO_ROOT}/dist/${name}" ] || {
       echo "missing artifact: ${name}"; return 1
     }
@@ -45,19 +47,36 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
-@test "SHA256SUMS has 5 well-formed basename-only lines (4 binaries + samples tarball)" {
+@test "dist ships no Linux runner (remote runners are macOS-only)" {
+  run sh -c 'ls "$1"/dist | grep -E "^arbitron-runner_.*_linux_"' _ "${REPO_ROOT}"
+  [ "$status" -ne 0 ]
+}
+
+@test "SHA256SUMS has 7 well-formed basename-only lines (4 server + 2 runner binaries + samples tarball)" {
   run wc -l < "${REPO_ROOT}/dist/SHA256SUMS"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | tr -d ' ')" -eq 5 ]
+  [ "$(echo "$output" | tr -d ' ')" -eq 7 ]
 
   # Every line: 64 hex + two spaces + a basename (no dist/ path prefix).
   while IFS= read -r line; do
-    [[ "$line" =~ ^[0-9a-f]{64}\ \ (arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+|arbitron_samples_${TEST_VERSION}\.tar\.gz)$ ]] || {
+    [[ "$line" =~ ^[0-9a-f]{64}\ \ (arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+|arbitron-runner_${TEST_VERSION}_darwin_[a-z0-9]+|arbitron_samples_${TEST_VERSION}\.tar\.gz)$ ]] || {
       echo "malformed or path-prefixed line: $line"; return 1
     }
   done < "${REPO_ROOT}/dist/SHA256SUMS"
   # Exactly one samples tarball, signed alongside the binaries.
   [ "$(grep -c "  arbitron_samples_${TEST_VERSION}\.tar\.gz$" "${REPO_ROOT}/dist/SHA256SUMS")" -eq 1 ]
+  [ "$(grep -c "  arbitron-runner_${TEST_VERSION}_darwin_" "${REPO_ROOT}/dist/SHA256SUMS")" -eq 2 ]
+}
+
+@test "the host-native darwin runner artifact reports the stamped version" {
+  hostos="$(go env GOOS)"
+  hostarch="$(go env GOARCH)"
+  if [ "$hostos" != "darwin" ]; then skip "runner artifacts are darwin-only"; fi
+  bin="${REPO_ROOT}/dist/arbitron-runner_${TEST_VERSION}_darwin_${hostarch}"
+  [ -x "$bin" ]
+  run "$bin" version
+  [ "$status" -eq 0 ]
+  [[ "$output" == "arbitron-runner ${TEST_VERSION} "* ]]
 }
 
 @test "samples tarball ships the _lib library folder" {

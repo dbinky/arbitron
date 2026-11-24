@@ -93,6 +93,7 @@ jobs:
           prerelease: ${{ github.event_name == 'workflow_dispatch' }}
           files: |
             dist/arbitron_*
+            dist/arbitron-runner_*
             dist/SHA256SUMS
             dist/SHA256SUMS.sig
             dist/SHA256SUMS.pem

@@ -124,7 +124,7 @@ _stage_runner_release() {
 }
 
 @test "ensure_runner_workspace_root uses an existing or user-creatable absolute root without sudo" {
-  install_fake sudo 'printf "sudo %s\n" "$*" >>"$MOCK_LOG"; exit 1'
+  install_fake sudo 'exit 1'
   export ARBITRON_RUNNER_WORKSPACE_ROOT="$TEST_SANDBOX/opt/arbitron/workspaces"
   ensure_runner_workspace_root
   [ "$CFG_RUNNER_WORKSPACE_ROOT" = "$TEST_SANDBOX/opt/arbitron/workspaces" ]
@@ -155,7 +155,7 @@ _stage_runner_release() {
   mkdir -p "$TEST_SANDBOX/locked"
   chmod 0500 "$TEST_SANDBOX/locked"
   # Fake sudo: record the argv, then perform the directory creation it asked for.
-  install_fake sudo 'printf "sudo %s\n" "$*" >>"$MOCK_LOG"; chmod 0700 "'"$TEST_SANDBOX"'/locked"; for a in "$@"; do last="$a"; done; mkdir -p "$last"'
+  install_fake sudo 'chmod 0700 "'"$TEST_SANDBOX"'/locked"; for a in "$@"; do last="$a"; done; mkdir -p "$last"'
   export ARBITRON_RUNNER_WORKSPACE_ROOT="$TEST_SANDBOX/locked/opt/arbitron/workspaces"
   export ARBITRON_RUNNER_ROOT_SUDO=yes
   ensure_runner_workspace_root
@@ -168,7 +168,7 @@ _stage_runner_release() {
   if [ "$(id -u)" -eq 0 ]; then skip "root can create any directory"; fi
   mkdir -p "$TEST_SANDBOX/locked"
   chmod 0500 "$TEST_SANDBOX/locked"
-  install_fake sudo 'printf "sudo %s\n" "$*" >>"$MOCK_LOG"; exit 0'
+  install_fake sudo 'exit 0'
   export ARBITRON_RUNNER_WORKSPACE_ROOT="$TEST_SANDBOX/locked/opt/arbitron/workspaces"
   export ARBITRON_RUNNER_ROOT_SUDO=no
   ensure_runner_workspace_root 2>"$TEST_SANDBOX/err"
@@ -184,7 +184,7 @@ _stage_runner_release() {
   if [ "$(id -u)" -eq 0 ]; then skip "root can create any directory"; fi
   mkdir -p "$TEST_SANDBOX/locked"
   chmod 0500 "$TEST_SANDBOX/locked"
-  install_fake sudo 'printf "sudo %s\n" "$*" >>"$MOCK_LOG"; exit 1'
+  install_fake sudo 'exit 1'
   export ARBITRON_RUNNER_WORKSPACE_ROOT="$TEST_SANDBOX/locked/opt/arbitron/workspaces"
   export ARBITRON_RUNNER_ROOT_SUDO=yes
   ensure_runner_workspace_root 2>"$TEST_SANDBOX/err"

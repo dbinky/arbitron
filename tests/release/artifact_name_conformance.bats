@@ -60,3 +60,16 @@ _name_from_make_pattern() {
   [ "$status" -eq 0 ]
   [ "$output" = "DIST_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64" ]
 }
+
+@test "install.sh runner artifact name matches the Makefile runner dist pattern" {
+  run bash -c 'ARBITRON_INSTALL_LIB_ONLY=1 source "$1"; arbitron_runner_artifact_name 1.2.3 darwin arm64' _ "$INSTALL_SH"
+  [ "$status" -eq 0 ]
+  [ "$output" = "arbitron-runner_1.2.3_darwin_arm64" ]
+  grep -qF 'out=dist/arbitron-runner_$(VERSION)_$${os}_$${arch}; \' "$MAKEFILE"
+  run grep -E '^RUNNER_PLATFORMS :=' "$MAKEFILE"
+  [ "$output" = "RUNNER_PLATFORMS := darwin/amd64 darwin/arm64" ]
+}
+
+@test "release.yml uploads the runner artifacts" {
+  grep -qF 'dist/arbitron-runner_*' "${REPO_ROOT}/.github/workflows/release.yml"
+}

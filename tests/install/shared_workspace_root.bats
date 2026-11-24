@@ -10,10 +10,13 @@ setup() {
   install_setup_sandbox
   install_isolate_path
   export ARBITRON_UNAME_S=Linux ARBITRON_UNAME_M=x86_64
+  export ARB_INSTALL_MODE=shared ARBITRON_INSTALL_TYPE=shared
   ARBITRON_INSTALL_LIB_ONLY=1 source "$INSTALL_SH"
-  install_mock recording-fake install
+  install_mock recording-install install
   install_mock recording-fake chown
-  export ARBITRON_INSTALL_TYPE=shared
+  hash -r
+  export ARB_ETC="$TEST_SANDBOX/etc/arbitron" ARB_LIB="$TEST_SANDBOX/var/lib/arbitron" ARB_LOG="$TEST_SANDBOX/var/log/arbitron"
+  mkdir -p "$ARB_ETC" "$ARB_LIB" "$ARB_LOG"
 }
 
 teardown() {
@@ -28,6 +31,7 @@ teardown() {
 }
 
 @test "create_system_layout creates /opt/arbitron 0755 root and workspaces 0750 for the service user" {
+  install_mock recording-fake install; hash -r
   export ARB_SVC_USER=arbitron SCFG_WORKSPACE_DIR=/opt/arbitron/workspaces
   create_system_layout
   grep -q "install -d -m 0755 -o root -g root /opt/arbitron$" "$MOCK_LOG"
@@ -64,6 +68,6 @@ teardown() {
 }
 
 @test "per-user (Local) installs keep ~/.arbitron/workspaces" {
-  export ARBITRON_INSTALL_TYPE=local
+  export ARB_INSTALL_MODE=local ARBITRON_INSTALL_TYPE=local
   [ "$(layout_workspaces)" = "$HOME/.arbitron/workspaces" ]
 }
