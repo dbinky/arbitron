@@ -239,7 +239,8 @@ func newRunnerStack(d runnerStackDeps) *runnerStack {
 		Events: recorder, Notifier: notifier, Clock: clock,
 		Interval: seconds(d.Config.ProbeIntervalSeconds), Jitter: seconds(d.Config.ProbeJitterSeconds),
 	})
-	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.Factory, Agents: d.Factory, Streams: d.Streams, Process: d.Process})
+	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.Factory, Agents: d.Factory, Streams: d.Streams, Process: d.Process,
+		Confirmations: runnerprobe.NewConfirmationExecutor(d.Factory)})
 	// Root shutdown unsubscribes after execution drains.
 	wake, stopWake := notifier.Subscribe()
 	dispatcher := runner.NewStepDispatcher(runner.DispatcherDeps{

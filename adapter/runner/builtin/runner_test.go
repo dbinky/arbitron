@@ -3,6 +3,8 @@ package builtin_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/process"
@@ -84,7 +86,7 @@ func assignment() runner.Assignment {
 }
 
 func newRunner(chats *fakeSelectors, streams *fakeStreams) *builtin.Runner {
-	return builtin.New(builtin.Deps{Chats: chats, Agents: chats, Streams: streams, Process: process.NewLocalProcessRunner()})
+	return builtin.New(builtin.Deps{Chats: chats, Agents: chats, Streams: streams, Process: process.NewLocalProcessRunner(), Confirmations: &fakeConfirmations{}})
 }
 
 func TestBuiltinRunner_ChatUsesInnerChatSelector(t *testing.T) {
@@ -181,12 +183,14 @@ func TestBuiltinRunner_RejectsMalformedJobs(t *testing.T) {
 }
 
 func TestBuiltinRunner_NewPanicsOnNilDeps(t *testing.T) {
-	ok := builtin.Deps{Chats: &fakeSelectors{}, Agents: &fakeSelectors{}, Streams: &fakeStreams{}, Process: process.NewLocalProcessRunner()}
+	ok := builtin.Deps{Chats: &fakeSelectors{}, Agents: &fakeSelectors{}, Streams: &fakeStreams{}, Process: process.NewLocalProcessRunner(), Confirmations: &fakeConfirmations{}}
 	for name, mutate := range map[string]func(*builtin.Deps){
-		"chats":   func(d *builtin.Deps) { d.Chats = nil },
-		"agents":  func(d *builtin.Deps) { d.Agents = nil },
-		"streams": func(d *builtin.Deps) { d.Streams = nil },
-		"process": func(d *builtin.Deps) { d.Process = nil },
+		"chats":                   func(d *builtin.Deps) { d.Chats = nil },
+		"agents":                  func(d *builtin.Deps) { d.Agents = nil },
+		"streams":                 func(d *builtin.Deps) { d.Streams = nil },
+		"process":                 func(d *builtin.Deps) { d.Process = nil },
+		"confirmations":           func(d *builtin.Deps) { d.Confirmations = nil },
+		"typed-nil confirmations": func(d *builtin.Deps) { d.Confirmations = (*fakeConfirmations)(nil) },
 	} {
 		d := ok
 		mutate(&d)
@@ -196,3 +200,46 @@ func TestBuiltinRunner_NewPanicsOnNilDeps(t *testing.T) {
 
 // Compile-time: the built-in runner satisfies the port the dispatcher consumes.
 var _ runner.StepRunner = (*builtin.Runner)(nil)
+
+type fakeConfirmations struct {
+	got  []provider.ResolvedBinding
+	dirs []string
+	seen []bool // the per-job dir existed during the call
+	res  runner.ConfirmationResult
+	err  error
+}
+
+func (f *fakeConfirmations) Confirm(_ context.Context, b provider.ResolvedBinding, dir string) (runner.ConfirmationResult, error) {
+	_, statErr := os.Stat(dir)
+	f.got, f.dirs, f.seen = append(f.got, b), append(f.dirs, dir), append(f.seen, statErr == nil)
+	return f.res, f.err
+}
+
+func TestBuiltinRunner_ConfirmUsesNativeVerifierInPerJobScratch(t *testing.T) {
+	scratch := t.TempDir()
+	conf := &fakeConfirmations{res: runner.ConfirmationResult{RequestedModel: "claude-opus-4-1", ExecutedModel: "claude-opus-4-1", SessionID: "s"}}
+	chats, streams := &fakeSelectors{}, &fakeStreams{}
+	r := builtin.New(builtin.Deps{Chats: chats, Agents: chats, Streams: streams, Process: process.NewLocalProcessRunner(), Confirmations: conf})
+	b := provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Provider: "claude-cli", Backend: "claude-code", Model: "claude-opus-4-1"}
+	job := runner.StepJob{Op: runner.OpConfirm, Binding: b, Confirmation: &runner.ConfirmationRequest{WorkDir: scratch}}
+
+	out, err := r.Run(context.Background(), assignment(), job)
+	require.NoError(t, err)
+	require.NotNil(t, out.Confirmation)
+	assert.Equal(t, conf.res, *out.Confirmation)
+	require.Len(t, conf.got, 1)
+	assert.Equal(t, b, conf.got[0])
+	assert.Equal(t, scratch, filepath.Dir(conf.dirs[0]), "a per-job directory under the configured scratch")
+	assert.True(t, conf.seen[0])
+	_, statErr := os.Stat(conf.dirs[0])
+	assert.True(t, os.IsNotExist(statErr), "the per-job directory is removed")
+	assert.Empty(t, chats.via, "confirmation never builds an unrestricted chat/agent run")
+
+	_, err = r.Run(context.Background(), assignment(), runner.StepJob{Op: runner.OpConfirm, Binding: b})
+	assert.ErrorIs(t, err, builtin.ErrMalformedJob)
+	assert.Len(t, conf.got, 1, "a malformed descriptor makes zero native launches")
+
+	conf.err = runner.WithOutcome(errors.New("limit"), runner.SourceOutcome{Class: runner.OutcomeExhausted})
+	_, err = r.Run(context.Background(), assignment(), job)
+	assert.Equal(t, runner.OutcomeExhausted, runner.ClassifyError(err).Class)
+}

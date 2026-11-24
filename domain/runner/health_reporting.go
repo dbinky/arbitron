@@ -60,6 +60,12 @@ func (r healthReportingRunner) Run(ctx context.Context, a Assignment, job StepJo
 		cancel()
 		return out, err
 	}
+	if job.Op == OpConfirm {
+		if verr := VerifyConfirmation(job.Binding.Model, out.Confirmation); verr != nil {
+			cancel()
+			return StepOutput{}, WithOutcome(verr, SourceOutcome{Class: OutcomeOther})
+		}
+	}
 	report := func() {
 		mu.Lock()
 		o := SourceOutcome{Class: OutcomeNone, Model: job.Binding.Model, HeadroomHint: seen.HeadroomHint, Windows: seen.Windows}

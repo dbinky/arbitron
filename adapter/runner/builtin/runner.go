@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"reflect"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -18,10 +20,11 @@ var ErrMalformedJob = errors.New("builtin runner: malformed step job")
 
 // Deps are the inner (undecorated) execution paths.
 type Deps struct {
-	Chats   engine.ChatProviderSelector
-	Agents  engine.AgentProviderSelector
-	Streams engine.InteractiveStreamSelector
-	Process engine.ProcessRunner
+	Chats         engine.ChatProviderSelector
+	Agents        engine.AgentProviderSelector
+	Streams       engine.InteractiveStreamSelector
+	Process       engine.ProcessRunner
+	Confirmations runner.ConfirmationExecutor
 }
 
 // Runner executes jobs placed on the built-in runner.
@@ -32,10 +35,22 @@ var _ runner.StepRunner = (*Runner)(nil)
 // New builds the built-in runner. Any nil dependency panics: a half-wired
 // built-in runner would silently fail every placed step.
 func New(d Deps) *Runner {
-	if d.Chats == nil || d.Agents == nil || d.Streams == nil || d.Process == nil {
-		panic("builtin: New requires Chats, Agents, Streams and Process")
+	if d.Chats == nil || d.Agents == nil || d.Streams == nil || d.Process == nil || isNilDep(d.Confirmations) {
+		panic("builtin: New requires Chats, Agents, Streams, Process and Confirmations")
 	}
 	return &Runner{d: d}
+}
+
+func isNilDep(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Interface, reflect.Chan:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // Run executes one placed job. Adapter errors are returned unchanged so the
@@ -78,6 +93,23 @@ func (r *Runner) Run(ctx context.Context, _ runner.Assignment, job runner.StepJo
 		}
 		res, err := r.d.Process.RunProcess(ctx, *job.Process)
 		return runner.StepOutput{Process: &res}, err
+	case runner.OpConfirm:
+		if job.Confirmation == nil || job.Confirmation.WorkDir == "" {
+			return runner.StepOutput{}, fmt.Errorf("%w: confirm op without a scratch request", ErrMalformedJob)
+		}
+		if err := os.MkdirAll(job.Confirmation.WorkDir, 0o700); err != nil {
+			return runner.StepOutput{}, fmt.Errorf("builtin runner: confirmation scratch: %w", err)
+		}
+		dir, err := os.MkdirTemp(job.Confirmation.WorkDir, "confirm-")
+		if err != nil {
+			return runner.StepOutput{}, fmt.Errorf("builtin runner: confirmation scratch: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
+		res, err := r.d.Confirmations.Confirm(ctx, job.Binding, dir)
+		if err != nil {
+			return runner.StepOutput{}, err
+		}
+		return runner.StepOutput{Confirmation: &res}, nil
 	default:
 		return runner.StepOutput{}, fmt.Errorf("%w: unknown op %q", ErrMalformedJob, job.Op)
 	}
