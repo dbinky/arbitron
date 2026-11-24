@@ -150,6 +150,8 @@ type DiscoverInput struct {
 	Runner         claudecli.CommandRunner
 	LunaRoute      config.LunaRoute
 	LunaRouteProbe provider.ConnectionProbe
+	Rules          provider.CapabilityRules
+	Confirmations  runner.ConfirmationExecutor
 }
 
 // Discover lists the sources this runner can serve. openai_subscription is
@@ -177,6 +179,10 @@ func Discover(ctx context.Context, in DiscoverInput) ([]Spec, map[string]string)
 				Families: append([]modelidentity.Family(nil), in.LunaRoute.Families...), Backends: []string{""}, Models: append([]string(nil), in.LunaRoute.Models...)},
 			Prober: LunaRouteAuth{Conn: in.LunaRouteProbe, Binding: b},
 		})
+	}
+	for idx := range specs {
+		src := &specs[idx].Source
+		src.Capabilities, src.UnavailableReason = BuildCapabilities(src.Kind, harness["claude"], in)
 	}
 	return specs, harness
 }

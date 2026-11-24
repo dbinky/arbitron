@@ -69,7 +69,7 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 	if err != nil {
 		return nil, err
 	}
-	specs, harness := sources.Discover(ctx, sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe})
+	specs, harness := sources.Discover(ctx, sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules})
 	inv := sources.New(specs, harness, time.Now)
 
 	sp, err := spool.Open(cfg.SpoolDir, cfg.OutputBufferFrames)
