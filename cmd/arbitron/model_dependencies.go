@@ -19,10 +19,12 @@ type ModelDependencies struct {
 	FetchTransport        http.RoundTripper
 	ProviderTransport     http.RoundTripper
 	AnnouncementTransport http.RoundTripper
-	Runner                claudecli.CommandRunner
-	Now                   func() time.Time
-	NewTicker             func(time.Duration) (<-chan time.Time, func())
-	ModelStateSecret      []byte
+	// TeamsTransport nil uses the production SSRF-guarded Teams client.
+	TeamsTransport   http.RoundTripper
+	Runner           claudecli.CommandRunner
+	Now              func() time.Time
+	NewTicker        func(time.Duration) (<-chan time.Time, func())
+	ModelStateSecret []byte
 }
 
 // Start is the single serving lifecycle for HTTP and standalone MCP. Build has

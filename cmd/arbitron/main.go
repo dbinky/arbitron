@@ -1136,6 +1136,10 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// Teams child reads the live webhook config through the store, so an admin
 	// toggle via the dashboard / MCP takes effect on the next notification.
 	externalNotifier := adaptnotif.NewDefaultExternalNotifier(settings, cfg.Server.PublicBaseURL, logger)
+	if modelDeps.TeamsTransport != nil {
+		externalNotifier = adaptnotif.NewMultiNotifier(logger, adaptnotif.NewLogNotifier(logger),
+			adaptnotif.NewTeamsNotifier(settings, cfg.Server.PublicBaseURL, outbound.NewGuardedClientWithTransport(10*time.Second, 0, modelDeps.TeamsTransport), logger))
+	}
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
