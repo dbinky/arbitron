@@ -24,7 +24,9 @@ type ProcessSpec struct {
 	Passthrough []string          // passthrough NAMES
 	TimeoutSecs int               // 0 = none
 	WorkDir     string            // canonical {{workspace}} for affinity; "" = no workspace
-	Bundle      *ScriptBundleRef  // nil in Phase 1
+	Bundle      *ScriptBundleRef  // nil for unbundled scripts
+	Portable    bool              // author opt-in to remote process placement
+	Requires    []string          // bare executable names required on the runner
 }
 
 // ScriptBundleRef names a content-addressed script bundle (Phase 3).

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -31,6 +32,7 @@ type ScriptExecutor struct {
 	fileReader  engine.FileReader
 	passthrough []string
 	runner      engine.ProcessRunner
+	bundles     runner.BundleStore
 }
 
 // NewScriptExecutor creates a ScriptExecutor. envPassthrough names the engine
@@ -42,6 +44,9 @@ func NewScriptExecutor(fr engine.FileReader, envPassthrough []string, pr engine.
 	}
 	return &ScriptExecutor{fileReader: fr, passthrough: envPassthrough, runner: pr}
 }
+
+// SetBundleStore enables bundling for explicitly portable scripts.
+func (e *ScriptExecutor) SetBundleStore(b runner.BundleStore) { e.bundles = b }
 
 // Execute resolves the script path, runs it with the configured interpreter,
 // pipes the variable store as JSON to stdin, and parses stdout as JSON.
@@ -71,7 +76,7 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 	}
 
 	workDir, _ := engine.WorkDirFromVars(vars)
-	res, runErr := e.runner.RunProcess(ctx, engine.ProcessSpec{
+	spec := engine.ProcessSpec{
 		Kind:        engine.ProcessScript,
 		Command:     interpreter,
 		Args:        append([]string{scriptPath}, args...),
@@ -81,7 +86,21 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 		Passthrough: append([]string(nil), e.passthrough...),
 		TimeoutSecs: node.Config.TimeoutSeconds,
 		WorkDir:     workDir,
-	})
+		Portable:    node.Config.Portable,
+		Requires:    append([]string(nil), node.Config.Requires...),
+	}
+	if e.bundles != nil && node.Config.Portable {
+		ref, data, err := BuildScriptBundle(scriptPath)
+		if err != nil {
+			return nil, fmt.Errorf("script %q: portable bundle: %w", node.ID, err)
+		}
+		if err := e.bundles.Put(ctx, ref, data); err != nil {
+			return nil, fmt.Errorf("script %q: store bundle: %w", node.ID, err)
+		}
+		spec.Bundle = &ref
+		spec.Args[0] = "./" + ref.Entrypoint
+	}
+	res, runErr := e.runner.RunProcess(ctx, spec)
 
 	result := &engine.NodeResult{
 		ScriptStdout:   res.Stdout,

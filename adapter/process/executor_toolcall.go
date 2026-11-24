@@ -54,11 +54,14 @@ func (e *ToolCallExecutor) Execute(ctx context.Context, node workflow.Node, vars
 	res, runErr := e.runner.RunProcess(ctx, engine.ProcessSpec{
 		Kind:        engine.ProcessToolCall,
 		Command:     node.Config.Command,
+		Dir:         workDir,
 		Args:        args,
 		NodeEnv:     resolveNodeEnv(node.Config.Env, vars),
 		Passthrough: append([]string(nil), e.passthrough...),
 		TimeoutSecs: node.Config.TimeoutSeconds,
 		WorkDir:     workDir,
+		Portable:    node.Config.Portable,
+		Requires:    append([]string(nil), node.Config.Requires...),
 	})
 
 	result := &engine.NodeResult{
