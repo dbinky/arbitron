@@ -449,3 +449,82 @@ func TestStepCommitRepo_SuspendCommitCompletesJobsKeepsInvocationOpen(t *testing
 	require.True(t, ok)
 	assert.Equal(t, engine.StepCommitAdvance, replay.Mode, "an advance commit supersedes the suspension for replay")
 }
+
+func nonPortableReceipt(f runner.Fence, res engine.ResourceFenceRef) engine.StepCompletion {
+	return engine.StepCompletion{JobFence: jobRef(f), Workspace: &engine.WorkspaceCompletion{NonPortable: true, Resource: res}}
+}
+
+func TestStepCommitRepo_NonPortableReceiptCommitsWithoutCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	fx := newStepFixture(t, setupTestDB(t).DB)
+	fx.baseline(t)
+	require.NoError(t, fx.homes.SetNonPortable(ctx, fx.run, runner.NonPortablePromisorReason))
+	j, f := fx.job(t, "node", runner.AffinityWorkspace)
+	res := fx.claim(t, j, f)
+	receipt := nonPortableReceipt(f, res)
+	c := fx.advance("B", receipt)
+
+	require.NoError(t, fx.repo.CommitStep(ctx, c))
+	s := fx.snapshot(t)
+	assert.Equal(t, "completed", s.Jobs[j.ID], "the job completes")
+	assert.Zero(t, fx.busySlots(t))
+	assert.False(t, s.LeaseActive, "the exact claim is released")
+	assert.Equal(t, "B", s.Current, "result, variables and continuation commit")
+	assert.Equal(t, 1, s.StepCommits)
+	assert.Equal(t, int64(1), s.Pointer, "no candidate is promoted; checkpoint_version is unchanged")
+	assert.Equal(t, map[int64]string{1: "committed"}, s.Candidates)
+	assert.True(t, s.Dirty, "interim RR-08 rule; P3 T16 Cycle 3 commits the local checkpoint instead")
+	assert.Equal(t, runner.NonPortablePromisorReason, s.Reason, "the marker stays until a portable candidate is promoted")
+	var ref sql.NullString
+	require.NoError(t, fx.db.QueryRow(`SELECT checkpoint_ref FROM step_commit_operations WHERE invocation_id = ? AND job_id = ?`,
+		fx.inv.String(), j.ID.String()).Scan(&ref))
+	assert.False(t, ref.Valid, "a non-portable receipt links no catalog checkpoint")
+
+	replay, ok, err := fx.repo.CommittedResult(ctx, fx.inv)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []engine.StepCompletion{receipt}, replay.Completions)
+	require.NoError(t, fx.repo.CommitStep(ctx, c), "an identical replay is idempotent")
+	assert.Equal(t, s, fx.snapshot(t))
+}
+
+func TestStepCommitRepo_NonPortableReceiptRejectedWhenHomePortable(t *testing.T) {
+	ctx := context.Background()
+	for name, arrange := range map[string]func(t *testing.T, fx stepFixture){
+		"a portable home": func(*testing.T, stepFixture) {},
+		"a non-portable home that is not the built-in server home": func(t *testing.T, fx stepFixture) {
+			require.NoError(t, fx.homes.SetNonPortable(ctx, fx.run, runner.NonPortablePromisorReason))
+			_, err := fx.db.Exec(`UPDATE workspace_homes SET runner_id = 'mac-1' WHERE run_id = ?`, fx.run.String())
+			require.NoError(t, err)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fx := newStepFixture(t, setupTestDB(t).DB)
+			fx.baseline(t)
+			arrange(t, fx)
+			j, f := fx.job(t, "node", runner.AffinityWorkspace)
+			res := fx.claim(t, j, f)
+			before := fx.snapshot(t)
+
+			err := fx.repo.CommitStep(ctx, fx.advance("B", nonPortableReceipt(f, res)))
+			require.ErrorIs(t, err, engine.ErrInvalidStepCompletion)
+			assert.Equal(t, before, fx.snapshot(t), "the job stays running and the claim stays held")
+		})
+	}
+}
+
+func TestStepCommitRepo_CandidatePromotionClearsNonPortable(t *testing.T) {
+	ctx := context.Background()
+	fx := newStepFixture(t, setupTestDB(t).DB)
+	base := fx.baseline(t)
+	require.NoError(t, fx.homes.SetNonPortable(ctx, fx.run, runner.NonPortablePromisorReason))
+	j, f := fx.job(t, "node", runner.AffinityWorkspace)
+	res := fx.claim(t, j, f)
+	ref := fx.candidate(t, 2, 'a', base, f, res) // all promisor objects present again
+
+	require.NoError(t, fx.repo.CommitStep(ctx, fx.advance("B", workspaceReceipt(f, ref, res))))
+	s := fx.snapshot(t)
+	assert.Empty(t, s.Reason, "promoting a normal candidate clears the non-portable marker in the same transaction")
+	assert.Equal(t, int64(2), s.Pointer)
+	assert.False(t, s.Dirty)
+}

@@ -225,13 +225,15 @@ func consumeCompletionTx(ctx context.Context, tx *sql.Tx, c engine.StepCommit, c
 			return err
 		}
 		if w.NonPortable {
-			// RR-08 non-portable branch: Cycle 7.
-			return fmt.Errorf("%w: job %s non-portable receipt is not supported yet", engine.ErrInvalidStepCompletion, f.JobID)
+			if err := commitNonPortableTx(ctx, tx, c.RunID, f, now); err != nil {
+				return err
+			}
+		} else {
+			if err := promoteCandidateTx(ctx, tx, c.RunID, f, *w, now); err != nil {
+				return err
+			}
+			checkpointRef = w.Ref
 		}
-		if err := promoteCandidateTx(ctx, tx, c.RunID, f, *w, now); err != nil {
-			return err
-		}
-		checkpointRef = w.Ref
 	}
 	if err := completeJobTx(ctx, tx, f, "step:"+uuidToString(c.InvocationID), checkpointRef, now); err != nil {
 		return fmt.Errorf("step commit: %w", err)
@@ -503,4 +505,29 @@ func (r *StepCommitRepo) CommittedResult(ctx context.Context, invocationID uuid.
 	}
 	return &engine.StepCommit{Mode: engine.StepCommitSuspend, RunID: runID, InvocationID: invocationID, NodeID: nodeID,
 		Suspension: s, Completions: comps}, true, nil
+}
+
+// commitNonPortableTx is the RR-08 branch: the home carries the non-portable
+// marker and lives on the built-in server home, and the job ran on the
+// built-in runner. No candidate is promoted and checkpoint_version is
+// unchanged; dirty = 1 records that the working copy is ahead of the committed
+// base. P3 T16 Cycle 3 replaces dirty = 1 with the RR-17 B local-checkpoint
+// promotion (local_checkpoint = LocalRef, dirty = 0).
+func commitNonPortableTx(ctx context.Context, tx groupQueryer, runID uuid.UUID, f runner.Fence, now string) error {
+	var reason, owner string
+	err := tx.QueryRowContext(ctx, `SELECT non_portable_reason, runner_id FROM workspace_homes WHERE run_id = ?`, uuidToString(runID)).Scan(&reason, &owner)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && reason == "") {
+		return fmt.Errorf("%w: run %s has a portable home; a non-portable receipt is not valid", engine.ErrInvalidStepCompletion, runID)
+	}
+	if err != nil {
+		return fmt.Errorf("step commit: reading home: %w", err)
+	}
+	if (owner != string(runner.ServerHome) && owner != string(runner.BuiltInRunnerID)) || f.RunnerID != runner.BuiltInRunnerID {
+		return fmt.Errorf("%w: non-portable home of run %s is on %q and job %s ran on %q; both must be the built-in server home",
+			engine.ErrInvalidStepCompletion, runID, owner, f.JobID, f.RunnerID)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET dirty = 1, updated_at = ? WHERE run_id = ?`, now, uuidToString(runID)); err != nil {
+		return fmt.Errorf("step commit: marking non-portable home dirty: %w", err)
+	}
+	return nil
 }
