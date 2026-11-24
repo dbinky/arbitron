@@ -478,3 +478,28 @@ assert_run_isolated() {
   [[ "$stderr" != *HOSTILE-ENV-BEGIN* ]]
   [ ! -s "$T/gremlins.count" ]
 }
+
+# --- A suite that fails only inside the sandbox -------------------------------
+
+# The tool's coverage run fails (a test that only breaks in the sandbox) after a
+# large log. The failing test names and the first failure's lines must lead the
+# node error, within its first 4KB, ahead of the log the engine cuts at 1MB.
+@test "a failing in-sandbox suite is summarized at the top of stderr" {
+  cat > "$STUBS/gremlins" <<'EOF'
+#!/bin/sh
+i=0; while [ "$i" -lt 3000 ]; do echo "ok  	noise/pkg$i	0.01s (cached) padding padding padding"; i=$((i + 1)); done
+printf -- '--- FAIL: TestProxyTLS (0.02s)\n    proxy_test.go:41: remote error: tls: bad certificate\nFAIL\ttoy/proxy\t0.3s\n'
+echo "failed to gather coverage" >&2
+exit 1
+EOF
+  chmod +x "$STUBS/gremlins"
+  run_it
+  [ "$status" -eq 1 ]
+  head4k="$(printf '%s' "$stderr" | head -c 4096)"
+  [[ "$head4k" == *"--- FAIL: TestProxyTLS"* ]] || { printf '%s\n' "$head4k"; return 1; }
+  [[ "$head4k" == *"bad certificate"* ]]
+  [[ "$head4k" == *"toy/proxy"* ]]
+  # The full log still follows, and is kept on disk.
+  [[ "$stderr" == *"failed to gather coverage"* ]]
+  [ -s "$WS/harden/run/go.log" ]
+}
