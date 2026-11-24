@@ -934,6 +934,14 @@ func validateErrorBehaviors(wf *Workflow) []ValidationError {
 				NodeID:  n.ID,
 			})
 		}
+		// timeoutRetryScale: 0 = default (2), 1 = keep the timeout unchanged.
+		if n.Config.TimeoutRetryScale < 0 {
+			errs = append(errs, ValidationError{
+				Code:    "INVALID_TIMEOUT_RETRY_SCALE",
+				Message: "node " + n.ID + " has a negative timeoutRetryScale: " + strconv.Itoa(n.Config.TimeoutRetryScale) + " (use 1 to keep the timeout unchanged on retry)",
+				NodeID:  n.ID,
+			})
+		}
 	}
 
 	return errs

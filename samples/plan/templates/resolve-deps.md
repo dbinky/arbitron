@@ -13,7 +13,13 @@ feature code.
 ## The gaps to resolve
 {{deps-assess.notes}}
 
-{{deps-assess.gaps}}
+{{deps-count.gaps}}
+
+Lines prefixed `HUMAN-ONLY:` come from a script that greps the committed plans'
+unchecked steps for work no implementation agent can do (operator observation,
+manual checks, live vendor evidence, captured production fixtures, real
+credentials). `NON-BLOCKING:` lines are context only. `UNREADABLE:` means a
+check could not read its input; look at the plans yourself.
 
 ## Process (follow exactly)
 1. **Ground first (read-only).** For each gap, open the named design/plan doc and the
@@ -35,6 +41,17 @@ feature code.
    For a `DECISION:` gap, the resolution is the human's choice itself: state it as a
    concrete rule an implementer can follow without asking again (what to build, what
    counts as success, what happens on failure).
+   For **work no agent can do** (`HUMAN-ONLY:` lines, and DECISIONs about operator
+   observation, live evidence, captured fixtures or credentials), the human picks:
+   drop the step; re-scope it into something an agent can verify in the repo (e.g.
+   a recorded fixture committed under testdata); or keep it as a person's job by
+   moving it OUT of the checkbox steps into a section headed
+   "Operator follow-up (not for implementation)" as plain bullets. An unticked
+   `- [ ]` box that only a person can tick stalls the implementation loop, and the
+   script re-checks the plans after you finish.
+   For a **retained test the plan contradicts**, the human decides which behaviour
+   wins. If the test changes, name the test and the authorized change in the
+   consuming task's steps; otherwise change the plan to keep the tested behaviour.
 4. **Patch the blocked doc(s) in place.** For a BLOCKING gap, add the producer task
    (full TDD steps in the plan's existing structure) and/or record the decision in the
    phase design's Data Provenance section. For a DECISION, record the choice where the
@@ -58,6 +75,7 @@ feature code.
 ## Finish
 When every gap is resolved and the docs are patched and committed, emit the completion
 result with ONLY `{updated_docs, notes}` (`updated_docs` = array of doc paths you
-changed). The workflow then re-aligns and re-checks the plans ONCE; anything still open
-blocks the stage. If you could not fully close a gap, say so in `notes` so the
-human sees it.
+changed). The workflow then re-aligns and re-checks the plans. There are at most two
+of these human rounds; anything still open after the second blocks the stage. Keep
+every plan's `- [ ]` TDD steps intact: a plan left without checkbox steps stops the
+stage. If you could not fully close a gap, say so in `notes` so the human sees it.
