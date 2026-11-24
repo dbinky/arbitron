@@ -254,7 +254,10 @@ func TestPlace_AffinityRestrictsRunner(t *testing.T) {
 
 	ws := anthropicReq(runner.AffinityWorkspace)
 	s := snap(runners, sources)
-	assert.Equal(t, runner.BuiltInRunnerID, runner.Place(ws, s, runner.PlacementPolicy{}).Runner, "no home => built-in")
+	noHome := runner.Place(ws, s, runner.PlacementPolicy{})
+	require.True(t, noHome.Placed, "no home => ordinary ranked placement")
+	assert.Empty(t, noHome.Tier, "no home => no stay/move tier")
+	assert.Contains(t, []runner.RunnerID{runner.BuiltInRunnerID, "mac-mini"}, noHome.Runner)
 	s.Homes[ws.RunID] = runner.Home{RunID: ws.RunID, RunnerID: "mac-mini", Generation: 1}
 	assert.Equal(t, runner.RunnerID("mac-mini"), runner.Place(ws, s, runner.PlacementPolicy{}).Runner, "home runner")
 
@@ -262,7 +265,11 @@ func TestPlace_AffinityRestrictsRunner(t *testing.T) {
 	sess.PinnedRunner = "mac-mini"
 	assert.Equal(t, runner.RunnerID("mac-mini"), runner.Place(sess, snap(runners, sources), runner.PlacementPolicy{}).Runner)
 	sess.PinnedRunner = ""
-	assert.Equal(t, runner.BuiltInRunnerID, runner.Place(sess, snap(runners, sources), runner.PlacementPolicy{}).Runner)
+	firstTurn := runner.Place(sess, snap(runners, sources), runner.PlacementPolicy{})
+	wsSame := sess
+	wsSame.Affinity = runner.AffinityWorkspace
+	assert.Equal(t, runner.Place(wsSame, snap(runners, sources), runner.PlacementPolicy{}), firstTurn, "no pin => identical to a workspace step")
+	require.True(t, firstTurn.Placed)
 }
 
 func TestPlace_LocalHarnessBuiltInOnly(t *testing.T) {
@@ -409,11 +416,11 @@ func TestPlace_LowerUtilisationWinsOnEqualHeadroom(t *testing.T) {
 func TestPlace_HealthierTelemetryWinsUnknownIsNeutral(t *testing.T) {
 	runners := []runner.Runner{online("a"), online("b")}
 	s := snap(runners, []runner.Source{withEvidenceFor(anthropicSub("a"), anthropicReq(runner.AffinityNone)), withEvidenceFor(anthropicSub("b"), anthropicReq(runner.AffinityNone))})
-	s.Telemetry["a"] = runner.Telemetry{MemPressure: strp("critical"), Thermal: strp("serious")}
+	s.Telemetry["a"] = runner.Telemetry{SampledAt: placeNow, MemPressure: strp("critical"), Thermal: strp("serious")}
 	// b has no telemetry at all: unknown is neutral, so b (penalty 0) beats a (penalty 3).
 	for i := 0; i < 20; i++ {
 		req := anthropicReq(runner.AffinityNone)
-		assert.Equal(t, runner.RunnerID("b"), runner.Place(req, s, runner.PlacementPolicy{}).Runner)
+		assert.Equal(t, runner.RunnerID("b"), runner.Place(req, s, runner.PlacementPolicy{TelemetryMaxAge: 15 * time.Second}).Runner)
 	}
 }
 
