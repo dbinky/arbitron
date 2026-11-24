@@ -17,8 +17,8 @@ import (
 // unacked-frame capacity.
 func Run(t *testing.T, newSpool func(t *testing.T, capacity int) runneragent.Spool) {
 	ctx := context.Background()
-	a := runneragent.JobRef{JobID: "job-a", Generation: 1}
-	b := runneragent.JobRef{JobID: "job-b", Generation: 2}
+	a := runneragent.JobRef{JobID: "0b9a4c1e-6f0d-4c2a-9d3e-00000000000a", Generation: 1}
+	b := runneragent.JobRef{JobID: "0b9a4c1e-6f0d-4c2a-9d3e-00000000000b", Generation: 2}
 
 	t.Run("full spool refuses without storing or dropping", func(t *testing.T) {
 		s := newSpool(t, 2)

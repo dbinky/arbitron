@@ -76,7 +76,7 @@ func New(cfg Config, deps Deps) (*Agent, error) {
 	if cfg.BackoffCap == 0 {
 		cfg.BackoffCap = 30 * time.Second
 	}
-	if cfg.OS == "" || cfg.Arch == "" || cfg.ProtocolVersion <= 0 || cfg.RunnerVersion == "" || cfg.WorkspaceRoot == "" || cfg.ScratchRoot == "" || cfg.Heartbeat <= 0 || cfg.ProbeInterval <= 0 || cfg.BackoffBase <= 0 || cfg.BackoffCap < cfg.BackoffBase {
+	if cfg.OS == "" || cfg.Arch == "" || cfg.ProtocolVersion <= 0 || cfg.RunnerVersion == "" || cfg.ScratchRoot == "" || cfg.Heartbeat <= 0 || cfg.ProbeInterval <= 0 || cfg.BackoffBase <= 0 || cfg.BackoffCap < cfg.BackoffBase {
 		return nil, fmt.Errorf("runneragent: invalid config")
 	}
 	if deps.Clock == nil {
