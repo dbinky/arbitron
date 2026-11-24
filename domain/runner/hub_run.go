@@ -30,7 +30,7 @@ func (h *Hub) Run(ctx context.Context, a Assignment, job StepJob) (StepOutput, e
 	if err != nil {
 		return StepOutput{}, err
 	}
-	if retained && receipt.Result != nil && job.Op == OpChat {
+	if retained && receipt.Result != nil && (job.Op == OpChat || job.Op == OpConfirm) {
 		return remoteOutput(receipt.Result)
 	}
 	now := h.now()
@@ -115,6 +115,18 @@ func dispatchMsg(j *remoteJob) Outbound {
 // buildDispatch builds the hermetic wire request. It never calls
 // Binding.RevealKey and never copies BaseURL, ConnectionRef or WorkDir.
 func buildDispatch(a Assignment, job StepJob, leaseUntil time.Time) (DispatchPayload, error) {
+	if job.Op == OpConfirm {
+		if job.Confirmation == nil || job.Binding.Model == "" {
+			return DispatchPayload{}, fmt.Errorf("%w: confirm job without a descriptor", ErrRemoteOpUnsupported)
+		}
+		if k := a.Job.Group.Kind; k != CredAnthropicSubscription && k != CredOpenAISubscription {
+			return DispatchPayload{}, fmt.Errorf("%w: %s", ErrRemoteCredential, k)
+		}
+		b := job.Binding
+		return DispatchPayload{Op: OpConfirm, LeaseUntil: leaseUntil, Confirmation: &ConfirmationDispatch{
+			Model: b.Model, Backend: b.Backend, Provider: b.Provider,
+			ContextWindow: string(b.ContextWindow), Effort: string(b.Effort)}}, nil
+	}
 	if job.Op != OpChat && job.Op != OpStream {
 		return DispatchPayload{}, fmt.Errorf("%w: %s", ErrRemoteOpUnsupported, job.Op)
 	}
@@ -175,8 +187,12 @@ func remoteOutput(res *RemoteResult) (StepOutput, error) {
 	if !res.OK {
 		return StepOutput{}, remoteError(res)
 	}
+	if res.Confirmation != nil {
+		c := *res.Confirmation
+		return StepOutput{Confirmation: &c}, nil
+	}
 	if res.Chat == nil {
-		return StepOutput{}, WithOutcome(fmt.Errorf("%w: result carries no chat payload", ErrRemoteStepFailed), SourceOutcome{Class: OutcomeOther})
+		return StepOutput{}, WithOutcome(fmt.Errorf("%w: result carries no payload", ErrRemoteStepFailed), SourceOutcome{Class: OutcomeOther})
 	}
 	resp := &engine.ChatResponse{Output: res.Chat.Output, Model: res.Chat.Model, TokensIn: res.Chat.TokensIn,
 		TokensOut: res.Chat.TokensOut, SessionID: res.Chat.SessionID}

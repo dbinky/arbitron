@@ -31,6 +31,19 @@ func remoteAssignment(id runner.RunnerID) runner.Assignment {
 	return runner.Assignment{Job: runner.Job{ID: jobID, RunnerID: id}, Fence: runner.Fence{JobID: jobID, RunnerID: id, Generation: 1}}
 }
 
+func TestRun_ConfirmNeverShipsTheServerScratch(t *testing.T) {
+	job := runner.StepJob{Op: runner.OpConfirm, Binding: provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-opus-5-5"}, Confirmation: &runner.ConfirmationRequest{WorkDir: "/srv/arbitron/workspaces/.runner-confirm"}}
+	exact := &runner.ConfirmationResult{RequestedModel: "claude-opus-5-5", ExecutedModel: "claude-opus-5-5", SessionID: "rs"}
+	h := &recordingHub{out: runner.StepOutput{Confirmation: exact}}
+	out, err := (&Runner{hub: h}).Run(context.Background(), remoteAssignment("mac-a"), job)
+	require.NoError(t, err)
+	assert.Equal(t, exact, out.Confirmation)
+	require.Len(t, h.jobs, 1)
+	require.NotNil(t, h.jobs[0].Confirmation)
+	assert.Empty(t, h.jobs[0].Confirmation.WorkDir, "the runner uses its own scratch root")
+	assert.Equal(t, "/srv/arbitron/workspaces/.runner-confirm", job.Confirmation.WorkDir, "the caller's job is untouched")
+}
+
 func TestRun_HandsTheHubAHermeticCopy(t *testing.T) {
 	revealed := false
 	job := runner.StepJob{Op: runner.OpChat,

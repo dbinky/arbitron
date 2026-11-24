@@ -49,6 +49,11 @@ func hermetic(job runner.StepJob) runner.StepJob {
 	out.Binding.RevealKey = nil
 	out.Binding.BaseURL = ""
 	out.Binding.Extras = nil
+	if job.Confirmation != nil {
+		c := *job.Confirmation
+		c.WorkDir = ""
+		out.Confirmation = &c
+	}
 	if job.Chat != nil {
 		c := *job.Chat
 		c.WorkDir = ""

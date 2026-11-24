@@ -135,10 +135,11 @@ type RemoteChatResult struct {
 
 // RemoteResult is a terminal job result. ErrorText is already sanitized by the runner.
 type RemoteResult struct {
-	OK        bool
-	Chat      *RemoteChatResult
-	Outcome   SourceOutcome
-	ErrorText string
+	Confirmation *ConfirmationResult
+	OK           bool
+	Chat         *RemoteChatResult
+	Outcome      SourceOutcome
+	ErrorText    string
 }
 
 // ChatDispatch is the hermetic chat request sent to a runner. SECURITY: it has
@@ -162,11 +163,17 @@ type ChatDispatch struct {
 	Tools                         []string
 }
 
+// ConfirmationDispatch is the hermetic native exact-model descriptor.
+type ConfirmationDispatch struct {
+	Model, Backend, Provider, EndpointFingerprint, ContextWindow, Effort string
+}
+
 // DispatchPayload is an offer of one job generation.
 type DispatchPayload struct {
-	Op         OpType
-	Chat       *ChatDispatch
-	LeaseUntil time.Time
+	Confirmation *ConfirmationDispatch
+	Op           OpType
+	Chat         *ChatDispatch
+	LeaseUntil   time.Time
 }
 
 // AckPayload acknowledges output through Seq, or the terminal result.
