@@ -179,4 +179,13 @@ func TestTurnRecoveryProof_Validate(t *testing.T) {
 	} {
 		assert.ErrorIs(t, p.Validate(), ErrTurnRecoveryProofInvalid, name)
 	}
+	assert.NoError(t, TurnRecoveryProof{IntentID: uuid.New(), StaleHolder: true}.Validate())
+	for name, p := range map[string]TurnRecoveryProof{
+		"stale holder with a job":      {IntentID: uuid.New(), StaleHolder: true, Jobs: []JobFenceRef{job}},
+		"stale holder with a resource": {IntentID: uuid.New(), StaleHolder: true, Resource: res},
+		"stale holder adoption":        {IntentID: uuid.New(), StaleHolder: true, Adopted: true},
+		"stale holder without intent":  {StaleHolder: true},
+	} {
+		assert.ErrorIs(t, p.Validate(), ErrTurnRecoveryProofInvalid, name)
+	}
 }

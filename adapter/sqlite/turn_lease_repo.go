@@ -18,6 +18,7 @@ var _ engine.TurnLeaseStore = (*TurnLeaseRepo)(nil)
 type TurnLeaseRepo struct {
 	db     *sql.DB
 	holder string
+	bootID string
 	now    func() time.Time
 }
 
@@ -29,6 +30,9 @@ func NewTurnLeaseRepo(db *sql.DB, holder string) *TurnLeaseRepo {
 
 // SetClock replaces the clock (tests).
 func (r *TurnLeaseRepo) SetClock(now func() time.Time) { r.now = now }
+
+// SetBootID sets this process's shared server boot ID before use.
+func (r *TurnLeaseRepo) SetBootID(bootID string) { r.bootID = bootID }
 
 // Acquire inserts the lease or takes over a RELEASED row in one statement. An
 // occupied row is never stolen, even when expires_at has passed: expiry alone
@@ -43,14 +47,15 @@ func (r *TurnLeaseRepo) Acquire(ctx context.Context, key string, ttl time.Durati
 	token := uuid.New()
 	exp := now.Add(ttl)
 	var gen int64
-	err := r.db.QueryRowContext(ctx, `INSERT INTO turn_leases (key, token, generation, expires_at, holder)
-VALUES (?, ?, 1, ?, ?)
+	err := r.db.QueryRowContext(ctx, `INSERT INTO turn_leases (key, token, generation, expires_at, holder, boot_id)
+VALUES (?, ?, 1, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
     token      = excluded.token,
     expires_at = excluded.expires_at,
-    holder     = excluded.holder
+    holder     = excluded.holder,
+    boot_id    = excluded.boot_id
 WHERE turn_leases.token IS NULL
-RETURNING generation`, key, token.String(), exp.UnixMilli(), r.holder).Scan(&gen)
+RETURNING generation`, key, token.String(), exp.UnixMilli(), r.holder, r.bootID).Scan(&gen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return engine.TurnLease{}, fmt.Errorf("turn lease %s: %w", key, engine.ErrInteractiveTurnInProgress)
 	}

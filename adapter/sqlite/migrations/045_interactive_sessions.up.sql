@@ -9,7 +9,8 @@ CREATE TABLE turn_leases (
     token      TEXT,
     generation INTEGER NOT NULL DEFAULT 1,
     expires_at INTEGER NOT NULL DEFAULT 0,
-    holder     TEXT NOT NULL DEFAULT ''
+    holder     TEXT NOT NULL DEFAULT '',
+    boot_id    TEXT NOT NULL DEFAULT ''
 );
 
 -- An accepted interactive operation, persisted before dispatch/ack and

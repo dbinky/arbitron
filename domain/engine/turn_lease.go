@@ -309,14 +309,22 @@ var ErrTurnRecoveryProofInvalid = errors.New("engine: turn recovery proof is inv
 // TurnRecoveryProof is built ONLY by P4 T10's TurnRecoveryCoordinator from
 // durable job/resource/stop records. Elapsed TTL is never part of it.
 type TurnRecoveryProof struct {
-	IntentID uuid.UUID
-	Adopted  bool
-	Jobs     []JobFenceRef
-	Resource *ResourceFenceRef
+	// StaleHolder proves an earlier boot accepted an intent but never dispatched it.
+	StaleHolder bool
+	IntentID    uuid.UUID
+	Adopted     bool
+	Jobs        []JobFenceRef
+	Resource    *ResourceFenceRef
 }
 
 // Validate checks the proof's shape; the store re-checks every fact in SQL.
 func (p TurnRecoveryProof) Validate() error {
+	if p.StaleHolder {
+		if p.IntentID == uuid.Nil || p.Adopted || len(p.Jobs) != 0 || p.Resource != nil {
+			return fmt.Errorf("%w: a stale-holder proof names only the intent", ErrTurnRecoveryProofInvalid)
+		}
+		return nil
+	}
 	if p.IntentID == uuid.Nil {
 		return fmt.Errorf("%w: no intent", ErrTurnRecoveryProofInvalid)
 	}

@@ -26,7 +26,7 @@ func TestMigration045_CreatesSessionTablesAndColumns(t *testing.T) {
 	db := setupTestDB(t)
 
 	leases := tableColumns(t, db, "turn_leases")
-	for _, c := range []string{"key", "token", "generation", "expires_at", "holder"} {
+	for _, c := range []string{"key", "token", "generation", "expires_at", "holder", "boot_id"} {
 		assert.True(t, leases[c], "turn_leases.%s", c)
 	}
 	intents := tableColumns(t, db, "turn_intents")

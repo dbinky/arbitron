@@ -41,7 +41,8 @@ func (r *TurnLeaseRepo) RecoverTurnLease(ctx context.Context, old engine.TurnLea
 
 	var tok sql.NullString
 	var gen int64
-	err = tx.QueryRowContext(ctx, `SELECT token, generation FROM turn_leases WHERE key = ?`, old.Key).Scan(&tok, &gen)
+	var heldBoot string
+	err = tx.QueryRowContext(ctx, `SELECT token, generation, boot_id FROM turn_leases WHERE key = ?`, old.Key).Scan(&tok, &gen, &heldBoot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return engine.TurnLease{}, engine.ErrTurnLeaseLost
 	}
@@ -66,6 +67,34 @@ WHERE id = ? AND lease_key = ? AND completed_at IS NULL`, p.IntentID.String(), o
 		return engine.TurnLease{}, invalidProof("intent %s was accepted at generation %d, lease is at %d", p.IntentID, intentGen, old.Generation)
 	}
 
+	if p.StaleHolder {
+		if heldBoot == "" || r.bootID == "" || heldBoot == r.bootID {
+			return engine.TurnLease{}, invalidProof("holder boot %q is not an earlier boot than %q", heldBoot, r.bootID)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT operation_id FROM runner_jobs WHERE run_id = ? AND invocation_id = ?`, runID, invocationID)
+		if err != nil {
+			return engine.TurnLease{}, fmt.Errorf("recovering turn lease %s: jobs: %w", old.Key, err)
+		}
+		dispatched := false
+		for rows.Next() {
+			var op string
+			if err := rows.Scan(&op); err != nil {
+				rows.Close()
+				return engine.TurnLease{}, err
+			}
+			dispatched = dispatched || turnOperationMatches(op, opID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return engine.TurnLease{}, err
+		}
+		if err := rows.Close(); err != nil {
+			return engine.TurnLease{}, err
+		}
+		if dispatched {
+			return engine.TurnLease{}, invalidProof("operation %s was dispatched; use the job proof", opID)
+		}
+	}
 	for _, j := range p.Jobs {
 		var jRun, jInv, jOp, state string
 		var jRunner sql.NullString
@@ -141,8 +170,8 @@ WHERE id = ? AND lease_key = ? AND completed_at IS NULL`, p.IntentID.String(), o
 	}
 	token := uuid.New()
 	exp := r.now().UTC().Add(ttl)
-	res, err := tx.ExecContext(ctx, `UPDATE turn_leases SET token = ?, generation = ?, expires_at = ?, holder = ?
-WHERE key = ? AND token = ? AND generation = ?`, token.String(), next, exp.UnixMilli(), r.holder, old.Key, old.Token.String(), old.Generation)
+	res, err := tx.ExecContext(ctx, `UPDATE turn_leases SET token = ?, generation = ?, expires_at = ?, holder = ?, boot_id = ?
+WHERE key = ? AND token = ? AND generation = ?`, token.String(), next, exp.UnixMilli(), r.holder, r.bootID, old.Key, old.Token.String(), old.Generation)
 	if err != nil {
 		return engine.TurnLease{}, fmt.Errorf("recovering turn lease %s: %w", old.Key, err)
 	}
