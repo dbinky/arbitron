@@ -59,3 +59,19 @@ ALTER TABLE node_executions ADD COLUMN session_invocation_id TEXT;
 ALTER TABLE node_executions ADD COLUMN session_checkpoint_ref TEXT;
 ALTER TABLE node_executions ADD COLUMN session_pin_runner TEXT;
 ALTER TABLE node_executions ADD COLUMN session_generation INTEGER NOT NULL DEFAULT 0;
+
+-- Private conflict-resolution staging resources; source_dir stays server-local.
+CREATE TABLE resolution_resources (
+    id               TEXT PRIMARY KEY,
+    group_run_id     TEXT NOT NULL,
+    merge_index      INTEGER NOT NULL CHECK (merge_index >= 0),
+    attempt          INTEGER NOT NULL CHECK (attempt >= 1),
+    task_key         TEXT NOT NULL DEFAULT '',
+    source_dir       TEXT NOT NULL,
+    work_dir         TEXT NOT NULL,
+    state            TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+    materialized_ref TEXT NOT NULL DEFAULT '',
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    UNIQUE (group_run_id, merge_index, attempt)
+);

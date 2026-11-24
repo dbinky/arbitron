@@ -45,6 +45,12 @@ func TestMigration045_CreatesSessionTablesAndColumns(t *testing.T) {
 		assert.True(t, execs[c], "node_executions.%s", c)
 	}
 
+	res := tableColumns(t, db, "resolution_resources")
+	for _, c := range []string{"id", "group_run_id", "merge_index", "attempt", "task_key", "source_dir", "work_dir",
+		"state", "materialized_ref", "created_at", "updated_at"} {
+		assert.True(t, res[c], "resolution_resources.%s", c)
+	}
+
 	var version int
 	require.NoError(t, db.DB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
 	assert.GreaterOrEqual(t, version, 45)
