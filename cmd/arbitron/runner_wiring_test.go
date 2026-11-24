@@ -476,6 +476,8 @@ func TestRunnerWiring_DecoratorRemovalBreaksRouting(t *testing.T) {
 	require.NoError(t, err)
 
 	runID := uuid.New()
+	workDir := filepath.Join(ds.cfg.Workspace.Path, "instances", runID.String())
+	require.NoError(t, os.MkdirAll(workDir, 0o700))
 	call := func(sel engine.ChatProviderSelector) string {
 		inv := uuid.New()
 		stepCtx := engine.ContextWithStepIdentity(ctx, engine.StepIdentity{
@@ -483,7 +485,7 @@ func TestRunnerWiring_DecoratorRemovalBreaksRouting(t *testing.T) {
 		})
 		p, err := sel.ChatProviderFor(b)
 		require.NoError(t, err)
-		resp, err := p.Chat(stepCtx, engine.ChatRequest{Model: b.Model, Prompt: "hello", WorkDir: t.TempDir()})
+		resp, err := p.Chat(stepCtx, engine.ChatRequest{Model: b.Model, Prompt: "hello", WorkDir: workDir})
 		require.NoError(t, err)
 		assert.Equal(t, "hello", resp.Output, "routing never changes the provider's output")
 		return inv.String()
