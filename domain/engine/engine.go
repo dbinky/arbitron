@@ -1572,10 +1572,11 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		resolvedInputs := vars.Snapshot()
 		startedAt := time.Now()
 		sink := NewPlacementSink()
-		attemptCtx := ContextWithPlacementSink(ContextWithStepIdentity(ctx, StepIdentity{
+		// Retry attempts must never inherit a failed attempt's receipts.
+		attemptCtx := ContextWithStepCompletionSink(ContextWithPlacementSink(ContextWithStepIdentity(ctx, StepIdentity{
 			RunID: instanceID, NodeID: node.ID, InvocationID: inv.ID,
 			OperationID: nodeOperationID, Kind: OperationNode, Attempt: attempt,
-		}), sink)
+		}), sink), NewStepCompletionSink())
 		result, err := executor.Execute(attemptCtx, node, vars, wf.Name)
 		completedAt := time.Now()
 
