@@ -165,6 +165,62 @@ func planSteps(complete bool, unchecked float64, unreadable []any, noBoxes bool)
 	}
 }
 
+// withStepless names plans that hold no checkbox of their own.
+func withStepless(steps map[string]any, paths ...string) map[string]any {
+	list := make([]any, 0, len(paths))
+	for _, p := range paths {
+		list = append(list, p)
+	}
+	steps["stepless"] = list
+	return steps
+}
+
+// Before the first pass the plans are counted once: a plan with no checkbox
+// steps (or an unreadable one) stops the stage before any agent runs, because
+// the agent picks the first task with an unticked box and would skip a
+// stepless plan as finished while later tasks wait on what it builds
+// (remote-runners 2026-11-23). Usable plans go on to pass-mark.
+func TestImplPreflightStopsOnUnusablePlans(t *testing.T) {
+	wf := loadSample(t, "implement")
+	if !hasEdge(wf, "record-baseline", "plan-preflight") || !hasEdge(wf, "plan-preflight", "plans-usable?") {
+		t.Fatal("record-baseline must reach plans-usable? through plan-preflight")
+	}
+	if hasEdge(wf, "record-baseline", "pass-mark") {
+		t.Error("record-baseline bypasses the preflight")
+	}
+	if n := nodeByID(wf, "plan-preflight"); n.Config.ScriptFile != "scripts/count-plan-steps.sh" {
+		t.Errorf("plan-preflight runs %v, want the same counter as count-plan-steps", n.Config.ScriptFile)
+	}
+	pre := func(steps map[string]any) map[string]any { return map[string]any{"plan-preflight": steps} }
+	for name, c := range map[string]struct {
+		steps map[string]any
+		want  string
+	}{
+		"usable":        {planSteps(false, 9, []any{}, false), "pass-mark"},
+		"stepless":      {withStepless(planSteps(false, 9, []any{}, false), "docs/plans/x/prose.md"), "mark-unusable-preflight"},
+		"unreadable":    {planSteps(false, 9, []any{"docs/plans/x/gone.md"}, false), "mark-unusable-preflight"},
+		"no checkboxes": {planSteps(false, 0, []any{}, true), "mark-unusable-preflight"},
+	} {
+		if got := routeTo(t, wf, "plans-usable?", pre(c.steps)); got != c.want {
+			t.Errorf("%s -> %s, want %s", name, got, c.want)
+		}
+	}
+
+	vars := variable.NewStore()
+	vars.SetNodeOutput("plan-preflight", withStepless(planSteps(false, 9, []any{}, false), "docs/plans/x/prose.md"))
+	if _, err := engine.NewTransformExecutor().Execute(context.Background(), nodeByID(wf, "mark-unusable-preflight"), vars, wf.Name); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := vars.Get("impl_status")
+	why, _ := vars.Get("blocked_reason")
+	if want := `plans unusable before the first pass: unreadable=[] stepless=["docs/plans/x/prose.md"] no_checkboxes=false; give each plan its checkbox steps and rerun`; st != "blocked" || why != want {
+		t.Errorf("mark-unusable-preflight: %v / %q, want blocked / %q", st, why, want)
+	}
+	if !hasEdge(wf, "mark-unusable-preflight", "finish") {
+		t.Error("mark-unusable-preflight does not go to finish")
+	}
+}
+
 // impl-gate decides completion by arithmetic. count-plan-steps comes first, so
 // an assessor claiming completion over unticked boxes cannot end the stage, and
 // a completed plan wins even if the assessor also says blocked. Degenerate
@@ -205,6 +261,7 @@ func TestImplGateCompletionIsArithmetic(t *testing.T) {
 	for name, steps := range map[string]map[string]any{
 		"one plan unreadable": planSteps(false, 3, []any{"docs/plans/x/gone.md"}, false),
 		"no checkboxes":       planSteps(false, 0, []any{}, true),
+		"one plan stepless":   withStepless(planSteps(false, 3, []any{}, false), "docs/plans/x/prose.md"),
 	} {
 		if got := implGate(t, wf, "lift-assess", pass(steps, map[string]any{"all_remaining_blocked": true, "notes": "x"}), atCap); got != "mark-unusable" {
 			t.Errorf("%s -> %s, want mark-unusable", name, got)
@@ -263,7 +320,7 @@ func TestImplMarksRecordTheStageOutcome(t *testing.T) {
 		if err := vars.SetInput("max_impl_iterations", float64(200)); err != nil {
 			t.Fatal(err)
 		}
-		vars.SetNodeOutput("count-plan-steps", planSteps(false, 7, []any{"docs/plans/x/gone.md"}, false))
+		vars.SetNodeOutput("count-plan-steps", withStepless(planSteps(false, 7, []any{"docs/plans/x/gone.md"}, false), "docs/plans/x/prose.md"))
 		vars.SetNodeOutput("impl-assess", map[string]any{"notes": "task 3 blocked: no producer"})
 		if _, err := engine.NewTransformExecutor().Execute(context.Background(), nodeByID(wf, id), vars, wf.Name); err != nil {
 			t.Fatal(err)
@@ -277,7 +334,7 @@ func TestImplMarksRecordTheStageOutcome(t *testing.T) {
 		"mark-blocked":             {"blocked", "task 3 blocked: no producer"},
 		"mark-blocked-unexplained": {"blocked", "all remaining tasks blocked (see impl-assess)"},
 		"mark-cap":                 {"blocked", "iteration cap 200 reached; 7 unchecked plan steps remain"},
-		"mark-unusable":            {"blocked", `plan_paths unreadable or contain no checkboxes: unreadable=["docs/plans/x/gone.md"] no_checkboxes=false`},
+		"mark-unusable":            {"blocked", `plan_paths unreadable or contain no checkboxes: unreadable=["docs/plans/x/gone.md"] stepless=["docs/plans/x/prose.md"] no_checkboxes=false`},
 	}
 	for id, w := range want {
 		if st, why := run(id); st != w[0] || why != w[1] {

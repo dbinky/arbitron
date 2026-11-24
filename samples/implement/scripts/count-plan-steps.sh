@@ -15,12 +15,18 @@
 #   unchecked_steps   number — unticked boxes across all readable plans
 #   checked_steps     number — ticked boxes
 #   all_tasks_complete bool  — unchecked == 0 AND checked > 0 AND nothing unreadable
+#                              AND no plan is stepless
 #   tasks_remaining   number — same count as unchecked_steps
 #   unreadable        array  — plan paths that could not be read at HEAD
 #   no_checkboxes     bool   — readable plans held no checkboxes at all
+#   stepless          array  — readable plans that hold no checkbox of their own
 #
 # Fails CLOSED: a missing or uncommitted plan, an empty plan list, or plans with
-# no checkboxes are never "complete" (nothing proves the work was done).
+# no checkboxes are never "complete" (nothing proves the work was done). That
+# holds per plan, not only in aggregate: the impl agent picks the first task
+# with an unticked box, so a plan whose steps were rewritten as prose would be
+# skipped as if finished while every later task waited on what it builds
+# (remote-runners, 2026-11-23: seven stepless producer plans blocked 47 tasks).
 set -eu
 # The repository belongs to the agent whose work is counted: ignore its replace refs.
 GIT_NO_REPLACE_OBJECTS=1
@@ -32,6 +38,7 @@ PATHS="$(printf '%s' "$IN" | jq -r '(.["resolve-inputs"].inputs.plan_paths // []
 unchecked=0
 checked=0
 unreadable=""
+stepless=""
 NL='
 '
 while IFS= read -r p; do
@@ -54,12 +61,17 @@ while IFS= read -r p; do
     END { printf "%d %d", u, c }')"
   unchecked=$((unchecked + ${counts% *}))
   checked=$((checked + ${counts#* }))
+  if [ "$counts" = "0 0" ]; then
+    echo "count-plan-steps: plan has no checkbox steps: $p" >&2
+    stepless="$stepless$p$NL"
+  fi
 done <<EOP
 $PATHS
 EOP
 
-printf '%s' "$unreadable" | jq -Rs --argjson u "$unchecked" --argjson c "$checked" '
-  (split("\n") | map(select(length > 0))) as $bad
-  | {unchecked_steps:$u, checked_steps:$c,
-     all_tasks_complete: ($u == 0 and $c > 0 and ($bad | length) == 0),
-     tasks_remaining:$u, unreadable:$bad, no_checkboxes: (($u + $c) == 0)}'
+lines() { printf '%s' "$1" | jq -Rs 'split("\n") | map(select(length > 0))'; }
+jq -n --argjson u "$unchecked" --argjson c "$checked" \
+  --argjson bad "$(lines "$unreadable")" --argjson stepless "$(lines "$stepless")" '
+  {unchecked_steps:$u, checked_steps:$c,
+   all_tasks_complete: ($u == 0 and $c > 0 and ($bad | length) == 0 and ($stepless | length) == 0),
+   tasks_remaining:$u, unreadable:$bad, no_checkboxes: (($u + $c) == 0), stepless:$stepless}'

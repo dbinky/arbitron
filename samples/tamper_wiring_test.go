@@ -292,8 +292,9 @@ func implBaselineCommittedBeforeFirstPass(t *testing.T) {
 	if reachableAvoiding(wf, "baseline-tests", "record-baseline", "checkpoint-push-baseline") {
 		t.Error("the measure path reaches record-baseline before the baseline is pushed")
 	}
-	if !hasEdge(wf, "import-baseline", "record-baseline") || !hasEdge(wf, "record-baseline", "pass-mark") {
-		t.Error("the import path must go import-baseline -> record-baseline -> pass-mark")
+	if !hasEdge(wf, "import-baseline", "record-baseline") || !hasEdge(wf, "record-baseline", "plan-preflight") ||
+		!hasEdge(wf, "plan-preflight", "plans-usable?") || !hasEdge(wf, "plans-usable?", "pass-mark") {
+		t.Error("the import path must go import-baseline -> record-baseline -> plan-preflight -> plans-usable? -> pass-mark")
 	}
 }
 
