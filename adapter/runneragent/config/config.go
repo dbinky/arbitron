@@ -36,7 +36,7 @@ const (
 var allowedKeys = map[string]bool{
 	"workspace_root": true, "scratch_root": true, "spool_dir": true,
 	"heartbeat_seconds": true, "probe_interval_seconds": true, "output_buffer_frames": true,
-	"claude_binary": true, "lunaroute.connection_ref": true, "lunaroute.families": true, "lunaroute.models": true,
+	"claude_binary": true, "codex_binary": true, "lunaroute.connection_ref": true, "lunaroute.families": true, "lunaroute.models": true,
 }
 
 var (

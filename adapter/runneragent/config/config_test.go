@@ -25,6 +25,17 @@ func writeConfig(t *testing.T, yaml, env string, envMode os.FileMode) string {
 	return p
 }
 
+func TestLoadCodexBinaryOverride(t *testing.T) {
+	p := writeConfig(t, "workspace_root: /srv/ws\ncodex_binary: \"  /opt/codex/bin/codex  \"\n", baseEnv(), 0o600)
+	cfg, err := Load(p)
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/codex/bin/codex", cfg.CodexBinary)
+	p = writeConfig(t, "workspace_root: /srv/ws\n", baseEnv(), 0o600)
+	cfg, err = Load(p)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CodexBinary)
+}
+
 func baseEnv() string {
 	return "# secrets\nARBITRON_SERVER_URL=https://arbitron.example.com/\nARBITRON_RUNNER_KEY=" + testKey + "\n"
 }
