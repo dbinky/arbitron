@@ -159,3 +159,20 @@ CREATE TABLE node_retry_failures (
  payload_hash TEXT NOT NULL,
  PRIMARY KEY(invocation_id,attempt)
 );
+
+-- Durable operation association; the base lease columns remain unchanged.
+CREATE TABLE workspace_lease_holders (
+ resource_key TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation >= 1),
+ token TEXT NOT NULL, holder TEXT NOT NULL, owner TEXT NOT NULL,
+ job_id TEXT, job_runner_id TEXT, job_generation INTEGER,
+ boot_id TEXT NOT NULL DEFAULT '', claimed_at TEXT NOT NULL,
+ CHECK ((job_id IS NULL AND job_generation IS NULL AND job_runner_id IS NULL AND boot_id != '')
+     OR (job_id IS NOT NULL AND job_generation >= 1 AND job_runner_id IS NOT NULL AND boot_id = '')),
+ PRIMARY KEY (resource_key, generation)
+);
+CREATE TABLE workspace_lease_supersessions (
+ resource_key TEXT NOT NULL, old_generation INTEGER NOT NULL, old_token TEXT NOT NULL,
+ new_generation INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('runner_lost','revoked','stopped','server_restart')),
+ job_id TEXT, job_generation INTEGER, superseded_at TEXT NOT NULL,
+ PRIMARY KEY (resource_key, old_generation)
+);
