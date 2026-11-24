@@ -1527,3 +1527,44 @@ These are settled by the spec/design or by a user decision. The owning task carr
   - `sources.ClaudeCodeTools` = `Bash, Edit, Glob, Grep, LS, Read, WebFetch, WebSearch, Write`. It is advertised on claude-code capabilities (`allowlist`).
   - `runner.ToolScopeSatisfied` accepts a requested `Tool(<non-empty pattern>)` (e.g. `Bash(gh:*)`) when an allowlist capability lists `Tool`. Claude Code enforces the pattern natively.
   - Unset and unrestricted policies never expand patterns.
+
+## Verification gates (unstick 2026-11-24)
+
+This rule applies to every task in every phase. It supersedes any step text
+that demands a broad, package-wide or combined gate be wholly green.
+
+1. **Scope.** A *broad gate* is any verification command that runs more than
+   the tests the step itself names: package-wide `go test ./pkg/...`, combined
+   multi-package race gates (e.g. `go test -race ./domain/runner/...
+   ./adapter/...`), `-count=N` repetition gates over a whole package,
+   `go test ./...`, and `npx vitest run` over the whole dashboard.
+2. **Pass criterion.** A broad gate passes when BOTH hold:
+   - there are **no NEW failures** compared with the branch's recorded test
+     baseline (`.arbitron/pipeline/remote-runners.baseline.json`) plus the
+     failures listed under item 3; and
+   - **every test the step names** (focused `-run` targets, tests the step
+     adds or edits) passes exactly, including under `-race` and any
+     `-count=N` the step specifies for those named tests.
+3. **Failures that do not block the step.** A failing test does not block a
+   step when it is any of:
+   - in the baseline's `failing_tests`, or it already failed on the step's
+     parent commit (re-run it there to confirm);
+   - owned by a different task (a test file or test function that another
+     task's plan creates or edits), including a later task's unfinished work
+     or a producer that has not landed yet;
+   - a timing/flake failure in a test the step neither names nor touches
+     (it passes on at least one rerun, or also fails on the parent commit).
+   The agent records each such failure in a single one-line note under the
+   step, `> GATE NOTE (unstick 2026-11-24): <test> — <baseline|pre-existing|
+   owned by PX TY|flaky>`, ticks the step, and moves on. It must not edit,
+   skip or loosen those tests to make the gate green.
+4. **Still mandatory.**
+   - Focused tests named by the step must pass exactly.
+   - Race-detector findings whose stack touches code the step changed (or
+     test code the step added) must be fixed before the step is ticked.
+   - `go build ./...` and `go vet` on the packages the step changed must pass.
+   - A failure the step introduced (it passes on the parent commit and fails
+     after the step) is a NEW failure and blocks, wherever the test lives.
+5. **Citation.** Plans cite this rule as "(gate per contracts §Verification
+   gates (unstick 2026-11-24))". The rule applies even where a step does not
+   cite it.
