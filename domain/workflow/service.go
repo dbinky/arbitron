@@ -96,6 +96,7 @@ type Service struct {
 	// require. When unset, group writes fail with GROUP_CHECKER_UNAVAILABLE.
 	groupProfiles ProfileChecker
 	groupFiles    OwnerFileChecker
+	bundles       ScriptBundleChecker
 	// gate serializes execution-affecting writes with model advancement and
 	// run-snapshot capture. nil (unit tests) writes directly.
 	gate MutationGate
@@ -298,6 +299,9 @@ func (s *Service) create(ctx context.Context, name string, wf *Workflow) error {
 	// Reject invalid groups before allocating identity or claiming the name, on
 	// both the stamped revision path and the legacy one. Non-group workflows
 	// retain their write path without validation.
+	if err := s.rejectUnportableScripts(ctx, wf, id.UserID); err != nil {
+		return err
+	}
 	if err := s.rejectInvalidGroups(ctx, wf, id.UserID); err != nil {
 		return err
 	}
@@ -367,9 +371,12 @@ func (s *Service) update(ctx context.Context, name string, wf *Workflow) ([]Vali
 	// Gate both private writes and admin shared-scope edits, checking files in
 	// the scope this write lands in.
 	var findings []ValidationError
-	if HasGroups(wf) {
+	if HasGroups(wf) || hasPortableConfig(wf) {
 		fileOwner, err := s.groupWriteFileOwner(ctx, id, name)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.rejectUnportableScripts(ctx, wf, fileOwner); err != nil {
 			return nil, err
 		}
 		if findings, err = s.validateGroupsForWrite(ctx, wf, fileOwner); err != nil {

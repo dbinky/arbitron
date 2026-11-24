@@ -139,7 +139,10 @@ func (r *callerChildContracts) load(name string) cachedChildContract {
 //   - WithGroupCheckersRequired(): a nil profile/file checker on a group-bearing
 //     workflow is reported as GROUP_CHECKER_UNAVAILABLE.
 func (s *Service) GroupValidateOptions(ctx context.Context) []ValidateOption {
-	opts := make([]ValidateOption, 0, 3)
+	opts := make([]ValidateOption, 0, 4)
+	if id, err := caller(ctx); err == nil && s.bundles != nil {
+		opts = append(opts, WithScriptBundleChecker(ctx, id.UserID, s.bundles))
+	}
 	if names, err := s.VisibleNames(ctx); err == nil {
 		opts = append(opts, WithWorkflowChecker(names))
 	}

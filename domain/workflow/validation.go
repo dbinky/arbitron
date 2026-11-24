@@ -1,12 +1,15 @@
 package workflow
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // FileChecker is a minimal subset of the engine.FileReader port used for
@@ -58,7 +61,10 @@ type WorkflowChecker interface {
 type ValidateOption func(*validateOptions)
 
 type validateOptions struct {
-	workflows WorkflowChecker
+	bundles     ScriptBundleChecker
+	bundleCtx   context.Context
+	bundleOwner uuid.UUID
+	workflows   WorkflowChecker
 	// children loads child workflow contracts for workflows-form group tasks
 	// (WithChildContractReader, validation_group_children.go).
 	children ChildContractReader
@@ -143,7 +149,7 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 	errs = append(errs, validateInputNames(wf)...)
 	errs = append(errs, validateReservedInputNames(wf)...)
 	errs = append(errs, validateNodeConfigs(wf)...)
-	errs = append(errs, validatePortableNodes(wf)...)
+	errs = append(errs, validatePortableNodes(wf, &o)...)
 	errs = append(errs, validateErrorBehaviors(wf)...)
 	errs = append(errs, validateGitVariable(wf)...)
 
