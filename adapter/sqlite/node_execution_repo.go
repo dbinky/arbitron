@@ -95,6 +95,18 @@ func insertNodeExecutionTx(ctx context.Context, tx *sql.Tx, exec *instance.NodeE
 }
 
 func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecution) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := r.updateTx(ctx, tx, exec); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *NodeExecutionRepo) updateTx(ctx context.Context, tx *sql.Tx, exec *instance.NodeExecution) error {
 	outputJSON, err := toNullJSONString(exec.Output)
 	if err != nil {
 		return fmt.Errorf("marshalling output: %w", err)
@@ -108,11 +120,6 @@ func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecu
 		return fmt.Errorf("marshalling llm conversation: %w", err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	err = r.queries.WithTx(tx).UpdateNodeExecution(ctx, generated.UpdateNodeExecutionParams{
 		ID:              uuidToString(exec.ID),
 		Status:          string(exec.Status),
@@ -130,10 +137,7 @@ func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecu
 	if err != nil {
 		return fmt.Errorf("updating node execution: %w", err)
 	}
-	if err := writePlacement(ctx, tx, exec); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return writePlacement(ctx, tx, exec)
 }
 
 var _ instance.OpenSessionRecordUpdater = (*NodeExecutionRepo)(nil)
@@ -142,6 +146,22 @@ var _ instance.OpenSessionRecordUpdater = (*NodeExecutionRepo)(nil)
 // llm_conversation having no endedAt, so a session end written concurrently
 // is never overwritten. It reports whether the row was written.
 func (r *NodeExecutionRepo) UpdateIfSessionOpen(ctx context.Context, exec *instance.NodeExecution) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	ok, err := r.updateIfSessionOpenTx(ctx, tx, exec)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+func (r *NodeExecutionRepo) updateIfSessionOpenTx(ctx context.Context, tx *sql.Tx, exec *instance.NodeExecution) (bool, error) {
 	outputJSON, err := toNullJSONString(exec.Output)
 	if err != nil {
 		return false, fmt.Errorf("marshalling output: %w", err)
@@ -154,11 +174,6 @@ func (r *NodeExecutionRepo) UpdateIfSessionOpen(ctx context.Context, exec *insta
 	if err != nil {
 		return false, fmt.Errorf("marshalling llm conversation: %w", err)
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx, `UPDATE node_executions SET status = ?, output = ?, error = ?, llm_conversation = ?, llm_model = ?, llm_tokens_in = ?, llm_tokens_out = ?, script_stdout = ?, script_stderr = ?, script_exit_code = ?, completed_at = ?
 WHERE id = ? AND (llm_conversation IS NULL OR json_extract(llm_conversation, '$.endedAt') IS NULL)`,
 		string(exec.Status), outputJSON, errorJSON, llmConvJSON, ptrToNullString(exec.LLMModel),
@@ -176,9 +191,6 @@ WHERE id = ? AND (llm_conversation IS NULL OR json_extract(llm_conversation, '$.
 		if err := writePlacement(ctx, tx, exec); err != nil {
 			return false, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return false, err
 	}
 	return n == 1, nil
 }
