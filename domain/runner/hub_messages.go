@@ -208,6 +208,7 @@ type Inbound struct {
 	Result       *RemoteResult
 	Accept       bool
 	RejectReason string
+	RejectCode   string
 }
 
 // RunnerConn is the hub's view of one runner connection. Send must be safe

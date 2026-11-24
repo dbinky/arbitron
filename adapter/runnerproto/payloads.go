@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -505,9 +506,17 @@ func (r *Refused) Validate() error {
 // Reject declines an offered job.
 type Reject struct {
 	Reason string `json:"reason"`
+	Code   string `json:"code,omitempty"`
 }
 
-func (r *Reject) Validate() error { return nil }
+var rejectCodeRE = regexp.MustCompile(`^[a-z][a-z_]{0,63}$`)
+
+func (r *Reject) Validate() error {
+	if r.Code != "" && !rejectCodeRE.MatchString(r.Code) {
+		return fmt.Errorf("reject code %q is not a lower_snake_case code of at most 64 characters", r.Code)
+	}
+	return nil
+}
 
 // Ack acknowledges output up to Seq for (jobId, generation); Result=true also
 // acknowledges the terminal result (the runner may drop it from its spool).
@@ -599,7 +608,11 @@ func (w *WireWindow) Validate() error     { return nil }
 func (t *WireTelemetry) Validate() error  { return nil }
 func (r *WireChatResult) Validate() error { return nil }
 func (o *WireOutcome) Validate() error {
-	return (&WireHealth{LastOutcome: o.Class, Headroom: o.HeadroomHint, Windows: o.Windows}).Validate()
+	class := o.Class
+	if class == "pull_failed" {
+		class = "other"
+	}
+	return (&WireHealth{LastOutcome: class, Headroom: o.HeadroomHint, Windows: o.Windows}).Validate()
 }
 func (a *WireAgent) Validate() error       { return errors.New("agent dispatch is reserved for phase 3") }
 func (p *WireProcess) Validate() error     { return errors.New("process dispatch is reserved for phase 3") }

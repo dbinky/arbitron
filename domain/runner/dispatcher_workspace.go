@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -12,6 +14,57 @@ import (
 )
 
 var _ engine.StepCompletionReleaser = (*StepDispatcher)(nil)
+
+// exclusions live for one operation, not for the source or workflow retry.
+type exclusions struct {
+	runners      []RunnerID
+	pullFailures int
+}
+
+func (e *exclusions) add(id RunnerID) {
+	if !slices.Contains(e.runners, id) {
+		e.runners = append(e.runners, id)
+	}
+}
+
+func (e *exclusions) apply(snap PoolSnapshot) PoolSnapshot {
+	for _, id := range e.runners {
+		snap = withoutRunner(snap, id)
+	}
+	return snap
+}
+
+func (e *exclusions) detail() string {
+	ids := make([]string, 0, len(e.runners))
+	for _, id := range e.runners {
+		ids = append(ids, string(id))
+	}
+	return "excluded for this operation after a pull/preparation failure: " + strings.Join(ids, ", ")
+}
+
+func (s *StepDispatcher) excludeAndRequeue(ctx context.Context, j *Job, a Assignment, o SourceOutcome, ex *exclusions, cause error) error {
+	bg := context.WithoutCancel(ctx)
+	if o.Class == OutcomePullFailed {
+		ex.pullFailures++
+		if ex.pullFailures >= MaxPullFailures {
+			s.release(bg, a, OutcomePullFailed)
+			return fmt.Errorf("runner: workspace pull failed %d times for %s: %w", ex.pullFailures, a.Job.NodeID, cause)
+		}
+	}
+	ex.add(a.Job.RunnerID)
+	nj, err := s.d.Ledger.Requeue(bg, a.Fence, o.Class)
+	if err != nil {
+		return fmt.Errorf("runner: requeue %s: %w", a.Job.ID, err)
+	}
+	*j = nj
+	run := nj.Key.RunID
+	s.d.Events.Record(bg, PoolEvent{Kind: EventJobRerouted, RunnerID: a.Job.RunnerID, SourceID: a.Job.SourceID, RunID: &run,
+		Cause: Cause{Kind: CauseOutcome, Outcome: o.Class},
+		Detail: map[string]any{"jobId": nj.ID.String(), "nodeId": nj.NodeID, "operationId": nj.Key.OperationID,
+			"fromGeneration": a.Fence.Generation, "group": nj.Group.String(), "excludedRunner": string(a.Job.RunnerID)}})
+	s.wake()
+	return nil
+}
 
 // SetWorkspace installs the workspace protocol before the first dispatch.
 func (s *StepDispatcher) SetWorkspace(w StepWorkspace) {

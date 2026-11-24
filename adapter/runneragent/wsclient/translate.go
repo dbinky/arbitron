@@ -134,7 +134,7 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 	case runneragent.KindAccept:
 		return runnerproto.NewJobEnvelope(runnerproto.KindAccept, m.JobID, m.Generation, 0, nil)
 	case runneragent.KindReject:
-		return runnerproto.NewJobEnvelope(runnerproto.KindReject, m.JobID, m.Generation, 0, runnerproto.Reject{Reason: m.RejectReason})
+		return runnerproto.NewJobEnvelope(runnerproto.KindReject, m.JobID, m.Generation, 0, runnerproto.Reject{Reason: m.RejectReason, Code: m.RejectCode})
 	case runneragent.KindOutput:
 		if m.Output == nil {
 			break

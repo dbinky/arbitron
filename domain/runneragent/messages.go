@@ -221,5 +221,6 @@ type Outbound struct {
 	Output            *OutputFrame
 	Result            *Result
 	RejectReason      string
+	RejectCode        string
 	ProbeResult       *Source
 }

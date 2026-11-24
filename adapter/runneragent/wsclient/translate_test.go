@@ -205,3 +205,12 @@ func TestFromEnvelopeRejectsInvalidPayload(t *testing.T) {
 	_, err = fromEnvelope(mustEnv(t, runnerproto.KindDispatch, tJob, 1, runnerproto.Dispatch{Op: "chat", Chat: &runnerproto.WireChat{Prompt: "no model", CredentialKind: "anthropic_subscription"}}))
 	assert.ErrorIs(t, err, runnerproto.ErrMalformed)
 }
+
+func TestToEnvelopeRejectCarriesCode(t *testing.T) {
+	rej := roundTrip(t, runneragent.Outbound{Kind: runneragent.KindReject, JobID: tJob, Generation: 2,
+		RejectReason: "jq missing", RejectCode: "command_unavailable"})
+	var r runnerproto.Reject
+	require.NoError(t, runnerproto.DecodePayload(rej, &r))
+	assert.Equal(t, "jq missing", r.Reason)
+	assert.Equal(t, "command_unavailable", r.Code)
+}

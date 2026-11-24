@@ -182,3 +182,13 @@ func TestRunnerTranslate_SourceCapabilitiesAreLossless(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, hello.Sources, hb.Sources)
 }
+
+func TestToInbound_RejectCarriesCode(t *testing.T) {
+	id := uuid.New()
+	in, err := toInbound(jobEnv(t, runnerproto.KindReject, id, 3, 0, &runnerproto.Reject{Reason: "jq missing", Code: "command_unavailable"}))
+	require.NoError(t, err)
+	assert.Equal(t, runner.Inbound{Kind: runner.MsgReject, JobID: id, Generation: 3, RejectReason: "jq missing", RejectCode: "command_unavailable"}, in)
+
+	_, err = toInbound(jobEnv(t, runnerproto.KindReject, id, 3, 0, &runnerproto.Reject{Reason: "x", Code: "Bad Code"}))
+	assert.Error(t, err, "a malformed code is a malformed frame")
+}

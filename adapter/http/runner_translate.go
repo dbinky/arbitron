@@ -66,7 +66,7 @@ func toInbound(e runnerproto.Envelope) (runner.Inbound, error) {
 				return runner.Inbound{}, malformedf("reject: %v", err)
 			}
 		}
-		return runner.Inbound{Kind: runner.MsgReject, JobID: id, Generation: e.Generation, RejectReason: rj.Reason}, nil
+		return runner.Inbound{Kind: runner.MsgReject, JobID: id, Generation: e.Generation, RejectReason: rj.Reason, RejectCode: rj.Code}, nil
 	case runnerproto.KindOutput:
 		id, err := parseJob(e)
 		if err != nil {

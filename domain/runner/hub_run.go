@@ -210,7 +210,7 @@ func remoteOutput(res *RemoteResult) (StepOutput, error) {
 func remoteError(res *RemoteResult) error {
 	o := res.Outcome
 	switch o.Class {
-	case OutcomeExhausted, OutcomeLoggedOut, OutcomeTransient, OutcomeOther:
+	case OutcomeExhausted, OutcomeLoggedOut, OutcomeTransient, OutcomeOther, OutcomePullFailed:
 	default:
 		o.Class = OutcomeOther
 	}
@@ -309,7 +309,15 @@ func (h *Hub) handleJob(ctx context.Context, s *Session, in Inbound, now time.Ti
 		}
 		return nil
 	case MsgReject:
-		h.finish(j, nil, WithOutcome(fmt.Errorf("%w: %s", ErrJobRejected, in.RejectReason), SourceOutcome{Class: OutcomeOther}))
+		o := SourceOutcome{Class: OutcomeOther}
+		if PreparationRejectCode(in.RejectCode) {
+			o.Class = OutcomePreparationFailed
+		}
+		msg := in.RejectReason
+		if in.RejectCode != "" {
+			msg = in.RejectCode + ": " + msg
+		}
+		h.finish(j, nil, WithOutcome(fmt.Errorf("%w: %s", ErrJobRejected, msg), o))
 		return nil
 	case MsgOutput:
 		if in.Output == nil {
