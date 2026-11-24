@@ -20,7 +20,28 @@ const (
 	OutcomeTransient  OutcomeClass = "transient"
 	OutcomeRunnerLost OutcomeClass = "runner_lost"
 	OutcomeOther      OutcomeClass = "other"
+	// OutcomePullFailed re-places a failed checkpoint pull without exhausting a source.
+	OutcomePullFailed OutcomeClass = "pull_failed"
+	// OutcomePreparationFailed re-places an allowlisted pre-accept rejection.
+	OutcomePreparationFailed OutcomeClass = "preparation_failed"
 )
+
+// Typed pre-accept reject codes produced by runner preparation checks.
+const (
+	RejectCommandUnavailable         = "command_unavailable"
+	RejectCapabilityUnavailable      = "capability_unavailable"
+	RejectWorkspacePreparationFailed = "workspace_preparation_failed"
+)
+
+// PreparationRejectCode accepts only typed preparation failures, never prose or
+// source-outcome words: a reject cannot exhaust a source.
+func PreparationRejectCode(code string) bool {
+	switch code {
+	case RejectCommandUnavailable, RejectCapabilityUnavailable, RejectWorkspacePreparationFailed:
+		return true
+	}
+	return false
+}
 
 // LimitWindow is one provider rate-limit window (keyed by limit id + duration;
 // same-duration per-model buckets are separate windows).
@@ -84,7 +105,8 @@ func classifyErrorAt(err error, now time.Time) SourceOutcome {
 	var oe *OutcomeError
 	if errors.As(err, &oe) && oe != nil {
 		switch oe.Outcome.Class {
-		case OutcomeExhausted, OutcomeLoggedOut, OutcomeTransient, OutcomeRunnerLost, OutcomeOther:
+		case OutcomeExhausted, OutcomeLoggedOut, OutcomeTransient, OutcomeRunnerLost, OutcomeOther,
+			OutcomePullFailed, OutcomePreparationFailed:
 			return oe.Outcome
 		}
 	}
