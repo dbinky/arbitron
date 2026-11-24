@@ -1470,7 +1470,7 @@ These are settled by the spec/design or by a user decision. The owning task carr
     - always: `--strict-config`, `features.plugins=false`, `features.apps=false` and a per-server `mcp_servers={…enabled=false}`;
     - `web_search="disabled"` unless `WebSearch` is granted;
     - read-only sandbox unless a write tool is granted.
-  - **Refusals:** a scope without `Bash`, `mcp__*`/unknown names, or a restricted launch on codex < 0.163.0.
+  - **Refusals:** a scope without `Bash`, `mcp__*`/unknown names (including pattern-scoped `Bash(gh:*)`-style entries; user decision 2026-11-23), or a restricted launch on codex < 0.163.0. The error message quotes the offending scope entry.
   - **Context:** `200k`/`1m` → `-c model_context_window=200000/1000000`, after `CapabilityRules.Validate`.
   - **Defaults:** an empty scope or default context emits nothing new.
 - **Probe correlation (P2 T1 Cycle 4).** `Probe.RequestID` and `ProbeResult.RequestID` are mandatory UUIDs. An uncorrelated probe frame is malformed.
