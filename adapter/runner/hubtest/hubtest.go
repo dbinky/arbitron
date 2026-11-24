@@ -184,10 +184,17 @@ func BuiltInAnthropic() runner.Source {
 // dispatcher does before calling a StepRunner (EnsureIntent, Reserve, MarkRunning).
 func (p *Pool) ReserveJob(t testing.TB, runID uuid.UUID, id runner.RunnerID, src runner.SourceID, op runner.OpType) runner.Assignment {
 	t.Helper()
+	c := Capability(op, ChatJob("claude-opus-5-5", op).Binding, "anthropic")
+	return p.ReserveJobFor(t, runID, id, src, runner.ExecRequirements{Group: runner.ModelGroup{Kind: runner.CredAnthropicSubscription, Family: "anthropic"},
+		Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint,
+		Model: "claude-opus-5-5", Op: op, Affinity: runner.AffinityNone, RunID: runID})
+}
+
+// ReserveJobFor reserves an assignment for the exact supplied requirements.
+func (p *Pool) ReserveJobFor(t testing.TB, runID uuid.UUID, id runner.RunnerID, src runner.SourceID, req runner.ExecRequirements) runner.Assignment {
+	t.Helper()
 	ctx := context.Background()
 	key := runner.JobKey{RunID: runID, InvocationID: uuid.New(), OperationID: "node", Attempt: 1}
-	req := runner.ExecRequirements{Group: runner.ModelGroup{Kind: runner.CredAnthropicSubscription, Family: "anthropic"},
-		Model: "claude-opus-5-5", Op: op, Affinity: runner.AffinityNone, RunID: runID}
 	job, err := p.Ledger.EnsureIntent(ctx, key, "n1", req)
 	require.NoError(t, err)
 	r, _, err := p.Registry.GetRunner(ctx, id)
@@ -232,17 +239,30 @@ func DarwinHello(sources ...runner.SourceReport) runner.HelloInfo {
 		ScratchRoot: "/Users/op/.arbitron-runner/scratch", Sources: sources}
 }
 
+// Capability is the exact evidence a remote runner advertises for b on op.
+func Capability(op runner.OpType, b provider.ResolvedBinding, families ...modelidentity.Family) runner.ExecutionCapability {
+	fp, err := runner.EndpointFingerprint(b)
+	if err != nil {
+		panic(err)
+	}
+	return runner.ExecutionCapability{Op: op, Backend: b.Backend, Provider: provider.Canonicalize(b.Provider), EndpointFingerprint: fp,
+		Families: families, Models: []string{b.Model}, ExecutedModel: true}
+}
+
 // AnthropicSource is a healthy subscription source report.
 func AnthropicSource() runner.SourceReport {
 	return runner.SourceReport{Kind: runner.CredAnthropicSubscription, Families: []modelidentity.Family{"anthropic"},
-		Health: runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
+		Capabilities: []runner.ExecutionCapability{Capability(runner.OpChat, ChatJob("claude-opus-5-5", runner.OpChat).Binding, "anthropic"), Capability(runner.OpStream, ChatJob("claude-opus-5-5", runner.OpStream).Binding, "anthropic")},
+		Health:       runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
 }
 
 // LunaRouteSource is a healthy LunaRoute source report keyed by the server's
 // connection ref, serving the given families.
 func LunaRouteSource(ref string, families ...modelidentity.Family) runner.SourceReport {
+	b := provider.ResolvedBinding{Provider: provider.CanonicalLunaRoute, BaseURL: provider.LunaRouteHostedRoot, Model: "glm-5.3", ConnectionRef: ref}
 	return runner.SourceReport{Kind: runner.CredLunaRoute, CredentialRef: ref, Families: families,
-		Health: runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
+		Capabilities: []runner.ExecutionCapability{Capability(runner.OpChat, b, families...), Capability(runner.OpStream, b, families...)},
+		Health:       runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
 }
 
 // ChatJob is a chat or stream StepJob on the no-connection subscription path.

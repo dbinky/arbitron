@@ -36,7 +36,7 @@ func exhaustedErr() error {
 
 func twoRunnerStreamFixture(t *testing.T, builtinScript, macScript []runStep) (*dispatchFixture, runner.Source, runner.Source, *scriptedRunner, *scriptedRunner) {
 	bSrc := headroomSource(runner.BuiltInRunnerID, f64(0.9))
-	mSrc := headroomSource("mac-mini", f64(0.5))
+	mSrc := withEvidenceFor(headroomSource("mac-mini", f64(0.5)), chatReq(uuid.Nil, runner.OpStream, runner.AffinityNone))
 	b := &scriptedRunner{id: runner.BuiltInRunnerID, script: map[runner.SourceID][]runStep{bSrc.ID: builtinScript}}
 	m := &scriptedRunner{id: "mac-mini", script: map[runner.SourceID][]runStep{mSrc.ID: macScript}}
 	f := newDispatchFixture(t, []runner.Runner{online(runner.BuiltInRunnerID), online("mac-mini")}, []runner.Source{bSrc, mSrc},

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/modelidentity"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,23 @@ func anthropicSub(r runner.RunnerID) runner.Source {
 	return runner.Source{ID: runner.MakeSourceID(r, runner.CredAnthropicSubscription, ""), RunnerID: r,
 		Kind: runner.CredAnthropicSubscription, Families: []modelidentity.Family{"anthropic"},
 		Backends: []string{"", "claude-code"}, Health: healthy()}
+}
+
+// withEvidenceFor advertises the exact requests exercised by a fixture.
+func withEvidenceFor(s runner.Source, reqs ...runner.ExecRequirements) runner.Source {
+	for _, r := range reqs {
+		c := runner.ExecutionCapability{Op: r.Op, Backend: r.Backend, Provider: r.Provider,
+			EndpointFingerprint: r.EndpointFingerprint, Families: []modelidentity.Family{r.Group.Family}, Models: []string{r.Model},
+			Tools: r.Tools, ExecutedModel: true}
+		if r.ContextWindow != "" && r.ContextWindow != provider.ContextDefault {
+			c.ContextWindows = []provider.ContextWindow{r.ContextWindow}
+		}
+		if r.Effort != "" && r.Effort != provider.EffortDefault {
+			c.Efforts = []provider.Effort{r.Effort}
+		}
+		s.Capabilities = append(s.Capabilities, c)
+	}
+	return s
 }
 
 func snap(runners []runner.Runner, sources []runner.Source) runner.PoolSnapshot {
@@ -86,9 +104,9 @@ func TestPlace_NoSourceWaitsForCapacityNamingGroupAndEarliestReset(t *testing.T)
 	late := placeNow.Add(5 * time.Hour)
 	a := anthropicSub(runner.BuiltInRunnerID)
 	a.Health = runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityExhausted, ResetAt: &late}
-	b := anthropicSub("mac-mini")
+	b := withEvidenceFor(anthropicSub("mac-mini"), anthropicReq(runner.AffinityNone))
 	b.Health = runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityExhausted, ResetAt: &early}
-	c := anthropicSub("mac-studio")
+	c := withEvidenceFor(anthropicSub("mac-studio"), anthropicReq(runner.AffinityNone))
 	c.Health = runner.SourceHealth{Auth: runner.AuthLoggedOut, Capacity: runner.CapacityAvailable}
 	s := snap([]runner.Runner{online(runner.BuiltInRunnerID), online("mac-mini"), online("mac-studio")}, []runner.Source{a, b, c})
 
@@ -221,7 +239,7 @@ func TestPlace_RunnerGates(t *testing.T) {
 func TestPlace_ChatOnlyRunnerAcceptsOnlyHermeticWork(t *testing.T) {
 	r := online("mac-mini")
 	r.Compat = runner.Compatibility{State: runner.CompatChatOnly, Reason: "harness too old for agents"}
-	s := snap([]runner.Runner{r}, []runner.Source{anthropicSub("mac-mini")})
+	s := snap([]runner.Runner{r}, []runner.Source{withEvidenceFor(anthropicSub("mac-mini"), anthropicReq(runner.AffinityNone))})
 	assert.True(t, runner.Place(anthropicReq(runner.AffinityNone), s, runner.PlacementPolicy{}).Placed)
 	for _, aff := range []runner.Affinity{runner.AffinityBuiltIn, runner.AffinityWorkspace, runner.AffinitySession} {
 		assert.False(t, runner.Place(anthropicReq(aff), s, runner.PlacementPolicy{}).Placed, "affinity %s", aff)
@@ -230,7 +248,7 @@ func TestPlace_ChatOnlyRunnerAcceptsOnlyHermeticWork(t *testing.T) {
 
 func TestPlace_AffinityRestrictsRunner(t *testing.T) {
 	runners := []runner.Runner{online(runner.BuiltInRunnerID), online("mac-mini")}
-	sources := []runner.Source{anthropicSub(runner.BuiltInRunnerID), anthropicSub("mac-mini")}
+	sources := []runner.Source{anthropicSub(runner.BuiltInRunnerID), withEvidenceFor(anthropicSub("mac-mini"), anthropicReq(runner.AffinityNone))}
 
 	assert.Equal(t, runner.BuiltInRunnerID, runner.Place(anthropicReq(runner.AffinityBuiltIn), snap(runners, sources), runner.PlacementPolicy{}).Runner)
 
@@ -341,7 +359,7 @@ func TestPlace_RequiredSourceCannotUseHealthyAlternative(t *testing.T) {
 }
 
 func headroomSource(r runner.RunnerID, h *float64) runner.Source {
-	s := anthropicSub(r)
+	s := withEvidenceFor(anthropicSub(r), anthropicReq(runner.AffinityNone))
 	s.Health.Headroom = h
 	return s
 }
@@ -390,7 +408,7 @@ func TestPlace_LowerUtilisationWinsOnEqualHeadroom(t *testing.T) {
 
 func TestPlace_HealthierTelemetryWinsUnknownIsNeutral(t *testing.T) {
 	runners := []runner.Runner{online("a"), online("b")}
-	s := snap(runners, []runner.Source{anthropicSub("a"), anthropicSub("b")})
+	s := snap(runners, []runner.Source{withEvidenceFor(anthropicSub("a"), anthropicReq(runner.AffinityNone)), withEvidenceFor(anthropicSub("b"), anthropicReq(runner.AffinityNone))})
 	s.Telemetry["a"] = runner.Telemetry{MemPressure: strp("critical"), Thermal: strp("serious")}
 	// b has no telemetry at all: unknown is neutral, so b (penalty 0) beats a (penalty 3).
 	for i := 0; i < 20; i++ {
@@ -401,7 +419,7 @@ func TestPlace_HealthierTelemetryWinsUnknownIsNeutral(t *testing.T) {
 
 func TestPlace_DeterministicFairTieBreakSpreadsJobs(t *testing.T) {
 	runners := []runner.Runner{online("a"), online("b")}
-	s := snap(runners, []runner.Source{anthropicSub("a"), anthropicSub("b")})
+	s := snap(runners, []runner.Source{withEvidenceFor(anthropicSub("a"), anthropicReq(runner.AffinityNone)), withEvidenceFor(anthropicSub("b"), anthropicReq(runner.AffinityNone))})
 	counts := map[runner.RunnerID]int{}
 	for i := 0; i < 200; i++ {
 		req := anthropicReq(runner.AffinityNone) // fresh RunID each time

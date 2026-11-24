@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/modelidentity"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/google/uuid"
 )
 
@@ -263,7 +264,29 @@ func sourceRequestMatches(s Source, req ExecRequirements) bool {
 	if len(s.Models) > 0 && !slices.Contains(s.Models, req.Model) {
 		return false
 	}
-	return true
+	return s.RunnerID == BuiltInRunnerID || slices.ContainsFunc(s.Capabilities, func(c ExecutionCapability) bool { return capabilitySatisfies(c, req) })
+}
+
+// capabilitySatisfies is the exact remote eligibility predicate. Built-in
+// sources retain their inner factory validation instead.
+func capabilitySatisfies(c ExecutionCapability, req ExecRequirements) bool {
+	if c.Op != req.Op || c.Backend != req.Backend || c.EndpointFingerprint != req.EndpointFingerprint ||
+		provider.Canonicalize(c.Provider) != provider.Canonicalize(req.Provider) ||
+		!slices.Contains(c.Families, req.Group.Family) || !slices.Contains(c.Models, req.Model) {
+		return false
+	}
+	if req.ContextWindow != "" && req.ContextWindow != provider.ContextDefault && !slices.Contains(c.ContextWindows, req.ContextWindow) {
+		return false
+	}
+	if req.Effort != "" && req.Effort != provider.EffortDefault && !slices.Contains(c.Efforts, req.Effort) {
+		return false
+	}
+	for _, tool := range req.Tools {
+		if !slices.Contains(c.Tools, tool) {
+			return false
+		}
+	}
+	return !req.RequireExecutedModel || c.ExecutedModel
 }
 
 func headroomTier(h *float64) int {

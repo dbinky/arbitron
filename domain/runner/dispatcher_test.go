@@ -132,7 +132,7 @@ func remoteRunner(id runner.RunnerID) runner.Runner { return online(id) }
 func TestDispatch_ExhaustedReplacesWithoutSpendingRetries(t *testing.T) {
 	reset := placeNow.Add(4 * time.Hour)
 	builtinSrc := headroomSource(runner.BuiltInRunnerID, f64(0.9))
-	macSrc := headroomSource("mac-mini", f64(0.5))
+	macSrc := withEvidenceFor(headroomSource("mac-mini", f64(0.5)), chatReq(uuid.Nil, runner.OpChat, runner.AffinityNone))
 	builtin := &scriptedRunner{id: runner.BuiltInRunnerID, script: map[runner.SourceID][]runStep{
 		builtinSrc.ID: {failWith(runner.WithOutcome(errors.New("claude exited 1"), runner.SourceOutcome{Class: runner.OutcomeExhausted, ResetAt: &reset}))},
 	}}

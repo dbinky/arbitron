@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/stretchr/testify/assert"
@@ -161,4 +162,33 @@ func TestReserve_RequiredSourceCannotBeChangedByDecision(t *testing.T) {
 	_, err = f.ledger.Reserve(ctx, j.ID, f.decision(b.ID), 8, ledgerNow)
 	assert.ErrorIs(t, err, runner.ErrSlotTaken)
 	assertQueuedWithoutAttempt(t, f, j)
+}
+
+func TestReserve_RemoteSourceWithoutCapabilityIsRefused(t *testing.T) {
+	f := newLedgerFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.reg.UpsertRunner(ctx, runner.Runner{ID: "mac-mini", Name: "mac-mini", StepLimit: 8, Liveness: runner.LivenessOnline,
+		Compat: runner.Compatibility{State: runner.CompatCompatible}}))
+	remote := runner.Source{ID: runner.MakeSourceID("mac-mini", runner.CredAnthropicSubscription, ""), RunnerID: "mac-mini",
+		Kind: runner.CredAnthropicSubscription, Families: []modelidentity.Family{"anthropic"},
+		Health: runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}}
+	require.NoError(t, f.reg.ReplaceSources(ctx, "mac-mini", []runner.Source{remote}))
+	k := newKey()
+	req := runner.ExecRequirements{Group: runner.ModelGroup{Kind: runner.CredAnthropicSubscription, Family: "anthropic"},
+		Model: "claude-sonnet-4-5", Op: runner.OpChat, Provider: "claude-cli", EndpointFingerprint: "ab", Affinity: runner.AffinityNone, RunID: k.RunID}
+	j, err := f.ledger.EnsureIntent(ctx, k, "n", req)
+	require.NoError(t, err)
+	d := runner.Decision{Placed: true, Runner: "mac-mini", Source: remote.ID, Reason: "test"}
+
+	_, err = f.ledger.Reserve(ctx, j.ID, d, 8, ledgerNow)
+	assert.ErrorIs(t, err, runner.ErrSlotTaken, "a family alone never proves a remote route")
+	assertQueuedWithoutAttempt(t, f, j)
+
+	remote.Capabilities = []runner.ExecutionCapability{{Op: runner.OpChat, Provider: "claude-cli", EndpointFingerprint: "ab",
+		Families: []modelidentity.Family{"anthropic"}, Models: []string{"claude-sonnet-4-5"}}}
+	require.NoError(t, f.reg.ReplaceSources(ctx, "mac-mini", []runner.Source{remote}))
+	got, err := f.ledger.Reserve(ctx, j.ID, d, 8, ledgerNow)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), got.Generation)
+	assert.Equal(t, runner.RunnerID("mac-mini"), got.RunnerID)
 }

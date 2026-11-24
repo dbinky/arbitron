@@ -63,10 +63,15 @@ func (f *connectFixture) wsURL() string {
 }
 
 func wireHello() runnerproto.Hello {
+	var caps []runnerproto.ExecutionCapability
+	for _, c := range hubtest.AnthropicSource().Capabilities {
+		caps = append(caps, runnerproto.ExecutionCapability{Op: string(c.Op), Backend: c.Backend, Provider: c.Provider,
+			EndpointFingerprint: c.EndpointFingerprint, Families: []string{"anthropic"}, Models: c.Models, ExecutedModel: c.ExecutedModel})
+	}
 	return runnerproto.Hello{OS: "darwin", Arch: "arm64", ProtocolVersion: 1, RunnerVersion: "0.2.0",
 		HarnessVersions: map[string]string{"claude": "2.1.30"}, WorkspaceRoot: hubtest.ServerRoot,
 		ScratchRoot: "/Users/op/.arbitron-runner/scratch",
-		Sources: []runnerproto.WireSource{{Kind: "anthropic_subscription", Families: []string{"anthropic"},
+		Sources: []runnerproto.WireSource{{Kind: "anthropic_subscription", Families: []string{"anthropic"}, Capabilities: caps,
 			Health: runnerproto.WireHealth{Auth: "ok", Capacity: "available"}}}}
 }
 

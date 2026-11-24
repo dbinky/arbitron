@@ -38,6 +38,7 @@ func (p *tierPool) runner(id runner.RunnerID, mut ...func(*runner.Runner, *runne
 		Backends: []string{"claude-code"},
 		Health:   runner.SourceHealth{Auth: runner.AuthState("ok"), Capacity: runner.CapacityState("available")},
 	}
+	s = withEvidenceFor(s, tierAgentReq(0))
 	for _, m := range mut {
 		m(&r, &s)
 	}

@@ -289,7 +289,7 @@ func TestRemote_LunaRouteStepsRunOnlyWhereTheSourceIsAdvertised(t *testing.T) {
 	macB := p.connect(t, "mac-b", 2, hubtest.AnthropicSource())
 	var revealed atomic.Bool
 	b := provider.ResolvedBinding{Kind: provider.ProfileKindChat, Provider: provider.CanonicalLunaRoute, Model: "glm-5.3",
-		ConnectionRef: "lunaroute", Pinned: true, BaseURL: "https://lunaroute.internal.example/v1",
+		ConnectionRef: "lunaroute", Pinned: true, BaseURL: "https://gw.lunaroute.com/v1",
 		RevealKey: func(context.Context) (string, error) { revealed.Store(true); return "lr_live_secret", nil }}
 	ctx := context.Background()
 
@@ -312,7 +312,7 @@ func TestRemote_LunaRouteStepsRunOnlyWhereTheSourceIsAdvertised(t *testing.T) {
 		assert.Equal(t, "glm-5.3", d.Dispatch.Chat.Model)
 		assert.True(t, d.Dispatch.Chat.RequireExecutedModel, "a pinned model must be proven by the runner")
 		dump := fmt.Sprintf("%+v", *d.Dispatch.Chat)
-		for _, secret := range []string{"lunaroute.internal", "lr_live_secret", workDir} {
+		for _, secret := range []string{"gw.lunaroute.com", "lr_live_secret", workDir} {
 			assert.NotContains(t, dump, secret)
 		}
 	}
@@ -388,7 +388,7 @@ func TestRemote_LostRunnerReplacesStepWithNextGeneration(t *testing.T) {
 
 	job, err := p.Ledger.Get(ctx, jobID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), job.Generation)
+	assert.Equal(t, int64(3), job.Generation)
 	assert.Equal(t, runner.JobCompleted, job.State)
 	assert.Equal(t, runner.BuiltInRunnerID, job.RunnerID)
 	assert.Equal(t, 1, job.Key.Attempt, "no workflow retry is spent")
@@ -406,7 +406,7 @@ func TestRemote_LostRunnerReplacesStepWithNextGeneration(t *testing.T) {
 	assert.Equal(t, int64(1), facts[0].Generation)
 	assert.Equal(t, "runner_lost", facts[0].Outcome)
 	assert.Equal(t, string(runner.BuiltInRunnerID), facts[1].RunnerID)
-	assert.Equal(t, int64(2), facts[1].Generation)
+	assert.Equal(t, int64(3), facts[1].Generation)
 	assert.Equal(t, "completed", facts[1].Outcome)
 
 	rerouted := p.EventsOf(t, runner.EventJobRerouted)
@@ -454,11 +454,11 @@ func TestRemote_UnacceptedOfferIsReofferedWithNextGeneration(t *testing.T) {
 		require.Equal(t, jobID, d.JobID)
 		gens = append(gens, d.Generation)
 	}
-	assert.Equal(t, []int64{1, 2}, gens, "the expired offer is re-offered at the next generation")
+	assert.Equal(t, []int64{1, 3}, gens, "the expired offer is re-offered at the next generation")
 	assert.Equal(t, 1, macA.Conn().Count(runner.MsgCancel, jobID), "the expired offer is withdrawn")
 	job, err := p.Ledger.Get(ctx, jobID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), job.Generation)
+	assert.Equal(t, int64(3), job.Generation)
 	assert.Equal(t, runner.JobCompleted, job.State)
 	assert.Equal(t, 1, job.Key.Attempt, "no workflow retry is spent")
 	attempts, err := p.Ledger.Attempts(ctx, jobID)

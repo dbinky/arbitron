@@ -19,7 +19,8 @@ func sessSource(r RunnerID, headroom float64) Source {
 	return Source{
 		ID: MakeSourceID(r, CredAnthropicSubscription, ""), RunnerID: r, Kind: CredAnthropicSubscription,
 		Families: []modelidentity.Family{modelidentity.Family("anthropic")}, Backends: []string{"claude-code"},
-		Health: SourceHealth{Auth: AuthState("ok"), Capacity: CapacityState("available"), Headroom: sessHeadroom(headroom)},
+		Capabilities: []ExecutionCapability{{Op: OpStream, Backend: "claude-code", Families: []modelidentity.Family{"anthropic"}, Models: []string{"claude-sonnet-4-5"}, ExecutedModel: true}},
+		Health:       SourceHealth{Auth: AuthState("ok"), Capacity: CapacityState("available"), Headroom: sessHeadroom(headroom)},
 	}
 }
 
