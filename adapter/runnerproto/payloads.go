@@ -150,6 +150,29 @@ func (c *ExecutionCapability) Validate() error {
 			}
 		}
 	}
+	return validateToolPolicy(c)
+}
+
+// validateToolPolicy mirrors domain admission without importing the domain.
+func validateToolPolicy(c *ExecutionCapability) error {
+	if c.Op != "agent" {
+		if c.ToolPolicy != "" {
+			return errors.New("tool policy is only valid on agent capabilities")
+		}
+		return nil
+	}
+	switch c.ToolPolicy {
+	case "allowlist":
+		if c.Backend == "codex" || len(c.Tools) == 0 {
+			return errors.New("allowlist tool policy needs a restricting backend and its tools")
+		}
+	case "unrestricted":
+		if c.Backend != "codex" || len(c.Tools) > 0 {
+			return errors.New("unrestricted tool policy is only for codex and lists no tools")
+		}
+	default:
+		return errors.New("agent capability needs a tool policy")
+	}
 	return nil
 }
 

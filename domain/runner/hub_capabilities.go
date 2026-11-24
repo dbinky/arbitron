@@ -32,6 +32,9 @@ func validateSourceReports(reports []SourceReport) error {
 			if !remoteCapabilityOp(c) || c.Provider == "" || err != nil || len(fingerprint) != 32 || len(c.Families) == 0 || len(c.Families) > maxRemoteCapabilities || len(c.Models) == 0 || len(c.Models) > maxRemoteCapabilities || len(c.ContextWindows) > maxRemoteCapabilities || len(c.Efforts) > maxRemoteCapabilities || len(c.Tools) > maxRemoteTools {
 				return fmt.Errorf("%w: invalid remote execution capability", ErrMalformedMessage)
 			}
+			if !validToolPolicy(c) {
+				return fmt.Errorf("%w: invalid capability tool policy", ErrMalformedMessage)
+			}
 			if c.Op == OpConfirm && c.Backend != "claude-code" && c.Backend != "codex" {
 				return fmt.Errorf("%w: confirm capability needs a native verifier backend", ErrMalformedMessage)
 			}

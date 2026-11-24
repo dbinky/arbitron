@@ -14,6 +14,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExecutionCapability_ToolPolicyRules(t *testing.T) {
+	base := func(backend, policy string, tools ...string) ExecutionCapability {
+		return ExecutionCapability{Op: "agent", Backend: backend, Provider: "claude-cli", EndpointFingerprint: strings.Repeat("a", 64), Families: []string{"anthropic"}, Models: []string{"m"}, Tools: tools, ToolPolicy: policy}
+	}
+	for _, c := range []ExecutionCapability{base("claude-code", "allowlist", "Read"), base("codex", "unrestricted")} {
+		require.NoError(t, c.Validate())
+	}
+	chat := base("", "")
+	chat.Op = "chat"
+	require.NoError(t, chat.Validate())
+	withPolicy := chat
+	withPolicy.ToolPolicy = "allowlist"
+	for name, c := range map[string]ExecutionCapability{
+		"agent without policy":             base("claude-code", "", "Read"),
+		"allowlist without tools":          base("claude-code", "allowlist"),
+		"unrestricted claude-code":         base("claude-code", "unrestricted"),
+		"unrestricted codex listing tools": base("codex", "unrestricted", "Read"),
+		"allowlist codex":                  base("codex", "allowlist", "Read"),
+		"unknown policy":                   base("claude-code", "sometimes", "Read"),
+		"policy on chat":                   withPolicy,
+	} {
+		assert.Error(t, c.Validate(), name)
+	}
+}
+
 func TestWireTelemetry_SampleAgeRoundTripsAndRejectsNegative(t *testing.T) {
 	hb := Heartbeat{Telemetry: WireTelemetry{SampledAt: time.Unix(1700000000, 0).UTC(), SampleAgeMs: 1500}}
 	require.NoError(t, hb.Validate())

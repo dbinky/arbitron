@@ -281,10 +281,8 @@ func capabilitySatisfies(c ExecutionCapability, req ExecRequirements) bool {
 	if req.Effort != "" && req.Effort != provider.EffortDefault && !slices.Contains(c.Efforts, req.Effort) {
 		return false
 	}
-	for _, tool := range req.Tools {
-		if !slices.Contains(c.Tools, tool) {
-			return false
-		}
+	if !ToolScopeSatisfied(c, req.Tools) {
+		return false
 	}
 	return !req.RequireExecutedModel || c.ExecutedModel
 }
