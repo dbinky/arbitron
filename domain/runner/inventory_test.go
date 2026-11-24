@@ -26,7 +26,7 @@ func TestBuiltInSources_FullHost(t *testing.T) {
 	}
 	got := BuiltInSources(in)
 	m := invByID(got)
-	require.Len(t, got, 8)
+	require.Len(t, got, 7)
 
 	anth := m[MakeSourceID(BuiltInRunnerID, CredAnthropicSubscription, "")]
 	assert.Equal(t, []modelidentity.Family{"anthropic"}, anth.Families)
