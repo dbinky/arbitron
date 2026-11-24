@@ -184,7 +184,7 @@ func TestImplTamperWiring(t *testing.T) {
 		{"pass-mark", "impl-task", "commit-leftovers", "tamper-gate", "tamper-route"},
 		{"tamper-context", "tamper-judge", "tamper-verdict", "voided?"},
 		{"tamper-void", "checkpoint-push-void"},
-		{"count-plan-steps", "impl-inc", "impl-gate"},
+		{"count-plan-steps", "stall-check", "impl-inc", "impl-gate"},
 	} {
 		for i := 0; i+1 < len(chain); i++ {
 			if !hasEdge(wf, chain[i], chain[i+1]) {
