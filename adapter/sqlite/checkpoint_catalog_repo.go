@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/google/uuid"
 )
@@ -150,7 +151,128 @@ func (r *CheckpointCatalogRepo) DeleteRun(ctx context.Context, runID uuid.UUID) 
 	return tx.Commit()
 }
 
-// appended to adapter/sqlite/checkpoint_catalog_repo.go
+var _ runner.CheckpointCatalog = (*CheckpointCatalogRepo)(nil)
+
+// Publish registers a prepared candidate under the exact active job and resource
+// fences. It never advances the committed pointer.
+func (r *CheckpointCatalogRepo) Publish(ctx context.Context, c runner.CheckpointCandidate) error {
+	if err := c.ValidatePrepared(); err != nil {
+		return err
+	}
+	f, res := *c.Job, c.Resource
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("checkpoint catalog: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Acquire the write lock before reading any of the fences.
+	if _, err := tx.ExecContext(ctx, `UPDATE runner_jobs SET updated_at = updated_at WHERE id = ?`, uuidToString(f.JobID)); err != nil {
+		return fmt.Errorf("checkpoint catalog: lock: %w", err)
+	}
+	if err := fenceErr(ctx, tx, f); err != nil {
+		if errors.Is(err, runner.ErrJobNotFound) {
+			return fmt.Errorf("%w: %w", runner.ErrFenced, err)
+		}
+		return err
+	}
+	if err := checkResourceFenceTx(ctx, tx, res); err != nil {
+		return err
+	}
+	var holderJob, holderRunner sql.NullString
+	var holderGen sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT job_id, job_runner_id, job_generation FROM workspace_lease_holders
+		WHERE resource_key = ? AND generation = ? AND token = ?`, res.Key, res.Generation, res.Token.String()).
+		Scan(&holderJob, &holderRunner, &holderGen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: claim %s gen %d has no holder record", runner.ErrResourceFenced, res.Key, res.Generation)
+	}
+	if err != nil {
+		return fmt.Errorf("checkpoint catalog: lease holder: %w", err)
+	}
+	if holderJob.Valid && (holderJob.String != uuidToString(f.JobID) || holderRunner.String != string(f.RunnerID) || holderGen.Int64 != f.Generation) {
+		return fmt.Errorf("%w: claim %s gen %d is held by another job", runner.ErrResourceFenced, res.Key, res.Generation)
+	}
+	base, _, _, err := committedRef(ctx, tx, c.Ref.RunID)
+	if err != nil {
+		return err
+	}
+	if base != c.Base {
+		return fmt.Errorf("%w: candidate base %q is not the committed %q", runner.ErrCheckpointConflict, c.Base, base)
+	}
+	run := uuidToString(c.Ref.RunID)
+	var have struct {
+		hash, path, state, jobID, baseRef, key, owner, token string
+		size, jobGen, resGen                                 int64
+	}
+	err = tx.QueryRowContext(ctx, `SELECT manifest_hash, archive_path, size_bytes, state, COALESCE(job_id, ''),
+		COALESCE(job_generation, 0), base_ref, resource_key, resource_owner, resource_generation, resource_token
+		FROM workspace_checkpoints WHERE run_id = ? AND version = ?`, run, c.Ref.Version).
+		Scan(&have.hash, &have.path, &have.size, &have.state, &have.jobID, &have.jobGen, &have.baseRef,
+			&have.key, &have.owner, &have.resGen, &have.token)
+	switch {
+	case err == nil:
+		if have.state == "prepared" && have.hash == c.Ref.ManifestHash && have.path == c.ArchivePath &&
+			have.size == c.SizeBytes && have.jobID == uuidToString(f.JobID) && have.jobGen == f.Generation &&
+			have.baseRef == c.Base.String() && have.key == res.Key && have.owner == res.Owner &&
+			have.resGen == res.Generation && have.token == res.Token.String() {
+			return tx.Commit()
+		}
+		return fmt.Errorf("%w: run %s v%d is already registered differently", runner.ErrCheckpointConflict, c.Ref.RunID, c.Ref.Version)
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("checkpoint catalog: existing candidate: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_checkpoints
+		(run_id, version, manifest_hash, archive_path, size_bytes, job_id, job_generation, state, base_ref,
+		 resource_key, resource_owner, resource_generation, resource_token, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?, ?, ?, ?, ?)`,
+		run, c.Ref.Version, c.Ref.ManifestHash, c.ArchivePath, c.SizeBytes, uuidToString(f.JobID), f.Generation,
+		c.Base.String(), res.Key, res.Owner, res.Generation, res.Token.String(), timeToString(r.now())); err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("%w: run %s v%d already registered", runner.ErrCheckpointConflict, c.Ref.RunID, c.Ref.Version)
+		}
+		return fmt.Errorf("checkpoint catalog: insert candidate: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("checkpoint catalog: commit: %w", err)
+	}
+	return nil
+}
+
+// PreparedFor finds the single prepared candidate of this exact job and claim.
+// Ambiguous results are conflicts, never a newest-row guess.
+func (r *CheckpointCatalogRepo) PreparedFor(ctx context.Context, runID uuid.UUID, job runner.Fence, res engine.ResourceFenceRef) (runner.CheckpointRef, bool, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT c.version, c.manifest_hash FROM workspace_checkpoints c
+		JOIN workspace_lease_holders h ON h.resource_key = c.resource_key AND h.generation = c.resource_generation AND h.token = c.resource_token
+		WHERE c.run_id = ? AND c.state = 'prepared' AND c.job_id = ? AND c.job_generation = ?
+		  AND c.resource_key = ? AND c.resource_owner = ? AND c.resource_generation = ? AND c.resource_token = ?
+		  AND (h.job_runner_id IS NULL OR h.job_runner_id = ?)`,
+		uuidToString(runID), uuidToString(job.JobID), job.Generation,
+		res.Key, res.Owner, res.Generation, res.Token.String(), string(job.RunnerID))
+	if err != nil {
+		return runner.CheckpointRef{}, false, fmt.Errorf("checkpoint catalog: prepared for: %w", err)
+	}
+	defer rows.Close()
+	var found []runner.CheckpointRef
+	for rows.Next() {
+		ref := runner.CheckpointRef{RunID: runID}
+		if err := rows.Scan(&ref.Version, &ref.ManifestHash); err != nil {
+			return runner.CheckpointRef{}, false, fmt.Errorf("checkpoint catalog: prepared for: %w", err)
+		}
+		found = append(found, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return runner.CheckpointRef{}, false, fmt.Errorf("checkpoint catalog: prepared for: %w", err)
+	}
+	switch len(found) {
+	case 0:
+		return runner.CheckpointRef{}, false, nil
+	case 1:
+		return found[0], true, nil
+	default:
+		return runner.CheckpointRef{}, false, fmt.Errorf("%w: %d prepared candidates for job %s generation %d", runner.ErrCheckpointConflict, len(found), job.JobID, job.Generation)
+	}
+}
+
 // Retention reports every row version of the run, its committed pointer and
 // whether a writer is active (an active run:<uuid> lease or an offered/running
 // job), for the store's Prune.
