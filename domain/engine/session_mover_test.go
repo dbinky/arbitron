@@ -6,11 +6,89 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPublishTurnRestartedAndContextNotice_MapPayloads(t *testing.T) {
+	bus := newMockEventBus()
+	run := uuid.New()
+	turn := engine.InteractiveTurnIdentity{RunID: run, NodeID: "talk", InvocationID: uuid.New(), RequestID: uuid.New(), TurnIndex: 3, Generation: 7}
+	engine.PublishTurnRestarted(bus, turn)
+	engine.PublishContextNotice(bus, turn, engine.SessionLossNotice)
+	restarted := bus.eventsOfType(run, engine.EventTypeInteractiveTurnRestarted)
+	require.Len(t, restarted, 1)
+	assert.False(t, restarted[0].Timestamp.IsZero())
+	assert.Equal(t, map[string]any{"instanceId": run.String(), "nodeId": "talk", "invocationId": turn.InvocationID.String(), "requestId": turn.RequestID.String(), "turnIndex": 3, "generation": int64(7)}, restarted[0].Data)
+	notice := bus.eventsOfType(run, engine.EventTypeInteractiveContextNotice)
+	require.Len(t, notice, 1)
+	assert.False(t, notice[0].Timestamp.IsZero())
+	assert.Equal(t, map[string]any{"instanceId": run.String(), "nodeId": "talk", "invocationId": turn.InvocationID.String(), "requestId": turn.RequestID.String(), "turnIndex": 3, "generation": int64(7), "notice": "tool details and reasoning may be lost", "lossy": true}, notice[0].Data)
+}
+
+func TestPublishTurnRestartedAndContextNotice_RejectIncompleteIdentity(t *testing.T) {
+	valid := engine.InteractiveTurnIdentity{RunID: uuid.New(), NodeID: "talk", InvocationID: uuid.New(), RequestID: uuid.New(), TurnIndex: 3, Generation: 7}
+	for _, field := range []string{"run", "node", "invocation", "request", "turn", "generation"} {
+		t.Run(field, func(t *testing.T) {
+			turn := valid
+			switch field {
+			case "run":
+				turn.RunID = uuid.Nil
+			case "node":
+				turn.NodeID = ""
+			case "invocation":
+				turn.InvocationID = uuid.Nil
+			case "request":
+				turn.RequestID = uuid.Nil
+			case "turn":
+				turn.TurnIndex = -1
+			case "generation":
+				turn.Generation = 0
+			}
+			bus := newMockEventBus()
+			engine.PublishTurnRestarted(bus, turn)
+			engine.PublishContextNotice(bus, turn, engine.SessionLossNotice)
+			assert.Empty(t, bus.eventsOfType(turn.RunID, engine.EventTypeInteractiveTurnRestarted))
+			assert.Empty(t, bus.eventsOfType(turn.RunID, engine.EventTypeInteractiveContextNotice))
+		})
+	}
+}
+
+// Exercise the existing accepted-intent identity producer and real subscriber
+// sink. Composition-root mover/replay acceptance is owned by the later cycles.
+func TestPublishTurnRestartedAndContextNotice_AcceptedIntentReachesSubscriber(t *testing.T) {
+	bus := eventbus.New()
+	intent := engine.TurnIntent{RunID: uuid.New(), NodeID: "talk", InvocationID: uuid.New(), RequestID: uuid.New(), TurnIndex: 4, SessionGeneration: 9}
+	events, unsubscribe := bus.Subscribe(intent.RunID)
+	defer unsubscribe()
+	turn := engine.TurnIdentityFromIntent(intent)
+	engine.PublishTurnRestarted(bus, turn)
+	engine.PublishContextNotice(bus, turn, engine.SessionLossNotice)
+	for _, kind := range []string{engine.EventTypeInteractiveTurnRestarted, engine.EventTypeInteractiveContextNotice} {
+		select {
+		case event := <-events:
+			require.Equal(t, kind, event.Type)
+			data, ok := event.Data.(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, intent.RunID.String(), data["instanceId"])
+			assert.Equal(t, intent.NodeID, data["nodeId"])
+			assert.Equal(t, intent.InvocationID.String(), data["invocationId"])
+			assert.Equal(t, intent.RequestID.String(), data["requestId"])
+			assert.Equal(t, intent.TurnIndex, data["turnIndex"])
+			assert.Equal(t, intent.SessionGeneration, data["generation"])
+			if kind == engine.EventTypeInteractiveContextNotice {
+				assert.Equal(t, engine.SessionLossNotice, data["notice"])
+				assert.Equal(t, true, data["lossy"])
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("subscriber did not receive %s", kind)
+		}
+	}
+}
 
 func TestAllowedMoveReason_OnlyRecoveryTriggers(t *testing.T) {
 	for _, r := range []string{"exhausted", "logged_out", "drain", "runner_lost"} {
