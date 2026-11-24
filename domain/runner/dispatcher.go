@@ -17,11 +17,12 @@ import (
 // StepJob is the operation payload. Binding is server-side only and is NEVER
 // serialized to remote runners.
 type StepJob struct {
-	Op      OpType
-	Binding provider.ResolvedBinding
-	Chat    *engine.ChatRequest // chat & stream
-	Agent   *engine.AgentMission
-	Process *engine.ProcessSpec
+	Op           OpType
+	Binding      provider.ResolvedBinding
+	Chat         *engine.ChatRequest // chat & stream
+	Agent        *engine.AgentMission
+	Process      *engine.ProcessSpec
+	Confirmation *ConfirmationRequest // OpConfirm
 }
 
 // Assignment is a reserved, fenced job handed to a StepRunner.
@@ -32,10 +33,11 @@ type Assignment struct {
 
 // StepOutput is a StepRunner's result; exactly one field is set.
 type StepOutput struct {
-	Chat    *engine.ChatResponse
-	Stream  <-chan engine.ChatChunk
-	Agent   *engine.AgentResult
-	Process *engine.ProcessResult
+	Chat         *engine.ChatResponse
+	Stream       <-chan engine.ChatChunk
+	Agent        *engine.AgentResult
+	Process      *engine.ProcessResult
+	Confirmation *ConfirmationResult
 }
 
 // StepRunner executes an assignment on one runner. Errors carry a classified
@@ -440,7 +442,7 @@ func (s *StepDispatcher) backoff(try int, retryAfter time.Duration) time.Duratio
 
 func validOutput(op OpType, out StepOutput) bool {
 	count := 0
-	for _, present := range []bool{out.Chat != nil, out.Stream != nil, out.Agent != nil, out.Process != nil} {
+	for _, present := range []bool{out.Chat != nil, out.Stream != nil, out.Agent != nil, out.Process != nil, out.Confirmation != nil} {
 		if present {
 			count++
 		}
@@ -457,6 +459,8 @@ func validOutput(op OpType, out StepOutput) bool {
 		return out.Agent != nil
 	case OpProcess:
 		return out.Process != nil
+	case OpConfirm:
+		return out.Confirmation != nil
 	}
 	return false
 }
