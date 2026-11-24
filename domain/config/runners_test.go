@@ -17,6 +17,16 @@ func validRunners() RunnersConfig {
 		TransientBackoffMinMs: DefaultRunnerTransientBackoffMinMs,
 		TransientBackoffMaxMs: DefaultRunnerTransientBackoffMaxMs,
 		EventRetention:        DefaultRunnerEventRetention,
+		// Phase 2 (loader defaults, adapter/config/loader.go)
+		HeartbeatSeconds: 5, SuspectAfterSeconds: 30, LostAfterSeconds: 120, OfferTTLSeconds: 30,
+		OutputBufferFrames: 4096, TelemetryWindow: 60,
+		// Phase 3
+		MoveLoadThresholdPct: DefaultMoveLoadThresholdPct, MoveSizeCapBytes: DefaultMoveSizeCapBytes,
+		RestartGraceSeconds: DefaultRestartGraceSeconds, TransferPartBytes: DefaultTransferPartBytes,
+		StagingDir: "/var/lib/arbitron/runner-staging", CheckpointDir: "/var/lib/arbitron/checkpoints",
+		StagingRetentionSeconds: DefaultStagingRetentionSeconds,
+		// Phase 4
+		TurnLeaseSeconds: 60, SessionBundleRetention: 1, RebuildMaxAttempts: 2,
 	}
 }
 

@@ -41,6 +41,7 @@ func TestLoad_Runners_DefaultsWhenBlockAbsent(t *testing.T) {
 	assert.Equal(t, 1000, r.TransientBackoffMinMs)
 	assert.Equal(t, 30000, r.TransientBackoffMaxMs)
 	assert.Equal(t, 1000, r.EventRetention)
+	require.NoError(t, cfg.Runners.Validate())
 }
 
 func TestLoad_Runners_GeneratedDefaultFileLoads(t *testing.T) {
