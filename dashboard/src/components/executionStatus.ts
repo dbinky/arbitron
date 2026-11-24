@@ -1,5 +1,25 @@
 import type { EnrichedInstanceSummary, ExecutionState, ExecutionStatus, MoveProgress } from '../api/types'
 
+import { formatCountdown } from '../utils/countdown'
+
+/** Badge text for a non-running execution state. */
+export function executionBadgeLabel(s: ExecutionStatus, now: number): string | null {
+  switch (s.state) {
+    case 'queued_slot':
+      return 'queued · slot'
+    case 'waiting_capacity': {
+      const detail = [s.reason, s.model ? `model ${s.model}` : ''].filter(Boolean).join(' · ')
+      return `waiting · capacity${detail ? ` — ${detail}` : ''} · ${formatCountdown(s.nextReset, now)}`
+    }
+    case 'moving_workspace':
+      return `moving workspace · ${moveProgressText(s.progress)}`
+    case 'recovering':
+      return 'recovering'
+    default:
+      return null
+  }
+}
+
 const STATE_ORDER: Record<ExecutionState, number> = {
   running: 0,
   moving_workspace: 1,

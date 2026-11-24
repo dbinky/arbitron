@@ -2,6 +2,10 @@ import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { EnrichedInstanceSummary } from '../api/types'
 import type { ColumnDef } from './queueColumns'
+import ExecutionStatusBadge from './ExecutionStatusBadge'
+import RunnerCell from './RunnerCell'
+import { orderedStatuses } from './executionStatus'
+import execStyles from './ExecutionStatus.module.css'
 import { formatDuration, relativeTime, localDateTime, runDuration } from '../utils/time'
 import styles from './QueueTableRow.module.css'
 
@@ -112,6 +116,15 @@ export default function QueueTableRow({
               )}
               {cellText(col)}
               {badges}
+            </span>
+          ) : col.key === 'runner' ? (
+            <RunnerCell execution={rowVal.execution} />
+          ) : col.key === 'status' && rowVal.execution && rowVal.execution.length > 0 ? (
+            <span className={execStyles.statusCell}>
+              {cellText(col)}
+              {orderedStatuses(rowVal.execution).map((s) => (
+                <ExecutionStatusBadge key={s.jobId} status={s} now={now} showNode={rowVal.execution!.length > 1} />
+              ))}
             </span>
           ) : col.key === 'git' && rowVal.gitRef ? (
             // gitRef is an author/run-controlled string; it is rendered as a JSX

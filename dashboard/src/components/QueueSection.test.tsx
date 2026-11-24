@@ -67,7 +67,7 @@ describe('QueueSection table rendering', () => {
   it('renders a table with column headers from queueColumns', () => {
     renderSection({ instances: [summary()] })
     expect(screen.getByRole('table')).toBeInTheDocument()
-    expect(screen.getByRole('columnheader', { name: /run/i })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /^run\b/i })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: /status/i })).toBeInTheDocument()
   })
 
@@ -116,7 +116,7 @@ describe('QueueSection table rendering', () => {
     const a = summary({ id: 'a', runName: 'A — wf', state: 'running' })
     const b = summary({ id: 'b', runName: 'B — wf', state: 'running' })
     renderSection({ instances: [a, b], timeMode: 'elapsed' })
-    fireEvent.click(screen.getByRole('columnheader', { name: /run/i }))
+    fireEvent.click(screen.getByRole('columnheader', { name: /^run\b/i }))
     const bodyRows = screen.getAllByRole('row').slice(1)
     // Ascending by runName: A before B
     expect(bodyRows[0].getAttribute('data-row-id')).toBe('a')

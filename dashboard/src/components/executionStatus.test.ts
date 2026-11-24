@@ -1,6 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { execStatus, row } from '../api/runners.fixtures'
-import { humanBytes, moveProgressText, orderedStatuses, runnerCellText, runnerSummary } from './executionStatus'
+import { T0, execStatus, iso, row } from '../api/runners.fixtures'
+import { executionBadgeLabel, humanBytes, moveProgressText, orderedStatuses, runnerCellText, runnerSummary } from './executionStatus'
+
+describe('executionBadgeLabel', () => {
+  it.each([
+    [execStatus({ state: 'queued_slot' }), 'queued · slot'],
+    [execStatus({ state: 'recovering' }), 'recovering'],
+    [execStatus({ state: 'moving_workspace', progress: { bytesDone: 512 * 1024 ** 2, bytesTotal: 2 * 1024 ** 3 } }), 'moving workspace · 25% (512.0 MiB of 2.0 GiB)'],
+    [execStatus({ state: 'moving_workspace' }), 'moving workspace · progress unknown'],
+    [execStatus({ state: 'running' }), null],
+  ])('%#: %s', (s, expected) => {
+    expect(executionBadgeLabel(s, T0)).toBe(expected)
+  })
+  it('a capacity wait carries its reason, the exact model and a countdown', () => {
+    const s = execStatus({ state: 'waiting_capacity', runnerId: undefined, reason: 'all anthropic subscriptions exhausted', nextReset: iso(120_000) })
+    expect(executionBadgeLabel(s, T0)).toBe('waiting · capacity — all anthropic subscriptions exhausted · model claude-opus-4-1 · resets in 2m 0s')
+    expect(executionBadgeLabel(s, T0 + 1_000)).toBe('waiting · capacity — all anthropic subscriptions exhausted · model claude-opus-4-1 · resets in 1m 59s')
+    expect(executionBadgeLabel(execStatus({ state: 'waiting_capacity', model: undefined }), T0)).toBe('waiting · capacity · reset time unknown')
+  })
+})
 
 const parallel = [
   execStatus({ jobId: 'q', nodeId: 'b', state: 'queued_slot', runnerId: undefined }),

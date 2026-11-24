@@ -1,6 +1,7 @@
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
 import { runDuration } from '../utils/time'
 import { formatBinding } from './formatBinding'
+import { runnerCellText } from './executionStatus'
 
 /** A single queue-list column declaration. */
 export interface ColumnDef {
@@ -68,6 +69,13 @@ export const COLUMNS: ColumnDef[] = [
     accessor: (r) => r.state,
     sortable: true,
     densities: ALL_DENSITIES,
+  },
+  {
+    key: 'runner',
+    header: 'Runner',
+    accessor: (r) => runnerCellText(r),
+    sortable: true,
+    densities: ['balanced', 'expanded'],
   },
   {
     key: 'friendlyStep',

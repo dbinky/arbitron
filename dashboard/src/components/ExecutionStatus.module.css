@@ -1,0 +1,8 @@
+.statusCell { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.badge { font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm); background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-secondary); white-space: nowrap; }
+.queued_slot { color: var(--state-queued); border-color: var(--state-queued); }
+.waiting_capacity { color: var(--state-waiting); border-color: var(--state-waiting); }
+.moving_workspace { color: var(--accent); border-color: var(--accent); }
+.recovering { color: var(--state-paused); border-color: var(--state-paused); }
+.runnerCell { display: inline-flex; flex-direction: column; gap: 1px; font-size: 12px; }
+.secondary { font-size: 10px; color: var(--text-muted); }

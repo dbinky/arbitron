@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { EnrichedInstanceSummary, Me, NodeEventData, WebSocketEvent } from '../api/types'
 import { api } from '../api/client'
+import { decodeLiveEvent } from '../api/runnerDecode'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
 import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
 import { useDensityPreference } from '../hooks/useDensityPreference'
@@ -101,6 +102,19 @@ export default function QueueView() {
   // child kept rendering its stale state under an already-open parent.
   const [refreshedAt, setRefreshedAt] = useState(0)
   const inFlight = useRef(false)
+  // Unversioned events invalidate; only authoritative reads supply rows.
+  const dirty = useRef(false)
+  const epoch = useRef(0)
+  const [loadedOnce, setLoadedOnce] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fetchAllRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const scheduleRefetch = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null
+      void fetchAllRef.current()
+    }, DEBOUNCE_MS)
+  }, [])
 
   const { density, cycle: cycleDensity } = useDensityPreference(me?.userId ?? null)
   // One page-level clock so Elapsed / "N ago" cells advance between events.
@@ -108,7 +122,12 @@ export default function QueueView() {
   const authMode = me?.authMode ?? 'local'
 
   const fetchAll = useCallback(async () => {
+    if (inFlight.current) {
+      dirty.current = true
+      return
+    }
     inFlight.current = true
+    const mine = epoch.current
     try {
       const since = daysAgo(HISTORY_DAYS)
 
@@ -137,6 +156,7 @@ export default function QueueView() {
           api.me(),
           ancestorsReq,
         ])
+      if (mine !== epoch.current) return
 
       // Ancestors go into the ACTIVE section: topLevelRows nests a row under
       // its parent only within one section, so this is what makes an active
@@ -153,15 +173,22 @@ export default function QueueView() {
       setCompleted(completedRes.filter((r) => !ancestorIds.has(r.id)))
       setMe(meResp)
       setError(null)
+      setLoadedOnce(true)
       setRefreshedAt((n) => n + 1)
     } catch (err) {
+      if (mine !== epoch.current) return
       const msg = err instanceof Error ? err.message : 'Unknown error'
       setError(msg)
     } finally {
       inFlight.current = false
       setLoading(false)
+      if (dirty.current || mine !== epoch.current) {
+        dirty.current = false
+        scheduleRefetch()
+      }
     }
-  }, [showDismissed])
+  }, [showDismissed, scheduleRefetch])
+  fetchAllRef.current = fetchAll
 
   const handleDismiss = useCallback(async (id: string) => {
     try {
@@ -195,10 +222,9 @@ export default function QueueView() {
   }, [fetchAll])
 
   useEffect(() => {
+    epoch.current += 1
     void fetchAll()
   }, [fetchAll])
-
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Each QueueSection owns a run hierarchy whose expanded children are cached
   // rows separate from `active` (a child may be past the list window, or sit
@@ -238,13 +264,16 @@ export default function QueueView() {
         // Lifecycle AND group events refetch (and so refresh open hierarchy
         // levels): a group decision or task update changes child rows and
         // their markers with no instance event on the expanded parent.
-        if (!isQueueRefreshEvent(event.type)) return
-        if (debounceRef.current) clearTimeout(debounceRef.current)
-        debounceRef.current = setTimeout(() => {
-          void fetchAll()
-        }, DEBOUNCE_MS)
+        if (isQueueRefreshEvent(event.type)) {
+          scheduleRefetch()
+          return
+        }
+        const live = decodeLiveEvent(event)
+        if (live.kind === 'execution' || live.kind === 'node_done' || (live.kind === 'pool' && live.event.runId !== null)) {
+          scheduleRefetch()
+        }
       },
-      [fetchAll],
+      [scheduleRefetch],
     ),
   )
 
@@ -283,7 +312,7 @@ export default function QueueView() {
     )
   }
 
-  if (error) {
+  if (error && !loadedOnce) {
     return (
       <div style={{ padding: 32, textAlign: 'center' }}>
         <div style={{ color: 'var(--state-failed)', marginBottom: 12 }}>
@@ -311,6 +340,12 @@ export default function QueueView() {
       <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 16px 8px' }}>
         <DensityToggle density={density} onCycle={cycleDensity} />
       </div>
+      {error && (
+        <div role="alert" data-testid="queue-stale" style={{ margin: '0 16px 8px', padding: '6px 12px', fontSize: 12, color: 'var(--state-failed)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+          {`Failed to refresh instances: ${error} — showing the last loaded data.`}{' '}
+          <button type="button" onClick={() => { void fetchAll() }}>Retry refresh</button>
+        </div>
+      )}
       {ancestorError && (
         <div
           role="status"
