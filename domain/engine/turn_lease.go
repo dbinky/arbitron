@@ -301,3 +301,46 @@ func turnLeaseErr(ctx context.Context, err error) error {
 	}
 	return err
 }
+
+// ErrTurnRecoveryProofInvalid rejects a recovery proof that does not establish
+// adoption of the exact live owner or a fenced, stopped previous owner.
+var ErrTurnRecoveryProofInvalid = errors.New("engine: turn recovery proof is invalid")
+
+// TurnRecoveryProof is built ONLY by P4 T10's TurnRecoveryCoordinator from
+// durable job/resource/stop records. Elapsed TTL is never part of it.
+type TurnRecoveryProof struct {
+	IntentID uuid.UUID
+	Adopted  bool
+	Jobs     []JobFenceRef
+	Resource *ResourceFenceRef
+}
+
+// Validate checks the proof's shape; the store re-checks every fact in SQL.
+func (p TurnRecoveryProof) Validate() error {
+	if p.IntentID == uuid.Nil {
+		return fmt.Errorf("%w: no intent", ErrTurnRecoveryProofInvalid)
+	}
+	if len(p.Jobs) == 0 {
+		return fmt.Errorf("%w: no job evidence (expiry alone is not proof)", ErrTurnRecoveryProofInvalid)
+	}
+	if p.Adopted && len(p.Jobs) != 1 {
+		return fmt.Errorf("%w: adoption names exactly one live job", ErrTurnRecoveryProofInvalid)
+	}
+	for _, j := range p.Jobs {
+		if j.JobID == uuid.Nil || j.RunnerID == "" || j.Generation < 1 {
+			return fmt.Errorf("%w: incomplete job fence", ErrTurnRecoveryProofInvalid)
+		}
+	}
+	if p.Resource != nil {
+		if err := p.Resource.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrTurnRecoveryProofInvalid, err)
+		}
+	}
+	return nil
+}
+
+// TurnLeaseRecoveryStore reclaims an occupied lease from durable proof only.
+// Adoption keeps the generation; replay reserves the next one.
+type TurnLeaseRecoveryStore interface {
+	RecoverTurnLease(ctx context.Context, old TurnLease, proof TurnRecoveryProof, ttl time.Duration) (TurnLease, error)
+}

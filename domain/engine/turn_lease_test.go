@@ -163,3 +163,20 @@ func TestHoldTurnLease_NilStoreIsLocalNoop(t *testing.T) {
 	local.Release()
 	assert.Equal(t, 1, released)
 }
+
+func TestTurnRecoveryProof_Validate(t *testing.T) {
+	job := JobFenceRef{JobID: uuid.New(), RunnerID: "mac-a", Generation: 2}
+	res := &ResourceFenceRef{Key: "run:x", Owner: "mac-a", Generation: 1, Token: uuid.New()}
+	assert.NoError(t, TurnRecoveryProof{IntentID: uuid.New(), Adopted: true, Jobs: []JobFenceRef{job}}.Validate())
+	assert.NoError(t, TurnRecoveryProof{IntentID: uuid.New(), Jobs: []JobFenceRef{job}, Resource: res}.Validate())
+	for name, p := range map[string]TurnRecoveryProof{
+		"no intent":           {Jobs: []JobFenceRef{job}},
+		"ttl only":            {IntentID: uuid.New()},
+		"adopt two jobs":      {IntentID: uuid.New(), Adopted: true, Jobs: []JobFenceRef{job, job}},
+		"adopt resource only": {IntentID: uuid.New(), Adopted: true, Resource: res},
+		"incomplete job":      {IntentID: uuid.New(), Jobs: []JobFenceRef{{JobID: uuid.New()}}},
+		"incomplete resource": {IntentID: uuid.New(), Jobs: []JobFenceRef{job}, Resource: &ResourceFenceRef{Key: "k"}},
+	} {
+		assert.ErrorIs(t, p.Validate(), ErrTurnRecoveryProofInvalid, name)
+	}
+}
