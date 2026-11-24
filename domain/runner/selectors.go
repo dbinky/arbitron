@@ -212,7 +212,7 @@ func (p *routedProcessRunner) RunProcess(ctx context.Context, spec engine.Proces
 	er := ExecRequirements{
 		Group:    ModelGroup{Kind: CredNone},
 		Op:       OpType("process"),
-		Affinity: AffinityBuiltIn,
+		Affinity: ProcessAffinity(spec),
 		RunID:    runIDFrom(ctx),
 	}
 	out, err := p.d.Dispatch(ctx, er, StepJob{Op: OpType("process"), Process: &s})
