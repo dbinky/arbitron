@@ -20,10 +20,13 @@ var ErrMalformedJob = errors.New("builtin runner: malformed step job")
 
 // Deps are the inner (undecorated) execution paths.
 type Deps struct {
-	Chats         engine.ChatProviderSelector
-	Agents        engine.AgentProviderSelector
-	Streams       engine.InteractiveStreamSelector
-	Process       engine.ProcessRunner
+	Chats   engine.ChatProviderSelector
+	Agents  engine.AgentProviderSelector
+	Streams engine.InteractiveStreamSelector
+	Process engine.ProcessRunner
+	// Sessions holds this machine's session adapters for session import (P4 T8).
+	// Export runs inside the originating stream assignment (contracts §24).
+	Sessions      *runner.SessionPortabilityRegistry
 	Confirmations runner.ConfirmationExecutor
 }
 
