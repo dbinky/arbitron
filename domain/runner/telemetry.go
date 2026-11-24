@@ -61,14 +61,15 @@ func newBuiltInTelemetryLoop(t MachineTelemetry, sink telemetrySink, every time.
 func (l *BuiltInTelemetryLoop) Every() time.Duration { return l.every }
 
 // Tick samples once and records the result for BuiltInRunnerID. A sampling
-// error records an all-unavailable sample stamped now and is returned.
+// error records an all-unavailable sample stamped now and is returned. Samples
+// without a producer timestamp also carry no metric evidence.
 func (l *BuiltInTelemetryLoop) Tick(ctx context.Context) error {
 	s, err := l.src.Sample(ctx)
 	if err != nil {
 		s = Telemetry{}
 	}
 	if s.SampledAt.IsZero() {
-		s.SampledAt = l.now()
+		s = Telemetry{SampledAt: l.now()}
 	}
 	l.sink.RecordTelemetry(BuiltInRunnerID, s)
 	return err

@@ -132,7 +132,8 @@ func TestBuiltInTelemetryLoopStampsZeroSampledAt(t *testing.T) {
 }
 
 func TestBuiltInTelemetryLoopStartSamplesImmediatelyThenEveryInterval(t *testing.T) {
-	m := &telemFakeMachine{samples: []Telemetry{{CPUPercent: telemF64(1)}, {CPUPercent: telemF64(2)}, {CPUPercent: telemF64(3)}}}
+	t0 := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	m := &telemFakeMachine{samples: []Telemetry{{SampledAt: t0, CPUPercent: telemF64(1)}, {SampledAt: t0.Add(7 * time.Second), CPUPercent: telemF64(2)}, {SampledAt: t0.Add(14 * time.Second), CPUPercent: telemF64(3)}}}
 	sink := newTelemSink()
 	timer := newTelemTimer()
 	l := newBuiltInTelemetryLoop(m, sink, 7*time.Second, time.Now, timer.after)
