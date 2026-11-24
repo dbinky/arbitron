@@ -1494,3 +1494,31 @@ These are settled by the spec/design or by a user decision. The owning task carr
   Stale or unknown jobs are still fenced.
 - **Generation after re-placement.** Requeue and Reserve each increment the generation, so the first re-placement runs at generation 3 (P1 ledger contract; P2 T6 Step 3a).
 - **Telemetry window port.** `TelemetryWindow.Window(RunnerID) []Telemetry` has no error result. Absence is "unknown" (P2 T12).
+
+### User decisions on the P3 open questions (2026-11-23)
+
+- **Agent tool policy (P3 T15, P2 T8 Cycle 2b Step 6).** `runner.ToolPolicy` is
+  `allowlist` or `unrestricted`. It is carried on `runner.ExecutionCapability.ToolPolicy`
+  and on `runnerproto.ExecutionCapability.ToolPolicy` (JSON `toolPolicy`).
+  - The single check is `runner.ToolScopeSatisfied(c, scope)`.
+  - `claude-code` advertises `allowlist`: it needs a non-empty scope, and every
+    requested tool must be in `Tools`.
+  - `codex` advertises `unrestricted`: it accepts only an empty scope.
+  - Non-agent capabilities leave the field empty.
+- **Runner capability rules (P3 T15 Cycle 9).** Rules load from
+  `<ConfigDir>/capabilities.yaml`. If the file is missing, the embedded rules
+  apply. If it is present but unparseable, startup fails visibly.
+- **Capability inventory names (P2 T9 Cycle 7 Step 6).**
+  - `BuildCapabilities(kind runner.CredentialKind, harnessVersion string, in DiscoverInput) ([]runner.ExecutionCapability, string)`.
+  - `DiscoverInput.Rules provider.CapabilityRules`.
+  - `DiscoverInput.Confirmations runner.ConfirmationExecutor`.
+- **Checkpoint symlinks (P3 T2).** Link targets are kept exactly as written,
+  including absolute ones. A link is never followed while writing, deleting or
+  reading.
+- **Checkpoint pruning (P3 T2 Cycle 7; P3 T13 Cycle 6b).**
+  - `(*checkpoint.Store).Prune(ctx, now) (PruneReport, error)`, with
+    `WithPruneGrace` (default `DefaultPruneGrace` = 24h) and the catalog
+    method `Retention`.
+  - It runs once at boot, after recovery, and then hourly.
+  - Held runs, committed and prepared artifacts, and the run's highest version
+    marker are never removed.
