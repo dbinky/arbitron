@@ -14,6 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWireTelemetry_SampleAgeRoundTripsAndRejectsNegative(t *testing.T) {
+	hb := Heartbeat{Telemetry: WireTelemetry{SampledAt: time.Unix(1700000000, 0).UTC(), SampleAgeMs: 1500}}
+	require.NoError(t, hb.Validate())
+	env, err := NewEnvelope(KindHeartbeat, hb)
+	require.NoError(t, err)
+	raw, err := Encode(env)
+	require.NoError(t, err)
+	got, err := Decode(raw)
+	require.NoError(t, err)
+	var back Heartbeat
+	require.NoError(t, DecodePayload(got, &back))
+	assert.Equal(t, int64(1500), back.Telemetry.SampleAgeMs)
+	assert.Error(t, (&Heartbeat{Telemetry: WireTelemetry{SampleAgeMs: -1}}).Validate())
+	env, err = NewEnvelope(KindHeartbeat, Heartbeat{Telemetry: WireTelemetry{SampleAgeMs: -1}})
+	require.NoError(t, err)
+	assert.ErrorIs(t, DecodePayload(env, &back), ErrMalformed)
+}
+
 func validHello() Hello {
 	return Hello{OS: "darwin", Arch: "arm64", ProtocolVersion: 1, RunnerVersion: "0.1.0",
 		WorkspaceRoot: "/srv/arbitron/workspaces", ScratchRoot: "/Users/op/.arbitron-runner/scratch",
@@ -121,7 +139,9 @@ func TestSmallPayloads_Validate(t *testing.T) {
 	require.NoError(t, (&Reject{Reason: "capability_missing"}).Validate())
 	require.NoError(t, (&Fenced{}).Validate())
 	require.NoError(t, (&Cancel{}).Validate())
-	require.NoError(t, (&Probe{SourceKind: "lunaroute"}).Validate())
+	require.NoError(t, (&Probe{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", SourceKind: "lunaroute"}).Validate())
 	assert.Error(t, (&Probe{SourceKind: "server_connection"}).Validate())
-	require.NoError(t, (&ProbeResult{Source: WireSource{Kind: "lunaroute"}}).Validate())
+	require.NoError(t, (&ProbeResult{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", Source: WireSource{Kind: "lunaroute"}}).Validate())
+	assert.Error(t, (&Probe{SourceKind: "lunaroute"}).Validate(), "an uncorrelated probe is malformed")
+	assert.Error(t, (&ProbeResult{Source: WireSource{Kind: "lunaroute"}}).Validate(), "an uncorrelated probe result is malformed")
 }

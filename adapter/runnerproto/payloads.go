@@ -232,6 +232,7 @@ type WireWindow struct {
 
 // WireTelemetry mirrors runner.Telemetry; nil fields are "unavailable".
 type WireTelemetry struct {
+	SampleAgeMs   int64     `json:"sampleAgeMs"`
 	SampledAt     time.Time `json:"sampledAt"`
 	CPUPercent    *float64  `json:"cpuPercent,omitempty"`
 	MemUsedBytes  *uint64   `json:"memUsedBytes,omitempty"`
@@ -252,6 +253,9 @@ type Heartbeat struct {
 }
 
 func (h *Heartbeat) Validate() error {
+	if h.Telemetry.SampleAgeMs < 0 {
+		return errors.New("sampleAgeMs must not be negative")
+	}
 	if len(h.Sources) > maxSources {
 		return fmt.Errorf("at most %d sources", maxSources)
 	}
@@ -516,10 +520,8 @@ type Probe struct {
 }
 
 func (p *Probe) Validate() error {
-	if p.RequestID != "" {
-		if _, err := uuid.Parse(p.RequestID); err != nil {
-			return errors.New("requestId must be a UUID")
-		}
+	if _, err := uuid.Parse(p.RequestID); err != nil {
+		return errors.New("requestId must be a UUID")
 	}
 	if !remoteCredentialKinds[p.SourceKind] {
 		return fmt.Errorf("source kind %q cannot be probed remotely", p.SourceKind)
@@ -535,10 +537,8 @@ type ProbeResult struct {
 }
 
 func (p *ProbeResult) Validate() error {
-	if p.RequestID != "" {
-		if _, err := uuid.Parse(p.RequestID); err != nil {
-			return errors.New("requestId must be a UUID")
-		}
+	if _, err := uuid.Parse(p.RequestID); err != nil {
+		return errors.New("requestId must be a UUID")
 	}
 	return p.Source.Validate()
 }

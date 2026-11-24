@@ -192,7 +192,7 @@ func TestFromEnvelopeCancelFencedProbe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, runneragent.KindCancel, in.Kind)
 
-	in, err = fromEnvelope(mustEnv(t, runnerproto.KindProbe, "", 0, runnerproto.Probe{SourceKind: "lunaroute", CredentialRef: "lr-main"}))
+	in, err = fromEnvelope(mustEnv(t, runnerproto.KindProbe, "", 0, runnerproto.Probe{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", SourceKind: "lunaroute", CredentialRef: "lr-main"}))
 	require.NoError(t, err)
 	assert.Equal(t, &runneragent.ProbeRequest{SourceKind: runner.CredLunaRoute, CredentialRef: "lr-main"}, in.Probe)
 }
