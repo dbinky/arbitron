@@ -1512,6 +1512,14 @@ These are settled by the spec/design or by a user decision. The owning task carr
   - `BuildCapabilities(kind runner.CredentialKind, harnessVersion string, in DiscoverInput) ([]runner.ExecutionCapability, string)`.
   - `DiscoverInput.Rules provider.CapabilityRules`.
   - `DiscoverInput.Confirmations runner.ConfirmationExecutor`.
+- **Positive capability producer (P2 T9 Cycle 9, unstick 2026-11-24).**
+  - `runner.CapabilitySatisfies(c ExecutionCapability, req ExecRequirements) bool` exports the existing exact predicate unchanged. Placement, the `Reserve` recheck and the runner's pre-accept recheck share it.
+  - Runner chat evidence is two capabilities per axis group, `chat` and `stream`. Each has Backend `""`, `ExecutedModel: true` and at most 32 exact models, sorted.
+    - **Claude:** Provider `claude-cli`. Fingerprint `runner.EndpointFingerprint(ResolvedBinding{Provider: "claude-cli"})`. Axes come from the loaded `claude-code` rules, including model overrides. `Tools` is `sources.ClaudeCodeTools`. Models come from the runner's `claude_models` config, pending human decision HD-RR2B-1 option A.
+    - **LunaRoute:** Provider `lunaroute`, with the hosted-root fingerprint. Models are the configured `lunaroute.models` (all rules models when none are configured) whose rules `tasks.chat` is `supported`. No axes, no tools. With no proven model, the reason is `sources.ReasonLunaRouteModelsUnproven`.
+  - The `claude-code` `OpConfirm` capability (P2 T13 Cycle 14) uses the claude-code route fingerprint `EndpointFingerprint(ResolvedBinding{Provider: "claude-cli", Backend: "claude-code"})`. `DispatchConfirmer` sets the same value on its `ExecRequirements.EndpointFingerprint`.
+  - `executor.Config.Advertised func(runner.CredentialKind, string) []runner.ExecutionCapability`: `buildAgent` wires `(*sources.Inventory).CapabilitiesFor`. If no live capability satisfies the dispatch, `Supports` refuses with `executor.ReasonNotAdvertised` (`"capability_not_advertised"`) before accept.
+- **Released versions in tests (P2 T10 Step 3a / Cycle 3).** Root tests pin `main.version = "0.2.0"` (`rrPinReleasedVersion`), and remote helpers advertise `RunnerVersion "0.2.0"`. An unstamped `dev` server admits no remote runner.
 - **Checkpoint symlinks (P3 T2).** Link targets are kept exactly as written,
   including absolute ones. A link is never followed while writing, deleting or
   reading.
