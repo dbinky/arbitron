@@ -248,10 +248,12 @@ func newRunnerStack(d runnerStackDeps) *runnerStack {
 		Runners: runner.NewHealthReportingRunnerSet(runner.StaticRunnerSet{runner.BuiltInRunnerID: builtin}, monitor),
 		Events:  recorder, Status: projector, Health: monitor,
 		Telemetry: runner.EmptyTelemetry{}, Policy: runner.PlacementPolicy{}, Clock: clock,
-		TransientMaxAttempts: d.Config.TransientMaxAttempts,
-		BackoffMin:           millis(d.Config.TransientBackoffMinMs),
-		BackoffMax:           millis(d.Config.TransientBackoffMaxMs),
-		Wake:                 wake,
+		// Explicit rollout mode; SetWorkspace ends it when mobility is installed.
+		LegacyBuiltInWorkspace: true,
+		TransientMaxAttempts:   d.Config.TransientMaxAttempts,
+		BackoffMin:             millis(d.Config.TransientBackoffMinMs),
+		BackoffMax:             millis(d.Config.TransientBackoffMaxMs),
+		Wake:                   wake,
 	})
 	d.Confirmer.Attach(dispatcher)
 	service := runner.NewService(runner.ServiceDeps{

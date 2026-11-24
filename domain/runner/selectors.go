@@ -175,13 +175,22 @@ func (p *routedChat) StreamChat(ctx context.Context, req engine.ChatRequest) (<-
 	return out.Stream, nil
 }
 
+// AgentAffinity keeps missions without a workspace built-in and places
+// missions with a working directory through the workspace protocol.
+func AgentAffinity(m engine.AgentMission) Affinity {
+	if m.WorkDir != "" {
+		return AffinityWorkspace
+	}
+	return AffinityBuiltIn
+}
+
 type routedAgent struct {
 	d dispatcher
 	b provider.ResolvedBinding
 }
 
 func (p *routedAgent) RunAgent(ctx context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
-	er, err := requirementsFor(ctx, p.b, OpType("agent"), AffinityBuiltIn, false, m.ToolScope)
+	er, err := requirementsFor(ctx, p.b, OpType("agent"), AgentAffinity(m), false, m.ToolScope)
 	if err != nil {
 		return nil, err
 	}
