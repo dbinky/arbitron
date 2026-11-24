@@ -11,8 +11,88 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/arbitron/arbitron/adapter/runner/hubtest"
+	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/runner"
 )
+
+func TestHubRestart_AdoptsHeldRunningJobFromDurableState(t *testing.T) {
+	p := hubtest.NewPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	h1 := p.NewHub(hubtest.HubConfig())
+	s, conn, key := admit(t, p, h1, "mac-a", hubtest.DarwinHello(hubtest.AnthropicSource()))
+	a := p.ReserveJob(t, p.SeedRun(t), "mac-a", anthropicSrcA, runner.OpStream)
+	ch := goRun(ctx, h1, a, hubtest.ChatJob("claude-opus-5-5", runner.OpStream))
+	conn.Await(t, runner.MsgDispatch, a.Fence.JobID)
+	require.NoError(t, h1.Handle(ctx, s, jobMsg(runner.MsgAccept, a)))
+	require.NoError(t, waitRun(t, ch).err)
+	require.NoError(t, h1.Handle(ctx, s, outputMsg(a, 1, "a")))
+	conn.Await(t, runner.MsgAck, a.Fence.JobID)
+
+	// A new Hub uses the same SQLite ledger/inbox, with no in-memory job.
+	h2 := p.NewHub(hubtest.HubConfig())
+	hello := hubtest.DarwinHello(hubtest.AnthropicSource())
+	hello.Held = []runner.HeldJobInfo{{JobID: a.Fence.JobID, Generation: a.Fence.Generation, State: runner.HeldRunning, LastOutputSeq: 2}}
+	conn2 := hubtest.NewFakeConn()
+	s2, err := h2.Admit(ctx, key, conn2, hello)
+	require.NoError(t, err)
+	ack := conn2.Await(t, runner.MsgAck, a.Fence.JobID)
+	assert.Equal(t, uint64(1), ack.Ack.Seq, "adopted at the durable cursor")
+
+	p.Clock.Advance(10 * time.Second)
+	hb := heartbeat(hubtest.AnthropicSource())
+	hb.Heartbeat.Jobs = hello.Held
+	require.NoError(t, h2.Handle(ctx, s2, hb))
+	current, err := p.Ledger.Get(ctx, a.Fence.JobID)
+	require.NoError(t, err)
+	assert.True(t, current.LeaseUntil.Equal(p.Clock.Now().Add(hubtest.HubConfig().LostAfter)))
+	assert.Zero(t, conn2.Count(runner.MsgFenced, a.Fence.JobID))
+	assert.Zero(t, conn2.Count(runner.MsgDispatch, a.Fence.JobID), "adoption never redispatches")
+
+	// Output arriving before a waiter attaches must reach the durable inbox.
+	require.NoError(t, h2.Handle(ctx, s2, outputMsg(a, 2, "b")))
+	ack = conn2.Await(t, runner.MsgAck, a.Fence.JobID)
+	assert.Equal(t, uint64(2), ack.Ack.Seq)
+	receipt, ok, err := adaptsqlite.NewRemoteInboxRepo(p.DB).Receipt(ctx, a.Fence)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, uint64(2), receipt.LastOutputSeq)
+
+	// A terminal frame is also durable before a waiter attaches.
+	require.NoError(t, h2.Handle(ctx, s2, resultMsg(a, okChat("ab"))))
+	ack = conn2.Await(t, runner.MsgAck, a.Fence.JobID)
+	assert.True(t, ack.Ack.Result)
+	receipt, ok, err = adaptsqlite.NewRemoteInboxRepo(p.DB).Receipt(ctx, a.Fence)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, receipt.Result)
+	assert.Equal(t, "ab", receipt.Result.Chat.Output)
+
+	// Attaching replays both journaled tokens and the terminal frame, never dispatching.
+	replayed, err := h2.Run(ctx, a, hubtest.ChatJob("claude-opus-5-5", runner.OpStream))
+	require.NoError(t, err)
+	var tokens []string
+	var done bool
+	for chunk := range replayed.Stream {
+		require.NoError(t, chunk.Error)
+		if chunk.Done {
+			done = true
+		} else {
+			tokens = append(tokens, chunk.Token)
+		}
+	}
+	assert.Equal(t, []string{"a", "b"}, tokens)
+	assert.True(t, done)
+	assert.Zero(t, conn2.Count(runner.MsgDispatch, a.Fence.JobID))
+
+	conn3 := hubtest.NewFakeConn()
+	h3 := p.NewHub(hubtest.HubConfig())
+	stale := hubtest.DarwinHello(hubtest.AnthropicSource())
+	stale.Held = []runner.HeldJobInfo{{JobID: a.Fence.JobID, Generation: a.Fence.Generation + 1, State: runner.HeldRunning}}
+	_, err = h3.Admit(ctx, key, conn3, stale)
+	require.NoError(t, err)
+	conn3.Await(t, runner.MsgFenced, a.Fence.JobID)
+}
 
 func TestHubReconnect_ResumesHeldStreamWithoutGapsOrDuplicates(t *testing.T) {
 	p := hubtest.NewPool(t)

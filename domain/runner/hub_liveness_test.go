@@ -158,6 +158,7 @@ func TestHubRevokeRunner_DisconnectsLosesAndRefuses(t *testing.T) {
 	ch := goRun(ctx, h, a, hubtest.ChatJob("claude-opus-5-5", runner.OpChat))
 	conn.Await(t, runner.MsgDispatch, a.Fence.JobID)
 	require.NoError(t, h.Handle(ctx, s, jobMsg(runner.MsgAccept, a)))
+	b := p.ReserveJob(t, p.SeedRun(t), "mac-a", anthropicSrcA, runner.OpChat)
 
 	require.NoError(t, h.RevokeRunner(ctx, "mac-a"))
 	code, _, closed := conn.Closed()
@@ -171,7 +172,6 @@ func TestHubRevokeRunner_DisconnectsLosesAndRefuses(t *testing.T) {
 	assert.ErrorIs(t, h.Handle(ctx, s, heartbeat()), runner.ErrRunnerRevoked)
 	_, err := h.Admit(ctx, key, hubtest.NewFakeConn(), hubtest.DarwinHello())
 	assert.ErrorIs(t, err, runner.ErrRunnerRevoked)
-	b := p.ReserveJob(t, p.SeedRun(t), "mac-a", anthropicSrcA, runner.OpChat)
 	_, err = h.Run(ctx, b, hubtest.ChatJob("claude-opus-5-5", runner.OpChat))
 	assert.True(t, errors.Is(err, runner.ErrRunnerRevoked))
 	assert.Equal(t, runner.OutcomeRunnerLost, runner.ClassifyError(err).Class)

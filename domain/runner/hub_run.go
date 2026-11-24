@@ -379,8 +379,8 @@ func (h *Hub) hasTerminalReceipt(ctx context.Context, f Fence) bool {
 }
 
 // handleOrphan answers a message for a job generation this process is not
-// waiting on: a replayed result of an already-consumed generation is
-// acknowledged; everything else is fenced so the runner stops spending tokens.
+// waiting on. Current generations can still journal output/results after a
+// restart; retained terminal replays are acknowledged. Other frames are fenced.
 func (h *Hub) handleOrphan(ctx context.Context, s *Session, in Inbound, f Fence) error {
 	if in.Kind == MsgResult && in.Result != nil {
 		receipt, ok, err := h.inbox.Receipt(ctx, f)
@@ -395,6 +395,20 @@ func (h *Hub) handleOrphan(ctx context.Context, s *Session, in Inbound, f Fence)
 			return nil
 		}
 	}
+	if h.ledger.FenceCheck(ctx, f) == nil {
+		switch {
+		case in.Kind == MsgOutput && in.Output != nil:
+			if ack, err := h.inbox.AcceptOutput(ctx, f, *in.Output); err == nil {
+				h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Seq: ack}})
+				return nil
+			}
+		case in.Kind == MsgResult && in.Result != nil:
+			if err := h.inbox.AcceptResult(ctx, f, *in.Result); err == nil {
+				h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Result: true}})
+				return nil
+			}
+		}
+	}
 	h.send(ctx, s, Outbound{Kind: MsgFenced, JobID: f.JobID, Generation: f.Generation})
 	return nil
 }
@@ -407,6 +421,11 @@ func (h *Hub) refreshHeld(ctx context.Context, s *Session, held []HeldJobInfo, n
 		if j == nil {
 			if hj.State == HeldTerminal && h.hasTerminalReceipt(ctx, f) {
 				continue
+			}
+			if h.adoptable(ctx, hj, f) {
+				if err := h.ledger.ExtendLease(ctx, f, now.Add(h.cfg.LostAfter)); err == nil {
+					continue
+				}
 			}
 			h.send(ctx, s, Outbound{Kind: MsgFenced, JobID: f.JobID, Generation: f.Generation})
 			continue

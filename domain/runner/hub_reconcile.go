@@ -32,6 +32,10 @@ func (h *Hub) reconcileHeld(ctx context.Context, s *Session, held []HeldJobInfo,
 				h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Result: true}})
 				continue
 			}
+			if h.adoptable(ctx, hj, f) && h.ledger.ExtendLease(ctx, f, now.Add(h.cfg.LostAfter)) == nil {
+				h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Seq: receipt.LastOutputSeq}})
+				continue
+			}
 			h.send(ctx, s, Outbound{Kind: MsgFenced, JobID: f.JobID, Generation: f.Generation})
 			continue
 		}
@@ -50,6 +54,11 @@ func (h *Hub) reconcileHeld(ctx context.Context, s *Session, held []HeldJobInfo,
 		h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Seq: seq}})
 	}
 	return claimed
+}
+
+// adoptable requires a running claim backed by the current durable fence.
+func (h *Hub) adoptable(ctx context.Context, hj HeldJobInfo, f Fence) bool {
+	return hj.State == HeldRunning && h.ledger.FenceCheck(ctx, f) == nil
 }
 
 // resendOffers re-sends every unaccepted offer for this runner that the
