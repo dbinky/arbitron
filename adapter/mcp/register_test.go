@@ -129,6 +129,9 @@ var expectedTools = []string{
 	"runner_cordon",
 	"runner_uncordon",
 	"runner_source_probe",
+	"runner_key_create",
+	"runner_key_list",
+	"runner_key_revoke",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {
