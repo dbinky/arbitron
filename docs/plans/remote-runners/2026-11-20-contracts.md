@@ -596,6 +596,10 @@ JSON DTOs use separate adapter-local mappers in `adapter/http/runner_dto.go` and
   - Result fields: `RemoteResult.Completion *engine.StepCompletion` (hub-sealed). `RemoteChatResult.Session *SessionBundleMeta` with a server-only `PreparedBundleRef`.
   - Errors: `runner.ErrMissingPreparedReceipt`, `runner.ErrSessionBundleMissing`.
 
+- **Decided (user, 2026-11-23)**, P4 T2 Cycle 2c / P4 T10 Cycle 4 / P4 T13 Cycle 2: `TurnRecoveryProof` gains `StaleHolder bool`. `turn_leases` gains `boot_id TEXT NOT NULL DEFAULT ''` (045, authorized). `(*sqlite.TurnLeaseRepo).SetBootID(bootID string)` takes the same process boot ID as `NewResourceLeaseRepo`. A stale-holder proof names only the intent. The repo accepts it only when the stored holder boot ID and its own boot ID are both non-empty and differ, and no `runner_jobs` row exists for the intent's operation. Same boot is refused, a missing boot ID is refused, and success fences at generation+1.
+- **Decided (user, 2026-11-23)**, P4 T3: recoverable turn errors (`ErrTurnLeaseLost`, `ErrSessionMoveRequired`, `ErrNoSessionTarget`, context cancellation/deadline) keep the intent pending; definitive errors complete it.
+- **Decided (user, 2026-11-23)**, P4 T6: `opencode`/`pi` interactive turns commit transcript + workspace with no native bundle; a move rebuilds the conversation from the transcript with the loss notice. These backends are not refused.
+
 ## 18. Phase 5 names (dashboard)
 
 `dashboard/src/api/types.ts` additions: `RunnerView`, `RunnerDetail`, `RunnerSource`, `SourceHealth`, `RunnerTelemetry`, `PoolEvent`, `RunnerKey`, `RunnerKeyCreateResponse`, `ExecutionStatus`, `PlacementRecord`, `HomeMove`, `DrainProgress`, `SessionMove`. API fns in `dashboard/src/api/runners.ts`: `listRunners()`, `getRunner(id)`, `listPoolEvents(limit)`, `listRunnerKeys()`, `createRunnerKey(name)`, `revokeRunnerKey(id)`. Hooks `dashboard/src/hooks/usePool.ts`, `useRunner.ts`. Routes `/pool`, `/pool/runners/:id`.
