@@ -83,7 +83,8 @@ type Envelope struct {
 }
 
 var knownKinds = map[string]bool{
-	KindHello: true, KindHeartbeat: true, KindAccept: true, KindReject: true,
+	KindSessionImport: true,
+	KindHello:         true, KindHeartbeat: true, KindAccept: true, KindReject: true,
 	KindOutput: true, KindResult: true, KindDispatch: true, KindCancel: true,
 	KindProbe: true, KindProbeResult: true, KindAck: true, KindFenced: true,
 	KindChallenge: true, KindChallengeResponse: true, KindAdmitted: true, KindRefused: true,
@@ -91,7 +92,8 @@ var knownKinds = map[string]bool{
 
 // jobScoped kinds must carry a UUID jobId and a generation >= 1.
 var jobScoped = map[string]bool{
-	KindAccept: true, KindReject: true, KindOutput: true, KindResult: true,
+	KindSessionImport: true,
+	KindAccept:        true, KindReject: true, KindOutput: true, KindResult: true,
 	KindDispatch: true, KindCancel: true, KindAck: true, KindFenced: true,
 }
 

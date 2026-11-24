@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"time"
 
@@ -308,10 +309,23 @@ type Dispatch struct {
 	Agent        *WireAgent        `json:"agent,omitempty"`
 	Process      *WireProcess      `json:"process,omitempty"`
 	Workspace    *WireWorkspace    `json:"workspace,omitempty"`
+	Session      *WireSessionOp    `json:"session,omitempty"`
+	Resource     *WireResource     `json:"resource,omitempty"`
 	LeaseUntil   time.Time         `json:"leaseUntil"` // offer deadline; unaccepted offers are re-offered with generation+1
 }
 
 func (d *Dispatch) Validate() error {
+	if d.Resource != nil {
+		if err := d.Resource.Validate(); err != nil {
+			return err
+		}
+	}
+	if _, ok := SessionKindForOp(d.Op); ok {
+		return d.validateSession()
+	}
+	if d.Session != nil {
+		return errors.New("session payload requires session_import")
+	}
 	switch d.Op {
 	case "chat", "stream":
 		if d.Chat == nil || d.Agent != nil || d.Process != nil || d.Confirmation != nil {
@@ -330,8 +344,8 @@ func (d *Dispatch) Validate() error {
 
 // WireChat is the allowlisted, hermetic chat descriptor. It carries NO server
 // credential material: no RevealKey, no BaseURL, no ConnectionRef, no Extras,
-// no environment and no working directory (the runner uses a per-job scratch
-// directory). The runner resolves CredentialKind to its OWN local credential.
+// no environment; a working directory only on stream (session) dispatches.
+// The runner resolves CredentialKind to its OWN local credential.
 type WireChat struct {
 	Provider             string          `json:"provider,omitempty"`
 	EndpointFingerprint  string          `json:"endpointFingerprint,omitempty"`
@@ -349,6 +363,11 @@ type WireChat struct {
 	ContextWindow        string          `json:"contextWindow,omitempty"`
 	Effort               string          `json:"effort,omitempty"`
 	Tools                []string        `json:"tools,omitempty"`
+	WorkDir              string          `json:"workDir,omitempty"`
+	ProfileKind          string          `json:"profileKind,omitempty"`
+	// Native checkpoints export inside the originating stream assignment.
+	NativeCheckpoint   bool   `json:"nativeCheckpoint,omitempty"`
+	SessionExportToken string `json:"sessionExportToken,omitempty"`
 }
 
 func (c *WireChat) Validate() error {
@@ -367,6 +386,16 @@ func (c *WireChat) Validate() error {
 		return fmt.Errorf("chat.credentialKind %q cannot run on a remote runner", c.CredentialKind)
 	case len(c.Tools) > maxTools:
 		return fmt.Errorf("at most %d tools", maxTools)
+	case c.WorkDir != "" && (!path.IsAbs(c.WorkDir) || len(c.WorkDir) > maxSessionField):
+		return errors.New("chat.workDir must be an absolute path")
+	case c.ProfileKind != "" && c.ProfileKind != "chat" && c.ProfileKind != "agent":
+		return fmt.Errorf("chat.profileKind %q is not chat or agent", c.ProfileKind)
+	case c.NativeCheckpoint != (c.SessionExportToken != ""):
+		return errors.New("chat.nativeCheckpoint and chat.sessionExportToken are set together")
+	case c.NativeCheckpoint && (!c.Stream || c.WorkDir == ""):
+		return errors.New("a native checkpoint belongs to a session stream with a workdir")
+	case len(c.SessionExportToken) > maxSessionField:
+		return errors.New("chat.sessionExportToken too long")
 	}
 	return nil
 }
@@ -386,6 +415,7 @@ func (o *Output) Validate() error {
 
 // Result is the terminal outcome of one (jobId, generation).
 type Result struct {
+	Session      *WireSessionResult      `json:"session,omitempty"`
 	Confirmation *WireConfirmationResult `json:"confirmation,omitempty"`
 	OK           bool                    `json:"ok"`
 	Chat         *WireChatResult         `json:"chat,omitempty"`
@@ -397,13 +427,26 @@ type Result struct {
 
 func (r *Result) Validate() error {
 	n := 0
-	for _, set := range []bool{r.Chat != nil, r.Agent != nil, r.Process != nil, r.Confirmation != nil} {
+	for _, set := range []bool{r.Chat != nil, r.Agent != nil, r.Process != nil, r.Confirmation != nil, r.Session != nil} {
 		if set {
 			n++
 		}
 	}
 	if r.OK && n != 1 {
 		return errors.New("an ok result carries exactly one payload")
+	}
+	if r.Session != nil {
+		if err := r.Session.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.Chat != nil && r.Chat.Session != nil {
+		if err := r.Chat.Session.Validate(); err != nil {
+			return err
+		}
+		if r.Chat.Session.SessionID != r.Chat.SessionID {
+			return errors.New("chat.session bundle names a different session than the turn")
+		}
 	}
 	if r.Agent != nil || r.Process != nil {
 		return fmt.Errorf("agent/process results are not supported by protocol v%d", ProtocolVersion)
@@ -427,12 +470,13 @@ func (r *Result) Validate() error {
 
 // WireChatResult mirrors engine.ChatResponse; Output is the raw assistant text.
 type WireChatResult struct {
-	Output       string          `json:"output"`
-	Conversation json.RawMessage `json:"conversation,omitempty"`
-	Model        string          `json:"model,omitempty"`
-	TokensIn     int             `json:"tokensIn,omitempty"`
-	TokensOut    int             `json:"tokensOut,omitempty"`
-	SessionID    string          `json:"sessionId,omitempty"`
+	Session      *WireSessionBundle `json:"session,omitempty"`
+	Output       string             `json:"output"`
+	Conversation json.RawMessage    `json:"conversation,omitempty"`
+	Model        string             `json:"model,omitempty"`
+	TokensIn     int                `json:"tokensIn,omitempty"`
+	TokensOut    int                `json:"tokensOut,omitempty"`
+	SessionID    string             `json:"sessionId,omitempty"`
 }
 
 // WireOutcome mirrors runner.SourceOutcome.
