@@ -189,6 +189,8 @@ type GroupResolutionBridge struct {
 	turnTimeout time.Duration
 	now         func() time.Time
 	invocations InvocationStore
+	leases      TurnLeaseStore
+	leaseTTL    time.Duration
 }
 
 var (
@@ -227,7 +229,16 @@ func NewGroupResolutionBridge(
 		groups: groups, instances: instances, nodeExecs: nodeExecs, sessions: sessions, resolver: resolver, selector: selector,
 		files: files, notifier: notifier, bus: bus, waker: waker, queueMgr: queueMgr, turnTimeout: turnTimeout, now: time.Now,
 		invocations: NewMemoryInvocationStore(),
+		leaseTTL:    DefaultTurnLeaseTTL,
 	}
+}
+
+// SetTurnLeases installs the durable resolution session guard before use.
+func (b *GroupResolutionBridge) SetTurnLeases(store TurnLeaseStore, ttl time.Duration) {
+	if store == nil || ttl <= 0 {
+		panic("engine: group resolution SetTurnLeases requires a store and a positive TTL")
+	}
+	b.leases, b.leaseTTL = store, ttl
 }
 
 // SetInvocationStore installs the shared store before resolution begins.
@@ -267,6 +278,14 @@ func (b *GroupResolutionBridge) StartResolution(ctx context.Context, run *instan
 	} else if existing != nil {
 		return &ref, nil
 	}
+	ctx, hold, err := holdTurnLease(ctx, b.leases, ResolutionLeaseKey(GroupResolutionIdentity{
+		GroupRunID: run.ID, MergeIndex: req.MergeIndex, Attempt: req.Attempt, TaskKey: req.TaskKey,
+	}), b.leaseTTL)
+	if err != nil {
+		return nil, fmt.Errorf("group resolution %q: %w", run.NodeID, err)
+	}
+	defer hold.Release()
+
 	alias := groupConfigString(run.Config, "resolverProfile")
 	if alias == "" {
 		return nil, fmt.Errorf("group resolution: parallel_group %q has no resolverProfile", run.NodeID)

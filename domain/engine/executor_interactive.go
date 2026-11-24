@@ -31,6 +31,8 @@ type InteractiveExecutor struct {
 	fileReader FileReader
 	eventBus   EventBus
 	queueMgr   QueueManager
+	leases     TurnLeaseStore
+	leaseTTL   time.Duration
 }
 
 // NewInteractiveExecutor constructs a new InteractiveExecutor with all required dependencies.
@@ -51,7 +53,16 @@ func NewInteractiveExecutor(
 		fileReader: fileReader,
 		eventBus:   eventBus,
 		queueMgr:   queueMgr,
+		leaseTTL:   DefaultTurnLeaseTTL,
 	}
+}
+
+// SetTurnLeases installs the durable session guard before execution.
+func (e *InteractiveExecutor) SetTurnLeases(store TurnLeaseStore, ttl time.Duration) {
+	if store == nil || ttl <= 0 {
+		panic("engine: interactive executor SetTurnLeases requires a store and a positive TTL")
+	}
+	e.leases, e.leaseTTL = store, ttl
 }
 
 // Execute reads the orchestration and template files, resolves variable
@@ -73,6 +84,12 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		!isGroupResolutionConversation(existing.LLMConversation) {
 		return &NodeResult{Output: existing.Output}, nil
 	}
+
+	ctx, hold, err := holdTurnLease(ctx, e.leases, RunLeaseKey(instanceID), e.leaseTTL)
+	if err != nil {
+		return nil, fmt.Errorf("interactive %q: %w", node.ID, err)
+	}
+	defer hold.Release()
 
 	startTime := time.Now()
 
