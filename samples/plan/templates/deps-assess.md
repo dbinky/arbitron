@@ -63,6 +63,29 @@ says a human must choose is a hard stop for them, whatever fallback a design
 mentions. Only a choice the plans themselves mark as already made, or as safe to
 defer with the fallback in place, is NON-BLOCKING.
 
+### Work no implementation agent can do is always a DECISION
+The implementation loop is unattended agents in a sandbox. Lunaroute
+implement runs a5259bec, c028678b and 8fc37529 stalled for hours on plan steps
+they could never complete. Class each of these as **DECISION** (never
+NON-BLOCKING, never passed through), whatever fallback the docs name, unless
+the plans already moved it out of the checkbox steps (e.g. into an "Operator
+follow-up (not for implementation)" section) or a person already decided it:
+- **(a) Human-only steps:** a plan step that needs operator observation or
+  sign-off, a manual check, live vendor evidence or a live acceptance run, a
+  fixture captured from production or the real world that is not in the repo,
+  or credentials, accounts or consoles an agent cannot have. The alignment
+  reviewer tags these `HUMAN-ONLY`.
+  `DECISION: <doc path> — <step> needs <operator observation | live evidence | captured fixture | credentials>; decision: drop it, re-scope it to something an agent can verify, or move it to operator follow-up?`
+- **(b) Contradicted retained tests:** a plan requirement that contradicts a
+  test already in the repo, where the plan does not explicitly authorize
+  changing or removing that test. The alignment reviewer tags these
+  `TEST-CONFLICT`.
+  `DECISION: <doc path> — <task> requires <behaviour> but retained test <file:TestName> asserts <other>; decision: which behaviour wins, and may the test change?`
+
+A script also greps the committed plans' unchecked steps for human-only wording
+and sends any hit to the person, whatever you decide; your DECISION lines are
+what tell the person why.
+
 Repeatedly re-deriving the same non-blocking item across passes is a failure of this
 gate, not a finding.
 
