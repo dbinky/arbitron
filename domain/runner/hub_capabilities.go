@@ -3,10 +3,24 @@ package runner
 import (
 	"encoding/hex"
 	"fmt"
+	"slices"
 )
 
 const maxRemoteCapabilities = 32
 const maxRemoteTools = 256
+
+// RemoteAgentBackends are the native agent backends remote runners can serve.
+var RemoteAgentBackends = []string{"claude-code", "codex"}
+
+func remoteCapabilityOp(c ExecutionCapability) bool {
+	switch c.Op {
+	case OpChat, OpStream, OpConfirm:
+		return true
+	case OpAgent:
+		return slices.Contains(RemoteAgentBackends, c.Backend)
+	}
+	return false
+}
 
 func validateSourceReports(reports []SourceReport) error {
 	for _, report := range reports {
@@ -15,7 +29,7 @@ func validateSourceReports(reports []SourceReport) error {
 		}
 		for _, c := range report.Capabilities {
 			fingerprint, err := hex.DecodeString(c.EndpointFingerprint)
-			if (c.Op != OpChat && c.Op != OpStream && c.Op != OpConfirm) || c.Provider == "" || err != nil || len(fingerprint) != 32 || len(c.Families) == 0 || len(c.Families) > maxRemoteCapabilities || len(c.Models) == 0 || len(c.Models) > maxRemoteCapabilities || len(c.ContextWindows) > maxRemoteCapabilities || len(c.Efforts) > maxRemoteCapabilities || len(c.Tools) > maxRemoteTools {
+			if !remoteCapabilityOp(c) || c.Provider == "" || err != nil || len(fingerprint) != 32 || len(c.Families) == 0 || len(c.Families) > maxRemoteCapabilities || len(c.Models) == 0 || len(c.Models) > maxRemoteCapabilities || len(c.ContextWindows) > maxRemoteCapabilities || len(c.Efforts) > maxRemoteCapabilities || len(c.Tools) > maxRemoteTools {
 				return fmt.Errorf("%w: invalid remote execution capability", ErrMalformedMessage)
 			}
 			if c.Op == OpConfirm && c.Backend != "claude-code" && c.Backend != "codex" {
