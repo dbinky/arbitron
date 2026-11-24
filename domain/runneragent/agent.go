@@ -252,9 +252,9 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 			sample, err := a.deps.Telemetry.Sample(ctx)
 			now := a.deps.Clock.Now()
 			age := int64(0)
-			if err != nil {
+			if err != nil || sample.SampledAt.IsZero() {
 				sample = runner.Telemetry{SampledAt: now}
-			} else if !sample.SampledAt.IsZero() {
+			} else {
 				age = max(0, now.Sub(sample.SampledAt).Milliseconds())
 			}
 			hb := &Heartbeat{Telemetry: sample, TelemetryAgeMs: age, Sources: a.deps.Sources.Sources(ctx), Jobs: a.held()}
