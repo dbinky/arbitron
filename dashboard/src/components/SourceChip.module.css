@@ -1,0 +1,18 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.healthy { border-color: var(--success); color: var(--success); }
+.pressure { border-color: var(--state-waiting); color: var(--state-waiting); }
+.exhausted { border-color: var(--danger); color: var(--danger); }
+.logged_out { border-color: var(--danger); color: var(--danger); font-weight: 600; }
+.probation { border-color: var(--state-queued); color: var(--state-queued); }
+.unknown { border-style: dashed; color: var(--text-muted); }
