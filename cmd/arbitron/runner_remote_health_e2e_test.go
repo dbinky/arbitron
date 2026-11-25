@@ -259,3 +259,126 @@ func TestRemoteHealthRoot_ShutdownJoinsPendingChecks(t *testing.T) {
 	}
 	assert.Zero(t, st.ds.remote.Hub.PendingProbes())
 }
+
+func rhCalls(dir, contains string) int {
+	b, err := os.ReadFile(filepath.Join(dir, "calls.log"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, contains) {
+			n++
+		}
+	}
+	return n
+}
+
+// rhCallsWith counts calls.log lines containing every substring.
+func rhCallsWith(dir string, subs ...string) int {
+	b, _ := os.ReadFile(filepath.Join(dir, "calls.log"))
+	n := 0
+	for _, l := range strings.Split(string(b), "\n") {
+		all := l != ""
+		for _, s := range subs {
+			all = all && strings.Contains(l, s)
+		}
+		if all {
+			n++
+		}
+	}
+	return n
+}
+
+// rhAwaitAdmissionVerification waits until the runner has natively verified
+// both models the server's profiles request at admission (contracts D1:
+// rh-opus and rh-sonnet), and returns the --safe-mode call count so far.
+func rhAwaitAdmissionVerification(t *testing.T, r *rhRunner) int {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return rhCallsWith(r.dir, "--safe-mode", "claude-opus-4-1") >= 1 && rhCallsWith(r.dir, "--safe-mode", "claude-sonnet-4-5") >= 1
+	}, 30*time.Second, 50*time.Millisecond, "admission verification of the requested models")
+	return rhCalls(r.dir, "--safe-mode")
+}
+
+func rhMaxConcurrent(dir string) int {
+	b, _ := os.ReadFile(filepath.Join(dir, "events.log"))
+	depth, peak := 0, 0
+	for _, l := range strings.Fields(string(b)) {
+		if l == "start" {
+			depth++
+		} else {
+			depth--
+		}
+		if depth > peak {
+			peak = depth
+		}
+	}
+	return peak
+}
+
+func TestRemoteConfirmation_UnknownResetRecoversExactSourceAutomatically(t *testing.T) {
+	st := rhBoot(t)
+	r := rhStartRunner(t, st, "mac-quota")
+	ctx := adminCtxForLocalUser(t, st.ds)
+	sid := r.source()
+	base := rhAwaitAdmissionVerification(t, r)
+	baseSonnet := rhCallsWith(r.dir, "--safe-mode", "claude-sonnet")
+
+	rwTouch(t, r.dir, "exhausted")
+	first, _, err := st.ds.eng.Trigger(ctx, "rh-ask", map[string]any{}, "normal")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		h := rwSourceHealth(t, st.ds, sid)
+		return h.Capacity == runner.CapacityExhausted && h.ResetAt == nil && h.ConfirmationModel == "claude-opus-4-1"
+	}, 30*time.Second, 50*time.Millisecond, "a real workflow exhausted the remote source with an unknown reset")
+	require.NoError(t, st.ds.eng.Cancel(ctx, first))
+	require.NoError(t, os.Remove(filepath.Join(r.dir, "exhausted")))
+	queued, _, err := st.ds.eng.Trigger(ctx, "rh-ask", map[string]any{}, "normal") // waits; no later user action
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return rwSourceHealth(t, st.ds, sid).Capacity == runner.CapacityAvailable },
+		45*time.Second, 100*time.Millisecond, "probation + native confirmation return the source automatically")
+	assert.GreaterOrEqual(t, rhCalls(r.dir, "--safe-mode")-base, 1, "the runner's own restricted native verifier ran")
+	assert.Equal(t, baseSonnet, rhCallsWith(r.dir, "--safe-mode", "claude-sonnet"), "never a same-family substitute")
+
+	var src, assigned, state, op string
+	require.NoError(t, st.ds.db.QueryRow(`SELECT source_id, runner_id, state, op FROM runner_jobs WHERE operation_id='probe/confirm' ORDER BY created_at DESC LIMIT 1`).
+		Scan(&src, &assigned, &state, &op))
+	assert.Equal(t, string(sid), src, "confirmed on exactly the exhausted source")
+	assert.Equal(t, r.runnerID, assigned)
+	assert.Equal(t, "completed", state)
+	assert.Equal(t, "confirm", op)
+	rrRequireCompleted(t, st.ds, queued) // the ordinary queued workflow then executes
+	jobs, err := st.ds.runners.ledger.ListActive(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, jobs, "the probe job slot was released")
+	assert.NotEmpty(t, rrStrings(t, st.ds, `SELECT kind FROM pool_events WHERE kind='source.recovered' AND source_id=?`, string(sid)))
+}
+
+func TestRemoteConfirmation_FullRunnerWaitsWithoutOversubscription(t *testing.T) {
+	st := rhBoot(t) // step limit 1 on every runner (rrRunnersYAML)
+	r := rhStartRunner(t, st, "mac-full")
+	ctx := adminCtxForLocalUser(t, st.ds)
+	sid := r.source()
+	require.Eventually(t, func() bool { return rwSourceHealth(t, st.ds, sid).Auth == runner.AuthOK }, 30*time.Second, 50*time.Millisecond)
+	base := rhAwaitAdmissionVerification(t, r)
+
+	rwTouch(t, r.dir, "hold")
+	held, _, err := st.ds.eng.Trigger(ctx, "rh-sonnet", map[string]any{}, "normal")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { // the held workflow step, not the admission verification
+		return rhCalls(r.dir, "claude-sonnet-4-5")-rhCallsWith(r.dir, "--safe-mode", "claude-sonnet-4-5") == 1
+	}, 30*time.Second, 50*time.Millisecond)
+	past := time.Now().Add(-time.Minute)
+	require.NoError(t, st.ds.runners.monitor.ApplyOutcome(ctx, sid, runner.SourceOutcome{Class: runner.OutcomeExhausted, Model: "claude-opus-4-1", ResetAt: &past}))
+	time.Sleep(6 * time.Second) // more than one health cadence while the runner is full
+	assert.Zero(t, rwCountJobs(st.ds.db, "operation_id='probe/confirm' AND state IN ('offered','running','completed')"), "no confirmation runs while the slot is held")
+	assert.Equal(t, runner.CapacityProbation, rwSourceHealth(t, st.ds, sid).Capacity)
+
+	require.NoError(t, os.Remove(filepath.Join(r.dir, "hold")))
+	rrRequireCompleted(t, st.ds, held)
+	require.Eventually(t, func() bool { return rwSourceHealth(t, st.ds, sid).Capacity == runner.CapacityAvailable }, 30*time.Second, 100*time.Millisecond)
+	assert.Equal(t, 1, rhMaxConcurrent(r.dir), "the confirmation never ran beside the held step")
+	assert.Equal(t, 1, rhCalls(r.dir, "--safe-mode")-base, "exactly one bounded confirmation after admission verification")
+}

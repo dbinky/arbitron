@@ -303,6 +303,13 @@ func Discover(ctx context.Context, in DiscoverInput) ([]Spec, map[string]string)
 	for idx := range specs {
 		src := &specs[idx].Source
 		src.Capabilities, src.UnavailableReason = BuildCapabilities(src.Kind, harness["claude"], in)
+		// Native confirmation does not require workspace execution. Keep the
+		// source's backend filter consistent with its proven capabilities.
+		for _, c := range src.Capabilities {
+			if !slices.Contains(src.Backends, c.Backend) {
+				src.Backends = append(src.Backends, c.Backend)
+			}
+		}
 		if src.Kind == runner.CredAnthropicSubscription && in.Native.WorkspaceEnabled {
 			caps, err := ClaudeAgentCapabilities(in.Native.Rules, src.Capabilities, false, in.Native.SessionsEnabled)
 			if err == nil {
