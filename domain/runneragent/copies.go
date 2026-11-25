@@ -8,6 +8,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// PreparedCopy records an uncommitted push receipt. Pull adopts it only when
+// the server names this exact candidate as the committed checkpoint.
+type PreparedCopy struct {
+	Ref             runner.CheckpointRef   `json:"ref"`
+	BaseRef         string                 `json:"baseRef"`
+	FenceKey        string                 `json:"fenceKey"`
+	FenceGeneration int64                  `json:"fenceGeneration"`
+	FenceToken      string                 `json:"fenceToken"`
+	Entries         []runner.ManifestEntry `json:"entries"`
+}
+
 // CopyState records the committed base of a local workspace. Dirty remains set
 // for an interrupted attempt until the committed base is restored.
 type CopyState struct {
@@ -18,6 +29,7 @@ type CopyState struct {
 	ManifestHash      string          `json:"manifestHash"`
 	Dirty             bool            `json:"dirty"`
 	Base              runner.Manifest `json:"base"`
+	Prepared          *PreparedCopy   `json:"prepared,omitempty"`
 	UpdatedAt         time.Time       `json:"updatedAt"`
 }
 
