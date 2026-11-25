@@ -21,6 +21,8 @@ import (
 	"github.com/arbitron/arbitron/adapter/runneragent/config"
 	"github.com/arbitron/arbitron/adapter/runneragent/wsclient"
 	"github.com/arbitron/arbitron/adapter/runnerproto"
+	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/arbitron/arbitron/domain/runneragent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,21 +61,27 @@ func writeFakeClaude(t *testing.T, dir string) string {
 		"esac\n" +
 		"cat > /dev/null\n" +
 		"m=$(echo \"$*\" | sed -n 's/.*--model \\([^ ]*\\).*/\\1/p')\n" +
-		"echo '{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"s1\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1},\"modelUsage\":{\"'\"$m\"'\":{}}}'\n"
+		"echo '{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"s1\",\"model\":\"'\"$m\"'\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1},\"modelUsage\":{\"'\"$m\"'\":{}}}'\n"
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o700))
 	return bin
 }
 
 type stubResult struct {
-	auth   string
-	hello  runnerproto.Hello
-	result runnerproto.Result
-	sigOK  bool
+	rejected  string
+	heartbeat runnerproto.Heartbeat
+	auth      string
+	hello     runnerproto.Hello
+	result    runnerproto.Result
+	sigOK     bool
 }
 
 // stubHub speaks runnerproto like the real endpoint: challenge, verify the
 // machine signature, admit, dispatch one chat job, ack its result.
 func stubHub(t *testing.T) (*httptest.Server, chan stubResult) {
+	return stubHubWith(t, []string{"claude-sonnet-4-5"}, nil)
+}
+
+func stubHubWith(t *testing.T, models []string, mutate func(*runnerproto.WireChat)) (*httptest.Server, chan stubResult) {
 	t.Helper()
 	done := make(chan stubResult, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,10 +127,38 @@ func stubHub(t *testing.T) (*httptest.Server, chan stubResult) {
 			return
 		}
 		require.NoError(t, runnerproto.DecodePayload(e, &out.hello))
-		send(runnerproto.NewEnvelope(runnerproto.KindAdmitted, runnerproto.Admitted{RunnerID: "mac-test", HeartbeatSeconds: 1, ProtocolVersion: runnerproto.ProtocolVersion}))
+		send(runnerproto.NewEnvelope(runnerproto.KindAdmitted, runnerproto.Admitted{RunnerID: "mac-test", HeartbeatSeconds: 1, ProtocolVersion: runnerproto.ProtocolVersion, ClaudeModels: models}))
+		// Wait for verification to reach the server-side heartbeat sink before dispatch.
+		for {
+			e, ok = recv()
+			if !ok {
+				return
+			}
+			if e.Kind != runnerproto.KindHeartbeat {
+				continue
+			}
+			require.NoError(t, runnerproto.DecodePayload(e, &out.heartbeat))
+			ready := len(models) == 0
+			for _, s := range out.heartbeat.Sources {
+				if s.Kind == "anthropic_subscription" && len(s.Capabilities) > 0 {
+					ready = true
+				}
+				if s.UnavailableReason == "harness_unsupported" || s.UnavailableReason == "harness_not_found" {
+					ready = true
+				}
+			}
+			if ready {
+				break
+			}
+		}
+		fp, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: "claude-cli"})
+		require.NoError(t, err)
+		chat := &runnerproto.WireChat{Model: "claude-sonnet-4-5", Prompt: "say ok", CredentialKind: "anthropic_subscription", Provider: "claude-cli", EndpointFingerprint: fp}
+		if mutate != nil {
+			mutate(chat)
+		}
 		jobID := uuid.NewString()
-		send(runnerproto.NewJobEnvelope(runnerproto.KindDispatch, jobID, 1, 0, runnerproto.Dispatch{Op: "chat", LeaseUntil: time.Now().Add(time.Minute),
-			Chat: &runnerproto.WireChat{Model: "claude-sonnet-4-5", Prompt: "say ok", CredentialKind: "anthropic_subscription"}}))
+		send(runnerproto.NewJobEnvelope(runnerproto.KindDispatch, jobID, 1, 0, runnerproto.Dispatch{Op: "chat", LeaseUntil: time.Now().Add(time.Minute), Chat: chat}))
 		accepted := false
 		for {
 			e, ok := recv()
@@ -133,7 +169,8 @@ func stubHub(t *testing.T) (*httptest.Server, chan stubResult) {
 			case runnerproto.KindAccept:
 				accepted = e.JobID == jobID && e.Generation == 1
 			case runnerproto.KindReject:
-				t.Errorf("runner rejected the job: %s", string(e.Payload))
+				out.rejected = string(e.Payload)
+				done <- out
 				return
 			case runnerproto.KindResult:
 				require.True(t, accepted, "result before accept")
@@ -190,6 +227,12 @@ func TestBuildAgentDeliversChatResultToServer(t *testing.T) {
 	require.Len(t, got.hello.Sources, 1)
 	assert.Equal(t, "anthropic_subscription", got.hello.Sources[0].Kind)
 	assert.Equal(t, "ok", got.hello.Sources[0].Health.Auth, "auth status was probed before admission")
+	assert.Empty(t, got.rejected)
+	require.Len(t, got.heartbeat.Sources, 1)
+	require.Len(t, got.heartbeat.Sources[0].Capabilities, 2)
+	for _, c := range got.heartbeat.Sources[0].Capabilities {
+		assert.Equal(t, []string{"claude-sonnet-4-5"}, c.Models)
+	}
 	assert.True(t, got.result.OK)
 	require.NotNil(t, got.result.Chat)
 	assert.Equal(t, "ok", got.result.Chat.Output)

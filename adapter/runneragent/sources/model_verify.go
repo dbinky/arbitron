@@ -9,6 +9,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 // ClaudeModelVerifier natively confirms the exact Claude models the server
@@ -50,7 +51,7 @@ func (v *ClaudeModelVerifier) Request(ctx context.Context, models []string) {
 		if cached {
 			continue
 		}
-		res, err := v.confirm.Confirm(ctx, provider.ResolvedBinding{Kind: provider.ProfileKindChat, Provider: claudeChatProvider, Model: m}, v.workDir)
+		res, err := v.confirm.Confirm(ctx, provider.ResolvedBinding{Kind: provider.ProfileKindChat, Provider: claudeChatProvider, Backend: workflow.BackendClaudeCode, Model: m}, v.workDir)
 		if err == nil {
 			err = runner.VerifyConfirmation(m, &res)
 		}

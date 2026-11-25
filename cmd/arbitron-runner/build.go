@@ -24,6 +24,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/runnerproto"
 	"github.com/arbitron/arbitron/adapter/telemetry"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/arbitron/arbitron/domain/runneragent"
 )
 
@@ -35,11 +36,15 @@ const (
 
 // buildExecutor uses this machine's native verifier and local credentials.
 func buildExecutor(cfg config.Config, local *providersadapter.Factory) (*executor.Executor, error) {
+	return buildExecutorFor(cfg, local, nil)
+}
+
+func buildExecutorFor(cfg config.Config, local *providersadapter.Factory, advertised func(runner.CredentialKind, string) []runner.ExecutionCapability) (*executor.Executor, error) {
 	var lr *executor.LunaRoute
 	if cfg.LunaRoute.Enabled() {
 		lr = &executor.LunaRoute{ConnectionRef: cfg.LunaRoute.ConnectionRef, APIKey: cfg.LunaRoute.APIKey}
 	}
-	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: runnerprobe.NewConfirmationExecutor(local)})
+	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: runnerprobe.NewConfirmationExecutor(local), Advertised: advertised})
 }
 
 // buildAgent is the runner's composition root: every adapter is constructed
@@ -74,12 +79,14 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 			return nil, fmt.Errorf("arbitron-runner: lunaroute probe: %w", err)
 		}
 	}
-	exec, err := buildExecutor(cfg, factory)
+	discoverIn := sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules, Confirmations: runnerprobe.NewConfirmationExecutor(factory)}
+	specs, harness := sources.Discover(ctx, discoverIn)
+	inv := sources.New(specs, harness, time.Now)
+	inv.EnableClaudeVerification(sources.NewClaudeModelVerifier(runnerprobe.NewConfirmationExecutor(factory), cfg.ScratchRoot, logger), discoverIn)
+	exec, err := buildExecutorFor(cfg, factory, inv.CapabilitiesFor)
 	if err != nil {
 		return nil, err
 	}
-	specs, harness := sources.Discover(ctx, sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules, Confirmations: runnerprobe.NewConfirmationExecutor(factory)})
-	inv := sources.New(specs, harness, time.Now)
 
 	sp, err := spool.Open(cfg.SpoolDir, cfg.OutputBufferFrames)
 	if err != nil {
@@ -100,7 +107,7 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		Capabilities: []string{runneragent.OpChat, runneragent.OpStream},
 		Heartbeat:    cfg.Heartbeat, ProbeInterval: cfg.ProbeInterval,
 	}, runneragent.Deps{
-		Conn: conn, Exec: exec, Sources: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
+		Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
 		Spool: sp, Identity: identity.New(cfg.MachineKeyPath()),
 		Clock: runneragent.SystemClock{}, Rand: rand.Float64, Logger: logger,
 	})
