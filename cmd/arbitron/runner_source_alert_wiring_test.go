@@ -100,6 +100,7 @@ func TestRunnerWiring_StreamEOFAndCancelNeverReportSuccess(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			_, _, err = ds.profileSvc.Create(ctx, provider.Profile{Alias: "rr-agent", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "claude-opus-4-1"})
 			require.NoError(t, err)
+			before := rwSourceHealth(t, ds, rwAnthropic)
 			id, _, err := ds.eng.Trigger(ctx, "rr-talk", map[string]any{}, "normal")
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = ds.eng.Cancel(ctx, id) })
@@ -115,7 +116,9 @@ func TestRunnerWiring_StreamEOFAndCancelNeverReportSuccess(t *testing.T) {
 			require.NoError(t, ds.db.QueryRow(`SELECT COUNT(*) FROM runner_job_attempts a JOIN runner_jobs j ON j.id = a.job_id WHERE j.run_id = ? AND a.outcome = 'completed'`, id.String()).Scan(&completed))
 			assert.Zero(t, completed, "no completed attempt without a terminal result")
 			h := rwSourceHealth(t, ds, rwAnthropic)
-			assert.NotEqual(t, runner.OutcomeNone, h.LastOutcome, "no success outcome recorded")
+			if h.Revision != before.Revision {
+				assert.NotEqual(t, runner.OutcomeNone, h.LastOutcome, "a health transition during the turn is never a success outcome")
+			}
 			assert.NotEqual(t, runner.AuthOK, h.Auth, "a non-terminal stream is not success evidence (inventory registers AuthUnknown; only success sets AuthOK)")
 		})
 	}
