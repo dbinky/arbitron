@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var forbiddenField = regexp.MustCompile(`(?i)(revealkey|baseurl|apikey|secret|password|connectionref|extras|authorization|header|workdir|^env$|^environ|^key$|^token$)`)
+var forbiddenField = regexp.MustCompile(`(?i)(revealkey|baseurl|apikey|secret|password|connectionref|extras|authorization|header|^env$|^environ|^key$|^token$)`)
 
 // walkOwnStructs visits every struct type of THIS package reachable from root.
 func walkOwnStructs(t *testing.T, root reflect.Type, visit func(path string, f reflect.StructField)) {
@@ -42,9 +42,21 @@ func walkOwnStructs(t *testing.T, root reflect.Type, visit func(path string, f r
 	walk(root, root.Name())
 }
 
+// The canonical {{workspace}} path is identical on every runner (design D2),
+// so only these exact string fields may name a work dir on the wire. Any other
+// work-dir-like name (ServerWorkDir, LocalWorkDir, ...) is forbidden.
+var (
+	workDirField      = regexp.MustCompile(`(?i)workdir`)
+	canonicalWorkDirs = map[string]bool{"WorkDir": true, "OriginWorkDir": true}
+)
+
 func TestDispatch_HasNoServerCredentialFields(t *testing.T) {
 	walkOwnStructs(t, reflect.TypeOf(Dispatch{}), func(path string, f reflect.StructField) {
 		assert.False(t, forbiddenField.MatchString(f.Name), "%s must not exist on the wire dispatch", path)
+		if workDirField.MatchString(f.Name) {
+			assert.True(t, canonicalWorkDirs[f.Name], "%s: only the canonical WorkDir/OriginWorkDir may travel (D2)", path)
+			assert.Equal(t, reflect.String, f.Type.Kind(), "%s must be the canonical path string", path)
+		}
 	})
 }
 

@@ -1,6 +1,14 @@
 // adapter/runnerproto/workspace.go
 package runnerproto
 
+import (
+	"errors"
+	"fmt"
+	"path"
+
+	"github.com/google/uuid"
+)
+
 // WireWorkspace is the sync plan for a workspace op (Phase 3 §3.3). The runner
 // reuses its local copy only when HomeGeneration AND CheckpointVersion match
 // its record and the copy is not dirty; it pushes with PushToken afterwards.
@@ -10,9 +18,40 @@ type WireWorkspace struct {
 	HomeGeneration    int64  `json:"homeGeneration"`
 	CheckpointVersion int64  `json:"checkpointVersion"`
 	ManifestHash      string `json:"manifestHash"`
-	PullToken         string `json:"pullToken,omitempty"`
-	PushToken         string `json:"pushToken,omitempty"`
-	PartBytes         int64  `json:"partBytes"`
+	// BaseRef pins the committed checkpoint; Fence* identifies the live resource claim.
+	BaseRef         string `json:"baseRef"`
+	FenceKey        string `json:"fenceKey"`
+	FenceOwner      string `json:"fenceOwner"`
+	FenceGeneration int64  `json:"fenceGeneration"`
+	FenceToken      string `json:"fenceToken"`
+	PullToken       string `json:"pullToken,omitempty"`
+	PushToken       string `json:"pushToken,omitempty"`
+	PartBytes       int64  `json:"partBytes"`
+}
+
+// Validate rejects an incomplete scoped workspace descriptor.
+func (w *WireWorkspace) Validate() error {
+	run, err := uuid.Parse(w.RunID)
+	if err != nil || run == uuid.Nil {
+		return errors.New("workspace.runId must be a nonzero UUID")
+	}
+	if w.WorkDir == "" || !path.IsAbs(w.WorkDir) || path.Clean(w.WorkDir) != w.WorkDir {
+		return errors.New("workspace.workDir must be a clean absolute path")
+	}
+	if w.CheckpointVersion < 1 || w.ManifestHash == "" ||
+		w.BaseRef != fmt.Sprintf("%s@%d:%s", run, w.CheckpointVersion, w.ManifestHash) {
+		return errors.New("workspace.baseRef must pin this run's checkpoint version and manifest hash")
+	}
+	if tok, err := uuid.Parse(w.FenceToken); err != nil || tok == uuid.Nil {
+		return errors.New("workspace.fenceToken must be a nonzero UUID")
+	}
+	if w.FenceKey != "run:"+run.String() || w.FenceOwner == "" || w.FenceGeneration < 1 {
+		return errors.New("workspace fence requires this run's key, an owner and a positive generation")
+	}
+	if w.PartBytes <= 0 {
+		return errors.New("workspace.partBytes must be positive")
+	}
+	return nil
 }
 
 // WireProcess is a script or tool_call. NodeEnv values are already resolved on
