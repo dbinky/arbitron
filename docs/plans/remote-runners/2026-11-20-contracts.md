@@ -1584,6 +1584,32 @@ that demands a broad, package-wide or combined gate be wholly green.
 5. **Citation.** Plans cite this rule as "(gate per contracts §Verification
    gates (unstick 2026-11-24))". The rule applies even where a step does not
    cite it.
+6. **Time budgets (unstick 2026-11-25).** Measured on the branch at
+   `1cc31dec`:
+   - Run every package-wide or combined gate with `-timeout 30m`. A timeout
+     under a smaller, self-chosen `-timeout` (90s, 120s, the 10m default) is
+     not a result; rerun with `-timeout 30m`. Run multi-package gates one
+     package per command when the combination would exceed 30m.
+   - `./domain/runner/` under `-race` takes about 12 minutes (704s); it never
+     fits the 10m default.
+   - `./adapter/sqlite/` under `-race` does NOT finish in 30 minutes (per-test
+     migrations; it timed out at 1801s in `TestPinsRoutesAllFullRowReads`).
+     Wherever a gate lists `./adapter/sqlite/` with `-race`, run it as:
+     (a) `go test ./adapter/sqlite/ -count=1 -timeout 30m` WITHOUT `-race`
+     (about 270s), judged by items 2–3; plus (b) the step's named or
+     step-touched SQLite tests WITH `-race` via `-run`. Race findings in
+     code the step changed still block (item 4).
+   - Known non-blocking failures at `1cc31dec` (owned by later tasks):
+     `adapter/sqlite` `TestTurnCommitRepo_*` (3) and
+     `TestSessionState_OldTurnSameGenerationCannotOverwriteNewCheckpoint`
+     (P3 T7/P4 T1/P4 T6); `adapter/runnerproto`
+     `TestSessionImport_EnvelopeRoundTrip` (P4 T12); `adapter/http`
+     `TestRunnerConnectJobs_ChannelTranslation/{process,agent}` (P3 T8/P3
+     T13); the `adapter/runneragent/executor` and `.../wsclient` test builds
+     fail on `workspace_jobs_test.go` (P3 T9's RED tests for
+     `WorkspaceJobs`/`WorkspaceJobsFromWire`). A test-package build failure
+     owned by a later task is a non-blocking failure under item 3; the
+     package's other tests are not judged until that task lands.
 
 ## Decisions (unstick 2026-11-24)
 
