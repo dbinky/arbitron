@@ -232,6 +232,19 @@
       "finished_at": "2026-11-24T13:50:21Z",
       "instance_id": "8ed4548e-83f2-431c-9796-3276270b575e",
       "workflow": "implement"
+    },
+    {
+      "stage": "implement",
+      "status": "blocked",
+      "outputs": {
+        "status": "blocked",
+        "blocked_reason": "Phase 3 Task 9 recorded its passing vocabulary check, but the pass reports all remaining implementation blocked: the Cycle 5 fixture omits the mandatory local capability rules, so the dependent executor work cannot proceed; 43 tasks remaining.",
+        "baseline_path": ".arbitron/pipeline/remote-runners.baseline.json"
+      },
+      "commit": "96ab7ddd4d4fe40cf92a5e44e14eed1957995099",
+      "finished_at": "2026-11-25T08:05:14Z",
+      "instance_id": "2098e8c5-3667-42e4-95aa-b95ea0a26c08",
+      "workflow": "implement"
     }
   ]
 }
