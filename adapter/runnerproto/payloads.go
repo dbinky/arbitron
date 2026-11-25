@@ -303,9 +303,9 @@ func (h *Heartbeat) Validate() error {
 	return nil
 }
 
-// Dispatch offers one chat, stream or native confirmation job to the runner.
+// Dispatch offers one model, process or native confirmation job to the runner.
 type Dispatch struct {
-	Op           string            `json:"op"` // chat, stream, confirm; agent/process arrive with Phase 3
+	Op           string            `json:"op"` // chat, stream, confirm, agent, process, session_import
 	Confirmation *WireConfirmation `json:"confirmation,omitempty"`
 	Chat         *WireChat         `json:"chat,omitempty"`
 	Agent        *WireAgent        `json:"agent,omitempty"`
@@ -339,6 +339,8 @@ func (d *Dispatch) Validate() error {
 			return errors.New("confirm dispatch carries exactly the confirmation descriptor")
 		}
 		return d.Confirmation.Validate()
+	case "process", "agent":
+		return d.validateWorkspaceOp()
 	default:
 		return fmt.Errorf("op %q is not supported by protocol v%d", d.Op, ProtocolVersion)
 	}
@@ -450,8 +452,15 @@ func (r *Result) Validate() error {
 			return errors.New("chat.session bundle names a different session than the turn")
 		}
 	}
-	if r.Agent != nil || r.Process != nil {
-		return fmt.Errorf("agent/process results are not supported by protocol v%d", ProtocolVersion)
+	if r.Agent != nil {
+		if err := r.Agent.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.Process != nil {
+		if err := r.Process.Validate(); err != nil {
+			return err
+		}
 	}
 	if r.Confirmation != nil {
 		if err := r.Confirmation.Validate(); err != nil {
@@ -683,10 +692,4 @@ func (o *WireOutcome) Validate() error {
 		class = "other"
 	}
 	return (&WireHealth{LastOutcome: class, Headroom: o.HeadroomHint, Windows: o.Windows}).Validate()
-}
-func (a *WireAgent) Validate() error       { return errors.New("agent dispatch is reserved for phase 3") }
-func (p *WireProcess) Validate() error     { return errors.New("process dispatch is reserved for phase 3") }
-func (a *WireAgentResult) Validate() error { return errors.New("agent result is reserved for phase 3") }
-func (p *WireProcessResult) Validate() error {
-	return errors.New("process result is reserved for phase 3")
 }
