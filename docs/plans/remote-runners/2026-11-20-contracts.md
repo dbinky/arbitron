@@ -46,6 +46,7 @@ Spec: `docs/specs/2026-11-19-remote-runners-spec.md`. Designs:
 | 043 | `043_runner_keys` | P2 T2 | `runner_keys`, `runner_inbox`, `runner_inbox_cursors`; `runner_sources.capabilities` (runner metadata already belongs to 041) |
 | 044 | `044_workspace_mobility` | P3 T1 | `workspace_checkpoints` (prepared/committed), `workspace_leases`, `home_moves`, `transfer_sessions`, `step_commits`, `step_commit_operations`, `node_retry_progress`, `node_retry_failures`, suspension records, maintenance operations, `builtin_processes`, `drain_items`, `runner_copies` |
 | 045 | `045_interactive_sessions` | P4 T1 | `turn_leases`, `turn_intents` (accepted binding and request ID), `session_moves`, resolution resources/materialization state; `node_executions` columns `session_checkpoint_ref`, `session_pin_runner`, `session_generation`, `session_invocation_id` |
+| 047 | `047_runner_job_absences` | P3 T10 Cycle 4a (decision D6, unstick 2026-11-25) | `runner_job_absences` (job_id, generation, runner_id, reported_at; PK job_id+generation); rebuilds `workspace_lease_supersessions` with `'reconnect_absent'` added to its `kind` CHECK (rows preserved; down drops only the new table) |
 
 ## 2. Config (`domain/config/config.go`, loader keys in `adapter/config/loader.go`)
 
@@ -404,7 +405,7 @@ System-scope events are published with `instanceID = uuid.Nil`; P1 T7 changes `S
 - `runner.updated`, `runner.cordoned`, `runner.uncordoned` (P1); `runner.connected`, `runner.suspect`, `runner.lost`, `runner.reconnected`, `runner.incompatible`, `runner.key_revoked` (P2); `runner.draining`, `runner.drained` (P3).
 - `source.health_changed`, `source.logged_out`, `source.recovered` (P1).
 - `execution.status` (run-scoped; P1, extended P3/P4), payload `instance.ExecutionStatus`.
-- `job.rerouted` (P1), `job.recovered`, `job.adopted`, `job.recovery_blocked` (P3; the last is run-scoped, from P3 T10 on `runner.ErrNoRecoveryBase`, RR-17 B), `workspace.moved` (P3, run-scoped).
+- `job.rerouted` (P1), `job.recovered`, `job.adopted`, `job.absent_on_reconnect` (P3 T10 Cycle 5, run-scoped, decision D6), `job.recovery_blocked` (P3; the last is run-scoped, from P3 T10 on `runner.ErrNoRecoveryBase`, RR-17 B), `workspace.moved` (P3, run-scoped).
 - `session.moved`, `interactive.turn_restarted`, `interactive.context_notice` (P4, run-scoped).
 Recorder: `runner.EventRecorder` — `NewEventRecorder(log EventLog, bus engine.EventBus, retention int, now func() time.Time) *EventRecorder`; `Record(ctx, ev PoolEvent)` appends (logs error, never fails caller) and publishes `engine.Event{Type: ev.Kind, Data: PoolEventView}` scoped to `*ev.RunID` or `uuid.Nil`.
 
@@ -1399,6 +1400,7 @@ CREATE TABLE workspace_lease_supersessions (
    - `revoked`: owner != builtin AND `runner_keys.revoked_at IS NOT NULL` for that runner_id.
    - `stopped`: lease has a job; owner == builtin → `builtin_processes(job_id, generation).state = 'stopped'` (written by P3 T10 `ProcessSupervisor.StopAndWait` after confirmed group exit); remote → `runner_inbox_cursors(job_id, generation).result_received = 1`.
    - `server_restart`: lease has no job AND `boot_id != ` current boot ID.
+   - `reconnect_absent` (decision D6, unstick 2026-11-25; migration 047): lease has a job, owner != builtin AND a `runner_job_absences(job_id, generation, runner_id = owner)` row exists. Written by `RemoteInboxRepo.RecordAbsent` only while that fence was ledger-live.
    - Any other combination: `ErrSupersedeUnproven`.
 4. Insert the `workspace_lease_supersessions` receipt, replace the lease with a new random token, generation+1, new holder/owner, and insert the new holder row (server-side holder, current boot ID). Commit.
 
@@ -1597,6 +1599,12 @@ User decisions recorded 2026-11-24. Each owning task carries the TDD steps; this
 - **D3 — `session.moved` lost after a commit crash: announce at most once; the committed move row is the record.** The event is never re-emitted on recovery to "repair" a lost announcement; readers that need the truth read the committed move row (trace/history). Owner: P4 T8 (already the plan's choice).
 - **D4 — native resume refused after a move: P4 T9 writes its own fenced conversation patch; the mover stays move-only.** The fallback patch is fenced by the session/move generation it was computed for and is refused when that generation is stale. The P4 T8 mover never rewrites conversations. Owner: P4 T9 (already the plan's choice).
 - **D5 — `Factory.EffectiveAgentTools` (applies the 2026-11-23 codex decision; §"Unstick 2026-11-23 — P1/P2 contract decisions").** Precedence: profile `AllowedTools` → requested node scope → backend global scope (claude-code: `ClaudeAgentConfig.AllowedTools`). `nil` = the backend's unrestricted default, never a universal grant; remote satisfaction is decided by the existing `ToolPolicy` field (`unrestricted` codex accepts only an empty scope, `allowlist` claude-code requires a non-empty one, the empty zero value keeps the legacy subset rule for chat/stream/confirm). Codex refuses any scope codex-cli cannot enforce (pattern-scoped, `mcp__*`/unknown, or no `Bash`) with P1 T10's existing `codex.ErrToolScopeUnsupported` via `codex.CheckToolScope`, before placement. opencode/pi pass their scope through (built-in only). The routed `RunAgent` applies the installed policy to both `ExecRequirements.Tools` and the mission. Owners: P3 T8 Cycle 7; P3 T13 installs it; P3 T15 Cycles 6/9/10 prove it end to end.
+- **D6 — P3 T10: a remote runner reconnects without the job, and nothing else proves its process stopped: the reconnect report (job absent) COUNTS as stop evidence (user decision 2026-11-25).** The claim is released, recovery proceeds, and the event is audit-logged. A generic loss error with no durable report still fails closed (`TestJobAdopter_UnprovenTakeoverFailsClosed` is unchanged).
+  - Durable evidence: migration 047 `runner_job_absences(job_id, generation, runner_id, reported_at)`; `runner.JobAbsenceRecorder{RecordAbsent(ctx, Fence) error}` is an optional `RemoteInbox` capability, implemented by `adaptsqlite.RemoteInboxRepo` and written only while the fence is ledger-live (`offered`/`running`), else `ErrFenced`; a repeat is a no-op.
+  - Kind: `runner.SupersedeReconnectAbsent = "reconnect_absent"` (remote owner + absence row; see §25 evidence list). 047 rebuilds `workspace_lease_supersessions` so its `kind` CHECK accepts it.
+  - Hub: `reconcileHeld` fails each ledger-live, unclaimed, waiter-less job through `Hub.absentOnReconnect`. When the report is recorded, the adoption error wraps `runner.ErrJobAbsentOnReconnect` (which itself wraps `ErrRunnerLost`) and the run-scoped pool event `job.absent_on_reconnect` is logged; otherwise it is a plain `ErrRunnerLost`.
+  - Adopter: `JobAdopter.Resolve` checks `ErrJobAbsentOnReconnect` before the generic loss branch and calls `recover(..., "reconnect_absent", SupersedeReconnectAbsent)`: Requeue (fence) → Supersede → Release → audit `audit.ActionRunnerJobReconnectAbsent = "runner.job_reconnect_absent"` (system actor, target `job:<id>`, detail runnerId/jobId/generation/runId/nodeId/evidence) → `job.recovered` with reason `reconnect_absent`. `AdoptDeps.Audit` is required; P3 T13 passes `auditSvc` through `workspaceMobilityInputs.Audit`.
+  - Owners: P3 T10 Cycles 4a, 5 and 6; P3 T13 (wiring).
 
 ## P3 T11/T12 lease use (unstick 2026-11-24)
 
