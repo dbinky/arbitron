@@ -18,7 +18,7 @@ var _ runner.ResourceLeaseStore = (*ResourceLeaseRepo)(nil)
 //     authorizes that job fence (the caller fenced it first); a server-side
 //     claim requires proof.OldJob == nil;
 //  3. the kind's evidence holds now (lost runner, revoked key, confirmed stop,
-//     or a server-side claim from an earlier boot);
+//     a reconnect-absence report, or a server-side claim from an earlier boot);
 //  4. a supersession receipt is written and the claim moves to generation+1
 //     with a fresh token for holder/owner, recorded under this boot.
 //
@@ -108,6 +108,9 @@ func (r *ResourceLeaseRepo) proveKind(ctx context.Context, tx groupQueryer, rec 
 	case kind == runner.SupersedeStopped && rec.Job != nil && remote:
 		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_inbox_cursors WHERE job_id = ? AND generation = ? AND result_received = 1`,
 			uuidToString(rec.Job.JobID), rec.Job.Generation).Scan(&ok)
+	case kind == runner.SupersedeReconnectAbsent && rec.Job != nil && remote:
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_job_absences WHERE job_id = ? AND generation = ? AND runner_id = ?`,
+			uuidToString(rec.Job.JobID), rec.Job.Generation, owner).Scan(&ok)
 	case kind == runner.SupersedeServerRestart && rec.Job == nil:
 		if rec.BootID != r.bootID {
 			ok = 1

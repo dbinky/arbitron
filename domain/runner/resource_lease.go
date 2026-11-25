@@ -24,6 +24,9 @@ const (
 	SupersedeRevoked       SupersedeKind = "revoked"        // remote owner: runner_keys.revoked_at IS NOT NULL
 	SupersedeStopped       SupersedeKind = "stopped"        // cancellation + confirmed stop of the old job's process
 	SupersedeServerRestart SupersedeKind = "server_restart" // server-side holder from an earlier boot (design D7)
+	// SupersedeReconnectAbsent: remote owner reconnected and its hello did not
+	// list the job (runner_job_absences row; decision D6).
+	SupersedeReconnectAbsent SupersedeKind = "reconnect_absent"
 )
 
 // SupersedeProof is the caller's claim of why the old holder can no longer

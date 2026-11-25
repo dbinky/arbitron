@@ -19,6 +19,37 @@ type RemoteInboxRepo struct{ db *sql.DB }
 func NewRemoteInboxRepo(db *sql.DB) *RemoteInboxRepo { return &RemoteInboxRepo{db: db} }
 
 var _ runner.RemoteInbox = (*RemoteInboxRepo)(nil)
+var _ runner.JobAbsenceRecorder = (*RemoteInboxRepo)(nil)
+
+// RecordAbsent stores the D6 reconnect-absence report for a live job fence in
+// one transaction with the ledger check, so a fenced or finished job can never
+// gain stop evidence after the fact.
+func (r *RemoteInboxRepo) RecordAbsent(ctx context.Context, f runner.Fence) error {
+	if f.Generation < 1 || f.RunnerID == "" {
+		return runner.ErrMalformedMessage
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE runner_jobs SET generation=generation WHERE id=? AND runner_id=? AND generation=? AND state IN ('offered','running')`, f.JobID.String(), string(f.RunnerID), f.Generation)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return runner.ErrFenced
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO runner_job_absences(job_id,generation,runner_id,reported_at) VALUES(?,?,?,?) ON CONFLICT(job_id,generation) DO NOTHING`,
+		f.JobID.String(), f.Generation, string(f.RunnerID), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("record job absence: %w", err)
+	}
+	return tx.Commit()
+}
 
 func (r *RemoteInboxRepo) accept(ctx context.Context, f runner.Fence, kind string, seq uint64, payload any) (uint64, error) {
 	if f.Generation < 1 || (kind == "output" && seq == 0) {
