@@ -149,6 +149,10 @@ func TestEngine_RetryDoesNotReusePriorAttemptReceipt(t *testing.T) {
 	wf := singleNodeWorkflow()
 	wf.Nodes[0].ErrorBehavior = workflow.ErrorBehavior{Type: "retry", Retries: 1}
 	f.workflowRepo.add(wf)
+	invs := engine.NewMemoryInvocationStore()
+	f.engine.SetInvocationStore(invs)
+	f.engine.SetStepCommitter(newMemCommitter(f, invs))
+	f.engine.SetStepCompletionReleaser(&recordingReleaser{})
 
 	var mu sync.Mutex
 	var sinks []*engine.StepCompletionSink
@@ -183,4 +187,25 @@ func TestEngine_RetryDoesNotReusePriorAttemptReceipt(t *testing.T) {
 	assert.Equal(t, []int{0, 0}, atEntry, "attempt 2 starts with no receipt from attempt 1")
 	require.Len(t, sinks[1].Completions(), 1)
 	assert.Equal(t, int64(2), sinks[1].Completions()[0].JobFence.Generation)
+}
+
+func TestEngine_NoCommitterInstallsNoCompletionSink(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+	var mu sync.Mutex
+	var sawSink, ran bool
+	f.executor.onNode("A", func(ctx context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		_, ok := engine.StepCompletionSinkFromContext(ctx)
+		mu.Lock()
+		sawSink, ran = ok, true
+		mu.Unlock()
+		return &engine.NodeResult{Output: map[string]any{"ok": true}}, nil
+	})
+	id, _, err := f.engine.Trigger(context.Background(), "single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	mu.Lock()
+	defer mu.Unlock()
+	require.True(t, ran)
+	assert.False(t, sawSink, "without a StepCommitter nothing would finalize deferred receipts, so dispatch must complete immediately")
 }

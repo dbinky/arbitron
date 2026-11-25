@@ -1658,10 +1658,15 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		sink := NewPlacementSink()
 		receipts := NewStepCompletionSink()
 		// Retry attempts must never inherit a failed attempt's receipts.
-		attemptCtx := ContextWithStepCompletionSink(ContextWithPlacementSink(ContextWithStepIdentity(ctx, StepIdentity{
+		attemptCtx := ContextWithPlacementSink(ContextWithStepIdentity(ctx, StepIdentity{
 			RunID: instanceID, NodeID: node.ID, InvocationID: inv.ID,
 			OperationID: nodeOperationID, Kind: OperationNode, Attempt: attempt,
-		}), sink), receipts)
+		}), sink)
+		if e.committer() != nil {
+			// Deferred completion exists only when a validated committer will
+			// finalize it; otherwise dispatch keeps Phase-1 immediate completion.
+			attemptCtx = ContextWithStepCompletionSink(attemptCtx, receipts)
+		}
 		result, err := executor.Execute(attemptCtx, node, vars, wf.Name)
 		completedAt := time.Now()
 
