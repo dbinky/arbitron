@@ -5,9 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
+
+// TurnOperationMatches reports whether a job is the accepted turn or one of its
+// sub-operations. A turn/1 prefix never accepts turn/10.
+func TurnOperationMatches(jobOp, intentOp string) bool {
+	return intentOp != "" && (jobOp == intentOp || strings.HasPrefix(jobOp, intentOp+"/"))
+}
 
 // InteractiveTurnIdentity names one accepted interactive turn. It is stamped
 // at acceptance from the persisted intent and held lease, committed in the
