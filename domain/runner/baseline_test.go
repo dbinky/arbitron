@@ -86,7 +86,11 @@ func TestWorkspaceBaseline_ConcurrentInitializersKeepOneBaseline(t *testing.T) {
 	for _, err := range errs {
 		require.NoError(t, err)
 	}
-	assert.Equal(t, int64(1), f.latest(t).Version)
+	var committed int
+	require.NoError(t, f.pool.DB.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM workspace_checkpoints WHERE run_id = ? AND state = 'committed'`, f.run.String()).Scan(&committed))
+	assert.Equal(t, 1, committed, "exactly one committed baseline; the losers re-read it")
+	assert.GreaterOrEqual(t, f.latest(t).Version, int64(1), "versions are reserved, never reused; an abandoned reservation is a gap (P3 T2)")
 }
 
 // Error: only the run's own canonical directory may become its baseline.
