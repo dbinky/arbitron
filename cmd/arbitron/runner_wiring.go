@@ -271,7 +271,8 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 	service := runner.NewService(runner.ServiceDeps{
 		Registry: d.Registry, Ledger: ledger, Events: poolEvents, Recorder: recorder, Audit: d.Audit,
 		Visibility: runner.NewInstanceVisibility(d.Instances), Monitor: monitor,
-		Telemetry: remoteStack.Hub, Notifier: notifier, Clock: clock,
+		Telemetry: remoteStack.Hub, Window: remoteStack.Hub,
+		Notifier: notifier, Clock: clock,
 	})
 	return &runnerStack{
 		refreshInventory: d.RefreshInventory, inventoryInterval: seconds(d.Config.ProbeIntervalSeconds), stopWake: stopWake,
