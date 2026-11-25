@@ -9,6 +9,17 @@ import (
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
+func TestCheckToolScope_SharesTheLaunchPolicy(t *testing.T) {
+	require.NoError(t, CheckToolScope(nil), "empty scope is codex's default posture")
+	require.NoError(t, CheckToolScope([]string{"Bash", "Read"}))
+	for _, bad := range [][]string{{"Read"}, {"Bash", "Bash(gh:*)"}, {"Bash", "mcp__github__create_pr"}} {
+		err := CheckToolScope(bad)
+		require.ErrorIs(t, err, ErrToolScopeUnsupported, "%v", bad)
+		_, launchErr := codexToolPolicy(bad)
+		assert.Equal(t, launchErr.Error(), err.Error(), "one predicate for placement and launch")
+	}
+}
+
 func TestCodexToolPolicy_EmptyScopeIsUnrestricted(t *testing.T) {
 	p, err := codexToolPolicy(nil)
 	require.NoError(t, err)

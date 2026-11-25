@@ -184,17 +184,33 @@ func AgentAffinity(m engine.AgentMission) Affinity {
 	return AffinityBuiltIn
 }
 
+// agentPolicy exposes the policy installed before execution starts.
+func (d *StepDispatcher) agentPolicy() AgentToolPolicy { return d.agentToolPolicy }
+
+type policyHolder interface{ agentPolicy() AgentToolPolicy }
+
 type routedAgent struct {
 	d dispatcher
 	b provider.ResolvedBinding
 }
 
 func (p *routedAgent) RunAgent(ctx context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
-	er, err := requirementsFor(ctx, p.b, OpType("agent"), AgentAffinity(m), false, m.ToolScope)
+	scope := m.ToolScope
+	if ph, ok := p.d.(policyHolder); ok {
+		if pol := ph.agentPolicy(); pol != nil {
+			effective, err := pol(p.b, m.ToolScope)
+			if err != nil {
+				return nil, err
+			}
+			scope = effective
+		}
+	}
+	er, err := requirementsFor(ctx, p.b, OpType("agent"), AgentAffinity(m), false, scope)
 	if err != nil {
 		return nil, err
 	}
 	mm := m
+	mm.ToolScope = scope
 	out, err := p.d.Dispatch(ctx, er, StepJob{Op: OpType("agent"), Binding: p.b, Agent: &mm})
 	if err != nil {
 		return out.Agent, err

@@ -33,6 +33,12 @@ var (
 	codexInertTools = map[string]bool{"WebFetch": true, "Task": true, "TodoWrite": true}
 )
 
+// CheckToolScope uses the native launch policy to reject unenforceable scopes.
+func CheckToolScope(scope []string) error {
+	_, err := codexToolPolicy(scope)
+	return err
+}
+
 func codexToolPolicy(scope []string) (toolPolicy, error) {
 	if len(scope) == 0 {
 		return toolPolicy{}, nil
