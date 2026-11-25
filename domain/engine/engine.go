@@ -41,6 +41,7 @@ type Engine struct {
 	interventions     instance.InterventionRepository
 	auditRecorder     AuditRecorder // optional; emits lead_intervention/admin.override audit events
 	workspaceManager  WorkspaceManager
+	removalHook       WorkspaceRemovalHook
 	workspaceBaseline WorkspaceBaselineInitializer
 	// groupFinalizer is the optional group-task terminal hook; nil keeps the
 	// plain completion path. Configured before starting instances.

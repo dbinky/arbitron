@@ -55,7 +55,9 @@ func (e *Engine) cleanupWorkspace(instanceID uuid.UUID) {
 	if rmErr := e.workspaceManager.RemoveInstanceDir(instanceID); rmErr != nil {
 		slog.Warn("failed to remove instance workspace",
 			"instanceID", instanceID, "error", rmErr)
+		return
 	}
+	notifyRemoval(e.removalHook, instanceID)
 }
 
 // warnWorkspaceRetained emits a slog.Warn with the on-disk size and file
