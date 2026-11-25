@@ -23,6 +23,7 @@ func TestRunnerWiring_RejectsMissingDependencies(t *testing.T) {
 	deps := func() runnerStackDeps {
 		return runnerStackDeps{
 			Config: ds.cfg.Runners, RefreshInventory: ds.runners.refreshInventory,
+			ServerRoot: ds.cfg.Workspace.Path, Logger: ds.logger,
 			DB: ds.db, Bus: ds.bus, Registry: ds.runners.registry,
 			Factory: ds.runners.innerChats.(*providersadapter.Factory), Streams: ds.runners.innerStreams,
 			Process: process.NewLocalProcessRunner(),
@@ -62,7 +63,7 @@ func TestRunnerWiring_RejectsMissingDependencies(t *testing.T) {
 			d := deps()
 			remove(&d)
 			assert.PanicsWithValue(t, "arbitron: incomplete runner stack", func() {
-				s := newRunnerStack(d)
+				s, _ := newRunnerStack(d)
 				// Clean up if a missing guard incorrectly permitted construction.
 				s.stopWake()
 				s.dispatcher.Close()

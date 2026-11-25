@@ -181,6 +181,9 @@ type runnerStackDeps struct {
 	Audit               runner.AuditRecorder
 	Instances           instance.InstanceRepository
 	Clock               func() time.Time
+	ServerRoot          string
+	Logger              *slog.Logger
+	RequiredModels      runner.RequiredModelSource
 }
 
 // runnerStack is the assembled Phase 1 pool: one built-in runner behind the
@@ -198,6 +201,7 @@ type runnerStack struct {
 	dispatcher        *runner.StepDispatcher
 	service           *runner.Service
 	alerts            *adaptnotif.SourceAlerts
+	remote            *remoteRunnerStack
 	// Routed: every model/process step the executors run goes through the dispatcher.
 	chats   engine.ChatProviderSelector
 	agents  engine.AgentProviderSelector
@@ -210,7 +214,7 @@ type runnerStack struct {
 	innerStreams engine.InteractiveStreamSelector
 }
 
-func newRunnerStack(d runnerStackDeps) *runnerStack {
+func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 	if err := d.Config.Validate(); err != nil {
 		panic(err)
 	}
@@ -241,13 +245,21 @@ func newRunnerStack(d runnerStackDeps) *runnerStack {
 	})
 	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.Factory, Agents: d.Factory, Streams: d.Streams, Process: d.Process,
 		Confirmations: runnerprobe.NewConfirmationExecutor(d.Factory)})
+	remoteStack, err := wireRemoteRunners(remoteRunnerInputs{
+		DB: d.DB, Runners: d.Config, ServerRoot: d.ServerRoot, Registry: d.Registry, Ledger: ledger,
+		Events: recorder, Health: monitor, Notifier: notifier, Audit: d.Audit, Builtin: builtin,
+		Logger: d.Logger, Clock: clock, RequiredModels: d.RequiredModels,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wiring remote runners: %w", err)
+	}
 	// Root shutdown unsubscribes after execution drains.
 	wake, stopWake := notifier.Subscribe()
 	dispatcher := runner.NewStepDispatcher(runner.DispatcherDeps{
 		Registry: d.Registry, Ledger: ledger,
-		Runners: runner.NewHealthReportingRunnerSet(runner.StaticRunnerSet{runner.BuiltInRunnerID: builtin}, monitor),
+		Runners: runner.NewHealthReportingRunnerSet(remoteStack.Runners, monitor),
 		Events:  recorder, Status: projector, Health: monitor,
-		Telemetry: runner.EmptyTelemetry{}, Policy: runner.PlacementPolicy{}, Clock: clock,
+		Telemetry: remoteStack.Hub, Policy: runner.PlacementPolicy{}, Clock: clock,
 		// Explicit rollout mode; SetWorkspace ends it when mobility is installed.
 		LegacyBuiltInWorkspace: true,
 		TransientMaxAttempts:   d.Config.TransientMaxAttempts,
@@ -259,18 +271,18 @@ func newRunnerStack(d runnerStackDeps) *runnerStack {
 	service := runner.NewService(runner.ServiceDeps{
 		Registry: d.Registry, Ledger: ledger, Events: poolEvents, Recorder: recorder, Audit: d.Audit,
 		Visibility: runner.NewInstanceVisibility(d.Instances), Monitor: monitor,
-		Telemetry: runner.EmptyTelemetry{}, Notifier: notifier, Clock: clock,
+		Telemetry: remoteStack.Hub, Notifier: notifier, Clock: clock,
 	})
 	return &runnerStack{
 		refreshInventory: d.RefreshInventory, inventoryInterval: seconds(d.Config.ProbeIntervalSeconds), stopWake: stopWake,
 		registry: d.Registry, ledger: ledger, recorder: recorder, notifier: notifier, projector: projector,
-		monitor: monitor, dispatcher: dispatcher, service: service, alerts: d.Alerts,
-		chats:        runner.NewRoutingChatSelector(d.Factory, dispatcher, runner.BuiltInAffinity),
+		monitor: monitor, dispatcher: dispatcher, service: service, alerts: d.Alerts, remote: remoteStack,
+		chats:        runner.NewRoutingChatSelector(d.Factory, dispatcher, runner.HermeticChatAffinity),
 		agents:       runner.NewRoutingAgentSelector(d.Factory, dispatcher),
 		streams:      runner.WithDefaultAgentBackend(runner.NewRoutingStreamSelector(d.Streams, dispatcher), d.DefaultAgentBackend),
 		process:      runner.NewRoutedProcessRunner(dispatcher),
 		innerChats:   d.Factory,
 		innerAgents:  d.Factory,
 		innerStreams: d.Streams,
-	}
+	}, nil
 }

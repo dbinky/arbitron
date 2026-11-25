@@ -352,6 +352,7 @@ type domainStack struct {
 	invocations     engine.InvocationStore
 	groupResolution *engine.GroupResolutionBridge
 	runners         *runnerStack
+	remote          *remoteRunnerStack
 }
 
 // Close cancels and joins startup, refresh and sweeps before draining execution,
@@ -430,6 +431,9 @@ func (ds *domainStack) close(ctx context.Context) {
 		ds.runners.dispatcher.Close()
 		ds.runners.monitor.Wait()
 		ds.runners.alerts.Wait()
+		if ds.remote != nil {
+			ds.remote.Hub.Wait()
+		}
 	}
 	if ds.db != nil {
 		ds.db.Close()
@@ -477,6 +481,9 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		ScheduleService:     ds.scheduleSvc,
 		Logger:              ds.logger,
 		BackendHealth:       ds.backendHealth,
+	}
+	if ds.remote != nil {
+		deps.RunnerKeys = ds.remote.Keys
 	}
 	if q := ds.layoutQuery(); q != nil {
 		deps.Layouts = q
@@ -533,6 +540,10 @@ func (ds *domainStack) httpDeps() adapthttp.RouterDeps {
 	}
 	if ds.subtreeEvents != nil {
 		deps.SubtreeEvents = ds.subtreeEvents
+	}
+	if ds.remote != nil {
+		deps.RunnerKeys = ds.remote.Keys
+		deps.RunnerConnect = ds.remote.Connect
 	}
 	if ds.runners != nil {
 		deps.Runners = ds.runners.service
@@ -1200,9 +1211,14 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		cfg.LLM.DefaultAgentBackend,
 	)
 
+	// Resolve the execution root before constructing the runner pool.
+	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
+	if err != nil {
+		return nil, fmt.Errorf("workspace manager: %w", err)
+	}
 	// The executing machine's process port; only the built-in runner calls it.
 	localProcess := process.NewLocalProcessRunner()
-	runnerPool := newRunnerStack(runnerStackDeps{
+	runnerPool, err := newRunnerStack(runnerStackDeps{
 		Config: cfg.Runners, DB: db, Bus: bus, Registry: runnerRegistry, RefreshInventory: sourceSync.Sync,
 		Factory: providerFactory, Streams: interactiveStreamSel, DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
 		Process: localProcess,
@@ -1211,12 +1227,17 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 			runner.CredOpenAISubscription:    runnerprobe.NewCodexProber(codexCfg),
 			runner.CredLunaRoute:             runnerprobe.NewLunaRouteProber(connStore, probeFactory),
 		},
-		Confirmer: runnerprobe.NewDispatchConfirmer(profileRepo, filepath.Join(wsRoot, ".runner-confirm"), 2*time.Minute),
-		Alerts:    adaptnotif.NewSourceAlerts(notifRepo, externalNotifier, logger, time.Now),
-		Audit:     auditSvc,
-		Instances: instanceRepo,
-		Clock:     time.Now,
+		Confirmer:  runnerprobe.NewDispatchConfirmer(profileRepo, filepath.Join(wsRoot, ".runner-confirm"), 2*time.Minute),
+		Alerts:     adaptnotif.NewSourceAlerts(notifRepo, externalNotifier, logger, time.Now),
+		Audit:      auditSvc,
+		Instances:  instanceRepo,
+		ServerRoot: wsMgr.BasePath(), Logger: logger,
+		RequiredModels: profileClaudeModels{profiles: profileRepo, resolver: profileResolver},
+		Clock:          time.Now,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("building runner pool: %w", err)
+	}
 
 	// 9. Create all node executors and build the executor map. Model and
 	// process steps run through the runner pool's routed ports.
@@ -1251,10 +1272,6 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	eng.SetInvocationStore(invocationStore)
 
 	// 11a. Wire the per-instance workspace manager.
-	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
-	if err != nil {
-		return nil, fmt.Errorf("workspace manager: %w", err)
-	}
 	eng.SetWorkspaceManager(wsMgr)
 
 	// 11b. Construct the instance-list enrichment step and wire it to the
@@ -1688,6 +1705,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		invocations:           invocationStore,
 		groupResolution:       groupResolution,
 		runners:               runnerPool,
+		remote:                runnerPool.remote,
 	}
 	skipSeed := func(alias string, cause error) {
 		logger.Warn("skipped config profile", "alias", alias, "error", cause)

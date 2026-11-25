@@ -81,6 +81,10 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 	schedulerCtx, schedulerCancel := context.WithCancel(ctx)
 	ds.schedulerCancel = schedulerCancel
 	ds.scheduler.Start(schedulerCtx)
+	if ds.remote != nil {
+		ds.remote.Hub.Start(ctx)
+		ds.remote.Telemetry.Start(ctx)
+	}
 	if err := ds.eng.RecoverCrashedInstancesContext(ctx); err != nil {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
