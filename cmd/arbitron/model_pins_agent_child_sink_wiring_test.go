@@ -161,7 +161,7 @@ func TestModelPinsWiringChildInputSink(t *testing.T) {
 
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	fixtureConns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	fixtureConns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	require.NoError(t, fixtureConns.Create(ctx, provider.Connection{Name: "sink", Provider: "openrouter", BaseURL: sink.srv.URL}, "k"))
 	require.NoError(t, ds.runners.refreshInventory(ctx))
 	chat := func(model string) provider.Profile {

@@ -151,7 +151,7 @@ func TestModelRefreshAndAdminProfileEditNeverOverwriteEachOther(t *testing.T) {
 		defer other.Close()
 		crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 		require.NoError(t, err)
-		require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "other", Provider: "openrouter", BaseURL: other.URL}, "k"))
+		require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "other", Provider: "openrouter", BaseURL: other.URL}, "k"))
 
 		isErr, text := mcpProfileCaller(t, ctx, ds)("profile_create", map[string]any{
 			"alias": "fresh", "kind": "chat", "connection_ref": "other",

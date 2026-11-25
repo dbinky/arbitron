@@ -75,7 +75,7 @@ func TestAdvanceWiringRejectsIncompatibleCandidateCapabilities(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "capability-sink", Provider: "openrouter", BaseURL: upstream.URL}, "capability-key"))
 	storeConfiguredFollowing(t, ctx, ds, "worker")
 	prior, err := ds.profileSvc.Get(ctx, "worker")

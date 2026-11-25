@@ -27,7 +27,7 @@ func TestModelSnapshotDefaultCodexRoot(t *testing.T) {
 	home := filepath.Join(dir, "account")
 	t.Setenv("CODEX_HOME", home)
 	script := fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "--version" ]; then echo 'codex-cli 0.139.0'; exit 0; fi
+if [ "$1" = "--version" ]; then echo 'codex-cli 0.171.0'; exit 0; fi
 printf '%%s\n' "$*" >> %q
 case " $* " in *" -m gpt-5-sol "*) ;; *) exit 42 ;; esac
 [ "$CODEX_HOME" = %q ] && [ -z "$OPENAI_API_KEY" ] || exit 43
@@ -98,7 +98,7 @@ func TestTriggerPinsCoherentGeneration(t *testing.T) {
 	sink, releaseSink := lifecycleSink(t, false)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "sink", Provider: "openrouter", BaseURL: sink.srv.URL}, "k"))
 	for _, alias := range []string{"first", "second"} {
 		_, _, err := ds.profileSvc.Create(ctx, provider.Profile{Alias: alias, Kind: provider.ProfileKindChat, ConnectionRef: "sink", Model: lifecycleModelX})

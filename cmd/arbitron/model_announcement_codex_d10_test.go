@@ -67,7 +67,7 @@ func TestModelAnnouncementCodexD10DiscoveryRoot(t *testing.T) {
 						return nil, nil, fmt.Errorf("missing binary/account/context isolation")
 					}
 					if slices.Equal(spec.Args, []string{"--version"}) {
-						return output("codex-cli 0.163.0")
+						return output("codex-cli 0.171.0")
 					}
 					authBytes, err := os.ReadFile(filepath.Join(home, "auth.json"))
 					if err != nil || string(authBytes) != auth {

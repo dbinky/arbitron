@@ -58,7 +58,7 @@ func TestRefreshAdvancesBySuccessfulFourHourTick(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "tick", Provider: "openrouter", BaseURL: upstream.URL}, "tick-key"))
+	require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "tick", Provider: "openrouter", BaseURL: upstream.URL}, "tick-key"))
 	var now atomic.Int64
 	now.Store(time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC).Unix())
 	deps := ds.refreshDeps

@@ -28,7 +28,7 @@ func TestUsabilityD8AndUnknownMappingRoot(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	refresh, err := newModelRefresh(ds.refreshDeps)
 	require.NoError(t, err)
 	defer refresh.stop()

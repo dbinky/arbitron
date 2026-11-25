@@ -45,7 +45,7 @@ func TestUsabilityProbeIndependentHarnessBoundsRoot(t *testing.T) {
 						t.Setenv("CLAUDE_CONFIG_DIR", home)
 					}
 					if backend == "codex" {
-						version, model, initial = "codex-cli 0.163.0", "gpt-native-bounds", "gpt-5-sol"
+						version, model, initial = "codex-cli 0.171.0", "gpt-native-bounds", "gpt-5-sol"
 						t.Setenv("CODEX_HOME", home)
 						t.Setenv(codexInteractiveVerifiedEnv, "true")
 						writeCodexAccountModels(t, home, model)

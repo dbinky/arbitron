@@ -22,7 +22,7 @@ func TestModelPinsWiringCodexInteractiveLiveBinding(t *testing.T) {
 	require.NoError(t, os.MkdirAll(sessions, 0o700))
 	bin := filepath.Join(dir, "codex")
 	require.NoError(t, os.WriteFile(bin, []byte(fmt.Sprintf(`#!/bin/sh
-if [ "$1" = '--version' ]; then echo 'codex-cli 0.139.0'; exit 0; fi
+if [ "$1" = '--version' ]; then echo 'codex-cli 0.171.0'; exit 0; fi
 echo "$*" >> %q
 [ -z "$OPENAI_API_KEY" ] || exit 40
 [ "$CODEX_HOME" = %q ] || exit 41

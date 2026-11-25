@@ -20,7 +20,7 @@ const codexCatalogFixture = `{"openai":{"id":"openai","models":{
 // writes — the requested model, or the fallback file's contents (a silent
 // harness fallback).
 const codexProbeScript = `#!/bin/sh
-if [ "$1" = '--version' ]; then echo 'codex-cli 0.163.0'; exit 0; fi
+if [ "$1" = '--version' ]; then echo 'codex-cli 0.171.0'; exit 0; fi
 case " $* " in *' --strict-config '*' mcp '*) echo 'Error: --strict-config is not supported for codex mcp' >&2; exit 1 ;; esac
 case " $* " in *' mcp list --json '*) echo '[]'; exit 0 ;; esac
 echo "$PWD $*" >> '@ARGV@'

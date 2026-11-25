@@ -21,7 +21,7 @@ const refreshCodexTalkOld, refreshCodexTalkNew = "gpt-5-sol", "gpt-5.1-sol"
 // in the account's rollout for its session (appending on `exec resume <id>`)
 // and serves the requested -m unless @FALLBACK@ names a silent fallback.
 const refreshCodexTalkScript = `#!/bin/sh
-if [ "$1" = '--version' ]; then echo 'codex-cli 0.163.0'; exit 0; fi
+if [ "$1" = '--version' ]; then echo 'codex-cli 0.171.0'; exit 0; fi
 [ -z "$OPENAI_API_KEY" ] || exit 40
 [ -f "$CODEX_HOME/models_cache.json" ] || exit 42
 case "$PWD" in

@@ -84,7 +84,7 @@ func TestModelPinsWiringRejectsIncompatibleLiveRoute(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 			require.NoError(t, err)
-			conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+			conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 			for name, route := range map[string]string{"native": "openrouter", "deployment": tc.route} {
 				require.NoError(t, conns.Create(ctx, provider.Connection{Name: name, Provider: route, BaseURL: upstream.URL, Extras: map[string]string{"api-version": "2024-10-21", "region": "us-east-1", "access-key-id": "route-access"}}, "route-secret"))
 			}

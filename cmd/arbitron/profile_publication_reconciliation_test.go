@@ -79,7 +79,7 @@ func TestDirectAdvancePublicationRecoveryWithoutReport(t *testing.T) {
 				ctx := adminCtxForLocalUser(t, ds)
 				crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 				require.NoError(t, err)
-				conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+				conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 				require.NoError(t, conns.Create(ctx, provider.Connection{Name: "publication-sink", Provider: "openrouter", BaseURL: upstream.URL}, "publication-key"))
 				// Existing proved following rows are the input to direct advancement;
 				// cold candidate initialization is a separate producer contract.

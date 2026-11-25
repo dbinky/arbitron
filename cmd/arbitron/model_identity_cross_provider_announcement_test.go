@@ -42,7 +42,7 @@ func TestIdentityCrossProviderConfirmationAnnouncesOnceRoot(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	connections := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	connections := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	carriers := []string{"deepseek", "ollama-cloud", "openrouter", "zhipuai"}
 	for _, name := range carriers {
 		require.NoError(t, connections.Create(ctx, provider.Connection{Name: "cross-" + name, Provider: name, BaseURL: upstream.URL}, "cross-key"))

@@ -41,7 +41,7 @@ import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
 if args == ["--version"]:
-    print("codex-cli 0.163.0")
+    print("codex-cli 0.171.0")
     sys.exit(0)
 with open(%q, "a") as log:
     log.write(" ".join(args) + "\n")

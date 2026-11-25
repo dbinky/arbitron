@@ -48,7 +48,7 @@ func bootTwoFollowersRoot(t *testing.T, sink *modelSink, aliases ...string) (*do
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "sink", Provider: "openrouter", BaseURL: sink.srv.URL}, "k"))
 	for _, alias := range aliases {
 		storeConfiguredFollowing(t, ctx, ds, alias)

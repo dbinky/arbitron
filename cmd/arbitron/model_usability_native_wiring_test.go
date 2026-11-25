@@ -87,7 +87,7 @@ func TestUsabilityNativeUnknownTierRoot(t *testing.T) {
 				ctx := adminCtxForLocalUser(t, ds)
 				crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 				require.NoError(t, err)
-				conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+				conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 				conn := provider.Connection{Name: "native-proof", Provider: "openrouter", BaseURL: upstream.URL}
 				require.NoError(t, conns.Create(ctx, conn, "native-proof-secret"))
 				_, _, err = ds.profileSvc.Create(ctx, provider.Profile{Alias: "native-chat", Kind: provider.ProfileKindChat, ConnectionRef: conn.Name, Model: "deepseek/deepseek-v4-flash"})

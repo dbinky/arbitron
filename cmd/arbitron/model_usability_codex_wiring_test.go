@@ -61,7 +61,7 @@ func TestUsabilityCodexBatchExactModelRoot(t *testing.T) {
 				copyEvidence = ":"
 			}
 			script := fmt.Sprintf(`#!/bin/sh
-if [ "$1" = '--version' ]; then echo 'codex-cli 0.163.0'; exit 0; fi
+if [ "$1" = '--version' ]; then echo 'codex-cli 0.171.0'; exit 0; fi
 printf '%%s\n' "$*" >> %q
 [ -z "$OPENAI_API_KEY" ] || exit 40
 [ "$CODEX_HOME" = %q ] || exit 41

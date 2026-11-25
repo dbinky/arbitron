@@ -50,7 +50,7 @@ func TestAutomaticAdvanceUsesConfiguredCapabilities(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "axes", Provider: "openrouter", BaseURL: upstream.URL}, "axes-key"))
+	require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "axes", Provider: "openrouter", BaseURL: upstream.URL}, "axes-key"))
 	deps := ds.refreshDeps
 	fetch := &fixtureFetcher{body: refreshCatalogFixture}
 	deps.Fetcher = fetch

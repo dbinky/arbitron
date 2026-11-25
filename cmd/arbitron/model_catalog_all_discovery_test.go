@@ -59,7 +59,7 @@ func TestDiscoveryAllSourceCandidatesOnEveryPathRoot(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 			require.NoError(t, err)
-			require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "all", Provider: "openrouter", BaseURL: upstream.URL}, "all-key"))
+			require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "all", Provider: "openrouter", BaseURL: upstream.URL}, "all-key"))
 			storeConfiguredFollowing(t, ctx, ds, "worker")
 			source := map[string]any{}
 			for _, model := range models {

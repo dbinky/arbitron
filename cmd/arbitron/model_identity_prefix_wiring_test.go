@@ -76,7 +76,7 @@ func TestIdentityRoutingPrefixRoot(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx,
+	require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx,
 		provider.Connection{Name: "identity-sink", Provider: "ollama-cloud", BaseURL: upstream.URL}, "identity-key"))
 	storeConfiguredFollowing(t, ctx, ds, "worker")
 	catalogURL, webhook := "https://catalog.example.test/identity.json", "https://hooks.example.test/teams/IDENTITY"

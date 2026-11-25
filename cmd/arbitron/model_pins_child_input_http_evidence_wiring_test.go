@@ -65,7 +65,7 @@ func TestModelPinsChildInputHTTPEvidenceRoot(t *testing.T) {
 				// resolution is unchanged.
 				crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 				require.NoError(t, err)
-				conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+				conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 				require.NoError(t, conns.Create(ctx, provider.Connection{Name: "http-api", Provider: protocol.provider, BaseURL: upstream.URL}, "http-root-secret"))
 				_, _, err = ds.profileSvc.Create(ctx, provider.Profile{Alias: "proof", Kind: provider.ProfileKindChat, ConnectionRef: "http-api", Model: model})
 				require.NoError(t, err)

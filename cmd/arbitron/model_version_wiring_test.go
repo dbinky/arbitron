@@ -67,7 +67,7 @@ func TestVersionRejectsNumericAliasesAtTrigger(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "api", Provider: "openai", BaseURL: sink.srv.URL}, "k"))
 	p := provider.Profile{Alias: "pin-alias", Kind: provider.ProfileKindChat, ConnectionRef: "api", Model: "gpt-6-sol"}
 	_, _, err = ds.profileSvc.Create(ctx, p)

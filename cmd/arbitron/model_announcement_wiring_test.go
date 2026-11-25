@@ -83,7 +83,7 @@ func TestModelAnnouncementWiringToReceiverSink(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 			require.NoError(t, err)
-			require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "refresh-sink", Provider: "openrouter", BaseURL: upstream.URL}, "refresh-key"))
+			require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "refresh-sink", Provider: "openrouter", BaseURL: upstream.URL}, "refresh-key"))
 			storeConfiguredFollowing(t, ctx, ds, "worker")
 			catalogURL := "https://catalog.example.test/api.json"
 			patch := settingsdomain.Patch{CatalogURL: &catalogURL}
@@ -173,7 +173,7 @@ func TestModelAnnouncementAwaitsSettingWhenEligibilityReadFaults(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "refresh-sink", Provider: "openrouter", BaseURL: upstream.URL}, "refresh-key"))
+	require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "refresh-sink", Provider: "openrouter", BaseURL: upstream.URL}, "refresh-key"))
 	storeConfiguredFollowing(t, ctx, ds, "worker")
 	catalogURL, webhook := "https://catalog.example.test/api.json", "https://hooks.example.test/teams/SECRET"
 	_, err = ds.SystemSettings.Update(ctx, settingsdomain.Patch{CatalogURL: &catalogURL, TeamsWebhookURL: &webhook})
@@ -258,7 +258,7 @@ func TestModelAnnouncementSettingsSeamThroughHTTP(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 			require.NoError(t, err)
-			require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "refresh-sink", Provider: "openrouter", BaseURL: upstream.URL}, "refresh-key"))
+			require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "refresh-sink", Provider: "openrouter", BaseURL: upstream.URL}, "refresh-key"))
 			storeConfiguredFollowing(t, ctx, ds, "worker")
 			router := adapthttp.NewRouterFromDeps(ds.httpDeps())
 			put := func(body string) *httptest.ResponseRecorder {

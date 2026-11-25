@@ -48,7 +48,7 @@ func TestUsabilityCodexD10RestrictionsRoot(t *testing.T) {
 						return ch, func() error { return nil }, nil
 					}
 					if slices.Equal(spec.Args, []string{"--version"}) {
-						return output("codex-cli 0.163.0")
+						return output("codex-cli 0.171.0")
 					}
 					if slices.Contains(spec.Args, "mcp") == slices.Contains(spec.Args, "--strict-config") || strings.Contains(strings.Join(spec.Env, "\n"), "unrelated-connection-secret") || spec.Bin != bin || filepath.Dir(spec.Dir) != root || !slices.Contains(spec.Env, "CODEX_HOME="+home) || slices.ContainsFunc(spec.Env, func(s string) bool { return strings.HasPrefix(s, "OPENAI_API_KEY=") }) {
 						return nil, nil, fmt.Errorf("missing resolved account/binary/isolated cwd")

@@ -35,7 +35,8 @@ func TestModelPinsWiringInteractiveFirstTurnRejectsFallback(t *testing.T) {
 			// The fake replaces only the external harness. It consumes the real
 			// model argument and prompt, then independently records a fallback.
 			script := fmt.Sprintf(`#!/bin/sh
-if [ "$1" = '--version' ]; then echo 'codex-cli 0.139.0'; exit 0; fi
+if [ "$1" = '--version' ]; then if [ %q = 'codex' ]; then echo 'codex-cli 0.171.0'; else echo '2.1.330 (Claude Code)'; fi; exit 0; fi
+case "$1" in auth) echo '{"loggedIn":true}'; exit 0 ;; esac
 echo "$*" >> %q
 [ -n "$(cat)" ] || exit 43
 m=''
@@ -56,7 +57,7 @@ else
   echo '{"type":"assistant","session_id":"first-turn-session","message":{"content":[{"type":"text","text":"first turn from '"$m"'"}]}}'
   echo '{"type":"result","session_id":"first-turn-session","is_error":false,"modelUsage":{"'"$m"'":{}},"usage":{"input_tokens":1,"output_tokens":1}}'
 fi
-`, argvLog, tc.flag, executed, executed, tc.backend, sessions, sessions)
+`, tc.backend, argvLog, tc.flag, executed, executed, tc.backend, sessions, sessions)
 			require.NoError(t, os.WriteFile(bin, []byte(script), 0o700))
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv("CODEX_HOME", home)

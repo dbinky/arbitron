@@ -60,7 +60,7 @@ func TestModelPinsWiringInteractiveAdminEditThroughMCP(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "conn-a", Provider: "anthropic", BaseURL: "https://a.gateway.test"}, "key-a"))
 	require.NoError(t, conns.Create(ctx, provider.Connection{Name: "conn-b", Provider: "anthropic", BaseURL: "https://b.gateway.test"}, "key-b"))
 

@@ -103,7 +103,7 @@ func TestUsabilityConfirmedExactModel(t *testing.T) {
 					}
 
 					if backend == "codex" {
-						version, old, model = "codex-cli 0.163.0", "gpt-5-sol", "gpt-native-preview-20261018"
+						version, old, model = "codex-cli 0.171.0", "gpt-5-sol", "gpt-native-preview-20261018"
 						t.Setenv("CODEX_HOME", home)
 						writeCodexAccountModels(t, home, model)
 					}

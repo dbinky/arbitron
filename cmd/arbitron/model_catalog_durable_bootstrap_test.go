@@ -62,7 +62,7 @@ func TestCatalogProspectiveBootstrapAtomicFrozenEventsRoot(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 			require.NoError(t, err)
-			require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: "durable", Provider: "openrouter", BaseURL: upstream.URL}, "durable-bootstrap-key"))
+			require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: "durable", Provider: "openrouter", BaseURL: upstream.URL}, "durable-bootstrap-key"))
 			deps := ds.refreshDeps
 			deps.FetchTransport = catalogHTTPLeaf(func(r *http.Request) (*http.Response, error) {
 				if r.Method != http.MethodGet || r.URL.String() != "https://models.dev/api.json" {
@@ -302,7 +302,7 @@ func TestCatalogOpaquePathsNeverPersistConfirmationRoot(t *testing.T) {
 			ctx := adminCtxForLocalUser(t, ds)
 			crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 			require.NoError(t, err)
-			require.NoError(t, adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy).Create(ctx, provider.Connection{Name: route, Provider: route, BaseURL: upstream.URL, Extras: map[string]string{"api-version": "2025-01-01", "region": "us-east-1", "access-key-id": "test-account"}}, "must-not-be-used"))
+			require.NoError(t, newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory).Create(ctx, provider.Connection{Name: route, Provider: route, BaseURL: upstream.URL, Extras: map[string]string{"api-version": "2025-01-01", "region": "us-east-1", "access-key-id": "test-account"}}, "must-not-be-used"))
 			receiver := newAnnouncementReceiver(t)
 			setAnnouncementDestination(t, ctx, ds, "https://teams.example.test/opaque?token=private-setting")
 			deps := ds.refreshDeps
@@ -348,7 +348,7 @@ func TestCatalogDiscoveryRejectsChangedConfigRoot(t *testing.T) {
 	ctx := adminCtxForLocalUser(t, ds)
 	crypto, err := adaptcrypto.NewAESGCM(bytes.Repeat([]byte{0x5d}, 32))
 	require.NoError(t, err)
-	conns := adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy)
+	conns := newSyncingConnStore(adaptsqlite.NewConnectionRepoWithPolicy(ds.db, crypto, provider.AllowAnyURLPolicy), ds.runners.refreshInventory)
 	var conn provider.Connection
 	var requests atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
