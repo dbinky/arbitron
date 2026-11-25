@@ -187,11 +187,11 @@ func TestResolutionPortability_CopyDiskErrorPublishesNothing(t *testing.T) {
 	assert.Empty(t, entries, "no partial directory is left behind")
 
 	// A missing backing object (task b's conflicting blob) is an error, not a falsely portable copy.
-	blob, err := standalone(t, h.StagingDir, "rev-parse", "MERGE_HEAD:c.txt")
-	require.Error(t, err, "sanity: with alternates disabled the object is not local")
 	res, err := f.a.git.Run(ctx, Command{Args: []string{"rev-parse", "MERGE_HEAD:c.txt"}, Dir: h.StagingDir})
 	require.NoError(t, err)
-	blob = strings.TrimSpace(res.Stdout)
+	blob := strings.TrimSpace(res.Stdout)
+	_, err = os.Stat(filepath.Join(h.StagingDir, ".git", "objects", blob[:2], blob[2:]))
+	require.True(t, os.IsNotExist(err), "sanity: the blob is not local to staging; only the backing alternate holds it")
 	backing, err := f.a.BackingDir(f.handle)
 	require.NoError(t, err)
 	loose := filepath.Join(backing, "objects", blob[:2], blob[2:])
