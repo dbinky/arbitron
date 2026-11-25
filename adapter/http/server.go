@@ -148,6 +148,8 @@ type RouterDeps struct {
 	// RunnerConnect is mounted outside user auth with header-only runner-key auth.
 	// Nil disables the route.
 	RunnerConnect *RunnerConnectHandler
+	// RunnerTransfers uses runner-key and transfer-token auth outside user auth.
+	RunnerTransfers *RunnerTransferHandler
 	// Runners serves pool reads and admin writes; nil disables the routes.
 	Runners RunnerService
 }
@@ -264,6 +266,10 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 
 	if d.RunnerConnect != nil {
 		r.With(d.RunnerConnect.KeyAuth().Handler).Get("/api/v1/runners/connect", d.RunnerConnect.ServeHTTP)
+	}
+
+	if d.RunnerTransfers != nil {
+		r.Route("/api/v1/runners/transfers", d.RunnerTransfers.Routes)
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
