@@ -12,6 +12,15 @@ import (
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
+// VerifiedDiscover reads current native model evidence on every discovery pass.
+func VerifiedDiscover(base DiscoverInput, v *ClaudeModelVerifier) DiscoverFunc {
+	return func(ctx context.Context) ([]Spec, map[string]string) {
+		in := base
+		in.ClaudeModels = v.Verified()
+		return Discover(ctx, in)
+	}
+}
+
 // ClaudeModelVerifier natively confirms the exact Claude models the server
 // requests at admission (contracts D1). Only verified models are advertised.
 type ClaudeModelVerifier struct {

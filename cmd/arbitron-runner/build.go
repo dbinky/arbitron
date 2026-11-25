@@ -80,9 +80,9 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		}
 	}
 	discoverIn := sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules, Confirmations: runnerprobe.NewConfirmationExecutor(factory)}
-	specs, harness := sources.Discover(ctx, discoverIn)
-	inv := sources.New(specs, harness, time.Now)
-	inv.EnableClaudeVerification(sources.NewClaudeModelVerifier(runnerprobe.NewConfirmationExecutor(factory), cfg.ScratchRoot, logger), discoverIn)
+	verifier := sources.NewClaudeModelVerifier(runnerprobe.NewConfirmationExecutor(factory), cfg.ScratchRoot, logger)
+	inv := sources.NewRefreshing(ctx, sources.VerifiedDiscover(discoverIn, verifier), time.Now)
+	inv.EnableClaudeVerification(verifier, discoverIn)
 	exec, err := buildExecutorFor(cfg, factory, inv.CapabilitiesFor)
 	if err != nil {
 		return nil, err

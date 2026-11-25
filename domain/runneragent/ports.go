@@ -104,6 +104,12 @@ var (
 	ErrRefused = errors.New("runneragent: admission refused")
 )
 
+// InventoryRevision changes when discovered sources require re-admission.
+type InventoryRevision interface{ Revision() uint64 }
+
+// HarnessReporter supplies current local harness versions for hello.
+type HarnessReporter interface{ HarnessVersions() map[string]string }
+
 // RefusedError is a typed admission refusal from the server.
 type RefusedError struct {
 	Code   string

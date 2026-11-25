@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+
 	"github.com/arbitron/arbitron/domain/runner"
 )
 
@@ -29,6 +30,13 @@ func (i *Inventory) VerifyModels(ctx context.Context, models []string) <-chan st
 		i.verifyMu.Lock()
 		defer i.verifyMu.Unlock()
 		v.Request(ctx, models)
+		if i.discover != nil {
+			i.probeMu.Lock()
+			defer i.probeMu.Unlock()
+			specs, harness := i.discover(ctx)
+			i.adopt(specs, harness, false)
+			return
+		}
 		in.ClaudeModels = v.Verified()
 		caps, reason := BuildCapabilities(runner.CredAnthropicSubscription, i.HarnessVersions()["claude"], in)
 		i.setCapabilities(runner.CredAnthropicSubscription, "", caps, reason)

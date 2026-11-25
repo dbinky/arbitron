@@ -3,6 +3,7 @@ package runneragent
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -116,6 +117,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		if admitted {
 			attempt = 0
 		}
+		if errors.Is(err, errInventoryChanged) {
+			continue
+		}
 		a.deps.Logger.Debug("runner connection ended", "error", err)
 		delay := Backoff(attempt, a.cfg.BackoffBase, a.cfg.BackoffCap, a.deps.Rand)
 		attempt++
@@ -126,6 +130,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+var errInventoryChanged = errors.New("runneragent: local sources changed; re-advertising")
+
+func (a *Agent) inventoryRevision() uint64 {
+	if r, ok := a.deps.Sources.(InventoryRevision); ok {
+		return r.Revision()
+	}
+	return 0
 }
 
 type received struct {
@@ -168,6 +181,7 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 		return false, fmt.Errorf("runneragent: invalid identity key")
 	}
 	admitted := false
+	var helloRev uint64
 	var heartbeat, probe <-chan time.Time
 	interval := a.cfg.Heartbeat
 	for {
@@ -191,6 +205,10 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 				}
 				sources := a.deps.Sources.Probe(ctx)
 				hello := &Hello{OS: a.cfg.OS, Arch: a.cfg.Arch, ProtocolVersion: a.cfg.ProtocolVersion, RunnerVersion: a.cfg.RunnerVersion, HarnessVersions: a.cfg.HarnessVersions, WorkspaceRoot: a.cfg.WorkspaceRoot, ScratchRoot: a.cfg.ScratchRoot, Capabilities: a.cfg.Capabilities, Sources: sources, Held: a.held()}
+				helloRev = a.inventoryRevision()
+				if r, ok := a.deps.Sources.(HarnessReporter); ok {
+					hello.HarnessVersions = r.HarnessVersions()
+				}
 				if err := s.Send(ctx, Outbound{Kind: KindHello, Hello: hello}); err != nil {
 					return admitted, err
 				}
@@ -248,6 +266,9 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 				a.startProbe(ctx, s, *in.Probe)
 			}
 		case <-heartbeat:
+			if a.inventoryRevision() != helloRev {
+				return admitted, errInventoryChanged
+			}
 			sample, err := a.deps.Telemetry.Sample(ctx)
 			now := a.deps.Clock.Now()
 			age := int64(0)

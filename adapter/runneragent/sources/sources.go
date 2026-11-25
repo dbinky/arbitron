@@ -26,6 +26,10 @@ type Spec struct {
 
 // Inventory implements runneragent.LocalSources.
 type Inventory struct {
+	probeMu    sync.Mutex // serializes rediscovery with index-based probe publication
+	discover   DiscoverFunc
+	sig        string
+	rev        uint64
 	verifier   *ClaudeModelVerifier
 	discoverIn DiscoverInput
 	verifyMu   sync.Mutex
@@ -56,6 +60,8 @@ func New(specs []Spec, harness map[string]string, now func() time.Time) *Invento
 
 // HarnessVersions are the detected local harness versions.
 func (i *Inventory) HarnessVersions() map[string]string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	out := make(map[string]string, len(i.harness))
 	for k, v := range i.harness {
 		out[k] = v
@@ -99,6 +105,9 @@ func cloneCapabilities(in []runner.ExecutionCapability) []runner.ExecutionCapabi
 
 // Probe refreshes every source with its own prober.
 func (i *Inventory) Probe(ctx context.Context) []runneragent.Source {
+	i.probeMu.Lock()
+	defer i.probeMu.Unlock()
+	i.refresh(ctx)
 	i.mu.Lock()
 	prev := append([]runneragent.Source(nil), i.last...)
 	specs := append([]Spec(nil), i.specs...)
@@ -180,6 +189,8 @@ var _ runneragent.FreshSourceProber = (*Inventory)(nil)
 
 // ProbeSource probes exactly the named source without consulting cached health.
 func (i *Inventory) ProbeSource(ctx context.Context, kind runner.CredentialKind, ref string) (runneragent.Source, error) {
+	i.probeMu.Lock()
+	defer i.probeMu.Unlock()
 	i.mu.Lock()
 	specs := append([]Spec(nil), i.specs...)
 	i.mu.Unlock()
@@ -253,6 +264,7 @@ func (p LunaRouteAuth) Probe(ctx context.Context, s runner.Source) (runner.Probe
 
 // DiscoverInput is what the runner knows about its local harnesses and keys.
 type DiscoverInput struct {
+	Native         NativeExecutionInput
 	ClaudeModels   []string // Natively verified exact models, never operator-declared.
 	ClaudeBinary   string
 	Runner         claudecli.CommandRunner
@@ -262,8 +274,8 @@ type DiscoverInput struct {
 	Confirmations  runner.ConfirmationExecutor
 }
 
-// Discover lists the sources this runner can serve. openai_subscription is
-// never advertised in Phase 2 (no remote codex chat path).
+// Discover lists sources proven by local harness and account evidence.
+// Codex advertises native agent work only; it has no remote chat route.
 func Discover(ctx context.Context, in DiscoverInput) ([]Spec, map[string]string) {
 	var specs []Spec
 	harness := map[string]string{}
@@ -291,6 +303,21 @@ func Discover(ctx context.Context, in DiscoverInput) ([]Spec, map[string]string)
 	for idx := range specs {
 		src := &specs[idx].Source
 		src.Capabilities, src.UnavailableReason = BuildCapabilities(src.Kind, harness["claude"], in)
+		if src.Kind == runner.CredAnthropicSubscription && in.Native.WorkspaceEnabled {
+			caps, err := ClaudeAgentCapabilities(in.Native.Rules, src.Capabilities, false, in.Native.SessionsEnabled)
+			if err == nil {
+				src.Backends = []string{"", "claude-code"}
+				src.Capabilities = append(src.Capabilities, caps...)
+			}
+		}
+	}
+	if !in.Native.Rules.Empty() {
+		if spec, version, ok := discoverCodex(ctx, in); ok {
+			specs = append(specs, spec)
+			if version != "" {
+				harness["codex"] = version
+			}
+		}
 	}
 	return specs, harness
 }
