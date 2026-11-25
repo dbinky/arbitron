@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	configadapter "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/adapter/process"
 	"github.com/arbitron/arbitron/adapter/runneragent/copies"
 	"github.com/arbitron/arbitron/adapter/runneragent/executor"
@@ -51,9 +52,11 @@ func newJobFixture(t *testing.T, harness claudecli.CommandRunner) *jobFixture {
 	require.NoError(t, err)
 	cache, err := executor.NewBundleCache(filepath.Join(t.TempDir(), "bundles"), srv)
 	require.NoError(t, err)
+	rules, err := configadapter.LoadCapabilityRules("")
+	require.NoError(t, err)
 	jobs, err := executor.NewWorkspaceJobs(executor.WorkspaceJobsDeps{
 		Syncer: syncer, Bundles: cache, Process: process.NewLocalProcessRunner(),
-		ClaudeBinary: "claude", CodexBinary: "codex", HarnessRunner: harness,
+		ClaudeBinary: "claude", CodexBinary: "codex", HarnessRunner: harness, Rules: rules,
 		LookPath: func(name string) (string, error) {
 			if name == "claude" || name == "codex" {
 				return "/usr/local/bin/" + name, nil

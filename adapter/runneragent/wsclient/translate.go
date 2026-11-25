@@ -153,6 +153,9 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 			c := m.Result.Chat
 			r.Chat = &runnerproto.WireChatResult{Output: c.Output, Model: c.Model, TokensIn: c.TokensIn, TokensOut: c.TokensOut, SessionID: c.SessionID}
 		}
+		if m.Result.OK {
+			r.Process, r.Agent = WorkspaceResultsToWire(*m.Result)
+		}
 		return runnerproto.NewJobEnvelope(runnerproto.KindResult, m.JobID, m.Generation, 0, r)
 	case runneragent.KindProbeResult:
 		if m.ProbeResult == nil {
@@ -208,6 +211,7 @@ func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 				CredentialKind: c.CredentialKind, Backend: c.Backend, ContextWindow: c.ContextWindow, Effort: c.Effort, Tools: c.Tools,
 			}
 		}
+		in.Dispatch.Process, in.Dispatch.Agent, in.Dispatch.Workspace = WorkspaceJobsFromWire(d)
 	case runnerproto.KindAck:
 		var a runnerproto.Ack
 		if err := runnerproto.DecodePayload(e, &a); err != nil {

@@ -3,10 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/arbitron/arbitron/adapter/process"
+	"github.com/arbitron/arbitron/adapter/runneragent/copies"
+	"github.com/arbitron/arbitron/adapter/runneragent/transfer"
+	"github.com/arbitron/arbitron/adapter/runneragent/workspace"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -36,15 +41,15 @@ const (
 
 // buildExecutor uses this machine's native verifier and local credentials.
 func buildExecutor(cfg config.Config, local *providersadapter.Factory) (*executor.Executor, error) {
-	return buildExecutorFor(cfg, local, nil)
+	return buildExecutorFor(cfg, local, nil, nil)
 }
 
-func buildExecutorFor(cfg config.Config, local *providersadapter.Factory, advertised func(runner.CredentialKind, string) []runner.ExecutionCapability) (*executor.Executor, error) {
+func buildExecutorFor(cfg config.Config, local *providersadapter.Factory, advertised func(runner.CredentialKind, string) []runner.ExecutionCapability, ws *executor.WorkspaceJobs) (*executor.Executor, error) {
 	var lr *executor.LunaRoute
 	if cfg.LunaRoute.Enabled() {
 		lr = &executor.LunaRoute{ConnectionRef: cfg.LunaRoute.ConnectionRef, APIKey: cfg.LunaRoute.APIKey}
 	}
-	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: runnerprobe.NewConfirmationExecutor(local), Advertised: advertised})
+	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: runnerprobe.NewConfirmationExecutor(local), Advertised: advertised, Workspace: ws})
 }
 
 // buildAgent is the runner's composition root: every adapter is constructed
@@ -83,7 +88,17 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 	verifier := sources.NewClaudeModelVerifier(runnerprobe.NewConfirmationExecutor(factory), cfg.ScratchRoot, logger)
 	inv := sources.NewRefreshing(ctx, sources.VerifiedDiscover(discoverIn, verifier), time.Now)
 	inv.EnableClaudeVerification(verifier, discoverIn)
-	exec, err := buildExecutorFor(cfg, factory, inv.CapabilitiesFor)
+	wsRoot, wsReason := config.VerifyWorkspaceRoot(cfg.WorkspaceRoot)
+	if wsReason != "" {
+		logger.Warn("workspace root not advertised; this runner is chat-only", "reason", wsReason)
+	}
+	var wsJobs *executor.WorkspaceJobs
+	if wsRoot != "" {
+		if wsJobs, err = buildWorkspaceJobs(cfg, wsRoot, httpClient, claudeRunner, claudeBin, rules); err != nil {
+			return nil, err
+		}
+	}
+	exec, err := buildExecutorFor(cfg, factory, inv.CapabilitiesFor, wsJobs)
 	if err != nil {
 		return nil, err
 	}
@@ -96,11 +111,6 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 	if err != nil {
 		return nil, err
 	}
-	// RR-07: advertise the root only when it verifies; "" => hub marks chat_only.
-	wsRoot, wsReason := config.VerifyWorkspaceRoot(cfg.WorkspaceRoot)
-	if wsReason != "" {
-		logger.Warn("workspace root not advertised; this runner is chat-only", "reason", wsReason)
-	}
 	return runneragent.New(runneragent.Config{
 		OS: runtime.GOOS, Arch: runtime.GOARCH, ProtocolVersion: runnerproto.ProtocolVersion, RunnerVersion: version,
 		HarnessVersions: inv.HarnessVersions(), WorkspaceRoot: wsRoot, ScratchRoot: cfg.ScratchRoot,
@@ -110,5 +120,32 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
 		Spool: sp, Identity: identity.New(cfg.MachineKeyPath()),
 		Clock: runneragent.SystemClock{}, Rand: rand.Float64, Logger: logger,
+	})
+}
+
+// buildWorkspaceJobs wires the P3 T9 process/agent executor: copy records and
+// bundles live under the runner's config dir; local copies live at the verified
+// workspace root; agent jobs use the same loaded capability rules as discovery.
+func buildWorkspaceJobs(cfg config.Config, wsRoot string, httpClient *http.Client, claudeRunner claudecli.CommandRunner, claudeBin string, rules provider.CapabilityRules) (*executor.WorkspaceJobs, error) {
+	copyStore, err := copies.NewFileStore(filepath.Join(cfg.ConfigDir, "copies"))
+	if err != nil {
+		return nil, fmt.Errorf("arbitron-runner: copy store: %w", err)
+	}
+	xfer := transfer.NewClient(cfg.ServerURL, cfg.RunnerKey, httpClient, cfg.ExtraHeaders)
+	syncer, err := workspace.NewSyncer(workspace.SyncerDeps{WorkspaceRoot: wsRoot, LocalRoot: wsRoot, Transfer: xfer, Copies: copyStore})
+	if err != nil {
+		return nil, fmt.Errorf("arbitron-runner: %w", err)
+	}
+	bundleCache, err := executor.NewBundleCache(filepath.Join(cfg.ConfigDir, "bundles"), xfer)
+	if err != nil {
+		return nil, fmt.Errorf("arbitron-runner: bundle cache: %w", err)
+	}
+	if claudeBin == "" {
+		claudeBin = cfg.ClaudeBinary
+	}
+	return executor.NewWorkspaceJobs(executor.WorkspaceJobsDeps{
+		Syncer: syncer, Bundles: bundleCache, Process: process.NewLocalProcessRunner(),
+		ClaudeBinary: claudeBin, CodexBinary: cfg.CodexBinary, MaxResponseBytes: maxResponseBytes,
+		HarnessRunner: claudeRunner, Rules: rules,
 	})
 }

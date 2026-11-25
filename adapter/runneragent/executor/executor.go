@@ -40,6 +40,7 @@ type Config struct {
 	ScratchRoot   string
 	Confirmations runner.ConfirmationExecutor
 	LunaRoute     *LunaRoute // nil: no LunaRoute on this runner
+	Workspace     *WorkspaceJobs
 }
 
 // Executor implements runneragent.JobExecutor.
@@ -72,6 +73,12 @@ func New(sel engine.ChatProviderSelector, cfg Config) (*Executor, error) {
 
 // Supports reports whether this runner can run d.
 func (e *Executor) Supports(d runneragent.Dispatch) (bool, string) {
+	if d.Op == runneragent.OpProcess || d.Op == runneragent.OpAgent {
+		if e.cfg.Workspace == nil {
+			return false, "workspace jobs are not supported by this runner"
+		}
+		return e.cfg.Workspace.Supports(d)
+	}
 	if d.Op == runneragent.OpConfirm {
 		return e.supportsConfirm(d)
 	}
@@ -112,6 +119,12 @@ func (e *Executor) Supports(d runneragent.Dispatch) (bool, string) {
 
 // Execute runs d in a fresh scratch directory that is removed afterwards.
 func (e *Executor) Execute(ctx context.Context, d runneragent.Dispatch, emit runneragent.EmitFunc) runneragent.Result {
+	if d.Op == runneragent.OpProcess || d.Op == runneragent.OpAgent {
+		if e.cfg.Workspace == nil {
+			return failure(runner.SourceOutcome{Class: runner.OutcomeOther}, "workspace jobs are not supported by this runner")
+		}
+		return e.cfg.Workspace.Execute(ctx, d)
+	}
 	if ok, reason := e.Supports(d); !ok {
 		return failure(runner.SourceOutcome{Class: runner.OutcomeOther}, reason)
 	}

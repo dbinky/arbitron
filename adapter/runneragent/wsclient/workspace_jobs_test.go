@@ -6,7 +6,6 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/runneragent/wsclient"
 	"github.com/arbitron/arbitron/adapter/runnerproto"
-	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runneragent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +43,7 @@ func TestWorkspaceResultsToWire(t *testing.T) {
 		Process: &runneragent.ProcessResult{Stdout: "o", Stderr: "e", ExitCode: 2},
 		Agent: &runneragent.AgentResult{Summary: "s", Steps: []runneragent.AgentStep{{Kind: "edit", Summary: "x"}}, Model: "m",
 			ModelEvidence: []runneragent.ModelEvidence{{Model: "m", Provider: "anthropic", Source: "result", Kind: "reported_execution"}},
-			DroppedTools: []string{"T"}, TokensIn: 1, TokensOut: 2, SessionID: "sid"}})
+			DroppedTools:  []string{"T"}, TokensIn: 1, TokensOut: 2, SessionID: "sid"}})
 	assert.Equal(t, runnerproto.WireProcessResult{Stdout: "o", Stderr: "e", ExitCode: 2}, *pr)
 	assert.Equal(t, []runnerproto.WireAgentStep{{Kind: "edit", Summary: "x"}}, ar.Steps)
 	assert.Equal(t, "reported_execution", ar.ModelEvidence[0].Kind)
