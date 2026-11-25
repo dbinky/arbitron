@@ -16,8 +16,13 @@ import (
 // invented: each is one of the package's Min values AND passes that package's
 // own CheckVersion (only the highest floor passes every floor).
 func TestRemoteCompatTableUsesHarnessFloors(t *testing.T) {
+	orig := version
+	t.Cleanup(func() { version = orig })
+	version = "0.2.0" // a released server stamp: runners 0.2.x are admitted
 	c, err := remoteCompatTable()
 	require.NoError(t, err)
+	assert.Equal(t, "0.2.0", c.RunnerMin)
+	assert.Equal(t, "0.3.0", c.RunnerMaxExclusive)
 	assert.Equal(t, runnerproto.ProtocolVersion, c.ProtocolMin)
 	assert.Equal(t, runnerproto.ProtocolVersion, c.ProtocolMax)
 	assert.NotEmpty(t, c.RunnerMin, "released compatibility range must have a concrete floor")
@@ -40,13 +45,17 @@ func TestRemoteCompatTableUsesHarnessFloors(t *testing.T) {
 	assert.True(t, ok, reason)
 
 	// Behaviour through the hub's own check: an old claude is refused, the floor is admitted.
-	hello := runner.HelloInfo{OS: "darwin", Arch: "arm64", ProtocolVersion: runnerproto.ProtocolVersion,
+	hello := runner.HelloInfo{OS: "darwin", Arch: "arm64", ProtocolVersion: runnerproto.ProtocolVersion, RunnerVersion: "0.2.0",
 		HarnessVersions: map[string]string{"claude": "2.0.1"}, WorkspaceRoot: "/srv/ws", ScratchRoot: "/Users/op/.arbitron-runner/scratch"}
 	got := c.Check(hello, "/srv/ws")
 	assert.Equal(t, runner.CompatIncompatible, got.State)
 	assert.Contains(t, got.Reason, "claude")
 	hello.HarnessVersions["claude"] = c.Harness["claude"] + " (Claude Code)"
 	assert.Equal(t, runner.CompatCompatible, c.Check(hello, "/srv/ws").State)
+	version = "dev"
+	unstamped, err := remoteCompatTable()
+	require.NoError(t, err)
+	assert.Equal(t, runner.CompatIncompatible, unstamped.Check(hello, "/srv/ws").State, "an unstamped server never admits remote runners")
 }
 
 func TestHarnessFloorPicksTheFloorThatPassesEveryCheck(t *testing.T) {
