@@ -229,10 +229,13 @@ func TestBuildAgentDeliversChatResultToServer(t *testing.T) {
 	assert.Equal(t, "ok", got.hello.Sources[0].Health.Auth, "auth status was probed before admission")
 	assert.Empty(t, got.rejected)
 	require.Len(t, got.heartbeat.Sources, 1)
-	require.Len(t, got.heartbeat.Sources[0].Capabilities, 2)
+	require.Len(t, got.heartbeat.Sources[0].Capabilities, 3, "chat, stream and P2 T13's native confirm capability")
+	var ops []string
 	for _, c := range got.heartbeat.Sources[0].Capabilities {
+		ops = append(ops, c.Op)
 		assert.Equal(t, []string{"claude-sonnet-4-5"}, c.Models)
 	}
+	assert.ElementsMatch(t, []string{"chat", "stream", "confirm"}, ops)
 	assert.True(t, got.result.OK)
 	require.NotNil(t, got.result.Chat)
 	assert.Equal(t, "ok", got.result.Chat.Output)

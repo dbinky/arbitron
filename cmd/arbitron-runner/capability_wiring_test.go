@@ -64,16 +64,26 @@ func TestBuildAgent_ServerRequestedModelsAreVerifiedThenAdvertised(t *testing.T)
 			got := capabilityRootRun(t, []string{"claude-sonnet-4-5", "claude-opus-5-5"}, func(c *runnerproto.WireChat) { c.Model = tc.model })
 			require.Len(t, got.heartbeat.Sources, 1)
 			caps := got.heartbeat.Sources[0].Capabilities
-			require.Len(t, caps, 2)
+			require.Len(t, caps, 3, "chat, stream and P2 T13's native confirm capability")
 			fp, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: "claude-cli"})
 			require.NoError(t, err)
+			confirmFP, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: "claude-cli", Backend: "claude-code"})
+			require.NoError(t, err)
+			var ops []string
 			for _, c := range caps {
+				ops = append(ops, c.Op)
 				assert.Equal(t, "claude-cli", c.Provider)
-				assert.Equal(t, fp, c.EndpointFingerprint)
+				if c.Op == "confirm" {
+					assert.Equal(t, "claude-code", c.Backend)
+					assert.Equal(t, confirmFP, c.EndpointFingerprint)
+				} else {
+					assert.Equal(t, fp, c.EndpointFingerprint)
+				}
 				assert.Equal(t, []string{"claude-sonnet-4-5"}, c.Models)
 				assert.Equal(t, sources.ClaudeCodeTools, c.Tools)
 				assert.True(t, c.ExecutedModel)
 			}
+			assert.ElementsMatch(t, []string{"chat", "stream", "confirm"}, ops)
 			if tc.rejected == "" {
 				assert.Empty(t, got.rejected)
 				assert.True(t, got.result.OK)
