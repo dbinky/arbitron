@@ -53,12 +53,21 @@ func (h *Hub) reconcileHeld(ctx context.Context, s *Session, held []HeldJobInfo,
 		seq := receipt.LastOutputSeq
 		h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Seq: seq}})
 	}
+	if active, err := h.ledger.ListActiveByRunner(ctx, s.RunnerID); err == nil {
+		for _, job := range active {
+			f := Fence{JobID: job.ID, RunnerID: s.RunnerID, Generation: job.Generation}
+			if claimed[job.ID] || job.State == stJobQueued || h.liveJob(f) != nil {
+				continue
+			}
+			h.adopt.FailJob(f, h.absentOnReconnect(ctx, job, f))
+		}
+	}
 	return claimed
 }
 
-// adoptable requires a running claim backed by the current durable fence.
+// adoptable requires a running or finished claim backed by the current durable fence.
 func (h *Hub) adoptable(ctx context.Context, hj HeldJobInfo, f Fence) bool {
-	return hj.State == HeldRunning && h.ledger.FenceCheck(ctx, f) == nil
+	return (hj.State == HeldRunning || hj.State == HeldTerminal) && h.ledger.FenceCheck(ctx, f) == nil
 }
 
 // resendOffers re-sends every unaccepted offer for this runner that the

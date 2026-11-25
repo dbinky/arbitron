@@ -450,6 +450,7 @@ func (h *Hub) handleOrphan(ctx context.Context, s *Session, in Inbound, f Fence)
 			}
 		case in.Kind == MsgResult && in.Result != nil:
 			if err := h.inbox.AcceptResult(ctx, f, *in.Result); err == nil {
+				h.adopt.Deliver(f, *in.Result)
 				h.send(ctx, s, Outbound{Kind: MsgAck, JobID: f.JobID, Generation: f.Generation, Ack: &AckPayload{Result: true}})
 				return nil
 			}

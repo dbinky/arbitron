@@ -12,14 +12,16 @@ import (
 // Event kinds (bus Event.Type == PoolEvent.Kind). runner./source./pool. kinds
 // published with uuid.Nil reach every authenticated subscriber.
 const (
-	EventRunnerUpdated       = "runner.updated"
-	EventRunnerCordoned      = "runner.cordoned"
-	EventRunnerUncordoned    = "runner.uncordoned"
-	EventSourceHealthChanged = "source.health_changed"
-	EventSourceLoggedOut     = "source.logged_out"
-	EventSourceRecovered     = "source.recovered"
-	EventJobRerouted         = "job.rerouted"     // run-scoped
-	EventExecutionStatus     = "execution.status" // run-scoped
+	// EventJobAbsentOnReconnect records durable stop evidence from a reconnect hello.
+	EventJobAbsentOnReconnect = "job.absent_on_reconnect"
+	EventRunnerUpdated        = "runner.updated"
+	EventRunnerCordoned       = "runner.cordoned"
+	EventRunnerUncordoned     = "runner.uncordoned"
+	EventSourceHealthChanged  = "source.health_changed"
+	EventSourceLoggedOut      = "source.logged_out"
+	EventSourceRecovered      = "source.recovered"
+	EventJobRerouted          = "job.rerouted"     // run-scoped
+	EventExecutionStatus      = "execution.status" // run-scoped
 )
 
 // PoolEventView is the JSON payload of a pool event on the bus.

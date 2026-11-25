@@ -51,6 +51,9 @@ func (h *Hub) Tick(ctx context.Context) error {
 		gap := now.Sub(last)
 		switch {
 		case gap >= h.cfg.LostAfter:
+			if h.InRestartGrace(now) {
+				continue
+			}
 			errs = append(errs, h.markLost(ctx, r.ID, last, CloseLost, fmt.Sprintf("no contact for %s", gap.Round(time.Second)),
 				Cause{Kind: "liveness", Actor: "hub", Outcome: OutcomeRunnerLost}))
 		case gap >= h.cfg.SuspectAfter && r.Liveness == LivenessOnline:
@@ -102,6 +105,9 @@ func (h *Hub) markLost(ctx context.Context, id RunnerID, at time.Time, code int,
 	setErr := h.reg.SetLiveness(ctx, id, LivenessLost, at)
 	lostErr := WithOutcome(fmt.Errorf("%w: %s: %s", ErrRunnerLost, id, reason), SourceOutcome{Class: OutcomeRunnerLost})
 	owned := map[uuid.UUID]bool{}
+	for _, f := range h.adopt.FailRunner(id, lostErr) {
+		owned[f.JobID] = true // the adopter owns recovery, not the hub
+	}
 	for _, j := range waiters {
 		owned[j.a.Fence.JobID] = true
 		h.finish(j, nil, lostErr)

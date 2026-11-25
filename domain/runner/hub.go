@@ -30,16 +30,18 @@ type HubDeps struct {
 
 // Hub owns every remote runner session in this server process.
 type Hub struct {
-	wsJobs         atomic.Pointer[WorkspaceJobDeps]
-	requiredModels RequiredModelSource // guarded by mu
-	inbox          RemoteInbox
-	reg            Registry
-	ledger         Ledger
-	events         *EventRecorder
-	health         HubHealth
-	notifier       *PoolNotifier
-	now            func() time.Time
-	cfg            HubConfig
+	adopt             AdoptionBook
+	restartGraceUntil atomic.Int64
+	wsJobs            atomic.Pointer[WorkspaceJobDeps]
+	requiredModels    RequiredModelSource // guarded by mu
+	inbox             RemoteInbox
+	reg               Registry
+	ledger            Ledger
+	events            *EventRecorder
+	health            HubHealth
+	notifier          *PoolNotifier
+	now               func() time.Time
+	cfg               HubConfig
 
 	// admitMu serialises admission with loss/revocation so a revoked or lost
 	// runner can never be re-admitted halfway through being torn down.
@@ -298,6 +300,7 @@ func (h *Hub) Admit(ctx context.Context, key RunnerKey, conn RunnerConn, hello H
 		h.Disconnect(s)
 		return nil, fmt.Errorf("admit %s: send admitted: %w", id, err)
 	}
+	h.adopt.runnerReconnected(id)
 	claimed := h.reconcileHeld(ctx, s, hello.Held, now)
 	h.resendOffers(ctx, s, claimed)
 	if err := h.applyObservations(ctx, s, hello.Sources); err != nil {
