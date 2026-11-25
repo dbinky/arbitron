@@ -34,6 +34,7 @@ func rhBoot(t *testing.T) *rrStack {
 		t.Skip("remote execution requires a darwin runner")
 	}
 	pinSinkRootEnv(t)
+	rrPinReleasedVersion(t)
 	root := t.TempDir()
 	ws := filepath.Join(root, "workspaces")
 	require.NoError(t, os.MkdirAll(ws, 0o700))
@@ -65,7 +66,7 @@ func rhBoot(t *testing.T) *rrStack {
 		require.NoError(t, err)
 	}
 	code, body := rrDo(t, http.MethodPost, st.srv.URL+"/api/v1/runners/builtin/cordon", nil)
-	require.Equal(t, http.StatusOK, code, string(body)) // work and confirmations must use the remote source
+	require.Equal(t, http.StatusNoContent, code, string(body)) // work and confirmations must use the remote source
 	return st
 }
 
@@ -84,7 +85,7 @@ func rhRunnerBinary(t *testing.T) string {
 			return
 		}
 		rhBin = filepath.Join(dir, "arbitron-runner")
-		if out, err := exec.Command("go", "build", "-o", rhBin, "github.com/arbitron/arbitron/cmd/arbitron-runner").CombinedOutput(); err != nil {
+		if out, err := exec.Command("go", "build", "-ldflags", "-X main.version="+rrReleasedVersion, "-o", rhBin, "github.com/arbitron/arbitron/cmd/arbitron-runner").CombinedOutput(); err != nil {
 			rhBinErr = fmt.Errorf("%v: %s", err, out)
 		}
 	})
@@ -126,7 +127,8 @@ type rhRunner struct {
 func rhStartRunner(t *testing.T, st *rrStack, name string) *rhRunner {
 	t.Helper()
 	plaintext, runnerID, _ := rrCreateKey(t, st, name)
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	fake := filepath.Join(home, "fake")
 	require.NoError(t, os.MkdirAll(fake, 0o700))
 	claude := filepath.Join(fake, "claude")

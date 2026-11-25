@@ -164,10 +164,12 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 			}
 		}
 	}()
+	var sampling sync.WaitGroup
 	defer func() {
 		cancel()
 		_ = s.Close()
 		<-done
+		sampling.Wait()
 		a.probeWG.Wait()
 		a.mu.Lock()
 		a.sessionConn = nil
@@ -184,6 +186,21 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 	var helloRev uint64
 	var heartbeat, probe <-chan time.Time
 	interval := a.cfg.Heartbeat
+	samples := make(chan runner.Telemetry, 1)
+	var samplingNow bool
+	var latest runner.Telemetry
+	sendHeartbeat := func() error {
+		sample := latest
+		now := a.deps.Clock.Now()
+		age := int64(0)
+		if sample.SampledAt.IsZero() {
+			sample = runner.Telemetry{SampledAt: now}
+		} else {
+			age = max(0, now.Sub(sample.SampledAt).Milliseconds())
+		}
+		hb := &Heartbeat{Telemetry: sample, TelemetryAgeMs: age, Sources: a.deps.Sources.Sources(ctx), Jobs: a.held()}
+		return s.Send(ctx, Outbound{Kind: KindHeartbeat, Heartbeat: hb})
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -269,19 +286,34 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 			if a.inventoryRevision() != helloRev {
 				return admitted, errInventoryChanged
 			}
-			sample, err := a.deps.Telemetry.Sample(ctx)
-			now := a.deps.Clock.Now()
-			age := int64(0)
-			if err != nil || sample.SampledAt.IsZero() {
-				sample = runner.Telemetry{SampledAt: now}
+			// Host sampling can exceed a heartbeat interval. Keep the session
+			// responsive and send the previous sample (with its original age)
+			// while one check is in flight.
+			if samplingNow {
+				if err := sendHeartbeat(); err != nil {
+					return admitted, err
+				}
 			} else {
-				age = max(0, now.Sub(sample.SampledAt).Milliseconds())
-			}
-			hb := &Heartbeat{Telemetry: sample, TelemetryAgeMs: age, Sources: a.deps.Sources.Sources(ctx), Jobs: a.held()}
-			if err := s.Send(ctx, Outbound{Kind: KindHeartbeat, Heartbeat: hb}); err != nil {
-				return admitted, err
+				samplingNow = true
+				sampling.Add(1)
+				go func() {
+					defer sampling.Done()
+					sample, err := a.deps.Telemetry.Sample(ctx)
+					if err != nil || sample.SampledAt.IsZero() {
+						sample = runner.Telemetry{}
+					}
+					select {
+					case samples <- sample:
+					case <-ctx.Done():
+					}
+				}()
 			}
 			heartbeat = a.deps.Clock.After(interval)
+		case latest = <-samples:
+			samplingNow = false
+			if err := sendHeartbeat(); err != nil {
+				return admitted, err
+			}
 		case <-probe:
 			a.deps.Sources.Probe(ctx)
 			probe = a.deps.Clock.After(a.cfg.ProbeInterval)
