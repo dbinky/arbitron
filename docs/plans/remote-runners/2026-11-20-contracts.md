@@ -1603,3 +1603,18 @@ User decisions recorded 2026-11-24. Each owning task carries the TDD steps; this
 - `CopyKeeperDeps`, `RemovalDeps` gain required `Leases ResourceLeaseStore` (the one shared repo). Copy-delete authorization: an active `run:<id>` claim OWNED BY the deletion target holds the tombstone (that runner is writing the copy); an active claim owned by another runner/the server does not cover the target's copy, and the delete's `HomeGeneration` bound protects the holder's newer generation; with no active claim the delete takes its own `Claim(key, "delete:<run>@<gen>/<runner>", target)` for the send and releases it. Removal claims `remove:<run>` (owner `builtin`) before releasing the home, deleting checkpoints or sending deletes; when busy it leaves `delete_pending` tombstones (remote holders, plus a `builtin` row for the server cleanup) that `RemovalNotifier.RetryDeferred` and the runner's next hello finish.
 - The drain pull port is `runner.DrainPuller` (not `WorkspacePuller`, which P3 T8 owns with `PreparePull`). `DrainDeps` = `{Pulls DrainPuller; Sessions PinnedSessions; Leases; Registry; Ledger; Requirements JobRequirements; Checkpoints DrainCheckpoints; Telemetry TelemetrySource; Homes; Store; Events; Notifier; Policy; Sizes; Clock; Interval}`; `RunnerLedgerRepo.Requirements(ctx, jobID)` is the `JobRequirements` producer (P3 T12 Cycle 2). Producer of `DrainPuller`: `NewWorkspacePullCoordinator(PullCoordinatorDeps{…})` (P3 T12 "Pull-only drain operation", wired by P3 T13).
 - `NewRevocationHomeReleaser(inner, homes, leases)`: hub revoke first (failure releases nothing); per home, `Supersede` (`SupersedeRevoked`, else `SupersedeRunnerLost`) to holder `revoke:<runner>`, owner `builtin` (a lease owner can never be `ServerHome`), then `HandOff` to `ServerHome` at the read generation; a generation conflict means recovery already won and is never clobbered.
+
+## Phase-3 wire validation (unstick 2026-11-25)
+
+Protocol v1 carries `process` and `agent` dispatches; there is no version bump. Owner: P3 T8 Cycle 6 Step 3b (`adapter/runnerproto/workspace_validate.go`).
+- **`Dispatch.Validate` for `process`/`agent`.**
+  - The dispatch carries exactly its own payload: no chat, confirmation or session payload.
+  - `Workspace` is required, and `WireWorkspace.Validate` must pass.
+  - The payload `WorkDir` must equal `Workspace.WorkDir` (D2).
+- **`WireProcess`.**
+  - `kind` is `script` or `tool_call`. `command` is non-empty. `workDir` is a clean absolute path, and so is `dir` when it is set. Timeouts are never negative.
+  - A script needs a 64-hex `bundleHash`, a relative in-bundle `bundleEntrypoint` and a `bundleToken`.
+  - `requires` entries are unique bare names, with no slash, backslash or whitespace.
+  - `passthrough` names and `nodeEnv` keys contain no `=` or whitespace.
+- **`WireAgent`.** Model, prompt and backend are required. `workDir` is clean and absolute. `credentialKind` must be in `remoteCredentialKinds`. `toolScope` holds at most 256 entries.
+- **Results.** `WireProcessResult` accepts any exit code: the server executor decides failure. Each `WireAgentResult` evidence entry names a model and a source. An ok `Result` still carries exactly one payload.
