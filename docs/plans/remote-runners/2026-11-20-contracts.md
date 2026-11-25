@@ -1618,3 +1618,10 @@ Protocol v1 carries `process` and `agent` dispatches; there is no version bump. 
   - `passthrough` names and `nodeEnv` keys contain no `=` or whitespace.
 - **`WireAgent`.** Model, prompt and backend are required. `workDir` is clean and absolute. `credentialKind` must be in `remoteCredentialKinds`. `toolScope` holds at most 256 entries.
 - **Results.** `WireProcessResult` accepts any exit code: the server executor decides failure. Each `WireAgentResult` evidence entry names a model and a source. An ok `Result` still carries exactly one payload.
+
+## P2 T9–T13 unstick notes (unstick 2026-11-25)
+
+- **Telemetry freshness is fed in Phase 2.** Per §21, P2 T10 Cycle 5 Step 3a sets the root dispatcher's `PlacementPolicy{TelemetryMaxAge: 3 * HeartbeatSeconds}`; P3 T13 Cycle 4's `placementPolicy(cfg.Runners)` later replaces that literal with the same value. A zero `TelemetryMaxAge` in production makes placement telemetry-blind.
+- **Remote stream output cursor across a server restart is Phase 3 acceptance.** Phase 2 keeps interactive streams built-in (design §3.6) and has no live-job re-attach (design §2: "restart re-attach (Phase 3)"). P2 T10's `TestRemoteRunnersCompositionRoot_OutputCursorSurvivesRestart` is accepted in P3 T13 Cycle 5b, after `SetAdopter`, using the hermetic chat stream route. Phase 2 still must survive restart for terminal results (`…DurableAckThenRestartRetainsResult`).
+- **Verified Claude source capabilities are three per axis group:** chat and stream (chat route fingerprint) plus `confirm` (Backend `claude-code`, fingerprint of `ResolvedBinding{Provider: "claude-cli", Backend: "claude-code"}`), all carrying exactly the natively verified models (D1). Fixtures asserting two are updated by P2 T9 sub-step 9.4f-fix.
+- **Admission verification spends one `--safe-mode` probe per requested model** (D1). Tests that count native probe calls must count after admission verification completes (P2 T13 Cycle 16 listing).
