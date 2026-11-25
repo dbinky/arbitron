@@ -248,7 +248,7 @@ func TestDispatch_WorkspaceCompletionCarriesExactCandidate(t *testing.T) {
 	_, jobID, _, _, found := f.preparedRow(t, ref.Version)
 	require.True(t, found)
 	assert.Equal(t, job.ID.String(), jobID)
-	assert.Equal(t, "from mac-1", readIn(t, f.restoreTo(t, ref), "a.txt"))
+	assert.Equal(t, "from mac-1", readIn(t, f.restorePreparedTo(t, ref), "a.txt"))
 	assert.Equal(t, base, f.latest(t))
 }
 

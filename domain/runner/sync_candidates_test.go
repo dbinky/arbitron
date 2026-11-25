@@ -59,7 +59,7 @@ func TestWorkspaceSync_BuiltInCandidateHasExactFence(t *testing.T) {
 	assert.Equal(t, a.Fence.JobID.String(), jobID)
 	assert.Equal(t, a.Fence.Generation, gen)
 	assert.Equal(t, att.Resource.Token.String(), token)
-	assert.Equal(t, "v2", readIn(t, f.restoreTo(t, ref), "a.txt"))
+	assert.Equal(t, "v2", readIn(t, f.restorePreparedTo(t, ref), "a.txt"))
 }
 
 // A remote step whose push never landed cannot succeed; after the push it
@@ -80,7 +80,7 @@ func TestWorkspaceSync_RemoteSuccessRequiresPreparedPush(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, engine.WorkspaceCompletion{Ref: ref.String(), Resource: att.Resource}, c)
 	assert.Equal(t, att.Base, f.latest(t), "accepting a push prepares only")
-	assert.Equal(t, "remote", readIn(t, f.restoreTo(t, ref), "a.txt"))
+	assert.Equal(t, "remote", readIn(t, f.restorePreparedTo(t, ref), "a.txt"))
 }
 
 // G3 (design §8 "on a server restart, remote jobs re-attach with no repeat"):

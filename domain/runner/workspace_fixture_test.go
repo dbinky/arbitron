@@ -1,13 +1,17 @@
 package runner_test
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -355,4 +359,44 @@ func (f *wsFixture) mustStage(t *testing.T, att runner.WorkspaceAttempt, files m
 	staged, err := f.stage(context.Background(), att, files)
 	require.NoError(t, err)
 	return staged
+}
+
+// restorePreparedTo extracts the exact PREPARED candidate ref into a fresh
+// directory for inspection only (authorized fixture, unstick 2026-11-24). It
+// reads that candidate's archive through its real catalog row and never
+// promotes it: Store.Restore stays committed-only (P3 T2).
+func (f *wsFixture) restorePreparedTo(t *testing.T, ref runner.CheckpointRef) string {
+	t.Helper()
+	var archive, state string
+	require.NoError(t, f.pool.DB.QueryRowContext(context.Background(),
+		`SELECT archive_path, state FROM workspace_checkpoints WHERE run_id = ? AND version = ? AND manifest_hash = ?`,
+		ref.RunID.String(), ref.Version, ref.ManifestHash).Scan(&archive, &state))
+	require.Equal(t, "prepared", state, "restorePreparedTo inspects prepared candidates only; committed refs use restoreTo")
+	fh, err := os.Open(archive)
+	require.NoError(t, err)
+	defer fh.Close()
+	gz, err := gzip.NewReader(fh)
+	require.NoError(t, err)
+	tr := tar.NewReader(gz)
+	dst := t.TempDir()
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		name, err := runner.CleanRelPath(strings.TrimSuffix(hdr.Name, "/"))
+		require.NoError(t, err)
+		target := filepath.Join(dst, filepath.FromSlash(name))
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			require.NoError(t, os.MkdirAll(target, 0o755))
+		case tar.TypeReg:
+			require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+			b, err := io.ReadAll(tr)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(target, b, 0o644))
+		}
+	}
+	return dst
 }

@@ -92,7 +92,7 @@ func TestDispatch_MissingInterpreterReplacesOnceOnCapableRunner(t *testing.T) {
 	assert.Equal(t, "mac-2", d.out.Completion.JobFence.RunnerID)
 	ref, err := runner.ParseCheckpointRef(d.out.Completion.Workspace.Ref)
 	require.NoError(t, err)
-	assert.Equal(t, "ran on mac-2", readIn(t, f.restoreTo(t, ref), "out.txt"))
+	assert.Equal(t, "ran on mac-2", readIn(t, f.restorePreparedTo(t, ref), "out.txt"))
 	assert.Empty(t, f.pool.Health.Calls())
 }
 
