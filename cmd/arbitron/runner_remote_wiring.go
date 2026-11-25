@@ -21,18 +21,19 @@ import (
 // remoteRunnerInputs are the Phase 1 pool objects (P1 T16) and existing
 // server collaborators the Phase 2 remote-runner stack is built from.
 type remoteRunnerInputs struct {
-	DB         *sql.DB
-	Runners    config.RunnersConfig
-	ServerRoot string // absolute server execution root (wsMgr.BasePath())
-	Registry   runner.Registry
-	Ledger     runner.Ledger
-	Events     *runner.EventRecorder
-	Health     *runner.HealthMonitor // concrete: satisfies HubDeps.Health (HealthTransitioner; P2 T13 HubHealth adds ObserveProbe) and P2 T13 calls SetRemoteProber on it
-	Notifier   *runner.PoolNotifier
-	Audit      runner.AuditRecorder
-	Builtin    runner.StepRunner
-	Logger     *slog.Logger
-	Clock      func() time.Time // nil = time.Now
+	DB             *sql.DB
+	Runners        config.RunnersConfig
+	ServerRoot     string // absolute server execution root (wsMgr.BasePath())
+	Registry       runner.Registry
+	Ledger         runner.Ledger
+	Events         *runner.EventRecorder
+	Health         *runner.HealthMonitor // concrete: satisfies HubDeps.Health (HealthTransitioner; P2 T13 HubHealth adds ObserveProbe) and P2 T13 calls SetRemoteProber on it
+	Notifier       *runner.PoolNotifier
+	Audit          runner.AuditRecorder
+	Builtin        runner.StepRunner
+	Logger         *slog.Logger
+	Clock          func() time.Time           // nil = time.Now
+	RequiredModels runner.RequiredModelSource // optional; nil requests no models
 }
 
 // remoteRunnerStack is everything the server needs to admit, supervise and
@@ -101,6 +102,7 @@ func wireRemoteRunners(in remoteRunnerInputs) (*remoteRunnerStack, error) {
 		Clock:    clock,
 		Config:   runner.HubConfigFromRunners(in.Runners, in.ServerRoot, compat),
 	})
+	hub.SetRequiredModels(in.RequiredModels)
 	keys := runner.NewKeyService(runner.KeyServiceDeps{
 		Store:            adaptsqlite.NewRunnerKeyRepo(in.DB),
 		Registry:         in.Registry,
