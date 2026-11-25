@@ -46,6 +46,8 @@ type HomeStore interface {
 	SetCheckpoint(context.Context, uuid.UUID, int64) error
 	MarkDirty(context.Context, uuid.UUID, bool) error
 	SetNonPortable(context.Context, uuid.UUID, string) error
+	// BootstrapLocalCheckpoint installs version 1 only without an active writer.
+	BootstrapLocalCheckpoint(context.Context, uuid.UUID, string) error
 	History(context.Context, uuid.UUID) ([]HomeMove, error)
 	ListByRunner(context.Context, RunnerID) ([]Home, error)
 	Release(context.Context, uuid.UUID, int64) error

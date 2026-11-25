@@ -72,6 +72,12 @@ func TestMigration044_WorkspaceMobility(t *testing.T) {
 	// Non-portable marker defaults empty and survives rollback of the extension.
 	_, err = db.Exec(`INSERT INTO workspace_homes(run_id,runner_id,generation,updated_at) VALUES('run-1','builtin',1,'t')`)
 	require.NoError(t, err)
+	var local string
+	require.NoError(t, db.QueryRow(`SELECT local_checkpoint FROM workspace_homes WHERE run_id='run-1'`).Scan(&local))
+	require.Empty(t, local)
+	var localCols int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM pragma_table_info('workspace_homes') WHERE name='local_checkpoint'`).Scan(&localCols))
+	require.Equal(t, 1, localCols)
 	var reason string
 	require.NoError(t, db.QueryRow(`SELECT non_portable_reason FROM workspace_homes WHERE run_id='run-1'`).Scan(&reason))
 	require.Empty(t, reason)
@@ -87,6 +93,8 @@ func TestMigration044_WorkspaceMobility(t *testing.T) {
 	var homes int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM workspace_homes WHERE run_id='run-1'`).Scan(&homes))
 	require.Equal(t, 1, homes)
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM pragma_table_info('workspace_homes') WHERE name='local_checkpoint'`).Scan(&localCols))
+	require.Zero(t, localCols)
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM pragma_table_info('workspace_homes') WHERE name='non_portable_reason'`).Scan(&cols))
 	require.Zero(t, cols)
 	for _, tbl := range mobilityTables {

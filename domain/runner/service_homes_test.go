@@ -17,10 +17,14 @@ var errRDHUnused = errors.New("rdh fake: unexpected call")
 // rdhHomes is a HomeStore keyed by runner. ListByRunner honours its id
 // argument and records every id it was asked for; err fails every listing.
 type rdhHomes struct {
-	mu       sync.Mutex
-	byRunner map[RunnerID][]Home
-	err      error
-	asked    []RunnerID
+	mu         sync.Mutex
+	byRunner   map[RunnerID][]Home
+	err        error
+	asked      []RunnerID
+	bootstraps []struct {
+		Run uuid.UUID
+		Ref string
+	}
 }
 
 func (h *rdhHomes) ListByRunner(_ context.Context, id RunnerID) ([]Home, error) {
@@ -46,6 +50,16 @@ func (h *rdhHomes) AcquireResource(context.Context, uuid.UUID, RunnerID, int64) 
 func (h *rdhHomes) HandOff(context.Context, uuid.UUID, RunnerID, string, int64, int64, HomeMoveCause) (Home, error) {
 	return Home{}, errRDHUnused
 }
+func (h *rdhHomes) BootstrapLocalCheckpoint(_ context.Context, run uuid.UUID, ref string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.bootstraps = append(h.bootstraps, struct {
+		Run uuid.UUID
+		Ref string
+	}{run, ref})
+	return errRDHUnused
+}
+
 func (h *rdhHomes) SetNonPortable(context.Context, uuid.UUID, string) error { return errRDHUnused }
 func (h *rdhHomes) SetCheckpoint(context.Context, uuid.UUID, int64) error   { return errRDHUnused }
 func (h *rdhHomes) MarkDirty(context.Context, uuid.UUID, bool) error        { return errRDHUnused }

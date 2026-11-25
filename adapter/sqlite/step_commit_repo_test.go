@@ -466,7 +466,7 @@ func nonPortableReceipt(f runner.Fence, res engine.ResourceFenceRef) engine.Step
 	return engine.StepCompletion{JobFence: jobRef(f), Workspace: &engine.WorkspaceCompletion{NonPortable: true, Resource: res}}
 }
 
-func TestStepCommitRepo_NonPortableReceiptCommitsWithoutCheckpoint(t *testing.T) {
+func TestStepCommitRepo_NonPortableReceiptPromotesLocalCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	fx := newStepFixture(t, setupTestDB(t).DB)
 	fx.baseline(t)
@@ -474,6 +474,8 @@ func TestStepCommitRepo_NonPortableReceiptCommitsWithoutCheckpoint(t *testing.T)
 	j, f := fx.job(t, "node", runner.AffinityWorkspace)
 	res := fx.claim(t, j, f)
 	receipt := nonPortableReceipt(f, res)
+	local := runner.LocalCheckpointRef{RunID: fx.run, Version: 1, ManifestHash: stepHash('a')}.String()
+	receipt.Workspace.LocalRef = local
 	c := fx.advance("B", receipt)
 
 	require.NoError(t, fx.repo.CommitStep(ctx, c))
@@ -485,12 +487,16 @@ func TestStepCommitRepo_NonPortableReceiptCommitsWithoutCheckpoint(t *testing.T)
 	assert.Equal(t, 1, s.StepCommits)
 	assert.Equal(t, int64(1), s.Pointer, "no candidate is promoted; checkpoint_version is unchanged")
 	assert.Equal(t, map[int64]string{1: "committed"}, s.Candidates)
-	assert.True(t, s.Dirty, "interim RR-08 rule; P3 T16 Cycle 3 commits the local checkpoint instead")
+	assert.False(t, s.Dirty, "the local checkpoint matches the working copy")
+	home, err := fx.homes.GetHome(ctx, fx.run)
+	require.NoError(t, err)
+	assert.Equal(t, local, home.LocalCheckpoint)
 	assert.Equal(t, runner.NonPortablePromisorReason, s.Reason, "the marker stays until a portable candidate is promoted")
 	var ref sql.NullString
 	require.NoError(t, fx.db.QueryRow(`SELECT checkpoint_ref FROM step_commit_operations WHERE invocation_id = ? AND job_id = ?`,
 		fx.inv.String(), j.ID.String()).Scan(&ref))
-	assert.False(t, ref.Valid, "a non-portable receipt links no catalog checkpoint")
+	assert.True(t, ref.Valid)
+	assert.Equal(t, local, ref.String)
 
 	replay, ok, err := fx.repo.CommittedResult(ctx, fx.inv)
 	require.NoError(t, err)
@@ -532,11 +538,16 @@ func TestStepCommitRepo_CandidatePromotionClearsNonPortable(t *testing.T) {
 	require.NoError(t, fx.homes.SetNonPortable(ctx, fx.run, runner.NonPortablePromisorReason))
 	j, f := fx.job(t, "node", runner.AffinityWorkspace)
 	res := fx.claim(t, j, f)
+	_, err := fx.db.Exec(`UPDATE workspace_homes SET local_checkpoint = ? WHERE run_id = ?`, runner.LocalCheckpointRef{RunID: fx.run, Version: 1, ManifestHash: stepHash('b')}.String(), fx.run.String())
+	require.NoError(t, err)
 	ref := fx.candidate(t, 2, 'a', base, f, res) // all promisor objects present again
 
 	require.NoError(t, fx.repo.CommitStep(ctx, fx.advance("B", workspaceReceipt(f, ref, res))))
 	s := fx.snapshot(t)
 	assert.Empty(t, s.Reason, "promoting a normal candidate clears the non-portable marker in the same transaction")
+	home, err := fx.homes.GetHome(ctx, fx.run)
+	require.NoError(t, err)
+	assert.Empty(t, home.LocalCheckpoint)
 	assert.Equal(t, int64(2), s.Pointer)
 	assert.False(t, s.Dirty)
 }

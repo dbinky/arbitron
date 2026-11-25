@@ -2,6 +2,7 @@ DROP TABLE IF EXISTS workspace_lease_supersessions;
 DROP TABLE IF EXISTS workspace_lease_holders;
 DROP TABLE IF EXISTS node_retry_failures;
 DROP TABLE IF EXISTS node_retry_progress;
+ALTER TABLE workspace_homes DROP COLUMN local_checkpoint;
 ALTER TABLE workspace_homes DROP COLUMN non_portable_reason;
 DROP INDEX IF EXISTS idx_runner_copies_runner;
 DROP TABLE IF EXISTS runner_copies;

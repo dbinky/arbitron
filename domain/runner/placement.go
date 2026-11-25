@@ -37,6 +37,7 @@ type Home struct {
 	CheckpointVersion int64
 	Dirty             bool
 	NonPortableReason string `json:"nonPortableReason"`
+	LocalCheckpoint   string `json:"localCheckpoint,omitempty"`
 }
 
 // PoolSnapshot is everything placement reads. Now comes from the caller's

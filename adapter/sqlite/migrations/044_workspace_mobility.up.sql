@@ -143,6 +143,7 @@ CREATE TABLE runner_copies (
 CREATE INDEX idx_runner_copies_runner ON runner_copies (runner_id, state);
 
 ALTER TABLE workspace_homes ADD COLUMN non_portable_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE workspace_homes ADD COLUMN local_checkpoint TEXT NOT NULL DEFAULT '';
 
 -- Retry budget and deadline survive process loss independently of the live loop.
 CREATE TABLE node_retry_progress (

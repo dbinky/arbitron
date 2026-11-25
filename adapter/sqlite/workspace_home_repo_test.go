@@ -26,7 +26,7 @@ func TestWorkspaceHomes_SchemaContract(t *testing.T) {
 		require.NoError(t, rows.Scan(&n))
 		cols[n] = true
 	}
-	for _, c := range []string{"run_id", "runner_id", "generation", "checkpoint_version", "dirty", "non_portable_reason"} {
+	for _, c := range []string{"run_id", "runner_id", "generation", "checkpoint_version", "dirty", "non_portable_reason", "local_checkpoint"} {
 		assert.True(t, cols[c], "workspace_homes (041) must have column %s", c)
 	}
 }

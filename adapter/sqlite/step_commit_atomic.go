@@ -232,9 +232,10 @@ func consumeCompletionTx(ctx context.Context, tx *sql.Tx, c engine.StepCommit, c
 			return err
 		}
 		if w.NonPortable {
-			if err := commitNonPortableTx(ctx, tx, c.RunID, f, now); err != nil {
+			if err := commitNonPortableTx(ctx, tx, c.RunID, f, w.LocalRef, now); err != nil {
 				return err
 			}
+			checkpointRef = w.LocalRef
 		} else {
 			if err := promoteCandidateTx(ctx, tx, c.RunID, f, *w, now); err != nil {
 				return err
@@ -359,7 +360,7 @@ func promoteCandidateTx(ctx context.Context, tx groupQueryer, runID uuid.UUID, f
 		return fmt.Errorf("step commit: home row: %w", err)
 	}
 	// A portable candidate also clears the RR-08 non-portable marker.
-	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET checkpoint_version = ?, dirty = 0, non_portable_reason = '', updated_at = ? WHERE run_id = ?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET checkpoint_version = ?, dirty = 0, non_portable_reason = '', local_checkpoint = '', updated_at = ? WHERE run_id = ?`,
 		ref.Version, now, run); err != nil {
 		return fmt.Errorf("step commit: advancing home pointer: %w", err)
 	}
@@ -402,6 +403,7 @@ func operationFromRow(jobID uuid.UUID, runnerID string, gen int64, ref, key, own
 		w.NonPortable = true
 	case strings.HasPrefix(ref.String, "local:"):
 		w.NonPortable = true
+		w.LocalRef = ref.String
 	default:
 		w.Ref = ref.String
 	}
@@ -514,13 +516,9 @@ func (r *StepCommitRepo) CommittedResult(ctx context.Context, invocationID uuid.
 		Suspension: s, Completions: comps}, true, nil
 }
 
-// commitNonPortableTx is the RR-08 branch: the home carries the non-portable
-// marker and lives on the built-in server home, and the job ran on the
-// built-in runner. No candidate is promoted and checkpoint_version is
-// unchanged; dirty = 1 records that the working copy is ahead of the committed
-// base. P3 T16 Cycle 3 replaces dirty = 1 with the RR-17 B local-checkpoint
-// promotion (local_checkpoint = LocalRef, dirty = 0).
-func commitNonPortableTx(ctx context.Context, tx groupQueryer, runID uuid.UUID, f runner.Fence, now string) error {
+// commitNonPortableTx advances the built-in home's local checkpoint without
+// changing its portable catalog pointer. The caller validates the job-held claim.
+func commitNonPortableTx(ctx context.Context, tx groupQueryer, runID uuid.UUID, f runner.Fence, localRef, now string) error {
 	var reason, owner string
 	err := tx.QueryRowContext(ctx, `SELECT non_portable_reason, runner_id FROM workspace_homes WHERE run_id = ?`, uuidToString(runID)).Scan(&reason, &owner)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && reason == "") {
@@ -533,8 +531,27 @@ func commitNonPortableTx(ctx context.Context, tx groupQueryer, runID uuid.UUID, 
 		return fmt.Errorf("%w: non-portable home of run %s is on %q and job %s ran on %q; both must be the built-in server home",
 			engine.ErrInvalidStepCompletion, runID, owner, f.JobID, f.RunnerID)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET dirty = 1, updated_at = ? WHERE run_id = ?`, now, uuidToString(runID)); err != nil {
-		return fmt.Errorf("step commit: marking non-portable home dirty: %w", err)
+	local, err := runner.ParseLocalCheckpointRef(localRef)
+	if err != nil || local.RunID != runID {
+		return fmt.Errorf("%w: local checkpoint %q for run %s", engine.ErrInvalidStepCompletion, localRef, runID)
+	}
+	var cur string
+	if err := tx.QueryRowContext(ctx, `SELECT local_checkpoint FROM workspace_homes WHERE run_id = ?`, runID.String()).Scan(&cur); err != nil {
+		return err
+	}
+	next := int64(1)
+	if cur != "" {
+		prev, err := runner.ParseLocalCheckpointRef(cur)
+		if err != nil {
+			return err
+		}
+		next = prev.Version + 1
+	}
+	if local.Version != next {
+		return fmt.Errorf("%w: local checkpoint %s is not the successor of %q", engine.ErrInvalidStepCompletion, local, cur)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET local_checkpoint = ?, dirty = 0, updated_at = ? WHERE run_id = ?`, localRef, now, runID.String()); err != nil {
+		return err
 	}
 	return nil
 }

@@ -17,11 +17,11 @@ func NewWorkspaceHomeRepo(db *sql.DB) *WorkspaceHomeRepo { return &WorkspaceHome
 
 var _ runner.HomeStore = (*WorkspaceHomeRepo)(nil)
 
-const homeColumns = `run_id, runner_id, generation, checkpoint_version, dirty, non_portable_reason`
+const homeColumns = `run_id, runner_id, generation, checkpoint_version, dirty, non_portable_reason, local_checkpoint`
 
 func scanHome(s interface{ Scan(...any) error }) (runner.Home, error) {
 	var h runner.Home
-	err := s.Scan(&h.RunID, &h.RunnerID, &h.Generation, &h.CheckpointVersion, &h.Dirty, &h.NonPortableReason)
+	err := s.Scan(&h.RunID, &h.RunnerID, &h.Generation, &h.CheckpointVersion, &h.Dirty, &h.NonPortableReason, &h.LocalCheckpoint)
 	return h, err
 }
 func getHome(ctx context.Context, q interface {
