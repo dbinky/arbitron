@@ -60,7 +60,7 @@ type CommandRunner interface {
 }
 
 // execRunner is the production CommandRunner backed by os/exec.
-type execRunner struct{}
+type execRunner struct{ launcher procenv.Launcher }
 
 // newExecRunner constructs the os/exec-backed CommandRunner.
 func newExecRunner() *execRunner { return &execRunner{} }
@@ -69,6 +69,15 @@ func newExecRunner() *execRunner { return &execRunner{} }
 // Exported so sibling driven adapters (e.g. adapter/opencode) can reuse the
 // same subprocess seam instead of redefining a parallel runner.
 func NewExecRunner() CommandRunner { return newExecRunner() }
+
+// NewSupervisedExecRunner launches workflow commands through the built-in
+// supervisor. Read-only probes keep NewExecRunner.
+func NewSupervisedExecRunner(l procenv.Launcher) CommandRunner {
+	if l == nil {
+		panic("claudecli: NewSupervisedExecRunner requires a launcher")
+	}
+	return &execRunner{launcher: l}
+}
 
 // Run starts the process described by spec. The caller's ctx is used both
 // for the subprocess lifecycle (exec.CommandContext) and for early abort if
@@ -101,7 +110,12 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 	stderrBuf := newTailBuf(stderrTailBytes)
 	cmd.Stderr = stderrBuf
 
-	if err := cmd.Start(); err != nil {
+	launcher := r.launcher
+	if launcher == nil {
+		launcher = procenv.Unsupervised{}
+	}
+	finish, err := launcher.Start(runCtx, cmd)
+	if err != nil {
 		cancel()
 		return nil, nil, fmt.Errorf("claudecli: start %q: %w", spec.Bin, err)
 	}
@@ -157,6 +171,7 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 		// (SF2 happens-before).
 		<-done
 		waitErr := cmd.Wait()
+		finish()
 		stopClose()
 		// Always release the derived context (covers the normal-exit path).
 		cancel()

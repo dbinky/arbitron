@@ -58,7 +58,8 @@ func isNilDep(v any) bool {
 
 // Run executes one placed job. Adapter errors are returned unchanged so the
 // outcome attached with runner.WithOutcome reaches the dispatcher's classifier.
-func (r *Runner) Run(ctx context.Context, _ runner.Assignment, job runner.StepJob) (runner.StepOutput, error) {
+func (r *Runner) Run(ctx context.Context, a runner.Assignment, job runner.StepJob) (runner.StepOutput, error) {
+	ctx = runner.ContextWithAssignment(ctx, a)
 	switch job.Op {
 	case runner.OpChat:
 		if job.Chat == nil {

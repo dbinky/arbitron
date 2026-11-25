@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/arbitron/arbitron/adapter/procenv"
 )
 
 // commandSpec describes a subprocess to run.
 type commandSpec struct {
 	Name        string // interpreter or command
 	Args        []string
-	Dir         string   // cwd; "" inherits
-	Stdin       []byte   // nil = no stdin
-	Env         []string // final "k=v" list; nil inherits the parent env
-	TimeoutSecs int      // 0 = no timeout
+	Dir         string           // cwd; "" inherits
+	Stdin       []byte           // nil = no stdin
+	Env         []string         // final "k=v" list; nil inherits the parent env
+	TimeoutSecs int              // 0 = no timeout
+	Launcher    procenv.Launcher // nil = procenv.Unsupervised{}
 }
 
 // commandResult is the outcome of a completed (or attempted) subprocess.
@@ -54,12 +57,21 @@ func run(ctx context.Context, spec commandSpec) (commandResult, error) {
 	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
 	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
 
-	if err := cmd.Start(); err != nil {
+	launcher := spec.Launcher
+	if launcher == nil {
+		launcher = procenv.Unsupervised{}
+	}
+	finish, err := launcher.Start(ctx, cmd)
+	if err != nil {
 		return commandResult{}, fmt.Errorf("start: %w", err)
 	}
 
 	doneCh := make(chan error, 1)
-	go func() { doneCh <- cmd.Wait() }()
+	go func() {
+		waitErr := cmd.Wait()
+		finish()
+		doneCh <- waitErr
+	}()
 
 	select {
 	case <-execCtx.Done():
