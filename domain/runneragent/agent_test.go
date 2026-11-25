@@ -187,7 +187,8 @@ func TestAgentIgnoresMalformedServerMessages(t *testing.T) {
 	s.push(dispatch(ref, string(runner.CredAnthropicSubscription)))
 	acc := s.expect(t, runneragent.KindAccept)
 	assert.Equal(t, "job-2", acc.JobID, "the session survives malformed messages")
-	assert.Equal(t, 1, h.exec.callCount())
+	assert.Eventually(t, func() bool { return h.exec.callCount() == 1 }, 5*time.Second, 5*time.Millisecond, "the accepted job reaches the executor")
+	assert.Equal(t, 1, h.exec.callCount(), "exactly once")
 }
 
 func TestAgentStreamsOutputInSequenceThenResult(t *testing.T) {
