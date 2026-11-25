@@ -184,7 +184,7 @@ func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 		if err := runnerproto.DecodePayload(e, &a); err != nil {
 			return runneragent.Inbound{}, err
 		}
-		in.Admitted = &runneragent.Admission{RunnerID: a.RunnerID, HeartbeatSeconds: a.HeartbeatSeconds}
+		in.Admitted = &runneragent.Admission{RunnerID: a.RunnerID, HeartbeatSeconds: a.HeartbeatSeconds, ClaudeModels: append([]string(nil), a.ClaudeModels...)}
 	case runnerproto.KindRefused:
 		var r runnerproto.Refused
 		if err := runnerproto.DecodePayload(e, &r); err != nil {

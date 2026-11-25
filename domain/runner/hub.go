@@ -29,14 +29,15 @@ type HubDeps struct {
 
 // Hub owns every remote runner session in this server process.
 type Hub struct {
-	inbox    RemoteInbox
-	reg      Registry
-	ledger   Ledger
-	events   *EventRecorder
-	health   HubHealth
-	notifier *PoolNotifier
-	now      func() time.Time
-	cfg      HubConfig
+	requiredModels RequiredModelSource // guarded by mu
+	inbox          RemoteInbox
+	reg            Registry
+	ledger         Ledger
+	events         *EventRecorder
+	health         HubHealth
+	notifier       *PoolNotifier
+	now            func() time.Time
+	cfg            HubConfig
 
 	// admitMu serialises admission with loss/revocation so a revoked or lost
 	// runner can never be re-admitted halfway through being torn down.
@@ -291,7 +292,7 @@ func (h *Hub) Admit(ctx context.Context, key RunnerKey, conn RunnerConn, hello H
 	if old != nil {
 		_ = old.conn.Close(CloseSuperseded, "superseded by a newer connection from this runner")
 	}
-	if err := conn.Send(ctx, Outbound{Kind: MsgAdmitted}); err != nil {
+	if err := conn.Send(ctx, Outbound{Kind: MsgAdmitted, Admitted: h.admittedPayload(ctx, id)}); err != nil {
 		h.Disconnect(s)
 		return nil, fmt.Errorf("admit %s: send admitted: %w", id, err)
 	}

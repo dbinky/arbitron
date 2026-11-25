@@ -5,6 +5,7 @@ package sources
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -66,6 +67,29 @@ func (i *Inventory) Sources(ctx context.Context) []runneragent.Source {
 	out := make([]runneragent.Source, len(i.last))
 	for idx, src := range i.last {
 		out[idx] = i.withObservation(idx, src)
+	}
+	return out
+}
+
+// CapabilitiesFor returns independent copies of the current source evidence.
+func (i *Inventory) CapabilitiesFor(kind runner.CredentialKind, credentialRef string) []runner.ExecutionCapability {
+	for _, s := range i.Sources(context.Background()) {
+		if s.Kind == kind && s.CredentialRef == credentialRef {
+			return cloneCapabilities(s.Capabilities)
+		}
+	}
+	return nil
+}
+
+func cloneCapabilities(in []runner.ExecutionCapability) []runner.ExecutionCapability {
+	out := slices.Clone(in)
+	for idx := range out {
+		c := &out[idx]
+		c.Families = slices.Clone(c.Families)
+		c.Models = slices.Clone(c.Models)
+		c.ContextWindows = slices.Clone(c.ContextWindows)
+		c.Efforts = slices.Clone(c.Efforts)
+		c.Tools = slices.Clone(c.Tools)
 	}
 	return out
 }

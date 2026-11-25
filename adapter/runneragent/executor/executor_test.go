@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,4 +246,48 @@ func TestExecuteRealClaudeAdapterThroughFactory(t *testing.T) {
 	entries, err := os.ReadDir(scratch)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "the per-job dir was removed")
+}
+
+func TestExecute_RejectsUnadvertisedAxesBeforeAccept(t *testing.T) {
+	fp, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: "claude-cli"})
+	require.NoError(t, err)
+	advertised := []runner.ExecutionCapability{{Op: runner.OpChat, Provider: "claude-cli", EndpointFingerprint: fp,
+		Families: []modelidentity.Family{"anthropic"}, Models: []string{"claude-sonnet-4-5"},
+		ContextWindows: []provider.ContextWindow{provider.ContextDefault, provider.Context200K},
+		Efforts:        []provider.Effort{provider.EffortDefault, provider.EffortHigh}, Tools: []string{"Read"}, ExecutedModel: true}}
+	var asked []runner.CredentialKind
+	e, err := New(&fakeSelector{}, Config{ScratchRoot: t.TempDir(), Advertised: func(k runner.CredentialKind, ref string) []runner.ExecutionCapability {
+		asked = append(asked, k)
+		assert.Equal(t, "", ref, "the subscription source has no credential ref")
+		return advertised
+	}})
+	require.NoError(t, err)
+
+	ok := func(mut func(c *runneragent.ChatJob)) (bool, string) {
+		d := chatDispatch("anthropic_subscription", false) // 200k + high
+		d.Chat.Provider, d.Chat.EndpointFingerprint = "claude-cli", fp
+		mut(d.Chat)
+		return e.Supports(d)
+	}
+	got, reason := ok(func(*runneragent.ChatJob) {})
+	assert.True(t, got, reason)
+	for name, mut := range map[string]func(c *runneragent.ChatJob){
+		"context":  func(c *runneragent.ChatJob) { c.ContextWindow = "1m" },
+		"effort":   func(c *runneragent.ChatJob) { c.Effort = "max" },
+		"model":    func(c *runneragent.ChatJob) { c.Model = "claude-opus-5-5" },
+		"tool":     func(c *runneragent.ChatJob) { c.Tools = []string{"Write"} },
+		"route":    func(c *runneragent.ChatJob) { c.EndpointFingerprint = strings.Repeat("0", 64) },
+		"provider": func(c *runneragent.ChatJob) { c.Provider = "anthropic-api" },
+	} {
+		got, reason := ok(mut)
+		assert.False(t, got, name)
+		assert.Equal(t, ReasonNotAdvertised, reason, name)
+	}
+	assert.NotEmpty(t, asked, "the recheck reads the live advertised evidence every time")
+
+	none, err := New(&fakeSelector{}, Config{ScratchRoot: t.TempDir(), Advertised: func(runner.CredentialKind, string) []runner.ExecutionCapability { return nil }})
+	require.NoError(t, err)
+	got, reason = none.Supports(chatDispatch("anthropic_subscription", false))
+	assert.False(t, got, "availability withdrawn after hello: refuse before accept")
+	assert.Equal(t, ReasonNotAdvertised, reason)
 }

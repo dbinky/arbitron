@@ -192,3 +192,19 @@ func TestToInbound_RejectCarriesCode(t *testing.T) {
 	_, err = toInbound(jobEnv(t, runnerproto.KindReject, id, 3, 0, &runnerproto.Reject{Reason: "x", Code: "Bad Code"}))
 	assert.Error(t, err, "a malformed code is a malformed frame")
 }
+
+func TestFromOutbound_AdmittedCarriesClaudeModels(t *testing.T) {
+	for _, payload := range []*runner.AdmittedPayload{{ClaudeModels: []string{"claude-opus-5-5"}}, nil} {
+		env, err := fromOutbound(runner.Outbound{Kind: runner.MsgAdmitted, Admitted: payload}, "mac-1", 10)
+		require.NoError(t, err)
+		var a runnerproto.Admitted
+		require.NoError(t, runnerproto.DecodePayload(env, &a))
+		assert.Equal(t, "mac-1", a.RunnerID)
+		assert.Equal(t, 10, a.HeartbeatSeconds)
+		if payload == nil {
+			assert.Empty(t, a.ClaudeModels)
+		} else {
+			assert.Equal(t, payload.ClaudeModels, a.ClaudeModels)
+		}
+	}
+}

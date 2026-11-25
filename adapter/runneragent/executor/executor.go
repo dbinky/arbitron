@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
 	"github.com/arbitron/arbitron/domain/runneragent"
@@ -20,6 +22,9 @@ import (
 )
 
 const maxErrorText = 1024
+
+// ReasonNotAdvertised refuses a dispatch no live advertised capability satisfies.
+const ReasonNotAdvertised = "capability_not_advertised"
 
 // LunaRoute is this runner's own LunaRoute connection and key.
 type LunaRoute struct {
@@ -29,6 +34,9 @@ type LunaRoute struct {
 
 // Config configures the executor.
 type Config struct {
+	// Advertised returns current evidence for a local source. buildAgent supplies
+	// the live inventory; nil is available for execution-only unit tests.
+	Advertised    func(runner.CredentialKind, string) []runner.ExecutionCapability
 	ScratchRoot   string
 	Confirmations runner.ConfirmationExecutor
 	LunaRoute     *LunaRoute // nil: no LunaRoute on this runner
@@ -75,17 +83,31 @@ func (e *Executor) Supports(d runneragent.Dispatch) (bool, string) {
 		if b := d.Chat.Backend; b != "" && b != "claude-code" {
 			return false, fmt.Sprintf("anthropic_subscription chat runs only on the claude harness, not %q", b)
 		}
-		return true, ""
 	case runner.CredLunaRoute:
 		if e.cfg.LunaRoute == nil {
 			return false, "no LunaRoute key is configured on this runner"
 		}
-		return true, ""
 	case runner.CredOpenAISubscription:
 		return false, "openai_subscription chat is not supported on remote runners in this release"
 	default:
 		return false, fmt.Sprintf("credential kind %q cannot run on this runner", d.Chat.CredentialKind)
 	}
+	if e.cfg.Advertised != nil {
+		kind := runner.CredentialKind(d.Chat.CredentialKind)
+		ref := ""
+		if kind == runner.CredLunaRoute {
+			ref = e.cfg.LunaRoute.ConnectionRef
+		}
+		req := runner.ExecRequirements{Op: runner.OpType(d.Op), Backend: d.Chat.Backend, Provider: d.Chat.Provider,
+			EndpointFingerprint: d.Chat.EndpointFingerprint, Model: d.Chat.Model,
+			ContextWindow: provider.ContextWindow(d.Chat.ContextWindow), Effort: provider.Effort(d.Chat.Effort),
+			Tools: d.Chat.Tools, RequireExecutedModel: d.Chat.RequireExecutedModel,
+			Group: runner.ModelGroup{Kind: kind, Family: modelidentity.ClassifyFamily(d.Chat.Provider, d.Chat.Model)}}
+		if !slices.ContainsFunc(e.cfg.Advertised(kind, ref), func(c runner.ExecutionCapability) bool { return runner.CapabilitySatisfies(c, req) }) {
+			return false, ReasonNotAdvertised
+		}
+	}
+	return true, ""
 }
 
 // Execute runs d in a fresh scratch directory that is removed afterwards.

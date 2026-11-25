@@ -374,3 +374,9 @@ func reason(c candidate) string {
 	}
 	return fmt.Sprintf("rank: runner=%s source=%s headroom=%s slots=%d/%d", c.runner.ID, src, head, c.used, c.runner.StepLimit)
 }
+
+// CapabilitySatisfies is the exact remote eligibility predicate shared by placement,
+// the atomic Reserve recheck and the runner pre-accept recheck.
+func CapabilitySatisfies(c ExecutionCapability, req ExecRequirements) bool {
+	return capabilitySatisfies(c, req)
+}

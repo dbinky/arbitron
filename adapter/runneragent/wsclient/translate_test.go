@@ -214,3 +214,12 @@ func TestToEnvelopeRejectCarriesCode(t *testing.T) {
 	assert.Equal(t, "jq missing", r.Reason)
 	assert.Equal(t, "command_unavailable", r.Code)
 }
+
+func TestFromEnvelopeAdmittedCarriesClaudeModels(t *testing.T) {
+	env, err := runnerproto.NewEnvelope(runnerproto.KindAdmitted, &runnerproto.Admitted{RunnerID: "mac-1", HeartbeatSeconds: 5, ClaudeModels: []string{"claude-opus-5-5"}})
+	require.NoError(t, err)
+	in, err := fromEnvelope(env)
+	require.NoError(t, err)
+	require.NotNil(t, in.Admitted)
+	assert.Equal(t, []string{"claude-opus-5-5"}, in.Admitted.ClaudeModels)
+}

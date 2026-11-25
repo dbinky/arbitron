@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -531,14 +533,27 @@ func (c *ChallengeResponse) Validate() error {
 
 // Admitted confirms admission.
 type Admitted struct {
-	RunnerID         string `json:"runnerId"`
-	HeartbeatSeconds int    `json:"heartbeatSeconds"`
-	ProtocolVersion  int    `json:"protocolVersion"`
+	RunnerID         string   `json:"runnerId"`
+	HeartbeatSeconds int      `json:"heartbeatSeconds"`
+	ProtocolVersion  int      `json:"protocolVersion"`
+	ClaudeModels     []string `json:"claudeModels,omitempty"`
 }
+
+const maxModelIDBytes = 200
 
 func (a *Admitted) Validate() error {
 	if a.RunnerID == "" || a.HeartbeatSeconds < 1 {
 		return errors.New("runnerId and heartbeatSeconds are required")
+	}
+	if len(a.ClaudeModels) > maxCapabilities {
+		return fmt.Errorf("at most %d claudeModels", maxCapabilities)
+	}
+	seen := make(map[string]bool, len(a.ClaudeModels))
+	for _, m := range a.ClaudeModels {
+		if m == "" || len(m) > maxModelIDBytes || strings.ContainsFunc(m, unicode.IsSpace) || seen[m] {
+			return fmt.Errorf("invalid claudeModels entry %q", m)
+		}
+		seen[m] = true
 	}
 	return nil
 }

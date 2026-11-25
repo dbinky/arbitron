@@ -186,7 +186,11 @@ type AckPayload struct {
 }
 
 // Outbound is a hub -> runner message.
+// AdmittedPayload carries the exact subscription models to verify natively.
+type AdmittedPayload struct{ ClaudeModels []string }
+
 type Outbound struct {
+	Admitted   *AdmittedPayload
 	Probe      *ProbePayload
 	Kind       string
 	JobID      uuid.UUID

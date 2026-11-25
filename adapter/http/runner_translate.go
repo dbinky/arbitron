@@ -235,8 +235,11 @@ func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (
 	jobID := m.JobID.String()
 	switch m.Kind {
 	case runner.MsgAdmitted:
-		return runnerproto.NewEnvelope(runnerproto.KindAdmitted, &runnerproto.Admitted{RunnerID: string(id),
-			HeartbeatSeconds: heartbeatSeconds, ProtocolVersion: runnerproto.ProtocolVersion})
+		a := &runnerproto.Admitted{RunnerID: string(id), HeartbeatSeconds: heartbeatSeconds, ProtocolVersion: runnerproto.ProtocolVersion}
+		if m.Admitted != nil {
+			a.ClaudeModels = append([]string(nil), m.Admitted.ClaudeModels...)
+		}
+		return runnerproto.NewEnvelope(runnerproto.KindAdmitted, a)
 	case runner.MsgProbe:
 		if m.Probe == nil {
 			return runnerproto.Envelope{}, fmt.Errorf("runner connect: probe without payload")

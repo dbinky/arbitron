@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -169,4 +171,31 @@ func TestSmallPayloads_Validate(t *testing.T) {
 	require.NoError(t, (&ProbeResult{RequestID: "0f9d6a3e-8c1b-4b7e-9a2d-5e6f7a8b9c0d", Source: WireSource{Kind: "lunaroute"}}).Validate())
 	assert.Error(t, (&Probe{SourceKind: "lunaroute"}).Validate(), "an uncorrelated probe is malformed")
 	assert.Error(t, (&ProbeResult{Source: WireSource{Kind: "lunaroute"}}).Validate(), "an uncorrelated probe result is malformed")
+}
+
+func TestAdmitted_ClaudeModelsAreBoundedExactIDs(t *testing.T) {
+	ok := &Admitted{RunnerID: "mac-1", HeartbeatSeconds: 10, ProtocolVersion: ProtocolVersion, ClaudeModels: []string{"claude-opus-5-5", "claude-sonnet-4-5"}}
+	require.NoError(t, ok.Validate())
+	b, err := json.Marshal(ok)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"claudeModels":["claude-opus-5-5","claude-sonnet-4-5"]`)
+	none := &Admitted{RunnerID: "mac-1", HeartbeatSeconds: 10}
+	b, err = json.Marshal(none)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "claudeModels", "an empty list is omitted")
+
+	too := make([]string, 33)
+	for i := range too {
+		too[i] = fmt.Sprintf("claude-m-%d", i)
+	}
+	for name, models := range map[string][]string{
+		"empty":     {""},
+		"space":     {"claude opus"},
+		"duplicate": {"claude-opus-5-5", "claude-opus-5-5"},
+		"long":      {strings.Repeat("c", 201)},
+		"too many":  too,
+	} {
+		a := &Admitted{RunnerID: "mac-1", HeartbeatSeconds: 10, ClaudeModels: models}
+		assert.Error(t, a.Validate(), name)
+	}
 }

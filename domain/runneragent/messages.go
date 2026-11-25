@@ -185,6 +185,7 @@ type Refusal struct {
 // Admission confirms the session (mirrors runnerproto.Admitted). A positive
 // HeartbeatSeconds overrides Config.Heartbeat for that session.
 type Admission struct {
+	ClaudeModels     []string // exact models to verify natively before advertising
 	RunnerID         string
 	HeartbeatSeconds int
 }
