@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -29,6 +30,7 @@ type HubDeps struct {
 
 // Hub owns every remote runner session in this server process.
 type Hub struct {
+	wsJobs         atomic.Pointer[WorkspaceJobDeps]
 	requiredModels RequiredModelSource // guarded by mu
 	inbox          RemoteInbox
 	reg            Registry

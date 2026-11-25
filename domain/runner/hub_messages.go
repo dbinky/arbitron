@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/modelidentity"
 )
 
@@ -138,6 +139,8 @@ type RemoteChatResult struct {
 
 // RemoteResult is a terminal job result. ErrorText is already sanitized by the runner.
 type RemoteResult struct {
+	Process      *engine.ProcessResult
+	Agent        *engine.AgentResult
 	Confirmation *ConfirmationResult
 	OK           bool
 	Chat         *RemoteChatResult
@@ -173,6 +176,9 @@ type ConfirmationDispatch struct {
 
 // DispatchPayload is an offer of one job generation.
 type DispatchPayload struct {
+	Process      *ProcessDispatch
+	Agent        *AgentDispatch
+	Workspace    *WorkspaceDispatch
 	Confirmation *ConfirmationDispatch
 	Op           OpType
 	Chat         *ChatDispatch

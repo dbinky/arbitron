@@ -216,7 +216,7 @@ func telemetryToDomain(t runnerproto.WireTelemetry) runner.Telemetry {
 }
 
 func resultToDomain(r runnerproto.Result) runner.RemoteResult {
-	out := runner.RemoteResult{OK: r.OK, ErrorText: r.ErrorText, Outcome: runner.SourceOutcome{
+	out := runner.RemoteResult{Process: fromWireProcessResult(r.Process), Agent: fromWireAgentResult(r.Agent), OK: r.OK, ErrorText: r.ErrorText, Outcome: runner.SourceOutcome{
 		Class: runner.OutcomeClass(r.Outcome.Class), ResetAt: r.Outcome.ResetAt,
 		RetryAfter: time.Duration(r.Outcome.RetryAfterMs) * time.Millisecond,
 		Windows:    windowsToDomain(r.Outcome.Windows), HeadroomHint: r.Outcome.HeadroomHint}}
@@ -264,10 +264,11 @@ func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (
 	}
 }
 
-// dispatchToWire copies exactly the hermetic chat fields; the domain payload
-// carries no secrets, and neither does the wire type (P2 T1 reflection test).
+// dispatchToWire copies the allowlisted operation and workspace descriptors.
+// Credential material remains local to each runner.
 func dispatchToWire(d runner.DispatchPayload) *runnerproto.Dispatch {
-	out := &runnerproto.Dispatch{Op: string(d.Op), LeaseUntil: d.LeaseUntil}
+	out := &runnerproto.Dispatch{Op: string(d.Op), LeaseUntil: d.LeaseUntil,
+		Process: toWireProcess(d.Process), Agent: toWireAgent(d.Agent), Workspace: toWireWorkspace(d.Workspace)}
 	if c := d.Confirmation; c != nil {
 		out.Confirmation = &runnerproto.WireConfirmation{Model: c.Model, Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, ContextWindow: c.ContextWindow, Effort: c.Effort}
 	}

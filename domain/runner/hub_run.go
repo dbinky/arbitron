@@ -34,8 +34,18 @@ func (h *Hub) Run(ctx context.Context, a Assignment, job StepJob) (StepOutput, e
 		return remoteOutput(receipt.Result)
 	}
 	now := h.now()
-	d, err := buildDispatch(a, job, now.Add(h.cfg.LostAfter))
-	if err != nil {
+	var d DispatchPayload
+	if job.Op == OpAgent || job.Op == OpProcess {
+		deps := h.wsJobs.Load()
+		if deps == nil {
+			return StepOutput{}, WithOutcome(fmt.Errorf("%w: %s", ErrRemoteOpUnsupported, job.Op), SourceOutcome{Class: OutcomeOther})
+		}
+		proc, agent, ws, err := BuildWorkspaceJob(ctx, deps, a, job)
+		if err != nil {
+			return StepOutput{}, WithOutcome(err, SourceOutcome{Class: OutcomeOther})
+		}
+		d = DispatchPayload{Op: job.Op, LeaseUntil: now.Add(h.cfg.LostAfter), Process: proc, Agent: agent, Workspace: ws}
+	} else if d, err = buildDispatch(a, job, now.Add(h.cfg.LostAfter)); err != nil {
 		return StepOutput{}, WithOutcome(err, SourceOutcome{Class: OutcomeOther})
 	}
 	j := &remoteJob{ctx: ctx, a: a, dispatch: d, offeredAt: now, acceptedCh: make(chan struct{}), done: make(chan struct{})}
@@ -190,6 +200,12 @@ func remoteOutput(res *RemoteResult) (StepOutput, error) {
 	if res.Confirmation != nil {
 		c := *res.Confirmation
 		return StepOutput{Confirmation: &c}, nil
+	}
+	if res.Process != nil {
+		return WorkspaceStepOutput(OpProcess, res)
+	}
+	if res.Agent != nil {
+		return WorkspaceStepOutput(OpAgent, res)
 	}
 	if res.Chat == nil {
 		return StepOutput{}, WithOutcome(fmt.Errorf("%w: result carries no payload", ErrRemoteStepFailed), SourceOutcome{Class: OutcomeOther})
