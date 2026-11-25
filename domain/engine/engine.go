@@ -24,6 +24,7 @@ import (
 // Engine is the core workflow execution engine. It orchestrates the loading,
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
+	recoveryNotices   RecoveryNoticeSource
 	workflows         workflow.Repository
 	instances         instance.InstanceRepository
 	nodeExecutions    instance.NodeExecutionRepository
@@ -927,6 +928,9 @@ func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Insta
 	if !canView(ctx, inst) {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
+	if err := e.attachRecovery(ctx, inst); err != nil {
+		return nil, err
+	}
 	return inst, nil
 }
 
@@ -986,19 +990,33 @@ func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*inst
 // GetTrace returns the ordered node executions for an instance the caller may
 // view, else ErrNotFound.
 func (e *Engine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
-	if _, err := e.authorizeView(ctx, id); err != nil {
+	inst, err := e.authorizeView(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	return e.nodeExecutions.ListByInstance(ctx, id)
+	execs, err := e.nodeExecutions.ListByInstance(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := range execs {
+		execs[i].Recovery = noticesFor(inst.Recovery, execs[i].NodeID)
+	}
+	return execs, nil
 }
 
 // GetNodeTrace returns a single node execution for an instance the caller may
 // view, else ErrNotFound.
 func (e *Engine) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
-	if _, err := e.authorizeView(ctx, id); err != nil {
+	inst, err := e.authorizeView(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	return e.nodeExecutions.GetByInstanceAndNode(ctx, id, nodeID)
+	ex, err := e.nodeExecutions.GetByInstanceAndNode(ctx, id, nodeID)
+	if err != nil || ex == nil {
+		return ex, err
+	}
+	ex.Recovery = noticesFor(inst.Recovery, nodeID)
+	return ex, nil
 }
 
 // GetVariables returns the current variables for an instance the caller may
