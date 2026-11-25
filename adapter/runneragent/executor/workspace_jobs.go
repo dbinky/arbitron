@@ -17,6 +17,8 @@ import (
 )
 
 var (
+	// ErrWorkspacePreparation marks incomplete pinned-base or resource scope.
+	ErrWorkspacePreparation = errors.New("workspace_preparation_failed")
 	// ErrCommandUnavailable: the interpreter / command / harness is not on
 	// this runner (RR-09: only a PATH lookup is verified).
 	ErrCommandUnavailable = errors.New("command_unavailable")
@@ -73,6 +75,9 @@ func (w *WorkspaceJobs) check(d runneragent.Dispatch) error {
 	}
 	if _, err := w.d.Syncer.LocalPath(d.Workspace.WorkDir); err != nil {
 		return err
+	}
+	if err := d.Workspace.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrWorkspacePreparation, err)
 	}
 	switch d.Op {
 	case runneragent.OpProcess:
