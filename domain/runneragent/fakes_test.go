@@ -334,6 +334,17 @@ func (f *fakeSources) Probe(ctx context.Context) []runneragent.Source {
 	return f.view()
 }
 
+// ProbeSource counts a fresh check of exactly the requested local source.
+func (f *fakeSources) ProbeSource(ctx context.Context, kind runner.CredentialKind, ref string) (runneragent.Source, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if kind != runner.CredAnthropicSubscription || ref != "" {
+		return runneragent.Source{}, runneragent.ErrUnknownSource
+	}
+	f.probes++
+	return f.view()[0], nil
+}
+
 func (f *fakeSources) probeCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

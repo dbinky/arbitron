@@ -128,7 +128,8 @@ func TestAgentProbeRequestRefreshesAndAnswersForThatSource(t *testing.T) {
 	s.push(runneragent.Inbound{Kind: runneragent.KindProbe, Probe: &runneragent.ProbeRequest{SourceKind: runner.CredLunaRoute, CredentialRef: "lunaroute"}})
 	missing := s.expect(t, runneragent.KindProbeResult)
 	assert.Equal(t, runner.CredLunaRoute, missing.ProbeResult.Kind)
-	assert.Equal(t, runner.AuthState("unknown"), missing.ProbeResult.Health.Auth, "an absent source is never reported healthy")
+	assert.NotEqual(t, runner.AuthOK, missing.ProbeResult.Health.Auth, "an absent source is never reported healthy")
+	assert.Equal(t, "probe_failed", missing.ProbeResult.UnavailableReason, "an absent source gets the typed refusal, not a fabricated observation")
 }
 
 func TestAgentUsesServerHeartbeatInterval(t *testing.T) {

@@ -84,6 +84,10 @@ func (c *DispatchConfirmer) Confirm(ctx context.Context, s runner.Source) error 
 	if err != nil {
 		return err
 	}
+	fp, err := runner.EndpointFingerprint(b)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(c.workDir, 0o700); err != nil {
 		return fmt.Errorf("probe: confirmation work dir: %w", err)
 	}
@@ -95,7 +99,7 @@ func (c *DispatchConfirmer) Confirm(ctx context.Context, s runner.Source) error 
 	}
 	ctx = engine.ContextWithStepIdentity(ctx, id)
 	req := runner.ExecRequirements{
-		Provider: b.Provider, ContextWindow: b.ContextWindow, Effort: b.Effort, Group: group, Model: b.Model, Backend: b.Backend,
+		Provider: b.Provider, EndpointFingerprint: fp, ContextWindow: b.ContextWindow, Effort: b.Effort, Group: group, Model: b.Model, Backend: b.Backend,
 		Op: runner.OpConfirm, Affinity: runner.AffinityNone, RunID: id.RunID,
 		PinnedRunner: s.RunnerID, RequiredSource: s.ID, RequireExecutedModel: true,
 	}

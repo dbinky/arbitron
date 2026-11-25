@@ -66,5 +66,18 @@ func claudeChatCapabilities(in DiscoverInput) ([]runner.ExecutionCapability, str
 			Families: []modelidentity.Family{"anthropic"}, Models: members[i], ContextWindows: g.tiers, Efforts: g.levels,
 			Tools: ClaudeCodeTools, ExecutedModel: true})...)
 	}
+	if in.Confirmations != nil {
+		confirmFP, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: claudeChatProvider, Backend: "claude-code"})
+		if err != nil {
+			return nil, ReasonCapabilityEvidenceUnproven
+		}
+		for _, c := range out {
+			if c.Op != runner.OpChat {
+				continue
+			}
+			c.Op, c.Backend, c.EndpointFingerprint = runner.OpConfirm, "claude-code", confirmFP
+			out = append(out, c)
+		}
+	}
 	return out, ""
 }
