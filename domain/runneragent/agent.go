@@ -27,6 +27,7 @@ type Config struct {
 
 // Deps contains the agent's transport-neutral production ports.
 type Deps struct {
+	Models    ModelVerifier // Optional native verification of admission-requested models.
 	Conn      Connection
 	Exec      JobExecutor
 	Sources   LocalSources
@@ -219,6 +220,9 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 				}
 				heartbeat = a.deps.Clock.After(interval)
 				probe = a.deps.Clock.After(a.cfg.ProbeInterval)
+				if a.deps.Models != nil {
+					a.deps.Models.VerifyModels(ctx, in.Admitted.ClaudeModels)
+				}
 			case KindFenced, KindCancel:
 				if admitted {
 					if err := a.fence(ctx, in); err != nil {

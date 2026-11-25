@@ -9,6 +9,12 @@ import (
 	"github.com/arbitron/arbitron/domain/runner"
 )
 
+// ModelVerifier verifies admission-requested models asynchronously. The returned
+// channel closes when the pass ends; VerifyModels must not block the session.
+type ModelVerifier interface {
+	VerifyModels(ctx context.Context, models []string) <-chan struct{}
+}
+
 // Clock is the agent's time seam; tests inject a gating fake.
 type Clock interface {
 	Now() time.Time

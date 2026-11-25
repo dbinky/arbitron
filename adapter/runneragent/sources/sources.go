@@ -26,13 +26,16 @@ type Spec struct {
 
 // Inventory implements runneragent.LocalSources.
 type Inventory struct {
-	mu      sync.Mutex
-	seq     uint64
-	samples []*sample
-	specs   []Spec
-	last    []runneragent.Source
-	harness map[string]string
-	now     func() time.Time
+	verifier   *ClaudeModelVerifier
+	discoverIn DiscoverInput
+	verifyMu   sync.Mutex
+	mu         sync.Mutex
+	seq        uint64
+	samples    []*sample
+	specs      []Spec
+	last       []runneragent.Source
+	harness    map[string]string
+	now        func() time.Time
 }
 
 var _ runneragent.LocalSources = (*Inventory)(nil)
@@ -98,9 +101,10 @@ func cloneCapabilities(in []runner.ExecutionCapability) []runner.ExecutionCapabi
 func (i *Inventory) Probe(ctx context.Context) []runneragent.Source {
 	i.mu.Lock()
 	prev := append([]runneragent.Source(nil), i.last...)
+	specs := append([]Spec(nil), i.specs...)
 	i.mu.Unlock()
-	next := make([]runneragent.Source, len(i.specs))
-	for idx, sp := range i.specs {
+	next := make([]runneragent.Source, len(specs))
+	for idx, sp := range specs {
 		src := sp.Source
 		old := prev[idx].Health
 		at := i.now().UTC()
@@ -127,6 +131,10 @@ func (i *Inventory) Probe(ctx context.Context) []runneragent.Source {
 		next[idx] = src
 	}
 	i.mu.Lock()
+	for idx := range next {
+		next[idx].Capabilities = cloneCapabilities(i.specs[idx].Source.Capabilities)
+		next[idx].UnavailableReason = i.specs[idx].Source.UnavailableReason
+	}
 	i.last = next
 	i.mu.Unlock()
 	return i.Sources(ctx)
@@ -172,8 +180,11 @@ var _ runneragent.FreshSourceProber = (*Inventory)(nil)
 
 // ProbeSource probes exactly the named source without consulting cached health.
 func (i *Inventory) ProbeSource(ctx context.Context, kind runner.CredentialKind, ref string) (runneragent.Source, error) {
+	i.mu.Lock()
+	specs := append([]Spec(nil), i.specs...)
+	i.mu.Unlock()
 	idx := -1
-	for n, sp := range i.specs {
+	for n, sp := range specs {
 		if sp.Source.Kind == kind && sp.Source.CredentialRef == ref {
 			idx = n
 			break
@@ -182,7 +193,7 @@ func (i *Inventory) ProbeSource(ctx context.Context, kind runner.CredentialKind,
 	if idx < 0 {
 		return runneragent.Source{}, runneragent.ErrUnknownSource
 	}
-	sp := i.specs[idx]
+	sp := specs[idx]
 	res, err := sp.Prober.Probe(ctx, runner.Source{Kind: sp.Source.Kind, CredentialRef: sp.Source.CredentialRef, Families: sp.Source.Families, Backends: sp.Source.Backends, Models: sp.Source.Models})
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -242,6 +253,7 @@ func (p LunaRouteAuth) Probe(ctx context.Context, s runner.Source) (runner.Probe
 
 // DiscoverInput is what the runner knows about its local harnesses and keys.
 type DiscoverInput struct {
+	ClaudeModels   []string // Natively verified exact models, never operator-declared.
 	ClaudeBinary   string
 	Runner         claudecli.CommandRunner
 	LunaRoute      config.LunaRoute

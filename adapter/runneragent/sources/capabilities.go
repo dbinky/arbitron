@@ -33,7 +33,7 @@ func BuildCapabilities(kind runner.CredentialKind, harnessVersion string, in Dis
 		if ok, _ := claudecli.CheckVersion(harnessVersion); !ok {
 			return nil, "harness_unsupported"
 		}
-		return nil, ReasonCapabilityEvidenceUnproven
+		return claudeChatCapabilities(in)
 	case runner.CredLunaRoute:
 		return lunaRouteChatCapabilities(in)
 	default:
