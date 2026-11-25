@@ -27,7 +27,9 @@ func admit(t *testing.T, p *hubtest.Pool, h *runner.Hub, id runner.RunnerID, hel
 }
 
 func anthropicChat(aff runner.Affinity) runner.ExecRequirements {
+	c := hubtest.Capability(runner.OpChat, hubtest.ChatJob("claude-opus-5-5", runner.OpChat).Binding, "anthropic")
 	return runner.ExecRequirements{Group: runner.ModelGroup{Kind: runner.CredAnthropicSubscription, Family: "anthropic"},
+		Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint,
 		Model: "claude-opus-5-5", Op: runner.OpChat, Affinity: aff, RunID: uuid.New()}
 }
 

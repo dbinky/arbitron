@@ -251,12 +251,14 @@ func TestHubRun_UnsupportedWorkNeverLeavesTheServer(t *testing.T) {
 	_, conn, _ := admit(t, p, h, "mac-a", hubtest.DarwinHello(hubtest.AnthropicSource()))
 	runID := p.SeedRun(t)
 
-	agent := p.ReserveJob(t, runID, "mac-a", anthropicSrcA, runner.OpAgent)
+	agent := p.ReserveJob(t, runID, "mac-a", anthropicSrcA, runner.OpChat)
+	agent.Job.Op = runner.OpAgent
 	_, err := h.Run(ctx, agent, runner.StepJob{Op: runner.OpAgent, Agent: &engine.AgentMission{}})
 	assert.ErrorIs(t, err, runner.ErrRemoteOpUnsupported)
 	assert.Equal(t, runner.OutcomeOther, runner.ClassifyError(err).Class)
 
-	proc := p.ReserveJob(t, runID, "mac-a", anthropicSrcA, runner.OpProcess)
+	proc := p.ReserveJob(t, runID, "mac-a", anthropicSrcA, runner.OpChat)
+	proc.Job.Op = runner.OpProcess
 	_, err = h.Run(ctx, proc, runner.StepJob{Op: runner.OpProcess, Process: &engine.ProcessSpec{}})
 	assert.ErrorIs(t, err, runner.ErrRemoteOpUnsupported)
 
