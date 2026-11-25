@@ -248,6 +248,15 @@ func TestEngine_NewVisitResetsRetryProgress(t *testing.T) {
 	assert.Equal(t, []int{1, 2, 1}, []int{seen[0].Attempt, seen[1].Attempt, seen[2].Attempt}, "a back-edge visit starts at attempt 1")
 	assert.Equal(t, seen[0].InvocationID, seen[1].InvocationID)
 	assert.NotEqual(t, seen[0].InvocationID, seen[2].InvocationID, "a new graph visit gets a new invocation")
-	assert.Equal(t, []uuid.UUID{seen[0].InvocationID, seen[2].InvocationID}, store.loads(),
-		"the engine loads the retry position of each visit's own invocation")
+	// Every invocation (A1, B1, A2, B2) loads its own retry position exactly
+	// once; A's two visits load their OWN invocations, never a shared one.
+	loads := store.loads()
+	require.Len(t, loads, 4, "A1, B1, A2, B2 each load their retry position once")
+	assert.Equal(t, seen[0].InvocationID, loads[0], "A's first visit loads its own invocation")
+	assert.Equal(t, seen[2].InvocationID, loads[2], "A's back-edge visit loads its NEW invocation")
+	distinct := map[uuid.UUID]bool{}
+	for _, id := range loads {
+		distinct[id] = true
+	}
+	assert.Len(t, distinct, 4, "no invocation's retry position is loaded twice or shared across visits")
 }
