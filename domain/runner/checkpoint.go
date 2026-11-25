@@ -13,6 +13,49 @@ import (
 	"github.com/google/uuid"
 )
 
+// LocalCheckpointRef identifies a server-local copy of a non-portable home.
+type LocalCheckpointRef struct {
+	RunID        uuid.UUID
+	Version      int64
+	ManifestHash string
+}
+
+func (r LocalCheckpointRef) IsZero() bool {
+	return r.RunID == uuid.Nil && r.Version == 0 && r.ManifestHash == ""
+}
+
+func (r LocalCheckpointRef) String() string {
+	if r.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("local:%s@%d:%s", r.RunID, r.Version, r.ManifestHash)
+}
+
+// ParseLocalCheckpointRef rejects catalog references and malformed local references.
+func ParseLocalCheckpointRef(s string) (LocalCheckpointRef, error) {
+	rest, ok := strings.CutPrefix(s, "local:")
+	if !ok || rest == "" {
+		return LocalCheckpointRef{}, fmt.Errorf("runner: malformed local checkpoint ref %q", s)
+	}
+	r, err := ParseCheckpointRef(rest)
+	if err != nil {
+		return LocalCheckpointRef{}, err
+	}
+	return LocalCheckpointRef{RunID: r.RunID, Version: r.Version, ManifestHash: r.ManifestHash}, nil
+}
+
+// LocalCheckpointStore prepares server-local copies; the step transaction
+// publishes the committed recovery base.
+type LocalCheckpointStore interface {
+	StageLocal(ctx context.Context, runID uuid.UUID, srcDir string, version int64) (LocalCheckpointRef, error)
+	RestoreLocal(ctx context.Context, ref LocalCheckpointRef, dstDir string) error
+	PruneLocal(ctx context.Context, runID uuid.UUID, keep LocalCheckpointRef) error
+	Delete(ctx context.Context, runID uuid.UUID) error
+}
+
+// ErrNoRecoveryBase means there is no committed or initial recovery state.
+var ErrNoRecoveryBase = errors.New("runner: no recoverable checkpoint for this workspace")
+
 // Manifest lists one immutable checkpoint of a run's workspace. Hash covers the
 // version and every entry, so two checkpoints of identical content at different
 // versions are distinct manifests.

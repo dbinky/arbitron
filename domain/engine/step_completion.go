@@ -25,6 +25,7 @@ type WorkspaceCompletion struct {
 	Ref         string
 	Resource    ResourceFenceRef
 	NonPortable bool
+	LocalRef    string // Server-local recovery candidate for a non-portable home.
 }
 
 // StepCompletion is one dispatched operation's receipt.
@@ -112,6 +113,16 @@ func NewStepCompletionSink() *StepCompletionSink {
 
 // Record retains a receipt in operation order, deduplicated by job.
 func (s *StepCompletionSink) Record(c StepCompletion) error {
+	if w := c.Workspace; w != nil {
+		switch {
+		case w.NonPortable && w.LocalRef == "":
+			return fmt.Errorf("%w: non-portable workspace receipt has no local checkpoint", ErrInvalidStepCompletion)
+		case w.NonPortable && w.Ref != "":
+			return fmt.Errorf("%w: non-portable workspace receipt carries a catalog ref", ErrInvalidStepCompletion)
+		case !w.NonPortable && w.LocalRef != "":
+			return fmt.Errorf("%w: portable workspace receipt carries a local checkpoint", ErrInvalidStepCompletion)
+		}
+	}
 	if err := c.Validate(); err != nil {
 		return err
 	}
