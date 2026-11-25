@@ -102,6 +102,7 @@ func wireRemoteRunners(in remoteRunnerInputs) (*remoteRunnerStack, error) {
 		Clock:    clock,
 		Config:   runner.HubConfigFromRunners(in.Runners, in.ServerRoot, compat),
 	})
+	in.Health.SetRemoteProber(runner.NewRemoteSourceProber(hub))
 	hub.SetRequiredModels(in.RequiredModels)
 	keys := runner.NewKeyService(runner.KeyServiceDeps{
 		Store:            adaptsqlite.NewRunnerKeyRepo(in.DB),
