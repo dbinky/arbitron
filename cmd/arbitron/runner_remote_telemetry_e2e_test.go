@@ -115,9 +115,15 @@ func TestRemoteRunnersCompositionRootPlacementUsesRunnerTelemetry(t *testing.T) 
 // empty map is what it sees when DispatcherDeps.Telemetry is not wired.
 func rrPlacementOracle(t *testing.T, run uuid.UUID, model string, tel map[runner.RunnerID]runner.Telemetry, ids ...runner.RunnerID) runner.RunnerID {
 	t.Helper()
+	now := time.Now().UTC()
+	fresh := make(map[runner.RunnerID]runner.Telemetry, len(tel))
+	for id, sample := range tel {
+		sample.SampledAt = now // the hub stamps every heartbeat sample; the oracle models a fresh one
+		fresh[id] = sample
+	}
 	snap := runner.PoolSnapshot{
 		SlotsInUse: map[runner.RunnerID]int{}, SourceInFlight: map[runner.SourceID]int{},
-		Telemetry: tel, Homes: map[uuid.UUID]runner.Home{}, Now: time.Now().UTC(),
+		Telemetry: fresh, Homes: map[uuid.UUID]runner.Home{}, Now: now,
 	}
 	for _, id := range ids {
 		snap.Runners = append(snap.Runners, runner.Runner{ID: id, Name: string(id), StepLimit: 1,
@@ -131,7 +137,7 @@ func rrPlacementOracle(t *testing.T, run uuid.UUID, model string, tel map[runner
 		Group: runner.ModelGroup{Kind: runner.CredAnthropicSubscription, Family: "anthropic"},
 		Model: model, Op: runner.OpChat, Affinity: runner.AffinityNone, RunID: run,
 		Provider: "claude-cli", EndpointFingerprint: rrFP, RequireExecutedModel: true,
-	}, snap, runner.PlacementPolicy{})
+	}, snap, runner.PlacementPolicy{TelemetryMaxAge: time.Minute})
 	require.True(t, d.Placed, d.Reason)
 	return d.Runner
 }

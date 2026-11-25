@@ -259,7 +259,9 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 		Registry: d.Registry, Ledger: ledger,
 		Runners: runner.NewHealthReportingRunnerSet(remoteStack.Runners, monitor),
 		Events:  recorder, Status: projector, Health: monitor,
-		Telemetry: remoteStack.Hub, Policy: runner.PlacementPolicy{}, Clock: clock,
+		Telemetry: remoteStack.Hub, Clock: clock,
+		// contracts §21: a sample is fresh for three heartbeats; zero would discard every sample.
+		Policy: runner.PlacementPolicy{TelemetryMaxAge: 3 * seconds(d.Config.HeartbeatSeconds)},
 		// Explicit rollout mode; SetWorkspace ends it when mobility is installed.
 		LegacyBuiltInWorkspace: true,
 		TransientMaxAttempts:   d.Config.TransientMaxAttempts,
