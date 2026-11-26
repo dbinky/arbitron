@@ -87,6 +87,7 @@ type HelloInfo struct {
 	Capabilities    []string
 	Sources         []SourceReport
 	Held            []HeldJobInfo
+	PullReceipts    []PullReceiptPayload
 }
 
 // SourceReport is one credential source a runner advertises.
@@ -196,17 +197,20 @@ type AckPayload struct {
 type AdmittedPayload struct{ ClaudeModels []string }
 
 type Outbound struct {
-	Admitted   *AdmittedPayload
-	Probe      *ProbePayload
-	Kind       string
-	JobID      uuid.UUID
-	Generation int64
-	Dispatch   *DispatchPayload
-	Ack        *AckPayload
+	PullWorkspace  *PullWorkspacePayload
+	PullReceiptAck string
+	Admitted       *AdmittedPayload
+	Probe          *ProbePayload
+	Kind           string
+	JobID          uuid.UUID
+	Generation     int64
+	Dispatch       *DispatchPayload
+	Ack            *AckPayload
 }
 
 // Inbound is a runner -> hub message after admission.
 type Inbound struct {
+	PullReceipt  *PullReceiptPayload
 	ProbeResult  *ProbeReply
 	Kind         string
 	JobID        uuid.UUID
