@@ -289,8 +289,15 @@ func TestCheckpointAndCommit_MissingProvenanceRejectedBeforeCommit(t *testing.T)
 		"zero fence": {func(t *testing.T) context.Context {
 			r := receipt("mac-a", true)
 			r.JobFence.Generation = 0
-			return withReceipts(t, r)
-		}, agent, ErrMissingTurnReceipt},
+			require.ErrorIs(t, NewStepCompletionSink().Record(r), ErrInvalidStepCompletion, "the live sink refuses it first")
+			return context.Background()
+		}, func() turnCheckpointPlan {
+			p := agent()
+			r := receipt("mac-a", true)
+			r.JobFence.Generation = 0
+			p.completions = []StepCompletion{r} // adopted original receipts bypass the sink
+			return p
+		}, ErrMissingTurnReceipt},
 		"unknown backend": {func(t *testing.T) context.Context { return withReceipts(t, receipt("mac-a", true)) }, func() turnCheckpointPlan { return gatePlan(provider.ProfileKindAgent, "gemini-cli", "") }, ErrUnknownSessionBackend},
 	}
 	for name, tc := range cases {
