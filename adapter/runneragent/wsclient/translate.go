@@ -104,6 +104,11 @@ func wireOutcome(o runner.SourceOutcome) runnerproto.WireOutcome {
 // toEnvelope translates a runner domain message into a protocol frame.
 func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 	switch m.Kind {
+	case runneragent.KindPullReceipt:
+		if m.PullReceipt == nil {
+			break
+		}
+		return runnerproto.NewEnvelope(runnerproto.KindPullReceipt, wirePullReceipt(*m.PullReceipt))
 	case runneragent.KindChallengeResponse:
 		if m.ChallengeResponse == nil {
 			break
@@ -120,7 +125,7 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 		return runnerproto.NewEnvelope(runnerproto.KindHello, runnerproto.Hello{
 			OS: h.OS, Arch: h.Arch, ProtocolVersion: h.ProtocolVersion, RunnerVersion: h.RunnerVersion,
 			HarnessVersions: h.HarnessVersions, WorkspaceRoot: h.WorkspaceRoot, ScratchRoot: h.ScratchRoot,
-			Capabilities: h.Capabilities, Sources: wireSources(h.Sources), Held: wireHeld(h.Held),
+			Capabilities: h.Capabilities, Sources: wireSources(h.Sources), Held: wireHeld(h.Held), PullReceipts: wirePullReceipts(h.PullReceipts),
 		})
 	case runneragent.KindHeartbeat:
 		if m.Heartbeat == nil {
@@ -172,6 +177,18 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 	in := runneragent.Inbound{Kind: e.Kind, JobID: e.JobID, Generation: e.Generation}
 	switch e.Kind {
+	case runnerproto.KindPullWorkspace:
+		var p runnerproto.PullWorkspace
+		if err := runnerproto.DecodePayload(e, &p); err != nil {
+			return in, err
+		}
+		in.PullWorkspace = pullWorkspaceFromWire(p)
+	case runnerproto.KindPullReceiptAck:
+		var a runnerproto.PullReceiptAck
+		if err := runnerproto.DecodePayload(e, &a); err != nil {
+			return in, err
+		}
+		in.PullReceiptAck = a.OperationID
 	case runnerproto.KindChallenge:
 		var c runnerproto.Challenge
 		if err := runnerproto.DecodePayload(e, &c); err != nil {

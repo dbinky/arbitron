@@ -83,6 +83,7 @@ type Envelope struct {
 }
 
 var knownKinds = map[string]bool{
+	KindPullWorkspace: true, KindPullReceipt: true, KindPullReceiptAck: true,
 	KindSessionImport: true,
 	KindHello:         true, KindHeartbeat: true, KindAccept: true, KindReject: true,
 	KindOutput: true, KindResult: true, KindDispatch: true, KindCancel: true,

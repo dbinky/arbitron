@@ -55,6 +55,7 @@ type Hello struct {
 	Capabilities    []string          `json:"capabilities,omitempty"`
 	Sources         []WireSource      `json:"sources,omitempty"`
 	Held            []HeldJob         `json:"held,omitempty"`
+	PullReceipts    []WirePullReceipt `json:"pullReceipts,omitempty"`
 }
 
 func (h *Hello) Validate() error {
@@ -67,6 +68,8 @@ func (h *Hello) Validate() error {
 		return errors.New("runnerVersion is required")
 	case len(h.Sources) > maxSources:
 		return fmt.Errorf("at most %d sources", maxSources)
+	case len(h.PullReceipts) > maxPullReceipts:
+		return fmt.Errorf("at most %d pull receipts", maxPullReceipts)
 	case len(h.Held) > maxHeld:
 		return fmt.Errorf("at most %d held jobs", maxHeld)
 	case len(h.Capabilities) > maxCapabilities:
@@ -77,6 +80,11 @@ func (h *Hello) Validate() error {
 	for i := range h.Sources {
 		if err := h.Sources[i].Validate(); err != nil {
 			return fmt.Errorf("sources[%d]: %w", i, err)
+		}
+	}
+	for i := range h.PullReceipts {
+		if err := h.PullReceipts[i].Validate(); err != nil {
+			return fmt.Errorf("pullReceipts[%d]: %w", i, err)
 		}
 	}
 	for i := range h.Held {

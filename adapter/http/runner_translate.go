@@ -8,10 +8,31 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/adapter/runnerproto"
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/modelidentity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/runner"
 )
+
+func pullReceiptToDomain(w runnerproto.WirePullReceipt) (runner.PullReceiptPayload, error) {
+	if err := w.Validate(); err != nil {
+		return runner.PullReceiptPayload{}, malformedf("pull receipt: %v", err)
+	}
+	run, err := uuid.Parse(w.RunID)
+	if err != nil {
+		return runner.PullReceiptPayload{}, malformedf("pull receipt run id: %v", err)
+	}
+	ref, err := runner.ParseCheckpointRef(w.BaseRef)
+	if err != nil {
+		return runner.PullReceiptPayload{}, malformedf("pull receipt base ref: %v", err)
+	}
+	tok, err := uuid.Parse(w.FenceToken)
+	if err != nil {
+		return runner.PullReceiptPayload{}, malformedf("pull receipt fence token: %v", err)
+	}
+	return runner.PullReceiptPayload{OperationID: w.OperationID, RunID: run, Ref: ref, OK: w.OK, Error: w.Error,
+		Resource: engine.ResourceFenceRef{Key: w.FenceKey, Owner: w.FenceOwner, Generation: w.FenceGeneration, Token: tok}}, nil
+}
 
 func malformedf(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{runner.ErrMalformedMessage}, args...)...)
@@ -28,6 +49,16 @@ func parseJob(e runnerproto.Envelope) (uuid.UUID, error) {
 // toInbound maps one post-admission frame to the hub's domain message.
 func toInbound(e runnerproto.Envelope) (runner.Inbound, error) {
 	switch e.Kind {
+	case runnerproto.KindPullReceipt:
+		var w runnerproto.WirePullReceipt
+		if err := runnerproto.DecodePayload(e, &w); err != nil {
+			return runner.Inbound{}, malformedf("pull receipt: %v", err)
+		}
+		rc, err := pullReceiptToDomain(w)
+		if err != nil {
+			return runner.Inbound{}, err
+		}
+		return runner.Inbound{Kind: runner.MsgPullReceipt, PullReceipt: &rc}, nil
 	case runnerproto.KindHeartbeat:
 		var hb runnerproto.Heartbeat
 		if err := runnerproto.DecodePayload(e, &hb); err != nil {
@@ -115,7 +146,15 @@ func helloInfo(h runnerproto.Hello) (runner.HelloInfo, error) {
 	if err != nil {
 		return runner.HelloInfo{}, err
 	}
-	return runner.HelloInfo{OS: h.OS, Arch: h.Arch, ProtocolVersion: h.ProtocolVersion, RunnerVersion: h.RunnerVersion,
+	receipts := make([]runner.PullReceiptPayload, 0, len(h.PullReceipts))
+	for _, w := range h.PullReceipts {
+		rc, err := pullReceiptToDomain(w)
+		if err != nil {
+			return runner.HelloInfo{}, err
+		}
+		receipts = append(receipts, rc)
+	}
+	return runner.HelloInfo{PullReceipts: receipts, OS: h.OS, Arch: h.Arch, ProtocolVersion: h.ProtocolVersion, RunnerVersion: h.RunnerVersion,
 		HarnessVersions: h.HarnessVersions, WorkspaceRoot: h.WorkspaceRoot, ScratchRoot: h.ScratchRoot,
 		Capabilities: h.Capabilities, Sources: sourcesToDomain(h.Sources), Held: held}, nil
 }
@@ -234,6 +273,17 @@ func resultToDomain(r runnerproto.Result) runner.RemoteResult {
 func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (runnerproto.Envelope, error) {
 	jobID := m.JobID.String()
 	switch m.Kind {
+	case runner.MsgPullWorkspace:
+		if m.PullWorkspace == nil {
+			return runnerproto.Envelope{}, fmt.Errorf("runner connect: pull_workspace without payload")
+		}
+		p := m.PullWorkspace
+		return runnerproto.NewEnvelope(runnerproto.KindPullWorkspace, runnerproto.PullWorkspace{OperationID: p.OperationID, RunID: p.RunID.String(),
+			WorkDir: p.WorkDir, HomeGeneration: p.HomeGeneration, CheckpointVersion: p.Ref.Version, ManifestHash: p.Ref.ManifestHash,
+			BaseRef: p.Ref.String(), FenceKey: p.Resource.Key, FenceOwner: p.Resource.Owner, FenceGeneration: p.Resource.Generation,
+			FenceToken: p.Resource.Token.String(), PullToken: p.PullToken, PartBytes: p.PartBytes})
+	case runner.MsgPullReceiptAck:
+		return runnerproto.NewEnvelope(runnerproto.KindPullReceiptAck, runnerproto.PullReceiptAck{OperationID: m.PullReceiptAck})
 	case runner.MsgAdmitted:
 		a := &runnerproto.Admitted{RunnerID: string(id), HeartbeatSeconds: heartbeatSeconds, ProtocolVersion: runnerproto.ProtocolVersion}
 		if m.Admitted != nil {

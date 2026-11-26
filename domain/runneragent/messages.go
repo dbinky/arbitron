@@ -15,6 +15,9 @@ import (
 
 // Message kinds. The strings equal adapter/runnerproto's Kind* constants.
 const (
+	KindPullWorkspace     = "pull_workspace"
+	KindPullReceipt       = "pull_receipt"
+	KindPullReceiptAck    = "pull_receipt_ack"
 	KindHello             = "hello"
 	KindHeartbeat         = "heartbeat"
 	KindAccept            = "accept"
@@ -89,6 +92,22 @@ type Hello struct {
 	Capabilities    []string
 	Sources         []Source
 	Held            []HeldJob
+	PullReceipts    []PullReceipt
+}
+
+// PullWorkspace fetches and verifies a committed checkpoint without executing a step.
+type PullWorkspace struct {
+	OperationID string
+	Job         WorkspaceJob
+}
+
+// PullReceipt is the terminal answer, replayed in hello until acknowledged.
+type PullReceipt struct {
+	OperationID, RunID, BaseRef, FenceKey, FenceOwner string
+	FenceGeneration                                   int64
+	FenceToken                                        string
+	OK                                                bool
+	Error                                             string
 }
 
 // Heartbeat carries liveness, telemetry, source health and held jobs.
@@ -201,20 +220,23 @@ type ProbeRequest struct {
 
 // Inbound is a server-to-runner message.
 type Inbound struct {
-	Kind       string
-	JobID      string
-	Generation int64
-	Seq        uint64
-	Challenge  *Challenge
-	Dispatch   *Dispatch
-	AckResult  bool
-	Refused    *Refusal
-	Admitted   *Admission
-	Probe      *ProbeRequest
+	PullWorkspace  *PullWorkspace
+	PullReceiptAck string
+	Kind           string
+	JobID          string
+	Generation     int64
+	Seq            uint64
+	Challenge      *Challenge
+	Dispatch       *Dispatch
+	AckResult      bool
+	Refused        *Refusal
+	Admitted       *Admission
+	Probe          *ProbeRequest
 }
 
 // Outbound is a runner-to-server message.
 type Outbound struct {
+	PullReceipt       *PullReceipt
 	RequestID         string
 	HealthRevision    uint64
 	Kind              string
