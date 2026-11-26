@@ -65,7 +65,16 @@ func newJobFixture(t *testing.T, harness claudecli.CommandRunner) *jobFixture {
 		},
 	})
 	require.NoError(t, err)
+	jobs.SetInventory(staticSources{claudeAgentSource(t)})
 	return &jobFixture{srv: srv, jobs: jobs, syncer: syncer, localRoot: localRoot, runID: runID, workDir: wsRoot + "/instances/" + runID.String()}
+}
+
+// newNativeFixture selects the current advertised source inventory.
+func newNativeFixture(t *testing.T, harness claudecli.CommandRunner, inv runneragent.LocalSources) *jobFixture {
+	t.Helper()
+	f := newJobFixture(t, harness)
+	f.jobs.SetInventory(inv)
+	return f
 }
 
 func (f *jobFixture) plan(t *testing.T) *runneragent.WorkspaceJob {
@@ -224,7 +233,7 @@ func TestWorkspaceJobs_AgentRunsAtTheWorkspaceAndPushes(t *testing.T) {
 	f := newJobFixture(t, h)
 	ws := f.plan(t)
 	res := f.jobs.Execute(context.Background(), runneragent.Dispatch{Op: runneragent.OpAgent, Workspace: ws, Agent: &runneragent.AgentJob{
-		Model: "claude-sonnet-4-5", Prompt: "edit", WorkDir: ws.WorkDir, ToolScope: []string{"Edit"},
+		Provider: "claude-cli", Model: "claude-opus-5-5", Prompt: "edit", WorkDir: ws.WorkDir, ToolScope: []string{"Edit"},
 		CredentialKind: string(runner.CredAnthropicSubscription), Backend: "claude-code"}})
 	require.True(t, res.OK, res.ErrorText)
 	require.NotNil(t, res.Agent)
