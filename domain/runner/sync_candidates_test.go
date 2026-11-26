@@ -255,9 +255,8 @@ func TestWorkspaceSync_ProgressAndSize(t *testing.T) {
 	assert.Equal(t, m.TotalBytes(), f.sync.WorkspaceBytes(context.Background(), f.run))
 }
 
-// RR-08 interim receipt (P3 T16 Cycle 5 replaces this test with
-// TestWorkspaceSync_NonPortableSuccessCarriesALocalCheckpointReceipt).
-func TestWorkspaceSync_CommitBuiltInPromisorMissingReturnsNonPortableReceipt(t *testing.T) {
+// P3 T16: a promisor miss stages the actual workspace as a local receipt.
+func TestWorkspaceSync_PromisorMissingStagesActualWorkspace(t *testing.T) {
 	f := newWSFixture(t)
 	base := f.seedBaseline(t, map[string]string{"a.txt": "v1"})
 	a := f.reserve(t, builtin)
@@ -266,7 +265,16 @@ func TestWorkspaceSync_CommitBuiltInPromisorMissingReturnsNonPortableReceipt(t *
 
 	c, err := f.sync.FinishSuccess(context.Background(), a, att)
 	require.NoError(t, err, "a promisor miss is never a step failure")
-	assert.Equal(t, engine.WorkspaceCompletion{NonPortable: true, Resource: att.Resource}, c)
+	assert.True(t, c.NonPortable)
+	assert.Empty(t, c.Ref)
+	assert.Equal(t, att.Resource, c.Resource)
+	localRef, err := runner.ParseLocalCheckpointRef(c.LocalRef)
+	require.NoError(t, err)
+	assert.Equal(t, f.run, localRef.RunID)
+	assert.Equal(t, int64(1), localRef.Version)
+	dst := t.TempDir()
+	require.NoError(t, f.local.RestoreLocal(context.Background(), localRef, dst))
+	assert.Equal(t, "v1", readIn(t, dst, "a.txt"))
 	assert.Equal(t, runner.NonPortablePromisorReason, f.home(t).NonPortableReason)
 	assert.Equal(t, base, f.latest(t))
 	_, _, _, _, found := f.preparedRow(t, base.Version+1)

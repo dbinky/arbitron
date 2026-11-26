@@ -96,7 +96,11 @@ func (s *WorkspaceSync) FinishSuccess(ctx context.Context, a Assignment, att Wor
 	if att.Runner == BuiltInRunnerID {
 		ref, err := s.prepareBuiltIn(ctx, f, att.RunID, att.WorkDir, att.Resource)
 		if errors.Is(err, ErrPromisorObjectsMissing) {
-			return engine.WorkspaceCompletion{NonPortable: true, Resource: att.Resource}, nil
+			localRef, err := s.local.Take(ctx, att.RunID, att.WorkDir, att.Resource)
+			if err != nil {
+				return engine.WorkspaceCompletion{}, err
+			}
+			return engine.WorkspaceCompletion{NonPortable: true, LocalRef: localRef.String(), Resource: att.Resource}, nil
 		}
 		if err != nil {
 			return engine.WorkspaceCompletion{}, err
@@ -162,7 +166,9 @@ func (s *WorkspaceSync) FinishFailure(ctx context.Context, a Assignment, att Wor
 		case err != nil:
 			errs = append(errs, fmt.Errorf("runner: read workspace home of run %s: %w", att.RunID, err))
 		case home.NonPortableReason != "":
-			// RR-08: no portable base to roll back to; leave the working copy.
+			if err := s.local.Restore(ctx, att.RunID, att.WorkDir); err != nil {
+				errs = append(errs, fmt.Errorf("runner: roll back non-portable run %s: %w", att.RunID, err))
+			}
 		default:
 			if err := s.restoreCommitted(ctx, att.RunID, att.WorkDir); err != nil {
 				errs = append(errs, fmt.Errorf("runner: roll back run %s: %w", att.RunID, err))
@@ -202,8 +208,15 @@ func (s *WorkspaceSync) restoreCommitted(ctx context.Context, runID uuid.UUID, d
 	return nil
 }
 
-// RestoreBuiltIn restores the committed portable recovery base.
+// RestoreBuiltIn restores the run's committed recovery base.
 func (s *WorkspaceSync) RestoreBuiltIn(ctx context.Context, runID uuid.UUID, dir string) error {
+	home, err := s.d.Homes.GetHome(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if home.NonPortableReason != "" {
+		return s.local.Restore(ctx, runID, dir)
+	}
 	return s.restoreCommitted(ctx, runID, dir)
 }
 

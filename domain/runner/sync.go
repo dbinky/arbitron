@@ -41,6 +41,7 @@ type WorkspaceSizer interface {
 
 // SyncDeps are WorkspaceSync's collaborators.
 type SyncDeps struct {
+	Local       LocalCheckpointStore
 	Checkpoints CheckpointStore
 	Homes       HomeStore
 	Leases      ResourceLeaseStore
@@ -87,6 +88,7 @@ type preparedPush struct {
 // every workspace step. d holds the validated deps (P3 T16 extends them).
 type WorkspaceSync struct {
 	d        SyncDeps
+	local    *LocalCheckpoints
 	mu       sync.Mutex
 	prepared map[uuid.UUID]preparedPush // by job id
 }
@@ -112,6 +114,9 @@ func NewWorkspaceSync(d SyncDeps) *WorkspaceSync {
 	if d.Status == nil {
 		missing = append(missing, "Status")
 	}
+	if d.Local == nil {
+		missing = append(missing, "Local")
+	}
 	if len(missing) > 0 {
 		panic("runner: NewWorkspaceSync requires " + strings.Join(missing, ", "))
 	}
@@ -121,7 +126,8 @@ func NewWorkspaceSync(d SyncDeps) *WorkspaceSync {
 	if d.TokenTTL <= 0 {
 		d.TokenTTL = DefaultTransferTokenTTL
 	}
-	return &WorkspaceSync{d: d, prepared: map[uuid.UUID]preparedPush{}}
+	return &WorkspaceSync{d: d, prepared: map[uuid.UUID]preparedPush{},
+		local: &LocalCheckpoints{d: LocalCheckpointDeps{Local: d.Local, Homes: d.Homes, Checkpoints: d.Checkpoints, Leases: d.Leases}}}
 }
 
 // isServerLocal reports whether a home's bytes are the server's own copy.

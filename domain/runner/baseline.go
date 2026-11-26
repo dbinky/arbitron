@@ -21,10 +21,14 @@ type BaselineDeps struct {
 	Ledger      Ledger
 	Leases      ResourceLeaseStore
 	Homes       HomeStore // RR-08 SetNonPortable
+	Local       LocalCheckpointStore
 }
 
 // BaselineInitializer is the only caller of the bootstrap store path.
-type BaselineInitializer struct{ d BaselineDeps }
+type BaselineInitializer struct {
+	d     BaselineDeps
+	local *LocalCheckpoints
+}
 
 var _ engine.WorkspaceBaselineInitializer = (*BaselineInitializer)(nil)
 
@@ -43,10 +47,13 @@ func NewWorkspaceBaselineInitializer(d BaselineDeps) *BaselineInitializer {
 	if d.Homes == nil {
 		missing = append(missing, "Homes")
 	}
+	if d.Local == nil {
+		missing = append(missing, "Local")
+	}
 	if len(missing) > 0 {
 		panic("runner: NewWorkspaceBaselineInitializer requires " + strings.Join(missing, ", "))
 	}
-	return &BaselineInitializer{d: d}
+	return &BaselineInitializer{d: d, local: &LocalCheckpoints{d: LocalCheckpointDeps{Local: d.Local, Homes: d.Homes, Checkpoints: d.Checkpoints, Leases: d.Leases}}}
 }
 
 // EnsureBaseline commits the run's canonical directory as its first committed
@@ -64,6 +71,11 @@ func (i *BaselineInitializer) EnsureBaseline(ctx context.Context, runID uuid.UUI
 	} else if ok {
 		return nil // committed baseline exists: never re-snapshot (restart copies may be dirty)
 	}
+	if home, err := i.d.Homes.GetHome(ctx, runID); err != nil {
+		return err
+	} else if home.NonPortableReason != "" && home.LocalCheckpoint != "" {
+		return nil
+	}
 	jobs, err := i.d.Ledger.ListByRun(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("runner: read operations of run %s: %w", runID, err)
@@ -79,7 +91,7 @@ func (i *BaselineInitializer) EnsureBaseline(ctx context.Context, runID uuid.UUI
 		if err := i.d.Homes.SetNonPortable(ctx, runID, NonPortablePromisorReason); err != nil {
 			return fmt.Errorf("runner: mark run %s non-portable: %w", runID, err)
 		}
-		return nil
+		return i.local.Bootstrap(ctx, runID, clean)
 	}
 	if err != nil {
 		if _, ok, lerr := i.d.Checkpoints.Latest(ctx, runID); lerr == nil && ok {

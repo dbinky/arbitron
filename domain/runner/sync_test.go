@@ -25,7 +25,7 @@ func TestWorkspaceSync_ConstructionFailsClosed(t *testing.T) {
 		"Ledger":      func(d *runner.SyncDeps) { d.Ledger = nil },
 		"Events":      func(d *runner.SyncDeps) { d.Events = nil },
 		"Status":      func(d *runner.SyncDeps) { d.Status = nil },
-		// P3 T16 Cycle 5 adds: "Local": func(d *runner.SyncDeps) { d.Local = nil },
+		"Local":       func(d *runner.SyncDeps) { d.Local = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := f.syncDeps()

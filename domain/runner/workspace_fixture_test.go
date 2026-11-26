@@ -133,6 +133,7 @@ type wsFixture struct {
 	leases   *adaptsqlite.ResourceLeaseRepo
 	ckptDir  string
 	store    *storeSpy
+	local    *checkpoint.LocalStore
 	tokens   *wsTokens
 	sizes    *wsSizer
 	bus      *recordingBus
@@ -152,6 +153,7 @@ func newWSFixture(t *testing.T) *wsFixture {
 		ckptDir: t.TempDir(), tokens: &wsTokens{}, sizes: &wsSizer{bytes: map[uuid.UUID]int64{}}, bus: &recordingBus{}, root: t.TempDir(),
 	}
 	f.store = &storeSpy{t: t, CheckpointStore: f.openStore()}
+	f.local = checkpoint.NewLocalStore(t.TempDir())
 	f.status = runner.NewExecutionStatusProjector(p.Ledger)
 	f.status.AttachBus(f.bus)
 	f.run = p.SeedRun(t)
@@ -167,10 +169,9 @@ func (f *wsFixture) openStore() *checkpoint.Store {
 	return checkpoint.NewStore(f.ckptDir, checkpoint.WithCatalog(adaptsqlite.NewCheckpointCatalogRepo(f.pool.DB)))
 }
 
-// baselineDeps is the ONLY place the fixture builds BaselineDeps (P3 T16
-// Cycle 5 adds Local: here).
+// baselineDeps is the ONLY place the fixture builds BaselineDeps.
 func (f *wsFixture) baselineDeps() runner.BaselineDeps {
-	return runner.BaselineDeps{Checkpoints: f.store, Ledger: f.pool.Ledger, Leases: f.leases, Homes: f.homes}
+	return runner.BaselineDeps{Checkpoints: f.store, Ledger: f.pool.Ledger, Leases: f.leases, Homes: f.homes, Local: f.local}
 }
 
 func (f *wsFixture) dir() string { return filepath.Join(f.root, "instances", f.run.String()) }
@@ -291,9 +292,9 @@ func (f *wsFixture) preparedRow(t *testing.T, version int64) (state, jobID strin
 	return state, jobID, jobGen, token, true
 }
 
-// syncDeps is the ONLY place the fixture builds SyncDeps (P3 T16 Cycle 5 adds Local: here).
+// syncDeps is the ONLY place the fixture builds SyncDeps.
 func (f *wsFixture) syncDeps() runner.SyncDeps {
-	return runner.SyncDeps{Checkpoints: f.store, Homes: f.homes, Leases: f.leases, Ledger: f.pool.Ledger, Tokens: f.tokens,
+	return runner.SyncDeps{Checkpoints: f.store, Homes: f.homes, Leases: f.leases, Ledger: f.pool.Ledger, Tokens: f.tokens, Local: f.local,
 		Events: f.pool.Events, Status: f.status, Sizes: f.sizes, Clock: f.pool.Clock.Now}
 }
 
