@@ -369,6 +369,7 @@ func (f fakeIdentity) Key(context.Context) (ed25519.PrivateKey, error) { return 
 
 // harness runs one Agent against the fakes.
 type harness struct {
+	pulls  runneragent.MaintenancePuller
 	t      *testing.T
 	agent  *runneragent.Agent
 	conn   *fakeConn
@@ -383,6 +384,8 @@ type harness struct {
 }
 
 type harnessOpt func(*harness)
+
+func withPulls(p runneragent.MaintenancePuller) harnessOpt { return func(h *harness) { h.pulls = p } }
 
 func withDialErrors(errs ...error) harnessOpt {
 	return func(h *harness) { h.conn.dialErrs = append(h.conn.dialErrs, errs...) }
@@ -415,7 +418,7 @@ func newHarness(t *testing.T, spoolCap int, opts ...harnessOpt) *harness {
 		o(h)
 	}
 	a, err := runneragent.New(testConfig(), runneragent.Deps{
-		Conn: h.conn, Exec: h.exec, Sources: h.src, Telemetry: h.tel, Spool: h.spool,
+		Pulls: h.pulls, Conn: h.conn, Exec: h.exec, Sources: h.src, Telemetry: h.tel, Spool: h.spool,
 		Identity: fakeIdentity{key: h.key}, Clock: clock, Rand: func() float64 { return 1 },
 	})
 	require.NoError(t, err)

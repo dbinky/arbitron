@@ -34,6 +34,17 @@ type WorkspaceJob struct {
 // Validate refuses incomplete scope evidence; the runner never invents a base
 // or a claim.
 func (j WorkspaceJob) Validate() error {
+	if err := j.ValidatePull(); err != nil {
+		return err
+	}
+	if j.PushToken == "" {
+		return errors.New("runneragent: workspace job needs a push token")
+	}
+	return nil
+}
+
+// ValidatePull checks read-only maintenance scope without requiring write authority.
+func (j WorkspaceJob) ValidatePull() error {
 	run, err := uuid.Parse(j.RunID)
 	if err != nil || run == uuid.Nil {
 		return errors.New("runneragent: workspace job run id must be a nonzero UUID")
@@ -51,8 +62,8 @@ func (j WorkspaceJob) Validate() error {
 	if j.FenceKey != "run:"+run.String() || j.FenceOwner == "" || j.FenceGeneration < 1 {
 		return errors.New("runneragent: workspace job claim must be this run's, with an owner and a positive generation")
 	}
-	if j.PullToken == "" || j.PushToken == "" || j.PartBytes <= 0 {
-		return errors.New("runneragent: workspace job needs pull/push tokens and a part size")
+	if j.PullToken == "" || j.PartBytes <= 0 {
+		return errors.New("runneragent: workspace job needs a pull token and a part size")
 	}
 	return nil
 }

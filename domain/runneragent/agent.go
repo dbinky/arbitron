@@ -28,6 +28,7 @@ type Config struct {
 
 // Deps contains the agent's transport-neutral production ports.
 type Deps struct {
+	Pulls     MaintenancePuller
 	Models    ModelVerifier // Optional native verification of admission-requested models.
 	Conn      Connection
 	Exec      JobExecutor
@@ -42,18 +43,19 @@ type Deps struct {
 
 // Agent maintains admission and liveness across connections.
 type Agent struct {
-	cfg         Config
-	deps        Deps
-	mu          sync.Mutex
-	jobs        map[JobRef]*localJob
-	fenced      map[string]int64
-	wake        chan struct{}
-	sessionConn Session
-	sessionCtx  context.Context
-	runCtx      context.Context
-	probeMu     sync.Mutex
-	probing     map[string]bool
-	probeWG     sync.WaitGroup
+	pullReceipts map[string]PullReceipt
+	cfg          Config
+	deps         Deps
+	mu           sync.Mutex
+	jobs         map[JobRef]*localJob
+	fenced       map[string]int64
+	wake         chan struct{}
+	sessionConn  Session
+	sessionCtx   context.Context
+	runCtx       context.Context
+	probeMu      sync.Mutex
+	probing      map[string]bool
+	probeWG      sync.WaitGroup
 }
 
 func New(cfg Config, deps Deps) (*Agent, error) {
@@ -93,7 +95,7 @@ func New(cfg Config, deps Deps) (*Agent, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
 	}
-	return &Agent{cfg: cfg, deps: deps, jobs: make(map[JobRef]*localJob), fenced: make(map[string]int64), wake: make(chan struct{}), probing: make(map[string]bool)}, nil
+	return &Agent{pullReceipts: make(map[string]PullReceipt), cfg: cfg, deps: deps, jobs: make(map[JobRef]*localJob), fenced: make(map[string]int64), wake: make(chan struct{}), probing: make(map[string]bool)}, nil
 }
 
 // Run reconnects until the caller cancels. Successful admission resets backoff.
@@ -221,7 +223,7 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 					return admitted, err
 				}
 				sources := a.deps.Sources.Probe(ctx)
-				hello := &Hello{OS: a.cfg.OS, Arch: a.cfg.Arch, ProtocolVersion: a.cfg.ProtocolVersion, RunnerVersion: a.cfg.RunnerVersion, HarnessVersions: a.cfg.HarnessVersions, WorkspaceRoot: a.cfg.WorkspaceRoot, ScratchRoot: a.cfg.ScratchRoot, Capabilities: a.cfg.Capabilities, Sources: sources, Held: a.held()}
+				hello := &Hello{OS: a.cfg.OS, Arch: a.cfg.Arch, ProtocolVersion: a.cfg.ProtocolVersion, RunnerVersion: a.cfg.RunnerVersion, HarnessVersions: a.cfg.HarnessVersions, WorkspaceRoot: a.cfg.WorkspaceRoot, ScratchRoot: a.cfg.ScratchRoot, Capabilities: a.cfg.Capabilities, Sources: sources, Held: a.held(), PullReceipts: a.PendingPullReceipts()}
 				helloRev = a.inventoryRevision()
 				if r, ok := a.deps.Sources.(HarnessReporter); ok {
 					hello.HarnessVersions = r.HarnessVersions()
@@ -275,6 +277,14 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 					if err := a.onDispatch(ctx, s, in); err != nil {
 						return admitted, err
 					}
+				}
+			case KindPullWorkspace:
+				if admitted && in.PullWorkspace != nil && in.PullWorkspace.OperationID != "" {
+					a.onPullWorkspace(ctx, s, *in.PullWorkspace)
+				}
+			case KindPullReceiptAck:
+				if admitted && in.PullReceiptAck != "" {
+					a.ackPullReceipt(in.PullReceiptAck)
 				}
 			case KindProbe:
 				if !admitted || in.Probe == nil {

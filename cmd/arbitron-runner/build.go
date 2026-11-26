@@ -93,8 +93,9 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		logger.Warn("workspace root not advertised; this runner is chat-only", "reason", wsReason)
 	}
 	var wsJobs *executor.WorkspaceJobs
+	var pulls runneragent.MaintenancePuller
 	if wsRoot != "" {
-		if wsJobs, err = buildWorkspaceJobs(cfg, wsRoot, httpClient, claudeRunner, claudeBin, rules); err != nil {
+		if wsJobs, pulls, err = buildWorkspaceJobs(cfg, wsRoot, httpClient, claudeRunner, claudeBin, rules); err != nil {
 			return nil, err
 		}
 	}
@@ -117,7 +118,7 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		Capabilities: []string{runneragent.OpChat, runneragent.OpStream},
 		Heartbeat:    cfg.Heartbeat, ProbeInterval: cfg.ProbeInterval,
 	}, runneragent.Deps{
-		Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
+		Pulls: pulls, Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
 		Spool: sp, Identity: identity.New(cfg.MachineKeyPath()),
 		Clock: runneragent.SystemClock{}, Rand: rand.Float64, Logger: logger,
 	})
@@ -126,26 +127,27 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 // buildWorkspaceJobs wires the P3 T9 process/agent executor: copy records and
 // bundles live under the runner's config dir; local copies live at the verified
 // workspace root; agent jobs use the same loaded capability rules as discovery.
-func buildWorkspaceJobs(cfg config.Config, wsRoot string, httpClient *http.Client, claudeRunner claudecli.CommandRunner, claudeBin string, rules provider.CapabilityRules) (*executor.WorkspaceJobs, error) {
+func buildWorkspaceJobs(cfg config.Config, wsRoot string, httpClient *http.Client, claudeRunner claudecli.CommandRunner, claudeBin string, rules provider.CapabilityRules) (*executor.WorkspaceJobs, *workspace.Syncer, error) {
 	copyStore, err := copies.NewFileStore(filepath.Join(cfg.ConfigDir, "copies"))
 	if err != nil {
-		return nil, fmt.Errorf("arbitron-runner: copy store: %w", err)
+		return nil, nil, fmt.Errorf("arbitron-runner: copy store: %w", err)
 	}
 	xfer := transfer.NewClient(cfg.ServerURL, cfg.RunnerKey, httpClient, cfg.ExtraHeaders)
 	syncer, err := workspace.NewSyncer(workspace.SyncerDeps{WorkspaceRoot: wsRoot, LocalRoot: wsRoot, Transfer: xfer, Copies: copyStore})
 	if err != nil {
-		return nil, fmt.Errorf("arbitron-runner: %w", err)
+		return nil, nil, fmt.Errorf("arbitron-runner: %w", err)
 	}
 	bundleCache, err := executor.NewBundleCache(filepath.Join(cfg.ConfigDir, "bundles"), xfer)
 	if err != nil {
-		return nil, fmt.Errorf("arbitron-runner: bundle cache: %w", err)
+		return nil, nil, fmt.Errorf("arbitron-runner: bundle cache: %w", err)
 	}
 	if claudeBin == "" {
 		claudeBin = cfg.ClaudeBinary
 	}
-	return executor.NewWorkspaceJobs(executor.WorkspaceJobsDeps{
+	jobs, err := executor.NewWorkspaceJobs(executor.WorkspaceJobsDeps{
 		Syncer: syncer, Bundles: bundleCache, Process: process.NewLocalProcessRunner(),
 		ClaudeBinary: claudeBin, CodexBinary: cfg.CodexBinary, MaxResponseBytes: maxResponseBytes,
 		HarnessRunner: claudeRunner, Rules: rules,
 	})
+	return jobs, syncer, err
 }

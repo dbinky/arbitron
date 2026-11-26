@@ -88,12 +88,16 @@ func (s *Syncer) LocalPath(workDir string) (string, error) {
 
 // scope checks the path and the whole scoped descriptor (Cycle 1b) before any
 // transfer or local mutation; nothing is defaulted.
-func (s *Syncer) scope(ws runneragent.WorkspaceJob) (string, runneragent.PullTarget, error) {
+func (s *Syncer) scope(ws runneragent.WorkspaceJob, write bool) (string, runneragent.PullTarget, error) {
 	local, err := s.LocalPath(ws.WorkDir)
 	if err != nil {
 		return "", runneragent.PullTarget{}, err
 	}
-	if err := ws.Validate(); err != nil {
+	validate := ws.ValidatePull
+	if write {
+		validate = ws.Validate
+	}
+	if err := validate(); err != nil {
 		return "", runneragent.PullTarget{}, fmt.Errorf("runner workspace: %w", err)
 	}
 	id, err := uuid.Parse(ws.RunID)
@@ -112,7 +116,7 @@ func (s *Syncer) scope(ws runneragent.WorkspaceJob) (string, runneragent.PullTar
 // absent from the checkpoint are removed, the result is verified to equal the
 // checkpoint exactly, and any uncommitted receipt is discarded.
 func (s *Syncer) Pull(ctx context.Context, ws runneragent.WorkspaceJob) (string, error) {
-	local, tgt, err := s.scope(ws)
+	local, tgt, err := s.scope(ws, false)
 	if err != nil {
 		return "", err
 	}
@@ -270,7 +274,7 @@ func (s *Syncer) fetchFile(ctx context.Context, token string, e runner.ManifestE
 
 // MarkDirty records that a step is about to mutate the copy.
 func (s *Syncer) MarkDirty(ctx context.Context, ws runneragent.WorkspaceJob) error {
-	_, tgt, err := s.scope(ws)
+	_, tgt, err := s.scope(ws, true)
 	if err != nil {
 		return err
 	}
@@ -293,7 +297,7 @@ func (s *Syncer) MarkDirty(ctx context.Context, ws runneragent.WorkspaceJob) err
 // as the committed checkpoint. On any error nothing is recorded and the copy
 // stays dirty, so the next pull restores the committed checkpoint.
 func (s *Syncer) Push(ctx context.Context, ws runneragent.WorkspaceJob) (runner.CheckpointRef, error) {
-	local, tgt, err := s.scope(ws)
+	local, tgt, err := s.scope(ws, true)
 	if err != nil {
 		return runner.CheckpointRef{}, err
 	}
