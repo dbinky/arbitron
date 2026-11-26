@@ -61,7 +61,7 @@ func TestSessionImport_EnvelopeRoundTrip(t *testing.T) {
 			_, err = Decode(raw)
 		}
 	}
-	assert.ErrorIs(t, err, ErrMalformed, "the retired session_export kind is unknown")
+	assert.ErrorIs(t, err, ErrUnknownKind, "the retired session_export kind is unknown")
 }
 
 func TestSessionImport_Validate(t *testing.T) {
