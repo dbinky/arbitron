@@ -34,6 +34,7 @@ type InteractiveExecutor struct {
 	queueMgr   QueueManager
 	leases     TurnLeaseStore
 	leaseTTL   time.Duration
+	intents    TurnIntentStore
 }
 
 // SetTurnBindingRestorer installs the accepted policy restorer for replay and recovery.
@@ -74,10 +75,32 @@ func (e *InteractiveExecutor) SetTurnLeases(store TurnLeaseStore, ttl time.Durat
 	e.leases, e.leaseTTL = store, ttl
 }
 
+func (e *InteractiveExecutor) SetTurnIntents(store TurnIntentStore) {
+	if store == nil {
+		panic("engine: interactive executor SetTurnIntents requires a store")
+	}
+	e.intents = store
+}
+
+func (e *InteractiveExecutor) pendingFirstIntent(ctx context.Context, key, nodeID string) (*TurnIntent, error) {
+	if e.intents == nil {
+		return nil, nil
+	}
+	in, err := e.intents.PendingFor(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := StepIdentityFromContext(ctx)
+	if in == nil || in.Kind != TurnIntentFirst || in.NodeID != nodeID || in.InvocationID != id.InvocationID {
+		return nil, nil
+	}
+	return in, nil
+}
+
 // Execute reads the orchestration and template files, resolves variable
 // substitutions, streams the first LLM response, writes the node execution
 // record, transitions the instance to waiting, and returns a wait result.
-func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
+func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (_ *NodeResult, retErr error) {
 	// 1. Extract instance ID from context.
 	instanceID, ok := InstanceIDFromContext(ctx)
 	if !ok {
@@ -102,54 +125,68 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	startTime := time.Now()
 
-	// 3. Read the orchestration file. It is composed into the same prompt as the
-	// template, so it goes through loadTemplate too: an include in it must
-	// expand (and be budgeted) exactly like one in the template.
-	orchText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.OrchestrationFile)
+	reuse, err := e.pendingFirstIntent(ctx, RunLeaseKey(instanceID), node.ID)
 	if err != nil {
-		return nil, fmt.Errorf("interactive %q: read orchestration: %w", node.ID, err)
+		return nil, fmt.Errorf("interactive %q: read turn intent: %w", node.ID, err)
 	}
-
-	// 4. Read the template file.
-	templateText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
-	if err != nil {
-		return nil, fmt.Errorf("interactive %q: read template: %w", node.ID, err)
+	var binding provider.ResolvedBinding
+	var intent TurnIntent
+	if reuse != nil {
+		intent = *reuse
+		if e.bindings != nil {
+			binding, err = e.bindings.RestoreTurnBinding(ctx, reuse.Binding)
+		} else {
+			binding, err = e.resolver.Resolve(ctx, node.Config.ModelProfile)
+			binding.Model, binding.AllowedTools = reuse.Model, reuse.Tools
+		}
+		if err != nil {
+			return nil, fmt.Errorf("interactive %q: restore turn binding: %w", node.ID, err)
+		}
+	} else {
+		binding, err = e.resolver.Resolve(ctx, node.Config.ModelProfile)
+		if err != nil {
+			return nil, fmt.Errorf("interactive %q: resolve profile: %w", node.ID, err)
+		}
+		if err := assertBindingKind(node.ID, node.Type, binding.Kind); err != nil {
+			return nil, fmt.Errorf("interactive %q: %w", node.ID, err)
+		}
+		accepted, err := CaptureAcceptedTurnBinding(binding)
+		if err != nil {
+			return nil, fmt.Errorf("interactive %q: accept binding: %w", node.ID, err)
+		}
+		orchText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.OrchestrationFile)
+		if err != nil {
+			return nil, fmt.Errorf("interactive %q: read orchestration: %w", node.ID, err)
+		}
+		templateText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
+		if err != nil {
+			return nil, fmt.Errorf("interactive %q: read template: %w", node.ID, err)
+		}
+		nonce := uuid.NewString()
+		intent = newTurnIntent(ctx, hold.Lease(), instanceID, node.ID, TurnIntentFirst, "node", 1, nil)
+		if id, ok := StepIdentityFromContext(ctx); ok {
+			intent.OperationID = id.OperationID
+		}
+		intent.Prompt = orchText + "\n\n" + variable.Resolve(templateText, vars) + sentinelInstruction(nonce, node.Config.OutputSchema)
+		intent.Nonce, intent.SystemPrompt = nonce, node.Config.SystemPrompt
+		intent.Binding, intent.Model, intent.Tools = accepted, binding.Model, binding.AllowedTools
+		if e.intents != nil {
+			if err := e.intents.Persist(ctx, intent); err != nil {
+				return nil, fmt.Errorf("interactive %q: persist turn intent: %w", node.ID, err)
+			}
+		}
 	}
-
-	// 5. Resolve {{variable}} substitutions in the template content.
-	resolvedTemplate := variable.Resolve(templateText, vars)
-
-	// 6. Compose the LLM request. The completion-sentinel instruction is
-	// appended to the prompt instead of injecting a complete_session tool, and
-	// the working directory is read from the {{workspace}} variable.
-	//
-	// SECURITY: generate a per-instance unguessable sentinel nonce. This
-	// scopes sentinel parsing so an attacker cannot stage a file whose
-	// contents look like a completed session and have the agent echo it
-	// back. PR #8 security HIGH thread 3291943275.
-	nonce := uuid.NewString()
-	workDirStr, _ := WorkDirFromVars(vars)
-
-	userMessage := orchText + "\n\n" + resolvedTemplate +
-		sentinelInstruction(nonce, node.Config.OutputSchema)
-
-	// 6a. Resolve the node's model_profile to a binding, then select the
-	// streaming backend for it: a chat binding yields the tool-suppressed chat
-	// stream, an agent binding yields the tool-enabled (YOLO) stream. The model
-	// comes from the resolved binding, never from node.Config.Model.
-	binding, err := e.resolver.Resolve(ctx, node.Config.ModelProfile)
-	if err != nil {
-		return nil, fmt.Errorf("interactive %q: resolve profile: %w", node.ID, err)
-	}
-
-	// 6b. FAIL CLOSED on a binding.Kind <-> node.Type mismatch BEFORE selecting
-	// a stream provider, so no tool-enabled stream can start on a chat node (or
-	// vice versa). This is the tool-posture escalation boundary — see
-	// ErrBindingKindMismatch. The guard does not depend on workflow validation
-	// having run upstream (a snapshot or programmatic node can bypass it).
 	if err := assertBindingKind(node.ID, node.Type, binding.Kind); err != nil {
 		return nil, fmt.Errorf("interactive %q: %w", node.ID, err)
 	}
+	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
+	defer func() {
+		if e.intents != nil && (retErr == nil || (ctx.Err() == nil && !recoverableTurnError(retErr))) {
+			_ = e.intents.Complete(context.WithoutCancel(ctx), intent.ID)
+		}
+	}()
+	userMessage, nonce := intent.Prompt, intent.Nonce
+	workDirStr, _ := WorkDirFromVars(vars)
 
 	streamProvider, err := e.selector.StreamProviderFor(binding)
 	if err != nil {
@@ -157,7 +194,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	}
 
 	req := ChatRequest{
-		SystemPrompt:         node.Config.SystemPrompt,
+		SystemPrompt:         intent.SystemPrompt,
 		Prompt:               userMessage,
 		Model:                binding.Model,
 		RequireExecutedModel: binding.RequiresModelEvidence(),

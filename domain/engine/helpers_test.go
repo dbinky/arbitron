@@ -114,15 +114,20 @@ func (r *fakeResolver) Resolve(_ context.Context, alias string) (provider.Resolv
 		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
 	}
 	return provider.ResolvedBinding{
-		Kind:         p.Kind,
-		Model:        p.Model,
-		Backend:      p.Backend,
-		AllowedTools: p.AllowedTools,
+		Kind:          p.Kind,
+		Provider:      fakeResolvedProvider,
+		Model:         p.Model,
+		Backend:       p.Backend,
+		ConnectionRef: p.ConnectionRef,
+		AllowedTools:  p.AllowedTools,
 		RevealKey: func(context.Context) (string, error) {
 			return "", nil
 		},
 	}, nil
 }
+
+// Mirrors the production resolver's provider for a profile without a connection.
+const fakeResolvedProvider = "claude-cli"
 
 var _ provider.ProfileResolver = (*fakeResolver)(nil)
 

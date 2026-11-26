@@ -96,6 +96,7 @@ type conversationHandler struct {
 	invocations    InvocationStore
 	leases         TurnLeaseStore
 	leaseTTL       time.Duration
+	intents        TurnIntentStore
 }
 
 // groupSessionTarget holds the validated session record and its staging directory.
@@ -186,6 +187,63 @@ func (h *conversationHandler) SetTurnLeases(store TurnLeaseStore, ttl time.Durat
 	h.leases, h.leaseTTL = store, ttl
 }
 
+// SetTurnIntents installs the durable store before serving accepted operations.
+func (h *conversationHandler) SetTurnIntents(store TurnIntentStore) {
+	if store == nil {
+		panic("engine: conversation SetTurnIntents requires a store")
+	}
+	h.intents = store
+}
+
+func userTurnCount(messages []map[string]any) int {
+	n := 0
+	for _, m := range messages {
+		if m["role"] == "user" {
+			n++
+		}
+	}
+	return n
+}
+
+func newTurnIntent(ctx context.Context, lease TurnLease, instanceID uuid.UUID, nodeID, kind, opID string, turnIndex int, exec *instance.NodeExecution) TurnIntent {
+	in := TurnIntent{
+		ID: uuid.New(), RequestID: uuid.New(), LeaseKey: lease.Key, RunID: instanceID, NodeID: nodeID, TurnIndex: turnIndex, Kind: kind,
+		SessionGeneration: lease.Generation, OperationID: opID,
+	}
+	if id, ok := StepIdentityFromContext(ctx); ok {
+		in.InvocationID = id.InvocationID
+	}
+	if exec != nil && exec.SessionCheckpointRef != nil {
+		in.PriorCheckpointRef = *exec.SessionCheckpointRef
+	}
+	return in
+}
+
+func (h *conversationHandler) persistIntent(ctx context.Context, in TurnIntent) error {
+	if h.intents == nil {
+		return nil
+	}
+	if err := h.intents.Persist(ctx, in); err != nil {
+		return fmt.Errorf("conversation: persist turn intent: %w", err)
+	}
+	return nil
+}
+
+func recoverableTurnError(err error) bool {
+	return errors.Is(err, ErrTurnLeaseLost) || errors.Is(err, ErrSessionMoveRequired) ||
+		errors.Is(err, ErrNoSessionTarget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func (h *conversationHandler) finishIntent(ctx context.Context, id uuid.UUID, opErr error) {
+	if h.intents == nil || id == uuid.Nil {
+		return
+	}
+	if opErr != nil && (ctx.Err() != nil || recoverableTurnError(opErr)) {
+		return
+	}
+	_ = h.intents.Complete(context.WithoutCancel(ctx), id)
+}
+
 func sessionLeaseKey(instanceID uuid.UUID, group *groupSessionTarget) string {
 	if group != nil {
 		if id, ok := GroupResolutionIdentityOf(group.exec.LLMConversation); ok {
@@ -273,7 +331,7 @@ func (h *conversationHandler) recordInteractiveIntervention(ctx context.Context,
 // It loads the instance and node execution, resumes the stored claude session
 // (sending only the new user message), streams the response, and detects
 // session completion via the result sentinel block.
-func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) error {
+func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) (retErr error) {
 	// 1. Load and validate instance state. This auth/state gate runs FIRST so an
 	// unauthorized caller (or a send to a non-waiting instance) gets the same
 	// ErrNotFound/ErrForbidden/ErrNotInteractiveWait it always would — it must not
@@ -334,6 +392,32 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	sink := NewPlacementSink()
 	ctx = ContextWithPlacementSink(ctx, sink)
 
+	// Resolve and persist before acknowledging the message or dispatching.
+	binding, err := h.resolver.Resolve(ctx, nodeConfig.ModelProfile)
+	if err != nil {
+		return fmt.Errorf("conversation: resolve profile: %w", err)
+	}
+	if group != nil {
+		if err := assertBindingKind(nodeID, workflow.NodeTypeInteractiveAgent, binding.Kind); err != nil {
+			return fmt.Errorf("conversation: group resolution %q: %w", nodeID, err)
+		}
+	}
+	streamProvider, err := h.selector.StreamProviderFor(binding)
+	if err != nil {
+		return fmt.Errorf("conversation: select stream provider: %w", err)
+	}
+	accepted, err := CaptureAcceptedTurnBinding(binding)
+	if err != nil {
+		return fmt.Errorf("conversation: accept binding: %w", err)
+	}
+	intent := newTurnIntent(ctx, hold.Lease(), instanceID, nodeID, TurnIntentMessage, opID, userTurns+1, nodeExec)
+	intent.Message, intent.Binding, intent.Model, intent.Tools = content, accepted, binding.Model, binding.AllowedTools
+	if err := h.persistIntent(ctx, intent); err != nil {
+		return err
+	}
+	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
+	defer func() { h.finishIntent(ctx, intent.ID, retErr) }()
+
 	// 4. Append user message (in memory only -- not persisted until LLM succeeds).
 	messages = append(messages, map[string]any{
 		"role":    "user",
@@ -355,26 +439,6 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		h.recordInteractiveIntervention(ctx, inst, instance.ActionInteractiveMsg, nil)
 	} else {
 		publishInteractiveMessage(bus, instanceID, "user", content)
-	}
-
-	// 5a. Resolve the waiting node's model_profile to a binding and select the
-	// streaming backend the same way the InteractiveExecutor does on the first
-	// turn: a chat binding yields the tool-suppressed chat stream, an agent
-	// binding yields the tool-enabled stream. The model comes from the binding.
-	binding, err := h.resolver.Resolve(ctx, nodeConfig.ModelProfile)
-	if err != nil {
-		return fmt.Errorf("conversation: resolve profile: %w", err)
-	}
-	// A conflict-resolution session edits files in the staging area: it must
-	// run on an AGENT binding, exactly like an interactive_agent node.
-	if group != nil {
-		if err := assertBindingKind(nodeID, workflow.NodeTypeInteractiveAgent, binding.Kind); err != nil {
-			return fmt.Errorf("conversation: group resolution %q: %w", nodeID, err)
-		}
-	}
-	streamProvider, err := h.selector.StreamProviderFor(binding)
-	if err != nil {
-		return fmt.Errorf("conversation: select stream provider: %w", err)
 	}
 
 	// 6. Build the request: resume the stored session, send only the new
@@ -460,7 +524,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 // For a group conflict-resolution session, ending means "finish and verify":
 // the completer records the attempt's end and wakes the parent, whose gatherer
 // then verifies the staged conflicts (it is NOT an abandon).
-func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error) {
+func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) (_ map[string]any, retErr error) {
 	// 1. Load and validate instance state (auth/state gate first).
 	inst, nodeID, _, group, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {
@@ -486,6 +550,14 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 	if err != nil {
 		return nil, err
 	}
+
+	turns := userTurnCount(parseConversation(nodeExec.LLMConversation))
+	intent := newTurnIntent(ctx, hold.Lease(), instanceID, nodeID, TurnIntentEnd, turnOperationID(turns), turns, nodeExec)
+	if err := h.persistIntent(ctx, intent); err != nil {
+		return nil, err
+	}
+	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
+	defer func() { h.finishIntent(ctx, intent.ID, retErr) }()
 
 	// 3. Determine output: use existing if present, otherwise empty object.
 	output := nodeExec.Output
@@ -522,11 +594,19 @@ func (h *conversationHandler) AbandonSession(ctx context.Context, instanceID uui
 	}
 	defer hold.Release()
 
+	turns := userTurnCount(parseConversation(group.exec.LLMConversation))
+	intent := newTurnIntent(ctx, hold.Lease(), instanceID, nodeID, TurnIntentAbandon, turnOperationID(turns), turns, group.exec)
+	if err := h.persistIntent(ctx, intent); err != nil {
+		return err
+	}
+	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
 	output := group.exec.Output
 	if output == nil {
 		output = map[string]any{}
 	}
-	return h.completeSession(ctx, inst, instanceID, nodeID, output, "abandoned", group, true)
+	err = h.completeSession(ctx, inst, instanceID, nodeID, output, "abandoned", group, true)
+	h.finishIntent(ctx, intent.ID, err)
+	return err
 }
 
 // sessionExecution returns the record the call addresses: the open group
