@@ -58,6 +58,7 @@ type GroupFileFinalizer struct {
 	groups     instance.GroupRunRepository
 	area       WorkingArea
 	workspaces ExistingWorkspaceReader
+	resource   WorkspaceResource
 }
 
 var _ GroupTaskFinalizer = (*GroupFileFinalizer)(nil)
@@ -103,6 +104,13 @@ func (f *GroupFileFinalizer) FinalizeTerminal(ctx context.Context, inst *instanc
 	dir, err := f.workspaces.ExistingInstanceDir(inst.ID)
 	if err != nil {
 		return fmt.Errorf("%w: task %q workspace: %v", ErrGroupFileFinalization, task.Key, err)
+	}
+	if f.resource != nil {
+		claim, err := f.resource.Acquire(ctx, inst.ID, dir, "group finalize")
+		if err != nil {
+			return fmt.Errorf("%w: task %q: acquire its working area: %w", ErrGroupFileFinalization, task.Key, err)
+		}
+		defer releaseWorkspaceResource(ctx, f.resource, claim)
 	}
 	ref, err := f.area.FinalizeTask(ctx, run.WorkspaceSnapshot, inst.ID, dir)
 	if err != nil {

@@ -84,11 +84,12 @@ type GroupResolutionStarter interface {
 // GatherReport after every step, so a crash at any boundary resumes from the
 // persisted merge index without applying a delta twice.
 type FileGatherer struct {
-	groups instance.GroupRunRepository
-	area   WorkingArea
-	bridge GroupResolutionStarter
-	bus    EventBus
-	now    func() time.Time
+	groups   instance.GroupRunRepository
+	area     WorkingArea
+	bridge   GroupResolutionStarter
+	bus      EventBus
+	now      func() time.Time
+	resource WorkspaceResource
 }
 
 var _ GroupGatherer = (*FileGatherer)(nil)
@@ -106,6 +107,7 @@ type gatherPass struct {
 	parent *instance.Instance
 	report instance.GatherReport
 	handle *GatherHandle
+	claim  *ResourceFenceRef
 }
 
 func (p *gatherPass) loadReport() {
@@ -242,6 +244,14 @@ func (g *FileGatherer) start(ctx context.Context, p *gatherPass) (*GatherStep, e
 		return g.abort(ctx, p, "group run has no working-area snapshot to compare task changes against", "")
 	}
 
+	if g.resource != nil {
+		claim, err := g.resource.Acquire(ctx, p.parent.ID, parentDir, "group gather")
+		if err != nil {
+			return g.abort(ctx, p, fmt.Sprintf("acquire the parent working area: %v", err), "")
+		}
+		p.claim = &claim
+		defer releaseWorkspaceResource(ctx, g.resource, claim)
+	}
 	p.report.State = gatherStateMerging
 	p.report.Error = ""
 	if err := g.persist(ctx, p); err != nil {
@@ -333,6 +343,14 @@ func (g *FileGatherer) mergeLoop(ctx context.Context, p *gatherPass, eligible []
 	}
 	if err := g.area.Apply(ctx, *p.handle); err != nil {
 		return g.abort(ctx, p, fmt.Sprintf("apply gathered changes to the parent working area: %v", err), "")
+	}
+	if g.resource != nil {
+		if p.claim == nil {
+			return g.abort(ctx, p, "commit the gathered working area: missing resource claim", "")
+		}
+		if err := g.resource.Commit(ctx, *p.claim, p.parent.ID, p.handle.ParentDir); err != nil {
+			return g.abort(ctx, p, fmt.Sprintf("commit the gathered working area: %v", err), "")
+		}
 	}
 	p.report.State = gatherStateApplied
 	p.report.Error = ""

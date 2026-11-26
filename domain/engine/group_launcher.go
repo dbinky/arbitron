@@ -52,6 +52,7 @@ type GroupLauncher struct {
 	// maxLaunchBytes and meter bound a launch's eager copies (SetLaunchByteBudget).
 	maxLaunchBytes int64
 	meter          GroupAreaMeter
+	resource       WorkspaceResource
 }
 
 // NewGroupLauncher constructs the launcher. groups, starter, identities,
@@ -165,6 +166,13 @@ func (l *GroupLauncher) Launch(ctx context.Context, req GroupLaunchRequest) (*in
 
 	start := captureStartVariables(req.Vars)
 	parentWS, _ := WorkDirFromVars(req.Vars)
+	if parentWS != "" && l.resource != nil {
+		claim, err := l.resource.Acquire(ctx, parent.ID, parentWS, "group snapshot")
+		if err != nil {
+			return nil, preLaunchError(fmt.Errorf("acquire the parent's working area: %w", err))
+		}
+		defer releaseWorkspaceResource(ctx, l.resource, claim)
+	}
 	ws, repoRel, err := l.launchWorkspace(ctx, req, parentWS)
 	if err != nil {
 		return nil, preLaunchError(err)
