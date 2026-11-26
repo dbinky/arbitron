@@ -72,6 +72,17 @@ func newTurnCommitFixture(t *testing.T) turnCommitFixture {
 	require.NoError(t, err)
 	hash := strings.Repeat("b", 64)
 	insertCandidate(t, lf.db, inst.ID, 2, hash, job, res, "prepared")
+	// Durable P3 evidence (authorized fixture change, unstick 2026-11-24): the
+	// committed v1 base the home points at, the v2 candidate's base_ref, and the
+	// exact job holder row for the active claim.
+	baseHash := strings.Repeat("a", 64)
+	insertCandidate(t, lf.db, inst.ID, 1, baseHash, job, res, "committed")
+	_, err = lf.db.DB.Exec(`UPDATE workspace_checkpoints SET base_ref = ? WHERE run_id = ? AND version = 2`,
+		inst.ID.String()+"@1:"+baseHash, inst.ID.String())
+	require.NoError(t, err)
+	_, err = lf.db.DB.Exec(`INSERT INTO workspace_lease_holders(resource_key, generation, token, holder, owner, job_id, job_runner_id, job_generation, boot_id, claimed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
+		res.Key, res.Generation, res.Token.String(), "job:"+job.ID.String(), res.Owner, job.ID.String(), string(job.RunnerID), job.Generation, timeToString(ledgerNow))
+	require.NoError(t, err)
 
 	return turnCommitFixture{lf: lf, db: lf.db, inst: inst, exec: exec, inv: inv, lease: lease, intent: in, job: job,
 		resource: res, hash: hash, repo: NewTurnCommitRepo(lf.db.DB)}
@@ -296,12 +307,18 @@ func TestSessionState_OldTurnSameGenerationCannotOverwriteNewCheckpoint(t *testi
 	job3, err = f.lf.ledger.Reserve(ctx, job3.ID, f.lf.decision(f.lf.src), 1, ledgerNow.Add(time.Minute))
 	require.NoError(t, err)
 	require.NoError(t, f.lf.ledger.MarkRunning(ctx, job3.Fence()))
+	// Turn 2's commit released its claim; turn 3's stream job takes a NEW claim
+	// (authorized fixture change, unstick 2026-11-24).
+	res3, err := NewResourceLeaseRepo(f.db.DB, "").ClaimJob(ctx, f.resource.Key, "job:"+job3.ID.String(), job3.Fence())
+	require.NoError(t, err)
 	hash3 := strings.Repeat("c", 64)
-	insertCandidate(t, f.db, f.inst.ID, 3, hash3, job3, f.resource, "prepared")
+	insertCandidate(t, f.db, f.inst.ID, 3, hash3, job3, res3, "prepared")
+	_, err = f.db.DB.Exec(`UPDATE workspace_checkpoints SET base_ref = ? WHERE run_id = ? AND version = 3`, f.wsRef(2), f.inst.ID.String())
+	require.NoError(t, err)
 	turn3 := f.turn()
 	turn3.CheckpointRef, turn3.IntentID, turn3.RequestID, turn3.TurnIndex = "session:ref-3", in3.ID, in3.RequestID, 3
 	turn3.Completions = []engine.StepCompletion{{JobFence: engine.JobFenceRef{JobID: job3.ID, RunnerID: string(job3.RunnerID), Generation: job3.Generation},
-		Workspace: &engine.WorkspaceCompletion{Ref: f.inst.ID.String() + "@3:" + hash3, Resource: f.resource}}}
+		Workspace: &engine.WorkspaceCompletion{Ref: f.inst.ID.String() + "@3:" + hash3, Resource: res3}}}
 	require.NoError(t, f.repo.CommitTurn(ctx, turn3))
 
 	// (a) A late replay of the completed turn 2 at the same generation is fenced.

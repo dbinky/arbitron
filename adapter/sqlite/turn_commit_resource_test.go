@@ -2,27 +2,16 @@ package sqlite
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Supply the durable base and holder evidence required by the shared P3
-// transaction helpers, without changing the plan's older acceptance fixtures.
+// Reuse the durable base and holder evidence supplied by the shared fixture.
 func turnCommitWithDurableEvidence(t *testing.T) turnCommitFixture {
 	t.Helper()
-	f := newTurnCommitFixture(t)
-	baseHash := strings.Repeat("a", 64)
-	insertCandidate(t, f.db, f.inst.ID, 1, baseHash, f.job, f.resource, "committed")
-	base := f.inst.ID.String() + "@1:" + baseHash
-	_, err := f.db.DB.Exec(`UPDATE workspace_checkpoints SET base_ref = ? WHERE run_id = ? AND version = 2`, base, f.inst.ID.String())
-	require.NoError(t, err)
-	_, err = f.db.DB.Exec(`INSERT INTO workspace_lease_holders(resource_key, generation, token, holder, owner, job_id, job_runner_id, job_generation, boot_id, claimed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
-		f.resource.Key, f.resource.Generation, f.resource.Token.String(), "job:"+f.job.ID.String(), f.resource.Owner, f.job.ID.String(), string(f.job.RunnerID), f.job.Generation, timeToString(ledgerNow))
-	require.NoError(t, err)
-	return f
+	return newTurnCommitFixture(t)
 }
 
 func TestTurnCommitDurableEvidence_CommitsAndReleases(t *testing.T) {
