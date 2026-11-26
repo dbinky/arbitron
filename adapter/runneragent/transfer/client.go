@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/arbitron/arbitron/adapter/runnerproto"
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/runner"
 )
 
@@ -129,6 +131,33 @@ func (c *Client) CommitPush(ctx context.Context, token string, pc PushCommit) (r
 		return runner.CheckpointRef{}, fmt.Errorf("transfer commit: %w", err)
 	}
 	return ref, nil
+}
+
+// PutSession uploads a session bundle under the job generation's session token.
+func (c *Client) PutSession(ctx context.Context, token, jobID string, data []byte) error {
+	resp, err := c.do(ctx, http.MethodPut, "/sessions/"+url.PathEscape(jobID), token, data,
+		map[string]string{runnerproto.SessionChecksumHeader: engine.BundleChecksum(data), "Content-Type": "application/octet-stream"})
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
+// GetSession downloads exactly size bytes of the staged session bundle.
+func (c *Client) GetSession(ctx context.Context, token, jobID string, size int64) ([]byte, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/sessions/"+url.PathEscape(jobID), token, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, size+1))
+	if err != nil {
+		return nil, fmt.Errorf("transfer session download: %w", err)
+	}
+	if int64(len(data)) != size {
+		return nil, fmt.Errorf("transfer session download: got %d bytes, announced %d", len(data), size)
+	}
+	return data, nil
 }
 
 func (c *Client) FetchBundle(ctx context.Context, token, hash string) (io.ReadCloser, error) {

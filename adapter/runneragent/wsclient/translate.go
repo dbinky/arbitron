@@ -156,9 +156,10 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 		}
 		if m.Result.OK && m.Result.Chat != nil {
 			c := m.Result.Chat
-			r.Chat = &runnerproto.WireChatResult{Output: c.Output, Model: c.Model, TokensIn: c.TokensIn, TokensOut: c.TokensOut, SessionID: c.SessionID}
+			r.Chat = &runnerproto.WireChatResult{Output: c.Output, Model: c.Model, TokensIn: c.TokensIn, TokensOut: c.TokensOut, SessionID: c.SessionID, Session: bundleMetaToWire(c.Session)}
 		}
 		if m.Result.OK {
+			r.Session = sessionResultToWire(m.Result.Session)
 			r.Process, r.Agent = WorkspaceResultsToWire(*m.Result)
 		}
 		return runnerproto.NewJobEnvelope(runnerproto.KindResult, m.JobID, m.Generation, 0, r)
@@ -211,22 +212,20 @@ func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 			return runneragent.Inbound{}, err
 		}
 		in.Refused = &runneragent.Refusal{Code: r.Code, Reason: r.Reason}
-	case runnerproto.KindDispatch:
+	case runnerproto.KindDispatch, runnerproto.KindSessionImport:
 		var d runnerproto.Dispatch
 		if err := runnerproto.DecodePayload(e, &d); err != nil {
 			return runneragent.Inbound{}, err
 		}
-		in.Dispatch = &runneragent.Dispatch{JobID: e.JobID, Generation: e.Generation, Op: d.Op, LeaseUntil: d.LeaseUntil}
+		kind, session := runnerproto.SessionKindForOp(d.Op)
+		if session != (e.Kind != runnerproto.KindDispatch) || (session && kind != e.Kind) {
+			return runneragent.Inbound{}, fmt.Errorf("%w: %s frame carries op %q", runnerproto.ErrMalformed, e.Kind, d.Op)
+		}
+		in.Kind = runneragent.KindDispatch
+		in.Dispatch = &runneragent.Dispatch{JobID: e.JobID, Generation: e.Generation, Op: d.Op, LeaseUntil: d.LeaseUntil,
+			Chat: chatJobFromWire(d.Chat), Session: sessionJobFromWire(d.Session), Resource: resourceFromWire(d.Resource)}
 		if c := d.Confirmation; c != nil {
 			in.Dispatch.Confirmation = &runneragent.ConfirmationJob{Model: c.Model, Backend: c.Backend, Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint, ContextWindow: c.ContextWindow, Effort: c.Effort}
-		}
-		if c := d.Chat; c != nil {
-			in.Dispatch.Chat = &runneragent.ChatJob{
-				Provider: c.Provider, EndpointFingerprint: c.EndpointFingerprint,
-				Model: c.Model, SystemPrompt: c.SystemPrompt, Prompt: c.Prompt, MaxTokens: c.MaxTokens, Temperature: c.Temperature,
-				OutputSchema: c.OutputSchema, SessionID: c.SessionID, RequireExecutedModel: c.RequireExecutedModel, Stream: c.Stream,
-				CredentialKind: c.CredentialKind, Backend: c.Backend, ContextWindow: c.ContextWindow, Effort: c.Effort, Tools: c.Tools,
-			}
 		}
 		in.Dispatch.Process, in.Dispatch.Agent, in.Dispatch.Workspace = WorkspaceJobsFromWire(d)
 	case runnerproto.KindAck:

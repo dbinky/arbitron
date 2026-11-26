@@ -135,6 +135,10 @@ type ChatJob struct {
 	ContextWindow                 string
 	Effort                        string
 	Tools                         []string
+	WorkDir                       string // stream session jobs only
+	ProfileKind                   string // chat or agent
+	NativeCheckpoint              bool
+	SessionExportToken            string
 }
 
 // ConfirmationJob describes a native confirmation using the runner's own login.
@@ -150,6 +154,8 @@ type Dispatch struct {
 	Generation   int64
 	Op           string
 	Chat         *ChatJob
+	Session      *SessionJob
+	Resource     *ResourceJob
 	Process      *ProcessJob
 	Agent        *AgentJob
 	Workspace    *WorkspaceJob
@@ -164,6 +170,7 @@ type OutputFrame struct {
 
 // ChatResult is a completed chat.
 type ChatResult struct {
+	Session   *SessionBundleMeta // in-turn export descriptor
 	Output    string
 	Model     string
 	SessionID string
@@ -177,6 +184,7 @@ type Result struct {
 	Confirmation *runner.ConfirmationResult
 	OK           bool
 	Chat         *ChatResult
+	Session      *SessionResult
 	Process      *ProcessResult
 	Agent        *AgentResult
 	Outcome      runner.SourceOutcome
