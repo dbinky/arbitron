@@ -100,8 +100,8 @@ const rhRunnerClaudeScript = `#!/bin/sh
 case "$1" in
   --version) echo "2.1.330 (Claude Code)"; exit 0 ;;
   auth) while [ -f '@DIR@/hang-auth' ]; do sleep 0.05; done
-        if [ -f '@DIR@/logged-in' ]; then echo '{"loggedIn":true}'; exit 0; fi
-        echo '{"loggedIn":false}'; exit 1 ;;
+        if [ -f '@DIR@/logged-in' ]; then echo ok >> '@DIR@/auth.log'; echo '{"loggedIn":true}'; exit 0; fi
+        echo logged_out >> '@DIR@/auth.log'; echo '{"loggedIn":false}'; exit 1 ;;
 esac
 cat > /dev/null
 echo "$*" >> '@DIR@/calls.log'
@@ -167,6 +167,12 @@ func (r *rhRunner) source() runner.SourceID {
 	return runner.MakeSourceID(runner.RunnerID(r.runnerID), runner.CredAnthropicSubscription, "")
 }
 
+// rhAuthAnswers counts the fake claude's `auth status` answers with this result.
+func rhAuthAnswers(dir, result string) int {
+	b, _ := os.ReadFile(filepath.Join(dir, "auth.log"))
+	return strings.Count(string(b), result+"\n")
+}
+
 func rhProbeREST(t *testing.T, st *rrStack, sid runner.SourceID) (int, map[string]any) {
 	t.Helper()
 	code, body := rrDo(t, http.MethodPost, st.srv.URL+"/api/v1/runners/sources/"+url.PathEscape(string(sid))+"/probe", nil)
@@ -182,6 +188,12 @@ func TestRemoteProbe_OperatorReadsOwningRunnerNow(t *testing.T) {
 	sid := r.source()
 	require.Eventually(t, func() bool { return rwSourceHealth(t, st.ds, sid).Auth == runner.AuthOK }, 30*time.Second, 50*time.Millisecond,
 		"the hello observation recorded the runner's own login")
+	// The server's periodic remote check runs once as soon as the source is
+	// admitted, then every probeintervalseconds (5). Let that first check
+	// finish (hello + periodic = two logged-in answers) so the cached-heartbeat
+	// window below lies wholly between periodic checks.
+	require.Eventually(t, func() bool { return rhAuthAnswers(r.dir, "ok") >= 2 }, 30*time.Second, 20*time.Millisecond,
+		"the first periodic remote check completed while still logged in")
 	before := rwSourceHealth(t, st.ds, sid)
 	require.NotNil(t, before.LastProbeAt)
 	builtinAuth := rwSourceHealth(t, st.ds, rwAnthropic).Auth
@@ -334,6 +346,13 @@ func TestRemoteConfirmation_UnknownResetRecoversExactSourceAutomatically(t *test
 	}, 30*time.Second, 50*time.Millisecond, "a real workflow exhausted the remote source with an unknown reset")
 	require.NoError(t, st.ds.eng.Cancel(ctx, first))
 	require.NoError(t, os.Remove(filepath.Join(r.dir, "exhausted")))
+	// The unknown reset is re-checked by the bounded native confirmation
+	// (phase-1 design §3.11 "Exhausted with unknown reset"). A same-model ordinary
+	// step that wins the single probation slot may also recover the source
+	// (§3.11, §8 "A probation source returns to available after one successful step"),
+	// so the ordinary workflow is queued only once the confirmation is placed.
+	require.Eventually(t, func() bool { return rwCountJobs(st.ds.db, "operation_id='probe/confirm'") > 0 },
+		45*time.Second, 100*time.Millisecond, "the monitor placed the native confirmation on its own")
 	queued, _, err := st.ds.eng.Trigger(ctx, "rh-ask", map[string]any{}, "normal") // waits; no later user action
 	require.NoError(t, err)
 
