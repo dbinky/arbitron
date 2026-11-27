@@ -28,6 +28,7 @@ type Config struct {
 
 // Deps contains the agent's transport-neutral production ports.
 type Deps struct {
+	Copies    CopyJanitor // Optional for chat-only runners.
 	Pulls     MaintenancePuller
 	Models    ModelVerifier // Optional native verification of admission-requested models.
 	Conn      Connection
@@ -223,7 +224,7 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 					return admitted, err
 				}
 				sources := a.deps.Sources.Probe(ctx)
-				hello := &Hello{OS: a.cfg.OS, Arch: a.cfg.Arch, ProtocolVersion: a.cfg.ProtocolVersion, RunnerVersion: a.cfg.RunnerVersion, HarnessVersions: a.cfg.HarnessVersions, WorkspaceRoot: a.cfg.WorkspaceRoot, ScratchRoot: a.cfg.ScratchRoot, Capabilities: a.cfg.Capabilities, Sources: sources, Held: a.held(), PullReceipts: a.PendingPullReceipts()}
+				hello := &Hello{OS: a.cfg.OS, Arch: a.cfg.Arch, ProtocolVersion: a.cfg.ProtocolVersion, RunnerVersion: a.cfg.RunnerVersion, HarnessVersions: a.cfg.HarnessVersions, WorkspaceRoot: a.cfg.WorkspaceRoot, ScratchRoot: a.cfg.ScratchRoot, Capabilities: a.cfg.Capabilities, Sources: sources, Held: a.held(), PullReceipts: a.PendingPullReceipts(), Copies: a.heldCopies(ctx)}
 				helloRev = a.inventoryRevision()
 				if r, ok := a.deps.Sources.(HarnessReporter); ok {
 					hello.HarnessVersions = r.HarnessVersions()
@@ -278,6 +279,8 @@ func (a *Agent) session(parent context.Context, s Session) (bool, error) {
 						return admitted, err
 					}
 				}
+			case KindDeleteCopy:
+				a.onDeleteCopy(ctx, in.DeleteCopy)
 			case KindPullWorkspace:
 				if admitted && in.PullWorkspace != nil && in.PullWorkspace.OperationID != "" {
 					a.onPullWorkspace(ctx, s, *in.PullWorkspace)

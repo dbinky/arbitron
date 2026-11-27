@@ -94,10 +94,13 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 	}
 	var wsJobs *executor.WorkspaceJobs
 	var pulls runneragent.MaintenancePuller
+	var janitor runneragent.CopyJanitor
 	if wsRoot != "" {
-		if wsJobs, pulls, err = buildWorkspaceJobs(cfg, wsRoot, httpClient, claudeRunner, claudeBin, rules); err != nil {
+		var syncer *workspace.Syncer
+		if wsJobs, syncer, err = buildWorkspaceJobs(cfg, wsRoot, httpClient, claudeRunner, claudeBin, rules); err != nil {
 			return nil, err
 		}
+		pulls, janitor = syncer, syncer
 	}
 	exec, err := buildExecutorFor(cfg, factory, inv.CapabilitiesFor, wsJobs)
 	if err != nil {
@@ -118,7 +121,7 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		Capabilities: []string{runneragent.OpChat, runneragent.OpStream},
 		Heartbeat:    cfg.Heartbeat, ProbeInterval: cfg.ProbeInterval,
 	}, runneragent.Deps{
-		Pulls: pulls, Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
+		Copies: janitor, Pulls: pulls, Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),
 		Spool: sp, Identity: identity.New(cfg.MachineKeyPath()),
 		Clock: runneragent.SystemClock{}, Rand: rand.Float64, Logger: logger,
 	})

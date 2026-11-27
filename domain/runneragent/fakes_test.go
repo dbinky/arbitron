@@ -369,6 +369,7 @@ func (f fakeIdentity) Key(context.Context) (ed25519.PrivateKey, error) { return 
 
 // harness runs one Agent against the fakes.
 type harness struct {
+	copies runneragent.CopyJanitor
 	pulls  runneragent.MaintenancePuller
 	t      *testing.T
 	agent  *runneragent.Agent
@@ -384,6 +385,8 @@ type harness struct {
 }
 
 type harnessOpt func(*harness)
+
+func withCopies(j runneragent.CopyJanitor) harnessOpt { return func(h *harness) { h.copies = j } }
 
 func withPulls(p runneragent.MaintenancePuller) harnessOpt { return func(h *harness) { h.pulls = p } }
 
@@ -418,7 +421,7 @@ func newHarness(t *testing.T, spoolCap int, opts ...harnessOpt) *harness {
 		o(h)
 	}
 	a, err := runneragent.New(testConfig(), runneragent.Deps{
-		Pulls: h.pulls, Conn: h.conn, Exec: h.exec, Sources: h.src, Telemetry: h.tel, Spool: h.spool,
+		Copies: h.copies, Pulls: h.pulls, Conn: h.conn, Exec: h.exec, Sources: h.src, Telemetry: h.tel, Spool: h.spool,
 		Identity: fakeIdentity{key: h.key}, Clock: clock, Rand: func() float64 { return 1 },
 	})
 	require.NoError(t, err)
