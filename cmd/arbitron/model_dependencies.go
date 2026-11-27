@@ -99,6 +99,14 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 	} else if err := ds.eng.RecoverCrashedInstancesContext(ctx); err != nil {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
+	if ds.mobility != nil {
+		// Own the ticker for the entire serving lifecycle, not just startup.
+		ds.background.Go(func() {
+			ticks := time.NewTicker(checkpointPruneInterval)
+			defer ticks.Stop()
+			<-startCheckpointPruner(ctx, ds.mobility.CheckpointStore, ticks.C, time.Now, ds.logger)
+		})
+	}
 	// Source health probing starts after crash recovery, so its first tick
 	// sees the recovered runs' placements. It stops with the lifecycle context.
 	if ds.runners != nil {

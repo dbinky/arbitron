@@ -45,29 +45,30 @@ type workspaceMobilityInputs struct {
 
 // workspaceMobility is the Phase 3 server stack. Every field is non-nil.
 type workspaceMobility struct {
-	Checkpoints *checkpoint.Store
-	Local       *checkpoint.LocalStore // P3 T16 local copies of non-portable homes (unstick 2026-11-27)
-	Homes       runner.HomeStore       // copy-tracking homes over the one WorkspaceHomeRepo
-	Leases      *adaptsqlite.ResourceLeaseRepo
-	BootID      string
-	Sync        *runner.WorkspaceSync
-	Baseline    *runner.BaselineInitializer
-	Tokens      *runner.TransferTokenService
-	Bundles     *checkpoint.BundleStore
-	Transfers   *adapthttp.RunnerTransferHandler
-	Commits     *adaptsqlite.StepCommitRepo
-	Resources   *adaptsqlite.ResourceCommitRepo
-	Supervisor  *builtin.ProcessSupervisor
-	Recovery    *runner.PoolRecovery
-	Adopter     *runner.JobAdopter
-	Removal     *runner.RemovalNotifier
-	Workspaces  engine.WorkspaceManager // wsMgr decorated with the removal hook
-	Pulls       *runner.WorkspacePullCoordinator
-	Drain       *runner.DrainController
-	Resource    *runner.ServerWorkspaceResource
-	Notices     *runner.RecoveryNoticeSource
-	History     *runner.WorkspaceHistorySource
-	Policy      runner.PlacementPolicy
+	Checkpoints     *checkpoint.Store
+	CheckpointStore *checkpoint.Store      // the same store, exposed to the runtime pruner
+	Local           *checkpoint.LocalStore // P3 T16 local copies of non-portable homes (unstick 2026-11-27)
+	Homes           runner.HomeStore       // copy-tracking homes over the one WorkspaceHomeRepo
+	Leases          *adaptsqlite.ResourceLeaseRepo
+	BootID          string
+	Sync            *runner.WorkspaceSync
+	Baseline        *runner.BaselineInitializer
+	Tokens          *runner.TransferTokenService
+	Bundles         *checkpoint.BundleStore
+	Transfers       *adapthttp.RunnerTransferHandler
+	Commits         *adaptsqlite.StepCommitRepo
+	Resources       *adaptsqlite.ResourceCommitRepo
+	Supervisor      *builtin.ProcessSupervisor
+	Recovery        *runner.PoolRecovery
+	Adopter         *runner.JobAdopter
+	Removal         *runner.RemovalNotifier
+	Workspaces      engine.WorkspaceManager // wsMgr decorated with the removal hook
+	Pulls           *runner.WorkspacePullCoordinator
+	Drain           *runner.DrainController
+	Resource        *runner.ServerWorkspaceResource
+	Notices         *runner.RecoveryNoticeSource
+	History         *runner.WorkspaceHistorySource
+	Policy          runner.PlacementPolicy
 }
 
 // placementPolicy maps cfg.Runners onto runner.PlacementPolicy (contracts §7).
@@ -126,6 +127,7 @@ func buildWorkspaceMobility(in workspaceMobilityInputs) (*workspaceMobility, err
 
 	// Checkpoints (P3 T2) and script bundles (P3 T8).
 	m.Checkpoints = checkpoint.NewStore(rc.CheckpointDir, checkpoint.WithCatalog(adaptsqlite.NewCheckpointCatalogRepo(in.DB)))
+	m.CheckpointStore = m.Checkpoints
 	bundles, err := checkpoint.NewBundleStore(filepath.Join(rc.CheckpointDir, "bundles"))
 	if err != nil {
 		return nil, fmt.Errorf("workspace mobility: bundle store: %w", err)
