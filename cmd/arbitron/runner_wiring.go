@@ -166,13 +166,17 @@ func (s *runnerStack) startInventory(ctx context.Context, wg *sync.WaitGroup) {
 
 // runnerStackDeps are the root values the runner pool is assembled from.
 type runnerStackDeps struct {
-	Config              config.RunnersConfig
-	RefreshInventory    func(context.Context) error
-	DB                  *sql.DB
-	Bus                 engine.EventBus
-	Registry            runner.Registry
-	Factory             *providersadapter.Factory        // undecorated chat + agent selectors
-	Streams             engine.InteractiveStreamSelector // undecorated interactive selector
+	Config           config.RunnersConfig
+	RefreshInventory func(context.Context) error
+	DB               *sql.DB
+	Bus              engine.EventBus
+	Registry         runner.Registry
+	Factory          *providersadapter.Factory        // undecorated chat + agent selectors
+	Streams          engine.InteractiveStreamSelector // undecorated interactive selector
+	// Built-in selectors launch through Supervisor; probes keep Factory/Streams.
+	BuiltinFactory      *providersadapter.Factory
+	BuiltinStreams      engine.InteractiveStreamSelector
+	Supervisor          *builtinrunner.ProcessSupervisor
 	DefaultAgentBackend string
 	Process             engine.ProcessRunner // the local process runner
 	Probers             map[runner.CredentialKind]runner.SourceProber
@@ -207,8 +211,7 @@ type runnerStack struct {
 	agents  engine.AgentProviderSelector
 	streams engine.InteractiveStreamSelector
 	process engine.ProcessRunner
-	// Undecorated: the built-in runner executes with these, and read-only
-	// probe/inventory/refresh paths keep them (they never consume a slot).
+	// Undecorated selectors for read-only probe/inventory/refresh paths (no slot).
 	innerChats   engine.ChatProviderSelector
 	innerAgents  engine.AgentProviderSelector
 	innerStreams engine.InteractiveStreamSelector
@@ -218,7 +221,7 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 	if err := d.Config.Validate(); err != nil {
 		panic(err)
 	}
-	if d.RefreshInventory == nil || d.Registry == nil || d.Factory == nil || d.Streams == nil || d.Process == nil || d.Confirmer == nil || d.Alerts == nil || d.Audit == nil || d.Instances == nil {
+	if d.RefreshInventory == nil || d.Registry == nil || d.Factory == nil || d.Streams == nil || d.BuiltinFactory == nil || d.BuiltinStreams == nil || d.Supervisor == nil || d.Process == nil || d.Confirmer == nil || d.Alerts == nil || d.Audit == nil || d.Instances == nil {
 		panic("arbitron: incomplete runner stack")
 	}
 	for _, kind := range []runner.CredentialKind{runner.CredAnthropicSubscription, runner.CredOpenAISubscription, runner.CredLunaRoute} {
@@ -243,7 +246,7 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 		Events: recorder, Notifier: notifier, Clock: clock,
 		Interval: seconds(d.Config.ProbeIntervalSeconds), Jitter: seconds(d.Config.ProbeJitterSeconds),
 	})
-	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.Factory, Agents: d.Factory, Streams: d.Streams, Process: d.Process,
+	builtin := builtinrunner.New(builtinrunner.Deps{Chats: d.BuiltinFactory, Agents: d.BuiltinFactory, Streams: d.BuiltinStreams, Process: d.Process,
 		Confirmations: runnerprobe.NewConfirmationExecutor(d.Factory)})
 	remoteStack, err := wireRemoteRunners(remoteRunnerInputs{
 		DB: d.DB, Runners: d.Config, ServerRoot: d.ServerRoot, Registry: d.Registry, Ledger: ledger,

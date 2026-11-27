@@ -8,6 +8,7 @@ import (
 	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
+	builtinrunner "github.com/arbitron/arbitron/adapter/runner/builtin"
 	runnerprobe "github.com/arbitron/arbitron/adapter/runner/probe"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/config"
@@ -26,7 +27,9 @@ func TestRunnerWiring_RejectsMissingDependencies(t *testing.T) {
 			ServerRoot: ds.cfg.Workspace.Path, Logger: ds.logger,
 			DB: ds.db, Bus: ds.bus, Registry: ds.runners.registry,
 			Factory: ds.runners.innerChats.(*providersadapter.Factory), Streams: ds.runners.innerStreams,
-			Process: process.NewLocalProcessRunner(),
+			BuiltinFactory: ds.runners.innerChats.(*providersadapter.Factory), BuiltinStreams: ds.runners.innerStreams,
+			Supervisor: builtinrunner.NewProcessSupervisor(adaptsqlite.NewBuiltInProcessRepo(ds.db), builtinrunner.SupervisorOptions{}),
+			Process:    process.NewLocalProcessRunner(),
 			Probers: map[runner.CredentialKind]runner.SourceProber{
 				runner.CredAnthropicSubscription: runnerprobe.NewClaudeAuthProber(ds.cfg.LLM.BinaryPath, nil),
 				runner.CredOpenAISubscription:    runnerprobe.NewCodexProber(codex.Config{}),
@@ -37,17 +40,20 @@ func TestRunnerWiring_RejectsMissingDependencies(t *testing.T) {
 		}
 	}
 	cases := map[string]func(*runnerStackDeps){
-		"inventory":     func(d *runnerStackDeps) { d.RefreshInventory = nil },
-		"registry":      func(d *runnerStackDeps) { d.Registry = nil },
-		"factory":       func(d *runnerStackDeps) { d.Factory = nil },
-		"streams":       func(d *runnerStackDeps) { d.Streams = nil },
-		"process":       func(d *runnerStackDeps) { d.Process = nil },
-		"confirmer":     func(d *runnerStackDeps) { d.Confirmer = nil },
-		"alerts":        func(d *runnerStackDeps) { d.Alerts = nil },
-		"audit":         func(d *runnerStackDeps) { d.Audit = nil },
-		"instances":     func(d *runnerStackDeps) { d.Instances = nil },
-		"nil probers":   func(d *runnerStackDeps) { d.Probers = nil },
-		"empty probers": func(d *runnerStackDeps) { d.Probers = map[runner.CredentialKind]runner.SourceProber{} },
+		"inventory":       func(d *runnerStackDeps) { d.RefreshInventory = nil },
+		"registry":        func(d *runnerStackDeps) { d.Registry = nil },
+		"factory":         func(d *runnerStackDeps) { d.Factory = nil },
+		"streams":         func(d *runnerStackDeps) { d.Streams = nil },
+		"builtin factory": func(d *runnerStackDeps) { d.BuiltinFactory = nil },
+		"builtin streams": func(d *runnerStackDeps) { d.BuiltinStreams = nil },
+		"supervisor":      func(d *runnerStackDeps) { d.Supervisor = nil },
+		"process":         func(d *runnerStackDeps) { d.Process = nil },
+		"confirmer":       func(d *runnerStackDeps) { d.Confirmer = nil },
+		"alerts":          func(d *runnerStackDeps) { d.Alerts = nil },
+		"audit":           func(d *runnerStackDeps) { d.Audit = nil },
+		"instances":       func(d *runnerStackDeps) { d.Instances = nil },
+		"nil probers":     func(d *runnerStackDeps) { d.Probers = nil },
+		"empty probers":   func(d *runnerStackDeps) { d.Probers = map[runner.CredentialKind]runner.SourceProber{} },
 	}
 	for _, kind := range []runner.CredentialKind{runner.CredAnthropicSubscription, runner.CredOpenAISubscription, runner.CredLunaRoute} {
 		cases["missing prober "+string(kind)] = func(d *runnerStackDeps) { delete(d.Probers, kind) }

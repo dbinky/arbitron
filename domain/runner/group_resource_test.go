@@ -72,6 +72,17 @@ func newGRRig(t *testing.T) *grRig {
 		Leases: leases, Commits: commits, Homes: homes, Checkpoints: store, Ledger: p.Ledger})
 	require.NoError(t, err)
 	p.SeedRunner(t, "mac-1", 2)
+	// Atomic Reserve re-validates this runner's liveness and exact capabilities.
+	require.NoError(t, p.Registry.SetLiveness(context.Background(), "mac-1", runner.LivenessOnline, p.Clock.Now()))
+	src := hubtest.AnthropicSource()
+	require.NoError(t, p.Registry.ReplaceSources(context.Background(), "mac-1", []runner.Source{{
+		ID: runner.MakeSourceID("mac-1", runner.CredAnthropicSubscription, ""), RunnerID: "mac-1",
+		Kind: src.Kind, Families: src.Families, Health: src.Health,
+		Capabilities: []runner.ExecutionCapability{
+			hubtest.Capability(runner.OpChat, hubtest.ChatJob("claude-opus-5-5", runner.OpChat).Binding, "anthropic"),
+			hubtest.Capability(runner.OpAgent, hubtest.ChatJob("claude-opus-5-5", runner.OpAgent).Binding, "anthropic"),
+		},
+	}}))
 	return &grRig{ctx: context.Background(), pool: p, homes: homes, leases: leases, commits: commits, store: store,
 		res: res, run: p.SeedRun(t), dir: t.TempDir()}
 }

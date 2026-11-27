@@ -39,6 +39,7 @@ import (
 	adaptprobe "github.com/arbitron/arbitron/adapter/probe"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
+	builtinrunner "github.com/arbitron/arbitron/adapter/runner/builtin"
 	runnerinventory "github.com/arbitron/arbitron/adapter/runner/inventory"
 	runnerprobe "github.com/arbitron/arbitron/adapter/runner/probe"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
@@ -865,6 +866,16 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	claudeChatAdapter := claudecli.NewChatAdapter(chatCfg)
 	claudeAgentAdapter := claudecli.NewAgentAdapter(agentCfg)
 
+	// Workflow launches share one supervisor; discovery and native probes keep
+	// the unsupervised adapters because they run outside ledger assignments.
+	builtinSup := builtinrunner.NewProcessSupervisor(adaptsqlite.NewBuiltInProcessRepo(db), builtinrunner.SupervisorOptions{})
+	builtinExec := modelDeps.Runner
+	if builtinExec == nil {
+		builtinExec = claudecli.NewSupervisedExecRunner(builtinSup)
+	}
+	builtinChatCfg, builtinAgentCfg := chatCfg, agentCfg
+	builtinChatCfg.Runner, builtinAgentCfg.Runner = builtinExec, builtinExec
+
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
 
@@ -1090,7 +1101,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
 		ClaudeBinaryPath: cfg.LLM.BinaryPath,
 	})
-	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
+	factoryDeps := providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
 		// profile-editing Phase 3: chat Config so the claude-cli chat arm builds
@@ -1131,7 +1142,14 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		// claude-code arm receives its rules through ClaudeAgentConfig (= agentCfg,
 		// which carries CapabilityRules).
 		CapabilityRules: capabilityRules,
-	})
+	}
+	providerFactory := providersadapter.NewFactory(factoryDeps)
+	builtinFactoryDeps := factoryDeps
+	builtinFactoryDeps.ClaudeChat = claudecli.NewChatAdapter(builtinChatCfg)
+	builtinFactoryDeps.ClaudeAgent = claudecli.NewAgentAdapter(builtinAgentCfg)
+	builtinFactoryDeps.ClaudeChatConfig, builtinFactoryDeps.ClaudeAgentConfig = builtinChatCfg, builtinAgentCfg
+	builtinFactoryDeps.Runner = builtinExec
+	builtinFactory := providersadapter.NewFactory(builtinFactoryDeps)
 	modelDiscovery := provider.NewModelDiscoveryService(connStore, probeFactory, capabilityRules)
 
 	// 9r. Remote runners (Phase 1). The pool is assembled before the
@@ -1211,16 +1229,31 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		cfg.LLM.DefaultAgentBackend,
 	)
 
+	builtinAgentStreams := map[string]providersadapter.AgentStreamFactory{
+		workflow.BackendClaudeCode: func(b provider.ResolvedBinding) engine.ChatProvider {
+			return claudecli.NewStreamAgentAdapterForBinding(builtinAgentCfg, b)
+		},
+	}
+	if _, ok := agentStreams[workflow.BackendCodex]; ok {
+		builtinAgentStreams[workflow.BackendCodex] = func(b provider.ResolvedBinding) engine.ChatProvider {
+			cfg := codexInteractiveConfig
+			cfg.Binding, cfg.Runner = b, builtinExec
+			return codex.NewInteractiveProvider(cfg)
+		}
+	}
+	builtinStreamSel := providersadapter.NewInteractiveStreamSelector(builtinFactory, builtinAgentStreams, cfg.LLM.DefaultAgentBackend)
+
 	// Resolve the execution root before constructing the runner pool.
 	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
 	if err != nil {
 		return nil, fmt.Errorf("workspace manager: %w", err)
 	}
 	// The executing machine's process port; only the built-in runner calls it.
-	localProcess := process.NewLocalProcessRunner()
+	localProcess := process.NewSupervisedLocalProcessRunner(builtinSup)
 	runnerPool, err := newRunnerStack(runnerStackDeps{
 		Config: cfg.Runners, DB: db, Bus: bus, Registry: runnerRegistry, RefreshInventory: sourceSync.Sync,
 		Factory: providerFactory, Streams: interactiveStreamSel, DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
+		BuiltinFactory: builtinFactory, BuiltinStreams: builtinStreamSel, Supervisor: builtinSup,
 		Process: localProcess,
 		Probers: map[runner.CredentialKind]runner.SourceProber{
 			runner.CredAnthropicSubscription: runnerprobe.NewClaudeAuthProber(cfg.LLM.BinaryPath, claudeRunner),

@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/arbitron/arbitron/domain/workflow"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -242,5 +242,86 @@ func TestFileGatherer_CommitFailureRollsTheApplyBack(t *testing.T) {
 	assert.Equal(t, map[string]string{"base.txt": "base"}, f.area.parentFiles(gatherParentDir),
 		"SINK: the parent area returns to the content the last checkpoint holds")
 	assert.Contains(t, f.report().Error, "commit the gathered working area: checkpoint disk full")
-	assert.Equal(t, instance.GatherStateFailed, f.report().State)
+	assert.Equal(t, instance.GatherStateRolledBack, f.report().State)
+	assert.Equal(t, instance.RollbackStatusRolledBack, f.report().RollbackStatus)
+}
+
+// A resolved conflict resumes in a later pass, which takes its own parent claim.
+func TestFileGatherer_ResolvedConflictPassReacquiresAndCommits(t *testing.T) {
+	f := newGatherFixture(t, workflow.GroupRuleAllSucceed, workflow.GroupPortSuccess, "", "a", "b")
+	f.conflictOnB()
+	var committed map[string]string
+	res := &recordingResource{
+		onAcquire: func(dir string) error {
+			assert.Equal(t, gatherParentDir, dir)
+			assert.Zero(t, f.area.applyCount(), "the parent claim precedes Apply, including on resume")
+			return nil
+		},
+		onCommit: func(dir string) error { committed = f.area.parentFiles(dir); return nil },
+	}
+	f.gatherer.SetWorkspaceResource(res)
+	_, err := f.gather()
+	require.NoError(t, err)
+	acq := "acquire " + f.parent.ID.String() + " " + gatherParentDir + " group gather"
+	rel := "release run:" + f.parent.ID.String()
+	assert.Equal(t, []string{acq, rel}, res.entries(), "a suspended pass releases its claim")
+
+	f.area.resolveStaged("shared.txt", "merged-a-and-b")
+	f.endOpenAttempts("")
+	step, err := f.gather()
+	require.NoError(t, err)
+	require.True(t, step.Done)
+	assert.Equal(t, workflow.GroupPortSuccess, step.Port)
+	assert.Equal(t, []string{acq, rel, acq, "commit " + f.parent.ID.String() + " " + gatherParentDir, rel}, res.entries())
+	assert.Equal(t, "merged-a-and-b", committed["shared.txt"], "SINK: the resolved, applied area is what is committed")
+	assert.Equal(t, instance.GatherStateApplied, f.report().State)
+}
+
+// AbortGather rolls back under its own claim.
+func TestFileGatherer_AbortGatherRollsBackUnderItsOwnClaim(t *testing.T) {
+	f := newGatherFixture(t, workflow.GroupRuleAllSucceed, workflow.GroupPortSuccess, "", "a", "b")
+	f.conflictOnB()
+	res := &recordingResource{onAcquire: func(dir string) error {
+		assert.Equal(t, gatherParentDir, dir)
+		assert.Zero(t, f.area.rollbackCount(), "the abort claim precedes Rollback")
+		return nil
+	}}
+	f.gatherer.SetWorkspaceResource(res)
+	_, err := f.gather()
+	require.NoError(t, err)
+
+	step, err := f.gatherer.AbortGather(context.Background(), f.groups.snapshot(f.runID),
+		engine.ResolutionOutcomeCancelled, "parent instance was cancelled")
+	require.NoError(t, err)
+	require.True(t, step.Done)
+	acq := "acquire " + f.parent.ID.String() + " " + gatherParentDir + " group gather"
+	rel := "release run:" + f.parent.ID.String()
+	assert.Equal(t, []string{acq, rel, acq, rel}, res.entries())
+	assert.Equal(t, 1, f.area.rollbackCount())
+	assert.Equal(t, instance.GatherStateRolledBack, f.report().State)
+}
+
+// Refusing an abort claim must block continuation, not fake a rollback.
+func TestFileGatherer_AbortGatherRefusedClaimIsARollbackFailure(t *testing.T) {
+	f := newGatherFixture(t, workflow.GroupRuleAllSucceed, workflow.GroupPortSuccess, "", "a", "b")
+	f.conflictOnB()
+	res := &recordingResource{}
+	f.gatherer.SetWorkspaceResource(res)
+	_, err := f.gather()
+	require.NoError(t, err)
+	res.acquireErr = engine.ErrWorkspaceBusy
+
+	_, err = f.gatherer.AbortGather(context.Background(), f.groups.snapshot(f.runID),
+		engine.ResolutionOutcomeCancelled, "parent instance was cancelled")
+	require.ErrorIs(t, err, engine.ErrGroupGatherRollbackFailed)
+	assert.Zero(t, f.area.rollbackCount())
+	assert.Equal(t, instance.RollbackStatusFailed, f.report().RollbackStatus)
+	assert.NotEqual(t, instance.GroupRunDone, f.groups.snapshot(f.runID).State)
+
+	res.acquireErr = nil
+	step, err := f.gather()
+	require.NoError(t, err)
+	require.True(t, step.Done)
+	assert.Equal(t, workflow.GroupPortFailure, step.Port)
+	assert.Equal(t, 1, f.area.rollbackCount())
 }

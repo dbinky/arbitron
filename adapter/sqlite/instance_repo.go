@@ -465,6 +465,16 @@ func (r *InstanceRepo) SetCompleted(ctx context.Context, id uuid.UUID) error {
 // projection, including depth. queries/instances.sql documents the predicate.
 const listRunningWithLinkSQL = `SELECT ` + instanceColumnsWithLink + ` FROM instances WHERE state = 'running'`
 
+// listWaitingAtNodeWithLinkSQL reads parked instances for session inventory.
+const listWaitingAtNodeWithLinkSQL = `SELECT ` + instanceColumnsWithLink +
+	` FROM instances WHERE state = 'waiting' AND current_node_id IS NOT NULL AND current_node_id != ''`
+
+// ListWaitingAtNode returns waiting instances with a current node. Corrupt
+// pin records return an error alongside healthy rows, so inventory fails closed.
+func (r *InstanceRepo) ListWaitingAtNode(ctx context.Context) ([]instance.Instance, error) {
+	return executionList(ctx, r.db, listWaitingAtNodeWithLinkSQL, "listing waiting instances at a node")
+}
+
 // ListRunning returns the healthy rows plus an *instance.CorruptPinsError when
 // any row's pin record is corrupt; crash recovery fails those through the engine.
 func (r *InstanceRepo) ListRunning(ctx context.Context) ([]instance.Instance, error) {

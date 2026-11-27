@@ -341,13 +341,18 @@ func (g *FileGatherer) mergeLoop(ctx context.Context, p *gatherPass, eligible []
 			return nil, err
 		}
 	}
+	if g.resource != nil && p.claim == nil {
+		// Resumed passes take their own claim before touching the parent area.
+		claim, err := g.claimParent(ctx, p)
+		if err != nil {
+			return g.abort(ctx, p, fmt.Sprintf("acquire the parent working area: %v", err), "")
+		}
+		defer releaseWorkspaceResource(ctx, g.resource, claim)
+	}
 	if err := g.area.Apply(ctx, *p.handle); err != nil {
 		return g.abort(ctx, p, fmt.Sprintf("apply gathered changes to the parent working area: %v", err), "")
 	}
 	if g.resource != nil {
-		if p.claim == nil {
-			return g.abort(ctx, p, "commit the gathered working area: missing resource claim", "")
-		}
 		if err := g.resource.Commit(ctx, *p.claim, p.parent.ID, p.handle.ParentDir); err != nil {
 			return g.abort(ctx, p, fmt.Sprintf("commit the gathered working area: %v", err), "")
 		}
@@ -641,7 +646,18 @@ func (g *FileGatherer) abort(ctx context.Context, p *gatherPass, reason, openOut
 		}
 	}
 	if p.handle != nil {
-		if err := g.area.Rollback(ctx, *p.handle); err != nil {
+		rollback := func() error { return g.area.Rollback(ctx, *p.handle) }
+		if g.resource != nil && p.claim == nil {
+			// An external or recovered abort needs its own pass-scoped claim.
+			// Refusal is a rollback failure and must be retried, not skipped.
+			claim, err := g.claimParent(ctx, p)
+			if err != nil {
+				rollback = func() error { return fmt.Errorf("acquire the parent working area: %w", err) }
+			} else {
+				defer releaseWorkspaceResource(ctx, g.resource, claim)
+			}
+		}
+		if err := rollback(); err != nil {
 			p.report.RollbackStatus = rollbackStatusFailed
 			p.report.State = gatherStateFailed
 			p.report.Error = reason + rollbackFailedSep + err.Error()
@@ -672,6 +688,19 @@ func (g *FileGatherer) abort(ctx context.Context, p *gatherPass, reason, openOut
 		return nil, err
 	}
 	return g.finish(ctx, p, workflow.GroupPortFailure)
+}
+
+// claimParent records this pass's claim on the persisted handle's parent area.
+func (g *FileGatherer) claimParent(ctx context.Context, p *gatherPass) (ResourceFenceRef, error) {
+	if p.handle == nil || p.handle.ParentDir == "" {
+		return ResourceFenceRef{}, errors.New("gather handle names no parent working area")
+	}
+	claim, err := g.resource.Acquire(ctx, p.run.ParentInstanceID, p.handle.ParentDir, "group gather")
+	if err != nil {
+		return ResourceFenceRef{}, err
+	}
+	p.claim = &claim
+	return claim, nil
 }
 
 // enterGathering moves a resolving_conflicts run back to gathering.
