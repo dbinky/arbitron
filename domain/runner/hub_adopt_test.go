@@ -179,6 +179,8 @@ func TestHubAdopt_GraceDefersLossThenLossReleasesAdopters(t *testing.T) {
 		_, err := h.Adopt(ctx, a, hubtest.ChatJob("claude-opus-5-5", runner.OpChat))
 		errs <- err
 	}()
+	require.Eventually(t, func() bool { return runner.HubAdoptWaiting(h, a.Fence) }, 2*time.Second, time.Millisecond,
+		"the adopter is registered before the clock moves")
 	p.Clock.Advance(2 * cfg.LostAfter)
 	require.NoError(t, h.Tick(ctx))
 	r, _, err := p.Registry.GetRunner(ctx, "mac-1")
