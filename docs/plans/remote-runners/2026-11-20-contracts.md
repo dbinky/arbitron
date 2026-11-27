@@ -1667,6 +1667,27 @@ User decisions recorded 2026-11-24. Each owning task carries the TDD steps; this
 - The drain pull port is `runner.DrainPuller` (not `WorkspacePuller`, which P3 T8 owns with `PreparePull`). `DrainDeps` = `{Pulls DrainPuller; Sessions PinnedSessions; Leases; Registry; Ledger; Requirements JobRequirements; Checkpoints DrainCheckpoints; Telemetry TelemetrySource; Homes; Store; Events; Notifier; Policy; Sizes; Clock; Interval}`; `RunnerLedgerRepo.Requirements(ctx, jobID)` is the `JobRequirements` producer (P3 T12 Cycle 2). Producer of `DrainPuller`: `NewWorkspacePullCoordinator(PullCoordinatorDeps{…})` (P3 T12 "Pull-only drain operation", wired by P3 T13).
 - `NewRevocationHomeReleaser(inner, homes, leases)`: hub revoke first (failure releases nothing); per home, `Supersede` (`SupersedeRevoked`, else `SupersedeRunnerLost`) to holder `revoke:<runner>`, owner `builtin` (a lease owner can never be `ServerHome`), then `HandOff` to `ServerHome` at the read generation; a generation conflict means recovery already won and is never clobbered.
 
+## P3 T13 root, gather claims and session inventory (unstick 2026-11-27)
+
+- **Gather claims are pass-scoped** (owner: P3 T13 Cycle 2 Step 3b; source: design phase 3 §2):
+  - A `FileGatherer` pass holds a `WorkspaceResource` claim only while it touches the parent area.
+  - The starting pass acquires before `BeginGather`.
+  - A resumed or post-resolution pass acquires before `Apply`, and commits under that claim.
+  - `AbortGather` and recovered aborts acquire before `Rollback`. A refused claim there is a rollback failure (`RollbackStatus failed`), which is retried and never skipped.
+  - Conflict-resolution sessions work in the staging dir and hold no parent claim.
+  - A successful rollback is reported as `rolled_back`.
+- **`runner.InteractiveSessionInventory`** (owner: P3 T13 Cycle 4c) is the Phase 3 `PinnedSessions`:
+  - It counts, for `builtin` only, instances in `waiting` at an interactive node, plus `parallel_group` waits whose group run is `resolving_conflicts` with an open `Gather.ActiveSession`.
+  - Any read or snapshot failure is an error, never 0.
+  - Its source read is `InstanceRepo.ListWaitingAtNode`.
+- **One supervisor, two factories** (owner: P3 T13 Cycle 4b):
+  - `main.go` builds `builtinSup` once.
+  - The built-in runner gets `BuiltinFactory`/`BuiltinStreams`. These use the same configuration, with `claudecli.NewSupervisedExecRunner(builtinSup)` as the runner.
+  - The built-in process port is `process.NewSupervisedLocalProcessRunner(builtinSup)`.
+  - `providerFactory` stays unsupervised for model refresh, discovery, inventory and the confirmation executor. A supervised launch without an assignment fails with `builtin.ErrNoAssignment`.
+- **Local checkpoint store at the root:** `SyncDeps.Local`/`BaselineDeps.Local` are mandatory (P3 T16 Cycle 5). `buildWorkspaceMobility` (P3 T13 Cycle 4) constructs `checkpoint.NewLocalStore(<CheckpointDir>/local)`. P3 T16 Cycle 6 adds only `JoinCheckpointDeleters` and `StepCommitter`.
+- **Full `domain/runner` race package** takes about 13 min. Run it with `-timeout 40m`.
+
 ## Phase-3 wire validation (unstick 2026-11-25)
 
 Protocol v1 carries `process` and `agent` dispatches; there is no version bump. Owner: P3 T8 Cycle 6 Step 3b (`adapter/runnerproto/workspace_validate.go`).
