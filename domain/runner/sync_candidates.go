@@ -310,6 +310,41 @@ func (s *WorkspaceSync) PreparePull(ctx context.Context, a Assignment, runID uui
 	return PullPlan{RunID: runID, Ref: ref, Home: home, Resource: rec.Fence, PullToken: pullTok, PushToken: pushTok}, nil
 }
 
+// WorkspaceAdopter rebuilds an adopted job's workspace attempt (P3 T10).
+type WorkspaceAdopter interface {
+	AdoptAttempt(ctx context.Context, a Assignment, job *StepJob) (WorkspaceAttempt, error)
+}
+
+var _ WorkspaceAdopter = (*WorkspaceSync)(nil)
+
+// AdoptAttempt rebuilds the workspace context without moving, restoring or
+// claiming it. The job must still hold its exact original claim.
+func (s *WorkspaceSync) AdoptAttempt(ctx context.Context, a Assignment, job *StepJob) (WorkspaceAttempt, error) {
+	runID, workDir := a.Job.Key.RunID, jobWorkDir(job)
+	if runID == uuid.Nil || workDir == "" {
+		return WorkspaceAttempt{}, fmt.Errorf("%w: adopted job %s", ErrNoWorkspace, a.Job.ID)
+	}
+	if a.Fence != a.Job.Fence() {
+		return WorkspaceAttempt{}, fmt.Errorf("%w: assignment fence does not match its job", ErrFenced)
+	}
+	if err := s.d.Ledger.FenceCheck(ctx, a.Fence); err != nil {
+		return WorkspaceAttempt{}, err
+	}
+	rec, ok, err := s.d.Leases.Active(ctx, runKey(runID))
+	if err != nil {
+		return WorkspaceAttempt{}, fmt.Errorf("runner: read workspace claim of run %s: %w", runID, err)
+	}
+	if !ok || rec.Job == nil || *rec.Job != a.Fence {
+		return WorkspaceAttempt{}, fmt.Errorf("%w: adopted job %s generation %d does not hold run %s's workspace",
+			ErrResourceFenced, a.Fence.JobID, a.Fence.Generation, runID)
+	}
+	base, _, err := s.d.Checkpoints.Latest(ctx, runID)
+	if err != nil {
+		return WorkspaceAttempt{}, fmt.Errorf("runner: read committed checkpoint of run %s: %w", runID, err)
+	}
+	return WorkspaceAttempt{RunID: runID, WorkDir: workDir, Runner: a.Fence.RunnerID, Base: base, Resource: rec.Fence}, nil
+}
+
 // ReportProgress publishes real transfer bytes for a live attempt (P3 T7).
 // Invalid counts and stale fences publish nothing.
 func (s *WorkspaceSync) ReportProgress(ctx context.Context, f Fence, runID uuid.UUID, done, total int64) {

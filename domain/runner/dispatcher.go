@@ -114,6 +114,7 @@ const (
 
 // StepDispatcher places, records, executes and classifies dispatched operations.
 type StepDispatcher struct {
+	adopter         *JobAdopter
 	agentToolPolicy AgentToolPolicy
 	d               DispatcherDeps
 	mu              sync.Mutex
@@ -198,6 +199,9 @@ func (s *StepDispatcher) wake() {
 	s.wakeCh = make(chan struct{})
 }
 
+// SetAdopter installs the restart adoption branch. Call before use.
+func (s *StepDispatcher) SetAdopter(a *JobAdopter) { s.adopter = a }
+
 // Dispatch runs job under the identity on ctx. See the package flow (design P1 §3.5).
 func (s *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job StepJob) (StepOutput, error) {
 	id, ok := engine.StepIdentityFromContext(ctx)
@@ -223,10 +227,23 @@ func (s *StepDispatcher) Dispatch(ctx context.Context, req ExecRequirements, job
 		return StepOutput{}, fmt.Errorf("runner: record intent for %s/%s: %w", id.NodeID, id.OperationID, err)
 	}
 	if j.State.HoldsSlot() {
-		// Left offered/running by a crashed server or lost runner: close it first.
-		orphan := j.ID
-		if j, err = s.d.Ledger.Requeue(context.WithoutCancel(ctx), j.Fence(), OutcomeRunnerLost); err != nil {
-			return StepOutput{}, fmt.Errorf("runner: recover orphaned job %s: %w", orphan, err)
+		if s.adopter == nil {
+			// Left offered/running by a crashed server or lost runner: close it first.
+			orphan := j.ID
+			if j, err = s.d.Ledger.Requeue(context.WithoutCancel(ctx), j.Fence(), OutcomeRunnerLost); err != nil {
+				return StepOutput{}, fmt.Errorf("runner: recover orphaned job %s: %w", orphan, err)
+			}
+		} else {
+			out, done, rerr := s.adopter.Resolve(ctx, j, job)
+			if done {
+				return s.finishAdopted(ctx, j, req, job, out, rerr)
+			}
+			if rerr != nil {
+				return StepOutput{}, rerr
+			}
+			if j, err = s.d.Ledger.Get(ctx, j.ID); err != nil {
+				return StepOutput{}, fmt.Errorf("runner: reload recovered job: %w", err)
+			}
 		}
 		s.wake()
 	}

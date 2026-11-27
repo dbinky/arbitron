@@ -141,6 +141,48 @@ func (s *StepDispatcher) retryWorkspace(ctx context.Context, a Assignment, req E
 	return s.beginWorkspace(ctx, a, req, dec, job)
 }
 
+// finishAdopted uses the same receipt and rollback paths as fresh dispatch.
+// Context cancellation leaves the job live for the next adoption.
+func (s *StepDispatcher) finishAdopted(ctx context.Context, j Job, req ExecRequirements, job StepJob, out StepOutput, runErr error) (StepOutput, error) {
+	if runErr != nil && ctx.Err() != nil {
+		return StepOutput{}, runErr
+	}
+	bg := context.WithoutCancel(ctx)
+	a := Assignment{Job: j, Fence: j.Fence()}
+	sink, _ := engine.PlacementSinkFromContext(ctx)
+	var att *WorkspaceAttempt
+	if req.Affinity == AffinityWorkspace {
+		w, _ := s.workspace()
+		wa, ok := w.(WorkspaceAdopter)
+		if !ok {
+			s.release(bg, a, OutcomeOther)
+			return StepOutput{}, fmt.Errorf("%w: the workspace service cannot adopt job %s", ErrNoWorkspace, j.ID)
+		}
+		x, err := wa.AdoptAttempt(ctx, a, &job)
+		if err != nil {
+			s.release(bg, a, OutcomeOther)
+			return StepOutput{}, fmt.Errorf("runner: adopt the workspace of %s: %w", j.ID, err)
+		}
+		att = &x
+	}
+	if runErr != nil {
+		class := classOrOther(ClassifyError(runErr).Class)
+		s.fact(sink, a, string(class))
+		s.failWorkspace(bg, a, att)
+		s.release(bg, a, class)
+		return StepOutput{}, runErr
+	}
+	if job.Op == OpStream && out.Stream != nil {
+		ch := make(chan engine.ChatChunk)
+		go s.pump(ctx, j, a, req, job, out.Stream, sink, ch, 0)
+		return StepOutput{Stream: ch}, nil
+	}
+	if err := s.completeStep(ctx, a, att, &out, sink); err != nil {
+		return StepOutput{}, err
+	}
+	return out, nil
+}
+
 type pendingStep struct {
 	a   Assignment
 	att *WorkspaceAttempt
