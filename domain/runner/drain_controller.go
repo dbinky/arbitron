@@ -310,6 +310,21 @@ func (c *DrainController) place(ctx context.Context, req ExecRequirements) (Deci
 	}
 	snap.Now = c.d.Clock()
 	snap.Telemetry = c.d.Telemetry.Latest()
+	snap = freshTelemetry(snap, c.d.Policy)
+	// A pull consumes disk but no execution slot. AffinityNone avoids the old
+	// home; retain workspace eligibility and fresh disk evidence explicitly.
+	var targets []Runner
+	for _, target := range snap.Runners {
+		telemetry := snap.Telemetry[target.ID]
+		if homeIneligible(target, telemetry) != "" {
+			continue
+		}
+		if telemetry.DiskFreeBytes != nil && req.WorkspaceBytes > 0 && *telemetry.DiskFreeBytes < uint64(req.WorkspaceBytes) {
+			continue
+		}
+		targets = append(targets, target)
+	}
+	snap.Runners = targets
 	snap.SlotsInUse, snap.SourceInFlight = nil, nil
 	return Place(req, snap, c.d.Policy), nil
 }

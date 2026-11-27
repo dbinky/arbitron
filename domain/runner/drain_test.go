@@ -85,18 +85,19 @@ func (c *drainCheckpoints) Latest(_ context.Context, run uuid.UUID) (runner.Chec
 }
 
 type drainRig struct {
-	pool     *hubtest.Pool
-	hub      *runner.Hub
-	leases   *adaptsqlite.ResourceLeaseRepo
-	repo     *adaptsqlite.WorkspaceHomeRepo
-	homes    runner.HomeStore
-	store    *adaptsqlite.DrainItemRepo
-	puller   *drainPuller
-	sessions *drainSessions
-	cps      *drainCheckpoints
-	ctrl     *runner.DrainController
-	keys     map[runner.RunnerID]runner.RunnerKey
-	conns    map[runner.RunnerID]*hubtest.FakeConn
+	pool             *hubtest.Pool
+	hub              *runner.Hub
+	leases           *adaptsqlite.ResourceLeaseRepo
+	repo             *adaptsqlite.WorkspaceHomeRepo
+	homes            runner.HomeStore
+	store            *adaptsqlite.DrainItemRepo
+	puller           *drainPuller
+	sessions         *drainSessions
+	cps              *drainCheckpoints
+	ctrl             *runner.DrainController
+	keys             map[runner.RunnerID]runner.RunnerKey
+	conns            map[runner.RunnerID]*hubtest.FakeConn
+	sessionsByRunner map[runner.RunnerID]*runner.Session
 }
 
 func newDrainRig(t *testing.T) *drainRig {
@@ -105,7 +106,7 @@ func newDrainRig(t *testing.T) *drainRig {
 	r := &drainRig{pool: p, hub: p.NewHub(hubtest.HubConfig()), leases: adaptsqlite.NewResourceLeaseRepo(p.DB, "boot-test"),
 		repo: adaptsqlite.NewWorkspaceHomeRepo(p.DB), store: adaptsqlite.NewDrainItemRepo(p.DB),
 		sessions: &drainSessions{n: map[runner.RunnerID]int{}}, cps: &drainCheckpoints{refs: map[uuid.UUID]runner.CheckpointRef{}},
-		keys: map[runner.RunnerID]runner.RunnerKey{}, conns: map[runner.RunnerID]*hubtest.FakeConn{}}
+		keys: map[runner.RunnerID]runner.RunnerKey{}, conns: map[runner.RunnerID]*hubtest.FakeConn{}, sessionsByRunner: map[runner.RunnerID]*runner.Session{}}
 	for _, id := range []runner.RunnerID{"mac-1", "mac-2"} {
 		r.keys[id] = p.SeedRunner(t, id, 2)
 	}
@@ -134,9 +135,9 @@ func (r *drainRig) online(t *testing.T, id runner.RunnerID) {
 	conn := hubtest.NewFakeConn()
 	source := hubtest.AnthropicSource()
 	source.Capabilities = append(source.Capabilities, drainAgentCapability())
-	_, err := r.hub.Admit(context.Background(), r.keys[id], conn, hubtest.DarwinHello(source))
+	session, err := r.hub.Admit(context.Background(), r.keys[id], conn, hubtest.DarwinHello(source))
 	require.NoError(t, err)
-	r.conns[id] = conn
+	r.conns[id], r.sessionsByRunner[id] = conn, session
 }
 
 // homedRunOn gives `on` a run whose last workspace step (anthropic agent) is
@@ -479,6 +480,37 @@ func TestDrain_LocalOnlyPoolReportsCapacityBlocker(t *testing.T) {
 	assert.Equal(t, run, *p.Blocked[0].RunID)
 	assert.Equal(t, "anthropic_subscription:anthropic", p.Blocked[0].Group)
 	assert.Contains(t, p.Blocked[0].Reason, "no eligible runner")
+}
+
+func TestDrain_InsufficientTargetDiskKeepsSourceHomeAndCopy(t *testing.T) {
+	ctx := context.Background()
+	r := newDrainRig(t)
+	r.online(t, "mac-1")
+	r.online(t, "mac-2")
+	run, a := r.homedRun(t)
+	require.NoError(t, r.pool.Ledger.Complete(ctx, a.Fence, "result"))
+	free := uint64(0)
+	require.NoError(t, r.hub.Handle(ctx, r.sessionsByRunner["mac-2"], runner.Inbound{Kind: runner.MsgHeartbeat,
+		Heartbeat: &runner.HeartbeatInfo{Telemetry: runner.Telemetry{SampledAt: r.pool.Clock.Now(), DiskFreeBytes: &free}}}))
+	r.startDrain(t, "mac-1")
+	p, err := r.ctrl.Step(ctx, "mac-1")
+	require.NoError(t, err)
+	assert.False(t, p.Complete, "verified capacity is required before transferring bytes")
+	require.Len(t, p.Blocked, 1)
+	assert.Contains(t, p.Blocked[0].Reason, "no eligible runner")
+	assert.Empty(t, r.puller.pulls())
+	assert.Zero(t, r.deletesTo("mac-1"))
+	h, err := r.repo.GetHome(ctx, run)
+	require.NoError(t, err)
+	assert.Equal(t, runner.RunnerID("mac-1"), h.RunnerID)
+	free = 2 * runner.MinHomeFreeDiskBytes
+	require.NoError(t, r.hub.Handle(ctx, r.sessionsByRunner["mac-2"], runner.Inbound{Kind: runner.MsgHeartbeat,
+		Heartbeat: &runner.HeartbeatInfo{Telemetry: runner.Telemetry{SampledAt: r.pool.Clock.Now(), DiskFreeBytes: &free}}}))
+	p, err = r.ctrl.Step(ctx, "mac-1")
+	require.NoError(t, err)
+	assert.True(t, p.Complete)
+	assert.Len(t, r.puller.pulls(), 1)
+	assert.Equal(t, 1, r.deletesTo("mac-1"))
 }
 
 func TestNewDrainController_RequiresEveryCollaborator(t *testing.T) {
