@@ -15,6 +15,7 @@ Read the files named in the context above before ruling. They say what the pass 
 For each finding, decide whether the change is legitimate:
 
 - Legitimate: the plan or the stated task requires it. Examples: a test file is deleted or renamed because the code under test was removed or renamed in the same plan; a skip marker is added for a behaviour the plan explicitly defers; assertions dropped because they were replaced by stronger ones.
+- Legitimate, when recorded: a `> FIXTURE REPAIR (self-authorized):` line in the plan cites a specific spec, design or contracts requirement that made an existing test's setup or expectation wrong, and the diff updates that test to check the required behaviour. Read the cited text yourself. If it does not require the change, or the repair removes checking rather than redirecting it, the change is not legitimate.
 - Not legitimate: the change makes tests pass by weakening them. Examples: deleting a failing test, adding a skip to avoid a failure, loosening a config threshold or exclusion, editing CI so a check no longer runs, rewriting a baseline to hide a regression, dropping assertions with nothing replacing them.
 
 When the evidence is thin or you cannot tell, rule `legitimate: false`. A wrong void costs one pass; a wrong approval costs the integrity of the tests.

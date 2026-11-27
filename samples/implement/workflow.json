@@ -382,7 +382,7 @@
           {
             "variable": "tamper_context",
             "operation": "set",
-            "value": "implement pass {{impl_iteration}}: one task from the plans listed in resolve-inputs.inputs.plan_paths; a task that removes a feature may legitimately remove its tests"
+            "value": "implement pass {{impl_iteration}}: one task from the plans listed in resolve-inputs.inputs.plan_paths; a task that removes a feature may legitimately remove its tests; an existing test repaired this pass must have a `> FIXTURE REPAIR (self-authorized):` line in that plan citing the spec, design or contracts requirement that made it wrong"
           }
         ]
       },

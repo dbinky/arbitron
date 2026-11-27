@@ -41,6 +41,14 @@ Commit using the task's commit step (or `git -C ./work add -A && git -C ./work c
 
 Red tests *elsewhere* in the suite are tolerated at this stage; later refinement closes them. Focus on completing THIS task's own steps and its own tests correctly.
 
+## Repairing a conflicting existing test
+An existing test (one this pass did not write) may stop a step even though the step is right. For example, its setup omits something the spec, design or contracts now require, or it pins an old signature, count or value that a requirement changed. You may repair that test yourself instead of blocking, but only within these rules:
+- **Grounds.** The repair is allowed only when a specific requirement in the spec, design or contracts (or this task's plan text) makes the test's current setup or expectation wrong. "It fails" is not a ground.
+- **Never weaken.** The repaired test must still prove what it proved before, now against the required behaviour. Update a fixture, a constructor call, a count or an expected value to the required one. Never delete a test, add a skip, drop an assertion without a replacement that checks the required behaviour, or loosen a timeout, threshold or tolerance to make it pass.
+- **A preexisting failure in a test this task does not touch is not a conflict.** Leave it alone; failures elsewhere are tolerated (see Commit).
+- **Prove it.** Run the repaired test and the step's own tests; both must pass for the right reason.
+- **Record it.** Under the step, add one line per repaired test: `> FIXTURE REPAIR (self-authorized): <TestName> in <file> — <what changed> — because <the requirement, citing the spec, design or contracts section>`. The tamper gate's judge reads this line when it rules on the change; a repair without one is voided.
+
 ## If blocked (do NOT guess)
 If you genuinely cannot complete the task — missing dependency, a plan step that is wrong/impossible, a missing producer/wiring the task depends on, or a verification that fails repeatedly — do **not** fabricate a "best guess" or paper over a missing input with a `// NOTE`. Instead:
 - Document the blocker precisely: a `> BLOCKED: <why>` note under the failing step in the task file, and in your report.

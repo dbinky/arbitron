@@ -351,6 +351,56 @@ func TestImplTemplateHasNoPush(t *testing.T) {
 	}
 }
 
+// An existing test whose setup contradicts the spec, design or contracts would
+// otherwise block implement until a human authorizes the change. implement may
+// repair it itself, within guardrails, and must record why; the tamper judge
+// rules on any repair the gate flags by checking that recorded justification.
+func TestImplFixtureRepairIsBoundedAndJudged(t *testing.T) {
+	impl, err := os.ReadFile("implement/templates/impl-task.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := string(impl)
+	sec := strings.Index(tpl, "## Repairing a conflicting existing test")
+	if sec < 0 {
+		t.Fatal("impl-task.md must have a fixture-repair section")
+	}
+	if blocked := strings.Index(tpl, "## If blocked"); blocked < 0 || sec > blocked {
+		t.Error("the fixture-repair section must come before \"If blocked\" so repair is tried first")
+	}
+	for _, want := range []string{
+		"> FIXTURE REPAIR (self-authorized):", // the recorded justification
+		"spec, design or contracts",           // the only grounds
+		"Never delete a test",                 // guardrails
+		"add a skip",
+		"without a replacement",
+		"preexisting failure",
+	} {
+		if !strings.Contains(tpl, want) {
+			t.Errorf("impl-task.md fixture-repair rules must contain %q", want)
+		}
+	}
+	wf := loadSample(t, "implement")
+	ctx := ""
+	for _, op := range nodeByID(wf, "tamper-context").Config.Operations {
+		if op.Variable == "tamper_context" {
+			ctx, _ = op.Value.(string)
+		}
+	}
+	if !strings.Contains(ctx, "FIXTURE REPAIR") {
+		t.Errorf("implement's tamper_context must point the judge at FIXTURE REPAIR lines, got %q", ctx)
+	}
+	judge, err := os.ReadFile("_lib/tamper-judge.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"FIXTURE REPAIR", "cites"} {
+		if !strings.Contains(string(judge), want) {
+			t.Errorf("tamper-judge.md must rule on recorded fixture repairs (missing %q)", want)
+		}
+	}
+}
+
 // strengthen may change tests only and must clear a voided round's must-fix
 // list first; it records equivalence claims in the claims file and never
 // pushes. The judge reads the claims and writes rulings to the verdicts file:
