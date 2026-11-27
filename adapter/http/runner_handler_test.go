@@ -21,14 +21,16 @@ import (
 // fakeRunnerService records load-bearing arguments and enforces the admin gate
 // the real service applies, so routing + error mapping are exercised.
 type fakeRunnerService struct {
-	views   []runner.RunnerView
-	detail  runner.RunnerDetail
-	events  []runner.PoolEvent
-	gotID   runner.RunnerID
-	gotSrc  runner.SourceID
-	gotLim  int
-	gotPat  runner.RunnerConfigPatch
-	cordons []bool
+	views    []runner.RunnerView
+	detail   runner.RunnerDetail
+	events   []runner.PoolEvent
+	gotID    runner.RunnerID
+	gotSrc   runner.SourceID
+	gotLim   int
+	gotPat   runner.RunnerConfigPatch
+	cordons  []bool
+	drain    runner.DrainProgress
+	drainErr error
 }
 
 func fakeAdmin(ctx context.Context) error {
@@ -84,6 +86,14 @@ func (f *fakeRunnerService) ProbeSource(ctx context.Context, id runner.SourceID)
 	}
 	f.gotSrc = id
 	return runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}, nil
+}
+
+func (f *fakeRunnerService) Drain(ctx context.Context, id runner.RunnerID) (runner.DrainProgress, error) {
+	if err := fakeAdmin(ctx); err != nil {
+		return runner.DrainProgress{}, err
+	}
+	f.gotID = id
+	return f.drain, f.drainErr
 }
 
 func sampleRunnerFake() *fakeRunnerService {

@@ -16,14 +16,16 @@ import (
 )
 
 type stubRunnerService struct {
-	views   []runner.RunnerView
-	detail  runner.RunnerDetail
-	events  []runner.PoolEvent
-	gotLim  int
-	gotPat  runner.RunnerConfigPatch
-	gotSrc  runner.SourceID
-	gotID   runner.RunnerID
-	cordons []bool
+	views    []runner.RunnerView
+	detail   runner.RunnerDetail
+	events   []runner.PoolEvent
+	gotLim   int
+	gotPat   runner.RunnerConfigPatch
+	gotSrc   runner.SourceID
+	gotID    runner.RunnerID
+	cordons  []bool
+	drain    runner.DrainProgress
+	gotDrain runner.RunnerID
 }
 
 func stubAdmin(ctx context.Context) error {
@@ -80,6 +82,14 @@ func (s *stubRunnerService) ProbeSource(ctx context.Context, id runner.SourceID)
 	}
 	s.gotSrc = id
 	return runner.SourceHealth{Auth: runner.AuthOK, Capacity: runner.CapacityAvailable}, nil
+}
+
+func (s *stubRunnerService) Drain(ctx context.Context, id runner.RunnerID) (runner.DrainProgress, error) {
+	if err := stubAdmin(ctx); err != nil {
+		return runner.DrainProgress{}, err
+	}
+	s.gotDrain = id
+	return s.drain, nil
 }
 
 func sampleRunnerStub() *stubRunnerService {

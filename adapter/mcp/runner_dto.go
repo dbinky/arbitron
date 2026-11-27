@@ -134,6 +134,12 @@ func toRunnerViewJSON(v runner.RunnerView) runnerViewJSON {
 		t := toRunnerTelemetryJSON(*v.Telemetry)
 		out.Telemetry = &t
 	}
+	if v.Drain != nil {
+		b, err := json.Marshal(toDrainProgressJSON(*v.Drain))
+		if err == nil {
+			out.Drain = b
+		}
+	}
 	return out
 }
 

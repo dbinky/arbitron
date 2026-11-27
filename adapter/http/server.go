@@ -441,6 +441,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 				r.Get("/{id}", rh.Get)
 				r.Patch("/{id}", rh.Update)
 				r.Post("/{id}/cordon", rh.Cordon)
+				r.Post("/{id}/drain", rh.Drain)
 				r.Post("/{id}/uncordon", rh.Uncordon)
 			})
 		}

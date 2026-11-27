@@ -21,6 +21,7 @@ type RunnerService interface {
 	Update(ctx context.Context, id runner.RunnerID, p runner.RunnerConfigPatch) (runner.Runner, error)
 	Cordon(ctx context.Context, id runner.RunnerID) error
 	Uncordon(ctx context.Context, id runner.RunnerID) error
+	Drain(ctx context.Context, id runner.RunnerID) (runner.DrainProgress, error)
 	ProbeSource(ctx context.Context, id runner.SourceID) (runner.SourceHealth, error)
 }
 
@@ -139,6 +140,19 @@ func (h *RunnerHandler) ProbeSource(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, toSourceHealthResponse(hl))
 }
 
+func (h *RunnerHandler) Drain(w http.ResponseWriter, r *http.Request) {
+	id, ok := runnerParam(w, r, "id")
+	if !ok {
+		return
+	}
+	p, err := h.svc.Drain(r.Context(), runner.RunnerID(id))
+	if err != nil {
+		writeRunnerError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, toDrainProgressResponse(p))
+}
+
 // runnerParam reads a URL-escaped path parameter (source IDs contain "/",
 // sent as %2F; chi matches on the raw path, so the value arrives escaped).
 func runnerParam(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
@@ -160,6 +174,8 @@ func writeRunnerError(w http.ResponseWriter, err error) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "runner not found")
 	case errors.Is(err, runner.ErrSourceNotFound):
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "source not found")
+	case errors.Is(err, runner.ErrDrainUnavailable):
+		WriteError(w, http.StatusServiceUnavailable, "DRAIN_UNAVAILABLE", "drain is not configured")
 	case errors.Is(err, runner.ErrInvalidStepLimit):
 		WriteError(w, http.StatusBadRequest, "INVALID_STEP_LIMIT", "stepLimit must be between 1 and 256")
 	default:

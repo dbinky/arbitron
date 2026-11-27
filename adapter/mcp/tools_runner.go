@@ -21,6 +21,7 @@ type RunnerService interface {
 	Update(ctx context.Context, id runner.RunnerID, p runner.RunnerConfigPatch) (runner.Runner, error)
 	Cordon(ctx context.Context, id runner.RunnerID) error
 	Uncordon(ctx context.Context, id runner.RunnerID) error
+	Drain(ctx context.Context, id runner.RunnerID) (runner.DrainProgress, error)
 	ProbeSource(ctx context.Context, id runner.SourceID) (runner.SourceHealth, error)
 }
 
@@ -52,6 +53,10 @@ func RegisterRunnerTools(srv *Server) {
 		gomcp.WithDescription("Admin: allow placements on a runner again."),
 		gomcp.WithString("id", gomcp.Required(), gomcp.Description("Runner id")),
 	), runnerCordonHandler(srv, false))
+	srv.AddTool(gomcp.NewTool("runner_drain",
+		gomcp.WithDescription("Admin: drain a runner — stop new placements, let active steps finish, move its homed workspaces to eligible runners. Returns progress; blocked items name the missing capacity. Safe to call again to read progress."),
+		gomcp.WithString("id", gomcp.Required(), gomcp.Description("Runner id")),
+	), runnerDrainHandler(srv))
 	srv.AddTool(gomcp.NewTool("runner_source_probe",
 		gomcp.WithDescription("Admin: probe a credential source's auth/capacity now (read-only, no tokens)."),
 		gomcp.WithString("sourceId", gomcp.Required(), gomcp.Description("Source id, e.g. builtin/anthropic_subscription/-")),
@@ -68,6 +73,8 @@ func runnerErrorResult(err error) *gomcp.CallToolResult {
 		return gomcp.NewToolResultError("runner not found")
 	case errors.Is(err, runner.ErrSourceNotFound):
 		return gomcp.NewToolResultError("source not found")
+	case errors.Is(err, runner.ErrDrainUnavailable):
+		return gomcp.NewToolResultError("drain is not configured")
 	case errors.Is(err, runner.ErrInvalidStepLimit):
 		return gomcp.NewToolResultError("stepLimit must be between 1 and 256")
 	default:
@@ -99,6 +106,23 @@ func runnerListHandler(srv *Server) server.ToolHandlerFunc {
 			out = append(out, toRunnerViewJSON(v))
 		}
 		return MarshalResult(map[string]any{"runners": out})
+	}
+}
+
+func runnerDrainHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Runners == nil {
+			return errRunnerUnavailable, nil
+		}
+		id, bad := runnerArg(request, "id")
+		if bad != nil {
+			return bad, nil
+		}
+		p, err := srv.deps.Runners.Drain(ctx, runner.RunnerID(id))
+		if err != nil {
+			return runnerErrorResult(err), nil
+		}
+		return MarshalResult(toDrainProgressJSON(p))
 	}
 }
 

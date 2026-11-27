@@ -69,7 +69,7 @@ type runnerViewResponse struct {
 	HomedWorkspaces int                      `json:"homedWorkspaces"`
 	Sources         []runnerSourceResponse   `json:"sources"`
 	Telemetry       *runnerTelemetryResponse `json:"telemetry"`
-	Drain           json.RawMessage          `json:"drain"` // P3 T12 fills; null in P1
+	Drain           json.RawMessage          `json:"drain"`
 }
 
 type assignmentResponse struct {
@@ -136,6 +136,12 @@ func toRunnerViewResponse(v runner.RunnerView) runnerViewResponse {
 	if v.Telemetry != nil {
 		t := toRunnerTelemetryResponse(*v.Telemetry)
 		out.Telemetry = &t
+	}
+	if v.Drain != nil {
+		b, err := json.Marshal(toDrainProgressResponse(*v.Drain))
+		if err == nil {
+			out.Drain = b
+		}
 	}
 	return out
 }
