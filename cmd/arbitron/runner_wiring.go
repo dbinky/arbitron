@@ -188,6 +188,8 @@ type runnerStackDeps struct {
 	ServerRoot          string
 	Logger              *slog.Logger
 	RequiredModels      runner.RequiredModelSource
+	Homes               *adaptsqlite.WorkspaceHomeRepo
+	Leases              runner.ResourceLeaseStore
 }
 
 // runnerStack is the assembled Phase 1 pool: one built-in runner behind the
@@ -251,7 +253,7 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 	remoteStack, err := wireRemoteRunners(remoteRunnerInputs{
 		DB: d.DB, Runners: d.Config, ServerRoot: d.ServerRoot, Registry: d.Registry, Ledger: ledger,
 		Events: recorder, Health: monitor, Notifier: notifier, Audit: d.Audit, Builtin: builtin,
-		Logger: d.Logger, Clock: clock, RequiredModels: d.RequiredModels,
+		Logger: d.Logger, Clock: clock, RequiredModels: d.RequiredModels, Homes: d.Homes, Leases: d.Leases,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("wiring remote runners: %w", err)

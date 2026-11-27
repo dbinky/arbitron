@@ -1266,7 +1266,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		Config: cfg.Runners, DB: db, Bus: bus, Registry: runnerRegistry, RefreshInventory: sourceSync.Sync,
 		Factory: providerFactory, Streams: interactiveStreamSel, DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
 		BuiltinFactory: builtinFactory, BuiltinStreams: builtinStreamSel, Supervisor: builtinSup,
-		Process: localProcess,
+		Process: localProcess, Homes: homeRepo, Leases: leases,
 		Probers: map[runner.CredentialKind]runner.SourceProber{
 			runner.CredAnthropicSubscription: runnerprobe.NewClaudeAuthProber(cfg.LLM.BinaryPath, claudeRunner),
 			runner.CredOpenAISubscription:    runnerprobe.NewCodexProber(codexCfg),
@@ -1510,12 +1510,15 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	}
 	groupCoord := engine.NewGroupCoordinator(groupRunRepo, instanceRepo, queueRepo, eng, identityResolver, bus, queueMgr)
 	groupLauncher := engine.NewGroupLauncher(groupRunRepo, eng, eng, mobility.Workspaces, groupWS, identityResolver, eng, bus)
+	groupLauncher.SetWorkspaceResource(mobility.Resource)
 	groupLauncher.SetFileWorkingArea(workingArea)
 	groupLauncher.SetLaunchByteBudget(cfg.Workspace.EffectiveGroupLaunchMaxBytes(), filesystem.GroupAreaMeter{})
 	groupExecutor := engine.NewParallelGroupExecutor(instanceRepo, nodeExecRepo, groupRunRepo, groupLauncher, groupCoord, instanceRepo, queueMgr)
 	eng.RegisterExecutor(workflow.NodeTypeParallelGroup, groupExecutor)
 	// Finalize immutable task refs before terminal persistence/workspace cleanup.
-	eng.SetGroupTaskFinalizer(engine.NewGroupFileFinalizer(groupRunRepo, workingArea, wsMgr))
+	groupFinalizer := engine.NewGroupFileFinalizer(groupRunRepo, workingArea, wsMgr)
+	groupFinalizer.SetWorkspaceResource(mobility.Resource)
+	eng.SetGroupTaskFinalizer(groupFinalizer)
 	eng.SetGroupTerminalHandler(groupCoord)
 
 	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
@@ -1668,6 +1671,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	}
 	groupSessions.SetGroupResolution(groupRunRepo, groupResolution)
 	gatherer := engine.NewGroupGatherer(groupRunRepo, workingArea, groupResolution, bus)
+	gatherer.SetWorkspaceResource(mobility.Resource)
 	groupExecutor.SetGatherer(gatherer)
 	groupPruner := engine.NewGroupResourcePruner(
 		groupRunRepo, instanceRepo, instanceRepo, mobility.Workspaces, workingArea, workingArea,

@@ -57,7 +57,13 @@ func (r *revocationHomeReleaser) release(ctx context.Context, id RunnerID, h Hom
 		if rec.Fence.Owner != string(id) {
 			return fmt.Errorf("%w: claimed by %q, not the revoked runner", ErrResourceBusy, rec.Fence.Owner)
 		}
-		if claim, err = r.supersede(ctx, rec, holder); err != nil {
+		claim, err = r.supersede(ctx, rec, holder)
+		if errors.Is(err, ErrResourceFenced) {
+			// The stopped job may have released its claim after Active. Claim
+			// atomically succeeds only if nobody else has acquired the resource.
+			claim, err = r.leases.Claim(ctx, key, holder, BuiltInRunnerID)
+		}
+		if err != nil {
 			return err
 		}
 	} else if claim, err = r.leases.Claim(ctx, key, holder, BuiltInRunnerID); err != nil {

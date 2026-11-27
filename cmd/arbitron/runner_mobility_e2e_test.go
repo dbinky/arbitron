@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -455,4 +456,89 @@ func TestBuildWorkspaceMobility_OneLeaseRepoBoundToTheBootID(t *testing.T) {
 	var boot string
 	require.NoError(t, st.ds.db.QueryRow(`SELECT boot_id FROM workspace_lease_holders WHERE resource_key = ? AND generation = ?`, ref.Key, ref.Generation).Scan(&boot))
 	assert.Equal(t, m.BootID, boot, "server-side claims record THIS boot, so a later boot can prove server_restart")
+}
+
+const p3BranchesManifest = `{
+  "name": "p3-branches",
+  "description": "parallel branches on independent homes, gathered into the parent",
+  "inputs": [],
+  "nodes": [
+    {"id": "one", "type": "agent_call", "entrypoint": true, "config": {"model_profile": "default-agent", "templateFile": "templates/one.md"}},
+    {"id": "g", "type": "parallel_group",
+     "config": {"group": {"form": "branches", "tasks": [{"key": "a", "entry": "a-run"}, {"key": "b", "entry": "b-run"}],
+       "completionRule": "all_succeed", "unfinishedBehavior": "cancel_unfinished", "gatherMode": "results_and_files",
+       "resolverProfile": "default-agent"}}},
+    {"id": "a-run", "type": "agent_call", "config": {"model_profile": "default-agent", "templateFile": "templates/branch-a.md"}},
+    {"id": "b-run", "type": "agent_call", "config": {"model_profile": "default-agent", "templateFile": "templates/branch-b.md"}},
+    {"id": "two", "type": "agent_call", "config": {"model_profile": "default-agent", "templateFile": "templates/two.md"}},
+    {"id": "onFailure", "type": "transform", "config": {"operations": [{"variable": "branch", "operation": "set", "value": "failure"}]}}
+  ],
+  "edges": [
+    {"source": "one", "target": "g"},
+    {"source": "g", "target": "a-run", "output": "task", "label": "a"},
+    {"source": "g", "target": "b-run", "output": "task", "label": "b"},
+    {"source": "g", "target": "two", "output": "success"},
+    {"source": "g", "target": "onFailure", "output": "failure"}
+  ]
+}`
+
+// Both branches wait for the other native launch. With cap one they must run
+// on independent homes; the final remote launch must read the gathered bytes.
+func TestPhase3E2E_ParallelBranchesPlaceIndependentlyAndGatherSeesAll(t *testing.T) {
+	requireHostGit(t)
+	st := bootP3Stack(t, map[string]p3Workflow{"p3-branches": {manifest: p3BranchesManifest, files: p3Files(nil)}}, "")
+	startWorkspaceRunner(t, st, "mac-1", runneragent.OpAgent)
+	startWorkspaceRunner(t, st, "mac-2", runneragent.OpAgent)
+
+	id, _, err := st.ds.eng.Trigger(adminCtxForLocalUser(t, st.ds), "p3-branches", map[string]any{}, "normal")
+	require.NoError(t, err)
+	p3RequireCompleted(t, st.ds, id, 90*time.Second)
+
+	run := groupRunOf(t, st.ds, id, "g")
+	require.Len(t, run.Tasks, 2)
+	var onA, onB []string
+	for _, task := range run.Tasks {
+		switch task.Key {
+		case "a":
+			onA = p3CompletedOn(t, st.ds, task.ChildInstanceID, "a-run")
+		case "b":
+			onB = p3CompletedOn(t, st.ds, task.ChildInstanceID, "b-run")
+		}
+	}
+	require.Len(t, onA, 1)
+	require.Len(t, onB, 1)
+	assert.NotEqual(t, onA[0], onB[0], "SINK: the branches ran on different runners at the same time")
+	require.NotNil(t, run.Gather)
+	out := p3Output(t, st.ds, id, "two")
+	listing := out[strings.Index(out, "|"):]
+	assert.Contains(t, listing, "branch-a.txt", "SINK: the gather saw branch a's files")
+	assert.Contains(t, listing, "branch-b.txt", "SINK: the gather saw branch b's files")
+	assert.Contains(t, out, "step1,step2,", "the parent's own remote work survived the group")
+}
+
+func TestPhase3E2E_RevokedKeyReleasesHomesAndRecoversSteps(t *testing.T) {
+	st := bootP3Stack(t, map[string]p3Workflow{"p3-hold": {manifest: p3HoldManifest, files: p3Files(nil)}}, "")
+	mac1 := startWorkspaceRunner(t, st, "mac-1", runneragent.OpAgent)
+	id, _, err := st.ds.eng.Trigger(adminCtxForLocalUser(t, st.ds), "p3-hold", map[string]any{}, "normal")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.ds.eng.Cancel(adminCtxForLocalUser(t, st.ds), id) })
+	st.awaitFile(t, "hold.started", 30*time.Second)
+
+	code, body := rrDo(t, http.MethodDelete, st.srv.URL+"/api/v1/runners/keys/"+mac1.keyID, map[string]any{"acknowledge": true})
+	require.Equal(t, http.StatusOK, code, string(body))
+	rrAwaitLiveness(t, st.rr(), mac1.id, "lost")
+	require.Eventually(t, func() bool { o, ok := p3HomeOwner(st.ds, id); return ok && o == "" },
+		20*time.Second, 50*time.Millisecond, "SINK: the revoked runner's home is released to the server checkpoint")
+
+	mac2 := startWorkspaceRunner(t, st, "mac-2", runneragent.OpAgent)
+	p3RequireCompleted(t, st.ds, id, 60*time.Second)
+
+	assert.Equal(t, []string{mac2.id}, p3CompletedOn(t, st.ds, id, "two"))
+	moves := rrStrings(t, st.ds, `SELECT from_runner || '>' || to_runner FROM home_moves WHERE run_id = ? ORDER BY generation`, id.String())
+	assert.Contains(t, moves, mac1.id+">", "the release is recorded in the home history")
+	assert.Contains(t, moves, ">"+mac2.id)
+	out := p3Output(t, st.ds, id, "two")
+	assert.Contains(t, out, "step1,step2,|")
+	assert.NotContains(t, out, "partial.txt")
+	assert.Positive(t, p3NoticeCount(t, st.ds, id, "two"))
 }

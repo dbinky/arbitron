@@ -34,6 +34,8 @@ type remoteRunnerInputs struct {
 	Logger         *slog.Logger
 	Clock          func() time.Time           // nil = time.Now
 	RequiredModels runner.RequiredModelSource // optional; nil requests no models
+	Homes          runner.HomeStore
+	Leases         runner.ResourceLeaseStore
 }
 
 // remoteRunnerStack is everything the server needs to admit, supervise and
@@ -104,11 +106,17 @@ func wireRemoteRunners(in remoteRunnerInputs) (*remoteRunnerStack, error) {
 	})
 	in.Health.SetRemoteProber(runner.NewRemoteSourceProber(hub))
 	hub.SetRequiredModels(in.RequiredModels)
+	var revoker runner.SessionRevoker = hub
+	if in.Homes != nil && in.Leases != nil {
+		// Revocation uses the undecorated homes and the same durable claim
+		// repository as sync and recovery; no copy deletion is owed to a revoked key.
+		revoker = runner.NewRevocationHomeReleaser(hub, in.Homes, in.Leases)
+	}
 	keys := runner.NewKeyService(runner.KeyServiceDeps{
 		Store:            adaptsqlite.NewRunnerKeyRepo(in.DB),
 		Registry:         in.Registry,
 		Audit:            in.Audit,
-		Revoker:          hub,
+		Revoker:          revoker,
 		Clock:            clock,
 		DefaultStepLimit: in.Runners.DefaultStepLimit,
 	})
