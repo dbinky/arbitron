@@ -101,6 +101,7 @@ func (h *InstanceHandler) SetGraphState(gs GraphStateService) {
 
 // instanceResponse is a JSON-friendly representation of an instance.
 type instanceResponse struct {
+	WorkspaceMoves    []instance.WorkspaceMove   `json:"workspaceMoves,omitempty"`
 	Recovery          []instance.RecoveryNotice  `json:"recovery,omitempty"`
 	Execution         []instance.ExecutionStatus `json:"execution,omitempty"`
 	ID                string                     `json:"id"`
@@ -145,6 +146,7 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	}
 	resp.WorkflowSnapshot = inst.WorkflowSnapshot
 	resp.Recovery = inst.Recovery
+	resp.WorkspaceMoves = inst.WorkspaceMoves
 	if inst.CompletedAt != nil {
 		s := inst.CompletedAt.Format(APITimeFormat)
 		resp.CompletedAt = &s
@@ -837,6 +839,7 @@ type placementRecordResponse struct {
 }
 
 type nodeExecutionResponse struct {
+	WorkspaceMoves       []instance.WorkspaceMove     `json:"workspaceMoves,omitempty"`
 	Recovery             []instance.RecoveryNotice    `json:"recovery,omitempty"`
 	RunnerID             *string                      `json:"runnerId,omitempty"`
 	SourceID             *string                      `json:"sourceId,omitempty"`
@@ -868,8 +871,9 @@ type nodeExecutionResponse struct {
 
 func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse {
 	resp := nodeExecutionResponse{
-		Recovery: exec.Recovery,
-		RunnerID: exec.RunnerID, SourceID: exec.SourceID, PlacementReason: exec.PlacementReason,
+		Recovery:       exec.Recovery,
+		WorkspaceMoves: exec.WorkspaceMoves,
+		RunnerID:       exec.RunnerID, SourceID: exec.SourceID, PlacementReason: exec.PlacementReason,
 		ID:                   exec.ID.String(),
 		InstanceID:           exec.InstanceID.String(),
 		NodeID:               exec.NodeID,

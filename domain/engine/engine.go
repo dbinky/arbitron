@@ -25,6 +25,7 @@ import (
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
 	recoveryNotices   RecoveryNoticeSource
+	workspaceHistory  WorkspaceHistorySource
 	workflows         workflow.Repository
 	instances         instance.InstanceRepository
 	nodeExecutions    instance.NodeExecutionRepository
@@ -931,6 +932,9 @@ func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Insta
 	if err := e.attachRecovery(ctx, inst); err != nil {
 		return nil, err
 	}
+	if err := e.attachWorkspaceHistory(ctx, inst); err != nil {
+		return nil, err
+	}
 	return inst, nil
 }
 
@@ -1000,6 +1004,7 @@ func (e *Engine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExe
 	}
 	for i := range execs {
 		execs[i].Recovery = noticesFor(inst.Recovery, execs[i].NodeID)
+		execs[i].WorkspaceMoves = movesForExecution(inst.WorkspaceMoves, execs[i])
 	}
 	return execs, nil
 }
@@ -1016,6 +1021,7 @@ func (e *Engine) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) 
 		return ex, err
 	}
 	ex.Recovery = noticesFor(inst.Recovery, nodeID)
+	ex.WorkspaceMoves = movesForExecution(inst.WorkspaceMoves, *ex)
 	return ex, nil
 }
 

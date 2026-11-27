@@ -194,7 +194,8 @@ type Instance struct {
 	WebhookSecretHash *string
 	WebhookReceivedAt *time.Time
 	// Recovery is derived at read time from interrupted attempts; never persisted.
-	Recovery []RecoveryNotice `json:"Recovery,omitempty"`
+	Recovery       []RecoveryNotice `json:"Recovery,omitempty"`
+	WorkspaceMoves []WorkspaceMove  `json:"WorkspaceMoves,omitempty"`
 }
 
 // IsRoot reports whether this run has no spawning parent. It is the ONE place
@@ -322,7 +323,8 @@ type NodeExecution struct {
 	PlacementReason      *string           `json:"placementReason,omitempty"`
 	PlacementHistory     []PlacementRecord `json:"placementHistory,omitempty"`
 	// Recovery contains interrupted attempts of this node, derived at read time.
-	Recovery []RecoveryNotice `json:"Recovery,omitempty"`
+	Recovery       []RecoveryNotice `json:"Recovery,omitempty"`
+	WorkspaceMoves []WorkspaceMove  `json:"WorkspaceMoves,omitempty"`
 }
 
 // PlacementRecord is one persisted placement fact of a node-execution attempt.
