@@ -158,7 +158,7 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	// wait path, so the executor writes its own — otherwise the awaited spawn
 	// node would leave no trace entry at all.
 	completedAt := time.Now()
-	if err := e.nodeExecs.Create(ctx, &instance.NodeExecution{
+	rec := &instance.NodeExecution{
 		ID:          uuid.New(),
 		InstanceID:  instanceID,
 		NodeID:      node.ID,
@@ -167,7 +167,13 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 		Output:      output,
 		StartedAt:   startedAt,
 		CompletedAt: &completedAt,
-	}); err != nil {
+	}
+	// Input preparation may have run on a runner; carry its placement facts
+	// onto this hand-written record, as executeWithRetry does for other nodes.
+	if sink, ok := PlacementSinkFromContext(ctx); ok {
+		applyPlacement(rec, sink.Facts())
+	}
+	if err := e.nodeExecs.Create(ctx, rec); err != nil {
 		return nil, fmt.Errorf("spawn_workflow %q: write node execution record: %w", node.ID, err)
 	}
 
