@@ -47,6 +47,7 @@ Spec: `docs/specs/2026-11-19-remote-runners-spec.md`. Designs:
 | 044 | `044_workspace_mobility` | P3 T1 | `workspace_checkpoints` (prepared/committed), `workspace_leases`, `home_moves`, `transfer_sessions`, `step_commits`, `step_commit_operations`, `node_retry_progress`, `node_retry_failures`, suspension records, maintenance operations, `builtin_processes`, `drain_items`, `runner_copies` |
 | 045 | `045_interactive_sessions` | P4 T1 | `turn_leases`, `turn_intents` (accepted binding and request ID), `session_moves`, resolution resources/materialization state; `node_executions` columns `session_checkpoint_ref`, `session_pin_runner`, `session_generation`, `session_invocation_id` |
 | 047 | `047_runner_job_absences` | P3 T10 Cycle 4a (decision D6, unstick 2026-11-25) | `runner_job_absences` (job_id, generation, runner_id, reported_at; PK job_id+generation); rebuilds `workspace_lease_supersessions` with `'reconnect_absent'` added to its `kind` CHECK (rows preserved; down drops only the new table) |
+| 048 | `048_transfer_session_direction` | P4 T12 Cycle 2 (unstick 2026-11-27) | rebuilds `transfer_sessions` with `'session'` added to its `direction` CHECK, keeping every 044 column and both indexes; down deletes `session` rows and restores the 044 CHECK. `validTransferScope` gains `case TransferSessionData` (job fence + exact live claim, no base, no bundle hash) |
 
 ## 2. Config (`domain/config/config.go`, loader keys in `adapter/config/loader.go`)
 
