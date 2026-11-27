@@ -44,6 +44,7 @@ type RunnerView struct {
 	Queued          int
 	Telemetry       *Telemetry
 	HomedWorkspaces int
+	Drain           *DrainProgress
 }
 
 // RunnerDetail adds what is running there now.
@@ -72,7 +73,10 @@ const (
 
 // Service is the single authority for pool reads and admin writes; REST and MCP
 // are thin adapters over it so the two surfaces cannot drift.
-type Service struct{ d ServiceDeps }
+type Service struct {
+	d     ServiceDeps
+	drain *DrainController
+}
 
 // NewService validates the wiring (missing dependencies panic at boot).
 func NewService(d ServiceDeps) *Service {
@@ -120,7 +124,11 @@ func (s *Service) List(ctx context.Context) ([]RunnerView, error) {
 	tel := s.d.Telemetry.Latest()
 	out := make([]RunnerView, 0, len(snap.Runners))
 	for _, r := range snap.Runners {
-		out = append(out, svcView(r, snap, active, tel))
+		v := svcView(r, snap, active, tel)
+		if err := s.attachDrain(ctx, &v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Runner.BuiltIn != out[j].Runner.BuiltIn {
@@ -149,6 +157,9 @@ func (s *Service) Get(ctx context.Context, id RunnerID) (RunnerDetail, error) {
 		return RunnerDetail{}, fmt.Errorf("runner: list assignments: %w", err)
 	}
 	d := RunnerDetail{RunnerView: svcView(rn, snap, active, s.d.Telemetry.Latest())}
+	if err := s.attachDrain(ctx, &d.RunnerView); err != nil {
+		return RunnerDetail{}, err
+	}
 	for _, j := range jobs {
 		if j.State != JobOffered && j.State != JobRunning {
 			continue
