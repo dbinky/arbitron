@@ -88,6 +88,7 @@ type HelloInfo struct {
 	Sources         []SourceReport
 	Held            []HeldJobInfo
 	PullReceipts    []PullReceiptPayload
+	Copies          []HeldCopyInfo
 }
 
 // SourceReport is one credential source a runner advertises.
@@ -206,6 +207,7 @@ type Outbound struct {
 	Generation     int64
 	Dispatch       *DispatchPayload
 	Ack            *AckPayload
+	DeleteCopy     *DeleteCopyPayload
 }
 
 // Inbound is a runner -> hub message after admission.

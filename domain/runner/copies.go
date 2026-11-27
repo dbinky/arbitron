@@ -56,7 +56,8 @@ type HeldCopyInfo struct {
 	HomeGeneration int64
 }
 
-// CopyReconciler decides which reported copies a reconnecting runner must delete.
+// CopyReconciler handles a reconnecting runner's reported copies, delivering
+// each authorized delete itself; it returns the deletes it sent.
 type CopyReconciler interface {
 	ReconcileCopies(ctx context.Context, id RunnerID, held []HeldCopyInfo) ([]DeleteCopyPayload, error)
 }

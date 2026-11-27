@@ -30,7 +30,8 @@ type HubDeps struct {
 
 // Hub owns every remote runner session in this server process.
 type Hub struct {
-	pulls             PullReceiver // guarded by mu
+	copies            CopyReconciler // guarded by mu
+	pulls             PullReceiver   // guarded by mu
 	adopt             AdoptionBook
 	restartGraceUntil atomic.Int64
 	wsJobs            atomic.Pointer[WorkspaceJobDeps]
@@ -304,6 +305,7 @@ func (h *Hub) Admit(ctx context.Context, key RunnerKey, conn RunnerConn, hello H
 	h.adopt.runnerReconnected(id)
 	claimed := h.reconcileHeld(ctx, s, hello.Held, now)
 	h.resendOffers(ctx, s, claimed)
+	h.reconcileCopies(ctx, s, hello.Copies)
 	for _, rc := range hello.PullReceipts {
 		if err := h.deliverPullReceipt(ctx, s, rc); err != nil {
 			h.Disconnect(s)
