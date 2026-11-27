@@ -1611,6 +1611,33 @@ that demands a broad, package-wide or combined gate be wholly green.
      owned by a later task is a non-blocking failure under item 3; the
      package's other tests are not judged until that task lands.
 
+7. **Reassigned tests, hung packages and foreign RED builds (unstick
+   2026-11-27).**
+   - **A test reassigned by a RESOLVED note is not a named test of the
+     original step.** When a RESOLVED note moves a test's acceptance to a
+     later task, the original step does not name it any more. Example: P2
+     T10's `TestRemoteRunnersCompositionRoot_OutputCursorSurvivesRestart`
+     moved to P3 T13 Cycle 5b. Its failure is "owned by <later task>" under
+     item 3, and the original step's acceptance is complete when its other
+     named tests pass. In a `-run` selection that matches the reassigned
+     test, add `-skip '^<TestName>$'`, or judge its failure under item 3. Do
+     not re-block on it.
+   - **A test that hangs blocks only itself.** Sometimes a package gate times
+     out inside a test the step neither names nor touches. Example: P2 T10's
+     2026-11-25 full `cmd/arbitron` race run hung in
+     `TestLunaRouteChatWiringMissingEffortFactsRefuse`, which passes alone in
+     about 5s. Rerun that test alone. If it passes, the hang is load-induced
+     flake. If it fails alone, it is pre-existing. Either way, record a GATE
+     NOTE and rerun the package gate with `-skip '^<TestName>$'` to judge
+     the rest. A hang is never a reason to leave the step blocked.
+   - **Verify named tests at the RED commit's parent.** A later task may
+     commit a RED test file that breaks a package's test build, for example
+     `adapter/runneragent/executor/native_test.go` from P3 T15 Cycle 8
+     (commit 33b3ad62). A step that names tests in that package verifies
+     them on the parent of that RED commit, `git worktree add <dir>
+     <commit>^`, and records the build failure as a GATE NOTE (owned by
+     <later task>). Never edit or move the foreign RED file.
+
 ## Decisions (unstick 2026-11-24)
 
 User decisions recorded 2026-11-24. Each owning task carries the TDD steps; this section is the cross-task record.
