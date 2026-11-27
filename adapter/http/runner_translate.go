@@ -154,7 +154,11 @@ func helloInfo(h runnerproto.Hello) (runner.HelloInfo, error) {
 		}
 		receipts = append(receipts, rc)
 	}
-	return runner.HelloInfo{PullReceipts: receipts, OS: h.OS, Arch: h.Arch, ProtocolVersion: h.ProtocolVersion, RunnerVersion: h.RunnerVersion,
+	copies, err := fromWireCopies(h.Copies)
+	if err != nil {
+		return runner.HelloInfo{}, err
+	}
+	return runner.HelloInfo{Copies: copies, PullReceipts: receipts, OS: h.OS, Arch: h.Arch, ProtocolVersion: h.ProtocolVersion, RunnerVersion: h.RunnerVersion,
 		HarnessVersions: h.HarnessVersions, WorkspaceRoot: h.WorkspaceRoot, ScratchRoot: h.ScratchRoot,
 		Capabilities: h.Capabilities, Sources: sourcesToDomain(h.Sources), Held: held}, nil
 }
@@ -273,6 +277,11 @@ func resultToDomain(r runnerproto.Result) runner.RemoteResult {
 func fromOutbound(m runner.Outbound, id runner.RunnerID, heartbeatSeconds int) (runnerproto.Envelope, error) {
 	jobID := m.JobID.String()
 	switch m.Kind {
+	case runner.MsgDeleteCopy:
+		if m.DeleteCopy == nil {
+			return runnerproto.Envelope{}, fmt.Errorf("runner connect: delete_copy without payload")
+		}
+		return runnerproto.NewEnvelope(runnerproto.KindDeleteCopy, toWireDeleteCopy(m.DeleteCopy))
 	case runner.MsgPullWorkspace:
 		if m.PullWorkspace == nil {
 			return runnerproto.Envelope{}, fmt.Errorf("runner connect: pull_workspace without payload")

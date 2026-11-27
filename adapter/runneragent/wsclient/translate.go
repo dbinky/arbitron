@@ -125,7 +125,7 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 		return runnerproto.NewEnvelope(runnerproto.KindHello, runnerproto.Hello{
 			OS: h.OS, Arch: h.Arch, ProtocolVersion: h.ProtocolVersion, RunnerVersion: h.RunnerVersion,
 			HarnessVersions: h.HarnessVersions, WorkspaceRoot: h.WorkspaceRoot, ScratchRoot: h.ScratchRoot,
-			Capabilities: h.Capabilities, Sources: wireSources(h.Sources), Held: wireHeld(h.Held), PullReceipts: wirePullReceipts(h.PullReceipts),
+			Capabilities: h.Capabilities, Sources: wireSources(h.Sources), Held: wireHeld(h.Held), PullReceipts: wirePullReceipts(h.PullReceipts), Copies: wireCopies(h.Copies),
 		})
 	case runneragent.KindHeartbeat:
 		if m.Heartbeat == nil {
@@ -178,6 +178,12 @@ func toEnvelope(m runneragent.Outbound) (runnerproto.Envelope, error) {
 func fromEnvelope(e runnerproto.Envelope) (runneragent.Inbound, error) {
 	in := runneragent.Inbound{Kind: e.Kind, JobID: e.JobID, Generation: e.Generation}
 	switch e.Kind {
+	case runnerproto.KindDeleteCopy:
+		var d runnerproto.DeleteCopy
+		if err := runnerproto.DecodePayload(e, &d); err != nil {
+			return runneragent.Inbound{}, err
+		}
+		in.DeleteCopy = deleteCopyFromWire(d)
 	case runnerproto.KindPullWorkspace:
 		var p runnerproto.PullWorkspace
 		if err := runnerproto.DecodePayload(e, &p); err != nil {

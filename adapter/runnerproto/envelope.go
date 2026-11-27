@@ -42,6 +42,7 @@ const MaxFrameBytes = 1 << 20
 
 // Message kinds.
 const (
+	KindDeleteCopy        = "delete_copy"
 	KindHello             = "hello"
 	KindHeartbeat         = "heartbeat"
 	KindAccept            = "accept"
@@ -83,6 +84,7 @@ type Envelope struct {
 }
 
 var knownKinds = map[string]bool{
+	KindDeleteCopy:    true,
 	KindPullWorkspace: true, KindPullReceipt: true, KindPullReceiptAck: true,
 	KindSessionImport: true,
 	KindHello:         true, KindHeartbeat: true, KindAccept: true, KindReject: true,

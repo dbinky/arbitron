@@ -93,6 +93,7 @@ type Hello struct {
 	Sources         []Source
 	Held            []HeldJob
 	PullReceipts    []PullReceipt
+	Copies          []HeldCopy
 }
 
 // PullWorkspace fetches and verifies a committed checkpoint without executing a step.
@@ -240,6 +241,7 @@ type Inbound struct {
 	Refused        *Refusal
 	Admitted       *Admission
 	Probe          *ProbeRequest
+	DeleteCopy     *DeleteCopy
 }
 
 // Outbound is a runner-to-server message.

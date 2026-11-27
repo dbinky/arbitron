@@ -55,6 +55,7 @@ type Hello struct {
 	Capabilities    []string          `json:"capabilities,omitempty"`
 	Sources         []WireSource      `json:"sources,omitempty"`
 	Held            []HeldJob         `json:"held,omitempty"`
+	Copies          []WireCopy        `json:"copies,omitempty"`
 	PullReceipts    []WirePullReceipt `json:"pullReceipts,omitempty"`
 }
 
@@ -90,6 +91,11 @@ func (h *Hello) Validate() error {
 	for i := range h.Held {
 		if err := h.Held[i].Validate(); err != nil {
 			return fmt.Errorf("held[%d]: %w", i, err)
+		}
+	}
+	for i := range h.Copies {
+		if err := h.Copies[i].Validate(); err != nil {
+			return err
 		}
 	}
 	return nil
