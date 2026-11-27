@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -212,11 +210,10 @@ func (e rrStreamExecutor) Execute(ctx context.Context, d runneragent.Dispatch, e
 	return runneragent.Result{OK: true, Chat: &runneragent.ChatResult{Output: "onetwothreefourfive", Model: d.Chat.Model, SessionID: "rr-stream"}}
 }
 func TestRemoteRunnersCompositionRoot_OutputCursorSurvivesRestart(t *testing.T) {
-	manifest := `{"name":"rr-stream","inputs":[],"nodes":[{"id":"talk","type":"interactive_agent","entrypoint":true,"config":{"model_profile":"rr-stream","orchestrationFile":"templates/o.md","templateFile":"templates/p.md"}}],"edges":[]}`
-	st := bootRemoteRunnerStack(t, map[string]string{"rr-stream": manifest}, false)
-	ctx := adminCtxForLocalUser(t, st.ds)
-	require.NoError(t, os.WriteFile(filepath.Join(st.workspaceDir, "users", localDefaultUser.String(), "rr-stream", "templates", "o.md"), []byte("orchestrate"), 0o600))
-	_, _, err := st.ds.profileSvc.Create(ctx, provider.Profile{Alias: "rr-stream", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: rrModel})
+	st := bootRemoteRunnerStack(t, nil, false)
+	ctx, cancel := context.WithCancel(adminCtxForLocalUser(t, st.ds))
+	t.Cleanup(cancel)
+	_, _, err := st.ds.profileSvc.Create(ctx, provider.Profile{Alias: "rr-stream", Kind: provider.ProfileKindChat, Model: rrModel})
 	require.NoError(t, err)
 	plain, rid, _ := rrCreateKey(t, st, "stream")
 	exec := rrStreamExecutor{newRRExecutor(t, "", true)}
@@ -224,22 +221,45 @@ func TestRemoteRunnersCompositionRoot_OutputCursorSurvivesRestart(t *testing.T) 
 	rrAwaitLiveness(t, st, rid, "online")
 	code, body := rrDo(t, http.MethodPost, st.srv.URL+"/api/v1/runners/builtin/cordon", nil)
 	require.Less(t, code, 300, string(body))
-	id, _, err := st.ds.eng.Trigger(ctx, "rr-stream", map[string]any{}, "normal")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		rrDo(t, http.MethodPost, st.srv.URL+"/api/v1/runners/builtin/uncordon", nil)
-		_ = st.ds.eng.Cancel(context.Background(), id)
-	})
+	// Interactive steps stay built-in until P4, so use the hermetic chat route
+	// with the same node identity before and after the restart.
+	ident := engine.StepIdentity{RunID: uuid.New(), NodeID: "talk", InvocationID: uuid.New(), OperationID: "talk", Kind: engine.OperationNode, Attempt: 1}
+	openStream := func() <-chan engine.ChatChunk {
+		b, err := st.ds.profileResolver.Resolve(ctx, "rr-stream")
+		require.NoError(t, err)
+		p, err := st.ds.runners.chats.ChatProviderFor(b)
+		require.NoError(t, err)
+		ch, err := p.StreamChat(engine.ContextWithStepIdentity(ctx, ident), engine.ChatRequest{Model: b.Model, Prompt: "hello", WorkDir: st.workspaceDir, SuppressTools: true})
+		require.NoError(t, err)
+		return ch
+	}
+	first := make(chan (<-chan engine.ChatChunk), 1)
+	go func() { first <- openStream() }()
 	d := rrAwaitDispatch(t, exec.rrExecutor)
 	ref := runneragent.JobRef{JobID: d.JobID, Generation: d.Generation}
 	require.Eventually(t, func() bool { job, ok, err := spool.Get(ctx, ref); return err == nil && ok && job.LastAcked >= 3 }, 20*time.Second, 20*time.Millisecond)
 	rrRestart(t, st)
 	require.Eventually(t, func() bool { job, ok, err := spool.Get(ctx, ref); return err == nil && ok && job.LastAcked >= 3 }, 20*time.Second, 20*time.Millisecond)
+	second := openStream()
 	exec.releaseAll()
-	require.Eventually(t, func() bool {
-		outs := rrStrings(t, st.ds, `SELECT COALESCE(output,'') FROM node_executions WHERE instance_id = ? AND node_id = 'talk'`, id.String())
-		return len(outs) == 1 && strings.Contains(outs[0], "onetwothreefourfive")
-	}, 20*time.Second, 20*time.Millisecond, "persisted output has all five tokens exactly once")
+	var got strings.Builder
+	timeout := time.After(20 * time.Second)
+	for done := false; !done; {
+		select {
+		case c, ok := <-second:
+			if !ok {
+				done = true
+				break
+			}
+			require.NoError(t, c.Error)
+			got.WriteString(c.Token)
+			done = c.Done
+		case <-timeout:
+			t.Fatalf("stream did not finish; got %q", got.String())
+		}
+	}
+	assert.Equal(t, "onetwothreefourfive", got.String(), "every token exactly once across the restart")
+	assert.Zero(t, len(exec.started), "the step was dispatched once and never re-executed after the restart")
 }
 
 var _ runneragent.JobExecutor = (*rrExecutor)(nil)
