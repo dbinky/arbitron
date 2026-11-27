@@ -128,8 +128,9 @@ func TestModelRefreshAdvancementKeepsRunPinsAndPublishesNewRuns(t *testing.T) {
 		release()
 		ds, closeStack, ctx := bootRefreshPinsRoot(t, sink)
 		ds.queueMgr.UpdateConfig(1, 1)
+		holder := uuid.New()
 		require.NoError(t, ds.instanceRepo.Create(ctx, &instance.Instance{
-			ID: uuid.New(), OwnerID: localDefaultUser, WorkflowName: "capacity-holder",
+			ID: holder, OwnerID: localDefaultUser, WorkflowName: "capacity-holder",
 			State: instance.StateRunning, Priority: instance.PriorityNormal,
 			WorkflowSnapshot: map[string]any{}, Variables: map[string]any{},
 			ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
@@ -144,6 +145,8 @@ func TestModelRefreshAdvancementKeepsRunPinsAndPublishesNewRuns(t *testing.T) {
 		refreshAdvancesToY(t, ctx, ds)
 		after := sink.mark()
 		configPath := filepath.Join(filepath.Dir(ds.cfg.Database.Path), "config.yaml")
+		// The holder only blocked the queue; it is not a crashed run.
+		require.NoError(t, ds.instanceRepo.UpdateState(ctx, holder, instance.StateCompleted))
 		closeStack()
 
 		reopened, err := initRecoveryTestDomain(context.Background(), configPath)
@@ -152,13 +155,8 @@ func TestModelRefreshAdvancementKeepsRunPinsAndPublishesNewRuns(t *testing.T) {
 		stored, err := reopened.profileSvc.Get(ctx, "pin-alias")
 		require.NoError(t, err)
 		require.Equal(t, lifecycleModelY, stored.Model, "the advancement is durable across restart")
-		recovered, err := reopened.instanceRepo.Get(ctx, r1)
-		require.NoError(t, err)
-		require.Equal(t, instance.StateFailed, recovered.State)
-		require.Empty(t, after())
-
-		require.NoError(t, reopened.eng.Retry(ctx, r1, nil))
-		require.Equal(t, instance.StateCompleted, waitTerminal(t, reopened, r1).State)
+		require.Equal(t, instance.StateCompleted, waitTerminal(t, reopened, r1).State,
+			"pool-aware recovery re-enters R1 at its provider node")
 		assert.Equal(t, []string{lifecycleModelX}, after(), "restart must reload R1's X pin, not the advanced Y")
 
 		after = sink.mark()

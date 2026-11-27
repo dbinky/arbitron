@@ -187,8 +187,9 @@ func TestRetryResumeRerunAndSpawnPins(t *testing.T) {
 		// Prevent a walker from starting while we construct the on-disk crash
 		// boundary: a triggered X run marked running at its first provider node.
 		ds.queueMgr.UpdateConfig(1, 1)
+		holder := uuid.New()
 		require.NoError(t, ds.instanceRepo.Create(ctx, &instance.Instance{
-			ID: uuid.New(), OwnerID: localDefaultUser, WorkflowName: "capacity-holder",
+			ID: holder, OwnerID: localDefaultUser, WorkflowName: "capacity-holder",
 			State: instance.StateRunning, Priority: instance.PriorityNormal,
 			WorkflowSnapshot: map[string]any{}, Variables: map[string]any{},
 			ModelPins: map[string]string{}, ModelPinsVersion: instance.ModelPinsVersionSnapshot,
@@ -201,22 +202,18 @@ func TestRetryResumeRerunAndSpawnPins(t *testing.T) {
 		_, _, err = ds.profileSvc.Update(ctx, lifecycleProfile(lifecycleModelY))
 		require.NoError(t, err)
 		configPath := filepath.Join(filepath.Dir(ds.cfg.Database.Path), "config.yaml")
+		// The holder only blocked the queue; it is not a crashed run.
+		require.NoError(t, ds.instanceRepo.UpdateState(ctx, holder, instance.StateCompleted))
 		closeStack()
 
 		// initDomain constructs a NEW PinLookup and recovers running rows.
 		reopened, err := initRecoveryTestDomain(context.Background(), configPath)
 		require.NoError(t, err)
 		t.Cleanup(func() { reopened.Close(context.Background()) })
-		recovered, err := reopened.instanceRepo.Get(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, instance.StateFailed, recovered.State)
-		require.NotNil(t, recovered.FailedNodeID)
-		assert.Equal(t, "ask", *recovered.FailedNodeID)
-		assertLifecyclePins(t, reopened, id, lifecycleModelX)
-		require.Empty(t, sink.seen())
-		require.NoError(t, reopened.eng.Retry(ctx, id, nil))
-		require.Equal(t, instance.StateCompleted, waitTerminal(t, reopened, id).State)
+		require.Equal(t, instance.StateCompleted, waitTerminal(t, reopened, id).State,
+			"pool-aware recovery re-enters the run at its current step")
 		assert.Equal(t, []string{lifecycleModelX}, sink.seen(), "restart must reload X from SQLite despite live Y")
+		assertLifecyclePins(t, reopened, id, lifecycleModelX)
 	})
 
 	t.Run("spawn pins fresh while parent prepares on X", func(t *testing.T) {

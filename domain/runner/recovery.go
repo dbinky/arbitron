@@ -86,15 +86,22 @@ func (p *PoolRecovery) Recover(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("runner: recovery: list active jobs: %w", err)
 	}
+	retainedRemote := false
 	for _, j := range jobs {
 		if !j.State.HoldsSlot() || j.RunnerID == "" || j.RunnerID == BuiltInRunnerID {
 			continue
 		}
-		if err := p.d.Ledger.ExtendLease(ctx, j.Fence(), until); err != nil && !errors.Is(err, ErrFenced) {
+		if err := p.d.Ledger.ExtendLease(ctx, j.Fence(), until); err != nil {
+			if errors.Is(err, ErrFenced) {
+				continue
+			}
 			return fmt.Errorf("runner: recovery: extend lease of %s: %w", j.ID, err)
 		}
+		retainedRemote = true
 	}
-	p.d.Grace.BeginRestartGrace(until)
+	if retainedRemote {
+		p.d.Grace.BeginRestartGrace(until)
+	}
 	return nil
 }
 

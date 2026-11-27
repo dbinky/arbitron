@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1134,12 +1136,12 @@ func TestGroupBehaviorsE2E_CancelReachesIndependentTaskBelowCompletedBranch(t *t
 // ---------------------------------------------------------------------------
 
 // Crash with task a RUNNING (holding the only slot) and task b still QUEUED.
-// On restart a is crash-failed (no wake), the startup reconcile takes that in
-// without deciding (first_success: b may still win), the queue starts b, and b
-// wins. A graceful ds.Close would instead drain both tasks to completion in the
-// first process, so the crash is simulated by severing the DB, exactly like
+// On restart pool-aware recovery (P3 T10) re-enters a's held gate step, which
+// repeats; a still holds the only slot, so b stays queued, a finishes first
+// and wins, and cancel_unfinished cancels b. A graceful ds.Close would drain
+// both tasks in the first process, so the crash severs the DB, exactly like
 // TestSpawnWaitE2E_RestartReconcilesParentAfterCrash.
-func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
+func TestGroupBehaviorsE2E_RestartRepeatsRunningTaskAfterCrash(t *testing.T) {
 	t.Parallel()
 	gates := newGroupProcessGates(t)
 	manifest := gateBehaviorManifest(t, restartManifest, gates, "a-hold")
@@ -1172,22 +1174,27 @@ func TestGroupBehaviorsE2E_RestartQueuedTaskStillWinsAfterCrash(t *testing.T) {
 	// first: Shutdown waits on that walker, which otherwise idles out the
 	// gate's full 60s bound before it can exit.
 	t.Cleanup(func() { gates.release(t, "a-hold"); ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
+	require.NoError(t, os.Remove(filepath.Join(gates.dir, "a-hold.reached")))
 
 	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds2.Close(context.Background()) })
 
-	waitForState(t, ds2, aID, instance.StateFailed)
+	gates.reached(t, "a-hold") // a's gate step repeats after the restart
+	require.Equal(t, instance.StateQueued, stateOf(t, ds2, bID), "the recovered task still holds the only slot")
+	gates.release(t, "a-hold")
 	require.Equal(t, instance.StateCompleted, waitForTerminalState(t, ds2, parentID))
 	assert.Equal(t, "success", branchVariable(t, ds2, parentID))
 
 	out := groupOutputOf(t, ds2, parentID, "race")
-	assert.Equal(t, "b", out["winner"])
-	assert.Equal(t, "failed", groupTaskByKey(t, out, "a")["status"], "the crash-failed task is frozen as failed")
+	assert.Equal(t, "a", out["winner"])
+	assert.Equal(t, "completed", groupTaskByKey(t, out, "a")["status"], "the recovered task wins")
 	b := groupTaskByKey(t, out, "b")
-	assert.Equal(t, "completed", b["status"])
-	assert.Equal(t, "b-won", resultOf(t, b)["b_value"])
+	assert.Equal(t, "unfinished", b["status"], "the decision freezes before cancellation is applied")
+	assert.Equal(t, true, b["cancelRequested"])
+	waitForState(t, ds2, bID, instance.StateCancelled)
 	assert.Equal(t, 1, nodeExecutionCount(t, ds2, parentID, "onSuccess"), "exactly one continuation across the restart")
+	assert.Positive(t, p3NoticeCount(t, ds2, aID, "gate-a-hold"))
 }
 
 // ---------------------------------------------------------------------------

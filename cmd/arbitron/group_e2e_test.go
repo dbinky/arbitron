@@ -577,14 +577,12 @@ func TestGroupE2E_PublishesGroupLifecycleEventsOnTheParent(t *testing.T) {
 		"group.launched (launcher) and group.decided (coordinator) must reach the parent's subscribers")
 }
 
-// STARTUP RECONCILE PROVENANCE. Crash while one task is done and the other is
-// still running; on restart RecoverCrashedInstances marks the running task
-// failed WITHOUT any in-process wake, so only the startup groupCoord.Reconcile
-// (run before the 60s sweep's first tick) can decide the group and resume the
-// parent through the failure port. Mirrors
-// TestSpawnWaitE2E_RestartReconcilesParentAfterCrash: the "crash" severs the DB
-// from the live process, because a graceful Close would drain the running task
-// to completion.
+// STARTUP RECOVERY PROVENANCE. Crash while one task is done and the other is
+// still running. On restart pool-aware recovery (P3 T10) re-enters the running
+// task's tool step on its checkpoint — it repeats, carrying the recovery
+// notice — and the group then decides through the in-process wake and resumes
+// the parent through the success port. The "crash" severs the DB from the live
+// process, because a graceful Close would drain the running task to completion.
 func TestGroupE2E_StartupReconcileSettlesGroupAfterCrash(t *testing.T) {
 	t.Parallel()
 	gates := newGroupProcessGates(t)
@@ -631,25 +629,24 @@ func TestGroupE2E_StartupReconcileSettlesGroupAfterCrash(t *testing.T) {
 	// gate's full 60s bound before it can exit.
 	t.Cleanup(func() { gates.release(t, "slow"); ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
+	require.NoError(t, os.Remove(filepath.Join(gates.dir, "slow.reached")))
 	ds2, err := initStartedDomain(ctx, paths.configPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ds2.Close(context.Background()) })
 
-	waitForState(t, ds2, slowID, instance.StateFailed)
-	require.Equal(t, instance.StateCompleted, waitForTerminalState(t, ds2, parentID),
-		"the startup group reconcile must decide the group and resume the waiting parent")
-	assert.Equal(t, "failure", branchVariable(t, ds2, parentID))
+	gates.reached(t, "slow") // the running task's step re-entered and repeats
+	gates.release(t, "slow")
+	waitForState(t, ds2, slowID, instance.StateCompleted)
+	require.Equal(t, instance.StateCompleted, waitForTerminalState(t, ds2, parentID))
+	assert.Equal(t, "success", branchVariable(t, ds2, parentID))
 
 	out := groupOutputOf(t, ds2, parentID, "group-1")
-	assert.Equal(t, "failure", out["outcome"])
+	assert.Equal(t, "success", out["outcome"])
 	quick := groupTaskByKey(t, out, "quick")
 	assert.Equal(t, "completed", quick["status"])
 	assert.Equal(t, "q", resultOf(t, quick)["quick_value"], "a completed task's result survives the crash")
-	slowTask := groupTaskByKey(t, out, "slow")
-	assert.Equal(t, "failed", slowTask["status"], "the crash-recovered task counts as failed")
-	failure, ok := slowTask["failure"].(map[string]any)
-	require.True(t, ok, "a failed task carries failure details")
-	assert.Equal(t, "failed", failure["state"])
+	assert.Equal(t, "completed", groupTaskByKey(t, out, "slow")["status"], "the recovered task finished on restart")
+	assert.Positive(t, p3NoticeCount(t, ds2, slowID, "slow-hold"), "the repeated step carries the recovery notice")
 }
 
 // PERIODIC SWEEP PROVENANCE. A group left with its only task already terminal

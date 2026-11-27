@@ -81,11 +81,22 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 	schedulerCtx, schedulerCancel := context.WithCancel(ctx)
 	ds.schedulerCancel = schedulerCancel
 	ds.scheduler.Start(schedulerCtx)
+	// Establish restart grace before liveness can declare a held remote job lost.
+	if ds.mobility != nil {
+		if err := ds.mobility.Recovery.Recover(ctx); err != nil {
+			return fmt.Errorf("preparing pool recovery: %w", err)
+		}
+	}
 	if ds.remote != nil {
 		ds.remote.Hub.Start(ctx)
 		ds.remote.Telemetry.Start(ctx)
 	}
-	if err := ds.eng.RecoverCrashedInstancesContext(ctx); err != nil {
+	// Re-enter running steps before reconciling waiting parents and groups.
+	if ds.mobility != nil {
+		if err := ds.eng.RecoverRunningInstances(ctx, ds.mobility.Recovery); err != nil {
+			return fmt.Errorf("recovering running instances: %w", err)
+		}
+	} else if err := ds.eng.RecoverCrashedInstancesContext(ctx); err != nil {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
 	// Source health probing starts after crash recovery, so its first tick
@@ -94,11 +105,13 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 		ds.runners.monitor.Start(ctx)
 		ds.runners.startInventory(ctx, &ds.background)
 	}
+	if ds.mobility != nil {
+		ds.mobility.Drain.Start(ctx)
+	}
 	if err := spawn.Reconcile(ctx); err != nil {
 		ds.logger.Error("spawn-wait reconciliation incomplete", "error", err)
 	}
-	// Group recovery runs after crash recovery, so it sees crash-failed tasks and
-	// parents. Every decision and wake is idempotent (the run's own state and the
+	// Group recovery runs after running steps have been re-entered. Every decision and wake is idempotent (the run's own state and the
 	// continuation/actions flags guard it), so a task the queue admits meanwhile
 	// is safe; a failed pass is retried by the sweep below.
 	if ds.groupCoord != nil {
@@ -106,7 +119,7 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 			ds.logger.Error("parallel-group reconciliation incomplete", "error", err)
 		}
 	}
-	// File gathers recover after crash-failed tasks are coordinated, under the
+	// File gathers recover after interrupted tasks are coordinated, under the
 	// executor's shared gather gate.
 	if ds.gatherReconciler != nil {
 		if err := ds.gatherReconciler.Reconcile(ctx); err != nil {

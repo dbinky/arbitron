@@ -277,8 +277,8 @@ func TestSpawnWaitE2E_NodeExecutionRecordWrittenOnTheWaitPath(t *testing.T) {
 
 // PROVENANCE PROBE for the composition root's startup ORDER, not just its
 // presence. main.go runs spawnReconciler.Reconcile immediately after
-// RecoverCrashedInstances specifically so a parent left waiting on a child
-// that crashed mid-flight resumes in the SAME startup pass, rather than being
+// pool-aware recovery (RecoverRunningInstances) specifically so a parent left waiting on a child
+// that was running mid-flight is resumed in the SAME startup pass, rather than being
 // stranded until some other wake arrives (there is none, since a crashed
 // child never reaches a terminal state through any OnChildTerminal call
 // site). Every existing reconciler test drives this ordering claim through
@@ -286,6 +286,7 @@ func TestSpawnWaitE2E_NodeExecutionRecordWrittenOnTheWaitPath(t *testing.T) {
 // composition root twice against the SAME database file to prove main.go
 // itself gets the order right, not just the reconciler's own logic.
 func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
+	gates := newGroupProcessGates(t)
 	root := t.TempDir()
 	workspaceDir := filepath.Join(root, "workspaces")
 	require.NoError(t, os.MkdirAll(workspaceDir, 0o700))
@@ -296,7 +297,7 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
   "inputs": [],
   "nodes": [
     {"id": "hold", "type": "tool_call", "entrypoint": true,
-     "config": {"command": "sh", "args": ["-c", "sleep `+childHoldSeconds+`; echo '{}'"]}}
+     "config": {"command": "sh", "args": ["-c", `+strconv.Quote(groupGateScript)+`, "sh", `+strconv.Quote(gates.dir)+`, "hold"]}}
   ],
   "edges": []
 }`)
@@ -349,6 +350,10 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
 		t.Skipf("child reached a terminal state before the simulated crash: %v", child.State)
 	}
 
+	// StateRunning alone precedes dispatch; the native launch is the crash boundary.
+	gates.reached(t, "hold")
+	require.NoError(t, os.Remove(filepath.Join(gates.dir, "hold.reached")))
+
 	// Simulate a hard crash: sever the database out from under the live
 	// process with no graceful drain, so the child's row is stranded at
 	// StateRunning exactly as a real process kill would leave it. (A real
@@ -358,20 +363,23 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
 	// The abandoned process's walkers still finish against the closed database
 	// and log through the process-wide logger; drain them inside this test so
 	// their errors never land in a later test's log.
-	t.Cleanup(func() { ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
+	t.Cleanup(func() { gates.release(t, "hold"); ds1.queueMgr.Stop(); ds1.eng.Shutdown() })
 
 	// --- Second boot: the real restart path. ---
 	ds2, err := initRecoveryTestDomain(context.Background(), configPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { ds2.Close(context.Background()) })
+	t.Cleanup(func() { gates.release(t, "hold"); ds2.Close(context.Background()) })
+	gates.reached(t, "hold")
+	gates.release(t, "hold")
 
-	// If RecoverCrashedInstances did not run, or spawnReconciler.Reconcile did
-	// not run immediately after it in this same startup pass, the parent would
-	// be stranded in StateWaiting indefinitely.
-	waitForState(t, ds2, childID, instance.StateFailed)
+	// Pool-aware recovery re-enters the running child's step on its checkpoint
+	// (it repeats, carrying the recovery notice); the child then completes and
+	// wakes the waiting parent through the success port.
+	waitForState(t, ds2, childID, instance.StateCompleted)
 	waitForState(t, ds2, parentID, instance.StateCompleted)
-	assert.Equal(t, "failure", branchVariable(t, ds2, parentID),
-		"the restart's recover-then-reconcile ordering must resume the stranded parent")
+	assert.Equal(t, "success", branchVariable(t, ds2, parentID),
+		"the restart's recover-then-reconcile ordering must resume the waiting parent")
+	assert.Positive(t, p3NoticeCount(t, ds2, childID, "hold"), "the repeated child step carries the recovery notice")
 }
 
 // The wait cycle at the SHIPPED default per-user cap, with a child that has no

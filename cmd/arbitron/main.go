@@ -353,6 +353,7 @@ type domainStack struct {
 	invocations     engine.InvocationStore
 	groupResolution *engine.GroupResolutionBridge
 	runners         *runnerStack
+	mobility        *workspaceMobility
 	remote          *remoteRunnerStack
 }
 
@@ -548,6 +549,9 @@ func (ds *domainStack) httpDeps() adapthttp.RouterDeps {
 	}
 	if ds.runners != nil {
 		deps.Runners = ds.runners.service
+	}
+	if ds.mobility != nil {
+		deps.RunnerTransfers = ds.mobility.Transfers
 	}
 	return deps
 }
@@ -1248,6 +1252,14 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	if err != nil {
 		return nil, fmt.Errorf("workspace manager: %w", err)
 	}
+	// One process-lifetime boot ID and shared workspace claim repository.
+	bootID := uuid.NewString()
+	leases := adaptsqlite.NewResourceLeaseRepo(db, bootID)
+	homeRepo := adaptsqlite.NewWorkspaceHomeRepo(db)
+	sessionInventory, err := runner.NewInteractiveSessionInventory(instanceRepo, adaptsqlite.NewGroupRunRepo(db))
+	if err != nil {
+		return nil, fmt.Errorf("interactive session inventory: %w", err)
+	}
 	// The executing machine's process port; only the built-in runner calls it.
 	localProcess := process.NewSupervisedLocalProcessRunner(builtinSup)
 	runnerPool, err := newRunnerStack(runnerStackDeps{
@@ -1275,10 +1287,11 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	// 9. Create all node executors and build the executor map. Model and
 	// process steps run through the runner pool's routed ports.
 	modelConsumers := newRunModelConsumers(fileReader, runnerPool.chats, runnerPool.agents, pinningResolver, cfg.LLM.DefaultAgentBackend)
+	scriptExec := process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough, runnerPool.process)
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     modelConsumers.llm,
 		workflow.NodeTypeAgentCall:   modelConsumers.agent,
-		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough, runnerPool.process),
+		workflow.NodeTypeScript:      scriptExec,
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough, runnerPool.process),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
@@ -1306,6 +1319,31 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 
 	// 11a. Wire the per-instance workspace manager.
 	eng.SetWorkspaceManager(wsMgr)
+
+	// Build and feed workspace mobility before any workflow can execute.
+	mobility, err := buildWorkspaceMobility(workspaceMobilityInputs{
+		DB: db, Runners: cfg.Runners, Homes: homeRepo,
+		Hub: runnerPool.remote.Hub, Keys: runnerPool.remote.Keys,
+		Registry: runnerPool.registry, Ledger: runnerPool.ledger, Events: runnerPool.recorder,
+		Status: runnerPool.projector, Notifier: runnerPool.notifier,
+		Workspaces: wsMgr, Capabilities: capabilityRules, Clock: time.Now,
+		Supervisor: builtinSup, Sessions: sessionInventory, Audit: auditSvc,
+		BootID: bootID, Leases: leases,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wiring workspace mobility: %w", err)
+	}
+	runnerPool.dispatcher.SetWorkspace(mobility.Sync)
+	runnerPool.dispatcher.SetAdopter(mobility.Adopter)
+	runnerPool.dispatcher.SetAgentToolPolicy(providerFactory.EffectiveAgentTools)
+	runnerPool.service.SetDrainController(mobility.Drain)
+	scriptExec.SetBundleStore(mobility.Bundles)
+	eng.SetStepCommitter(mobility.Commits)
+	eng.SetStepCompletionReleaser(runnerPool.dispatcher)
+	eng.SetWorkspaceBaselineInitializer(mobility.Baseline)
+	eng.SetRecoveryNoticeSource(mobility.Notices)
+	eng.SetWorkspaceHistorySource(mobility.History)
+	eng.SetWorkspaceRemovalHook(mobility.Removal)
 
 	// 11b. Construct the instance-list enrichment step and wire it to the
 	// engine so ListEnriched composes the additive queue-list fields (run
@@ -1471,7 +1509,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		return nil, fmt.Errorf("group working area: %w", err)
 	}
 	groupCoord := engine.NewGroupCoordinator(groupRunRepo, instanceRepo, queueRepo, eng, identityResolver, bus, queueMgr)
-	groupLauncher := engine.NewGroupLauncher(groupRunRepo, eng, eng, wsMgr, groupWS, identityResolver, eng, bus)
+	groupLauncher := engine.NewGroupLauncher(groupRunRepo, eng, eng, mobility.Workspaces, groupWS, identityResolver, eng, bus)
 	groupLauncher.SetFileWorkingArea(workingArea)
 	groupLauncher.SetLaunchByteBudget(cfg.Workspace.EffectiveGroupLaunchMaxBytes(), filesystem.GroupAreaMeter{})
 	groupExecutor := engine.NewParallelGroupExecutor(instanceRepo, nodeExecRepo, groupRunRepo, groupLauncher, groupCoord, instanceRepo, queueMgr)
@@ -1632,7 +1670,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	gatherer := engine.NewGroupGatherer(groupRunRepo, workingArea, groupResolution, bus)
 	groupExecutor.SetGatherer(gatherer)
 	groupPruner := engine.NewGroupResourcePruner(
-		groupRunRepo, instanceRepo, instanceRepo, wsMgr, workingArea, workingArea,
+		groupRunRepo, instanceRepo, instanceRepo, mobility.Workspaces, workingArea, workingArea,
 	)
 	groupPruner.SetResultsResources(groupWS, groupRunRepo)
 	// Executor and recovery share the single-writer gather lock and bridge.
@@ -1738,6 +1776,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 		invocations:           invocationStore,
 		groupResolution:       groupResolution,
 		runners:               runnerPool,
+		mobility:              mobility,
 		remote:                runnerPool.remote,
 	}
 	skipSeed := func(alias string, cause error) {
