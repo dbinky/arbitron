@@ -13,6 +13,7 @@ import (
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -131,9 +132,7 @@ func TestSpawnInputsE2E_FullyMappedAwaitedSpawn_NoChatCalls(t *testing.T) {
 
 	assert.Equal(t, int32(0), ds.calls.Load(), "a fully mapped spawn must make zero chat calls")
 	// No input may be sourced "prepared".
-	exec, err := ds.nodeExecRepo.GetByInstanceAndNode(context.Background(), parentID, "spawn")
-	require.NoError(t, err)
-	require.NotNil(t, exec)
+	exec := firstSpawnExecution(t, ds.domainStack, parentID)
 	assert.Equal(t, map[string]any{"branch": "mapped", "n": "mapped"}, exec.Output["inputSources"])
 }
 
@@ -211,8 +210,21 @@ func TestSpawnInputsE2E_PartiallyMappedSpawn_PreparesOnlyUnmappedInput(t *testin
 	assert.Equal(t, "feat/x", child.Variables["branch"])
 	assert.Equal(t, 7.0, child.Variables["n"])
 
-	exec, err := ds.nodeExecRepo.GetByInstanceAndNode(context.Background(), parentID, "spawn")
-	require.NoError(t, err)
-	require.NotNil(t, exec)
+	exec := firstSpawnExecution(t, ds.domainStack, parentID)
 	assert.Equal(t, map[string]any{"branch": "mapped", "n": "prepared"}, exec.Output["inputSources"])
+}
+
+// firstSpawnExecution returns the awaited spawn node's FIRST execution record:
+// inputSources is trace-only there; the resume record is the latest visit.
+func firstSpawnExecution(t *testing.T, ds *domainStack, parentID uuid.UUID) *instance.NodeExecution {
+	t.Helper()
+	execs, err := ds.nodeExecRepo.ListByInstance(context.Background(), parentID)
+	require.NoError(t, err)
+	for i := range execs {
+		if execs[i].NodeID == "spawn" {
+			return &execs[i]
+		}
+	}
+	t.Fatalf("no spawn execution for %s", parentID)
+	return nil
 }
