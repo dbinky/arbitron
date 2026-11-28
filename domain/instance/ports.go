@@ -103,6 +103,12 @@ type OpenSessionRecordUpdater interface {
 	PatchSessionFields(ctx context.Context, id uuid.UUID, patch map[string]any) (bool, error)
 }
 
+// SessionConversationFencer patches only an open session at the exact generation.
+// Nil patch values delete keys; stale, closed and missing sessions write nothing.
+type SessionConversationFencer interface {
+	PatchSessionFieldsAtGeneration(ctx context.Context, id uuid.UUID, generation int64, patch map[string]any) error
+}
+
 // SessionStateStore persists generation-fenced interactive session state.
 // SetSessionState is an internal transaction helper; turn commits additionally
 // fence the request and prior checkpoint before calling it.

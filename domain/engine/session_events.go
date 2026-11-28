@@ -1,6 +1,11 @@
 package engine
 
-import "time"
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 const (
 	EventTypeInteractiveTurnRestarted = "interactive.turn_restarted"
@@ -19,6 +24,20 @@ func PublishContextNotice(bus EventBus, turn InteractiveTurnIdentity, notice str
 	publishSessionEvent(bus, turn, EventTypeInteractiveContextNotice, map[string]any{
 		"notice": notice, "lossy": true,
 	})
+}
+
+// publishTurnEvent uses the held generation, including a generation adopted
+// during recovery, rather than the identity captured at acceptance.
+func publishTurnEvent(ctx context.Context, bus EventBus, runID uuid.UUID, kind string, data map[string]any) {
+	turn, _ := TurnIdentityFromContext(ctx)
+	if lease, ok := TurnLeaseFromContext(ctx); ok {
+		turn.Generation = lease.Generation
+	}
+	if turn.Validate() == nil {
+		publishSessionEvent(bus, turn, kind, data)
+		return
+	}
+	bus.Publish(runID, Event{Type: kind, Timestamp: time.Now(), Data: data})
 }
 
 func publishSessionEvent(bus EventBus, turn InteractiveTurnIdentity, kind string, extra map[string]any) {

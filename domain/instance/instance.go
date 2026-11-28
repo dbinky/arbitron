@@ -39,6 +39,7 @@ var (
 	ErrCannotRerun               = errors.New("instance cannot be rerun")
 	ErrCannotRetry               = errors.New("instance cannot be retried")
 	ErrStaleSessionGeneration    = errors.New("instance: stale session generation")
+	ErrSessionClosed             = errors.New("instance: interactive session is closed")
 )
 
 // State represents the lifecycle state of a workflow instance.

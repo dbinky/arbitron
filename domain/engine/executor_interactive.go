@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
@@ -36,6 +35,8 @@ type InteractiveExecutor struct {
 	leaseTTL   time.Duration
 	intents    TurnIntentStore
 	sessions   *SessionCheckpointDeps
+	mover      SessionMover
+	maxMoves   int
 }
 
 // SetTurnBindingRestorer installs the accepted policy restorer for replay and recovery.
@@ -81,6 +82,17 @@ func (e *InteractiveExecutor) SetTurnIntents(store TurnIntentStore) {
 		panic("engine: interactive executor SetTurnIntents requires a store")
 	}
 	e.intents = store
+}
+
+// SetSessionMover enables first-turn recovery using the same prompt and nonce.
+func (e *InteractiveExecutor) SetSessionMover(m SessionMover, maxMoves int) {
+	if m == nil {
+		panic("engine: interactive executor SetSessionMover requires a non-nil mover")
+	}
+	if maxMoves < 1 {
+		maxMoves = 1
+	}
+	e.mover, e.maxMoves = m, maxMoves
 }
 
 // SetSessionCheckpoints enables receipt-gated first-turn persistence.
@@ -229,79 +241,12 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		ctx = ContextWithStepCompletionSink(ctx, NewStepCompletionSink())
 	}
 
-	// 7. Call the LLM provider with streaming.
-	stream, err := streamProvider.StreamChat(ctx, req)
+	// 7-8. Partial attempts never become the initial conversation.
+	first, err := e.streamFirstTurnWithRecovery(ctx, node, instanceID, streamProvider, req, binding, workDirStr, hold, intent.RequestID)
 	if err != nil {
-		return nil, fmt.Errorf("interactive %q: stream call: %w", node.ID, err)
+		return nil, err
 	}
-	if stream == nil {
-		return nil, fmt.Errorf("interactive %q: stream closed without completion (nil stream)", node.ID)
-	}
-
-	// 8. Consume the stream channel.
-	var responseBuilder strings.Builder
-	var tokensIn, tokensOut int
-	var sessionID string
-	var sawDone bool
-
-	for {
-		var chunk ChatChunk
-		var open bool
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("interactive %q: stream cancelled: %w", node.ID, ctx.Err())
-		case chunk, open = <-stream:
-		}
-		// A buffered chunk or channel closure can win the select even after
-		// cancellation. Never treat that as a successfully completed turn.
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("interactive %q: stream cancelled: %w", node.ID, err)
-		}
-		if !open {
-			break
-		}
-		if chunk.Error != nil {
-			return nil, fmt.Errorf("interactive %q: stream error: %w", node.ID, chunk.Error)
-		}
-
-		if chunk.SessionID != "" {
-			sessionID = chunk.SessionID
-		}
-
-		if chunk.Token != "" {
-			responseBuilder.WriteString(chunk.Token)
-			e.eventBus.Publish(instanceID, Event{
-				Type:      EventTypeInteractiveToken,
-				Timestamp: time.Now(),
-				Data:      map[string]any{"token": chunk.Token},
-			})
-		}
-
-		if chunk.Done {
-			tokensIn = chunk.TokensIn
-			tokensOut = chunk.TokensOut
-			sawDone = true
-			break
-		}
-	}
-	// Publishing the last token can itself race cancellation, including when
-	// that same chunk carries Done. Check again before persisting success.
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("interactive %q: stream cancelled: %w", node.ID, err)
-	}
-
-	// DATA INTEGRITY (PR #18, comment 4614891622): if the stream channel closed
-	// without ever delivering a terminal Done chunk (and without an error chunk),
-	// the turn was cancelled or truncated mid-stream — makeSendChunk drops the
-	// Done chunk on a mid-stream context cancellation (instance cancel, shutdown,
-	// timeout). Recording that as NodeStatusSucceeded and advancing the
-	// conversation on partial data is a silent data-integrity bug. Fail closed:
-	// return an error so the node is NOT persisted as a completed success.
-	if !sawDone {
-		return nil, fmt.Errorf("interactive %q: stream closed without completion", node.ID)
-	}
-
-	fullResponse := responseBuilder.String()
+	fullResponse, sessionID, tokensIn, tokensOut := first.response, first.sessionID, first.tokensIn, first.tokensOut
 
 	// 9. Build the initial conversation array. The nonce is persisted so
 	// resumed turns (ConversationHandler.HandleMessage) can scope their
@@ -366,7 +311,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// its streaming flag. Publishing only post-transition means the turn-complete
 	// event is emitted once the instance is durable and actually accepting input —
 	// a live subscriber is never told the turn finished before it is persisted.
-	publishInteractiveMessage(e.eventBus, instanceID, "assistant", fullResponse)
+	publishTurnEvent(ctx, e.eventBus, instanceID, EventTypeInteractiveMessage, map[string]any{"role": "assistant", "content": fullResponse})
 
 	// 12. Notify capacity freed.
 	e.queueMgr.NotifyCapacityFreed(ctx)

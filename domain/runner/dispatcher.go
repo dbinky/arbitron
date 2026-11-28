@@ -310,6 +310,12 @@ outer:
 			}
 			o := ClassifyError(runErr)
 			o.Model = req.Model
+			if ierr, ok := interruptSession(bg, s.d.Health, s.d.Ledger, req, a, o, runErr); ok {
+				s.fact(sink, a, string(o.Class))
+				s.failWorkspace(bg, a, att)
+				s.wake()
+				return Assignment{}, StepOutput{}, nil, ierr
+			}
 			switch o.Class {
 			case OutcomeTransient:
 				s.fact(sink, a, string(OutcomeTransient))
@@ -368,7 +374,7 @@ func (s *StepDispatcher) acquire(ctx context.Context, j *Job, req ExecRequiremen
 		snap = ex.apply(snap)
 		dec := Place(req, snap, s.d.Policy)
 		if dec.MoveRequired {
-			return Assignment{}, Decision{}, &SessionPinMoveError{Runner: req.PinnedRunner, Reason: dec.MoveReason, Detail: dec.Reason}
+			return Assignment{}, Decision{}, sessionPinMoveRequired(&SessionPinMoveError{Runner: req.PinnedRunner, Reason: dec.MoveReason, Detail: dec.Reason})
 		}
 		if !dec.Placed {
 			if len(ex.runners) > 0 {
@@ -573,6 +579,13 @@ func (s *StepDispatcher) pump(ctx context.Context, j Job, a Assignment, req Exec
 		if chunk.Error != nil {
 			o := ClassifyError(chunk.Error)
 			o.Model = req.Model
+			if ierr, ok := interruptSession(bg, s.d.Health, s.d.Ledger, req, a, o, chunk.Error); ok {
+				go drain(in)
+				s.fact(sink, a, string(o.Class))
+				s.wake()
+				send(ctx, out, engine.ChatChunk{Error: ierr, Done: true})
+				return
+			}
 			if o.Class == OutcomeTransient && !forwarded {
 				go drain(in)
 				s.fact(sink, a, string(OutcomeTransient))

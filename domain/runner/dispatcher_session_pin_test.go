@@ -75,6 +75,8 @@ func TestDispatch_SessionMustMoveReturnsPinMoveErrorWithoutRunning(t *testing.T)
 			_, err := d.Dispatch(ctx, req, StepJob{Op: OpType("stream"), Chat: &engine.ChatRequest{Prompt: "next", SessionID: "s1"}})
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrSessionPinUnavailable)
+			var interrupted *engine.SessionMoveRequiredError
+			require.True(t, errors.As(err, &interrupted), "must-move must reach the engine mover loop")
 			var mv *SessionPinMoveError
 			require.True(t, errors.As(err, &mv))
 			assert.Equal(t, RunnerID("mac-a"), mv.Runner)

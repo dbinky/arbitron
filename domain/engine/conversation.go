@@ -98,6 +98,10 @@ type conversationHandler struct {
 	leaseTTL       time.Duration
 	intents        TurnIntentStore
 	sessions       *SessionCheckpointDeps
+	mover          SessionMover
+	maxMoves       int
+	fencer         instance.SessionConversationFencer
+	restorer       CommittedWorkspaceRestorer
 }
 
 // groupSessionTarget holds the validated session record and its staging directory.
@@ -196,6 +200,17 @@ func (h *conversationHandler) SetTurnIntents(store TurnIntentStore) {
 	h.intents = store
 }
 
+// SetSessionMover enables bounded recovery under the turn's held lease.
+func (h *conversationHandler) SetSessionMover(m SessionMover, maxMoves int) {
+	if m == nil {
+		panic("engine: conversation SetSessionMover requires a non-nil mover")
+	}
+	if maxMoves < 1 {
+		maxMoves = 1
+	}
+	h.mover, h.maxMoves = m, maxMoves
+}
+
 // SetSessionCheckpoints enables receipt-gated turn persistence.
 func (h *conversationHandler) SetSessionCheckpoints(d SessionCheckpointDeps) {
 	if err := d.validate(); err != nil {
@@ -240,7 +255,7 @@ func (h *conversationHandler) persistIntent(ctx context.Context, in TurnIntent) 
 
 func recoverableTurnError(err error) bool {
 	return errors.Is(err, ErrTurnLeaseLost) || errors.Is(err, ErrSessionMoveRequired) ||
-		errors.Is(err, ErrNoSessionTarget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+		errors.Is(err, ErrNoSessionTarget) || errors.Is(err, ErrRecoveryBudgetExhausted) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (h *conversationHandler) finishIntent(ctx context.Context, id uuid.UUID, opErr error) {
@@ -436,18 +451,12 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// 5. Publish interactive.message event for user message, tagging the actor
 	// when an admin (non-owner) is participating, and record an attribution row.
 	if actor, isOther := h.nonOwnerActor(ctx, inst); isOther {
-		bus.Publish(instanceID, Event{
-			Type:      EventTypeInteractiveMessage,
-			Timestamp: time.Now(),
-			Data: map[string]any{
-				"role":        "user",
-				"content":     content,
-				"actorUserId": actor.String(),
-			},
+		publishTurnEvent(ctx, bus, instanceID, EventTypeInteractiveMessage, map[string]any{
+			"role": "user", "content": content, "actorUserId": actor.String(),
 		})
 		h.recordInteractiveIntervention(ctx, inst, instance.ActionInteractiveMsg, nil)
 	} else {
-		publishInteractiveMessage(bus, instanceID, "user", content)
+		publishTurnEvent(ctx, bus, instanceID, EventTypeInteractiveMessage, map[string]any{"role": "user", "content": content})
 	}
 
 	// 6. Build the request: resume the stored session, send only the new
@@ -471,13 +480,25 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		WorkDir:              workDir,
 	}
 
+	if pending, _ := nodeExec.LLMConversation[ConversationKeyPendingRebuild].(bool); pending {
+		primer, err := BuildRebuildPrompt(nodeExec.LLMConversation, content, RebuildLimitBytes(binding.ContextWindow))
+		if err != nil {
+			return fmt.Errorf("conversation: restore session: %w", err)
+		}
+		req.Prompt, req.SessionID = primer, ""
+	}
+
 	// The turn transaction consumes its own dispatcher completion.
 	if h.sessions != nil {
 		ctx = ContextWithStepCompletionSink(ctx, NewStepCompletionSink())
 	}
 
 	// 7. Call the provider with streaming.
-	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, streamProvider, req, bus)
+	fullResponse, newSessionID, err := h.runTurnWithRecovery(ctx, &turnRun{
+		instanceID: instanceID, nodeID: nodeID, exec: nodeExec, binding: binding, provider: streamProvider,
+		req: req, bus: bus, hold: hold, message: content, turnIndex: intent.TurnIndex, requestID: intent.RequestID, workDir: workDir,
+		restoreWorkspace: binding.Kind == provider.ProfileKindAgent && group == nil,
+	})
 	applyPlacement(nodeExec, sink.Facts())
 	if err != nil {
 		if h.sessions == nil && len(sink.Facts()) > 0 {
@@ -490,12 +511,9 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		return turnLeaseErr(ctx, err)
 	}
 
-	// claude returns a session id on each turn; if the stream did not carry
-	// one, keep the existing id so the next turn can still resume.
+	// The recovery loop preserves the successful attempt's resumable id,
+	// never the id of an earlier, refused native import.
 	persistSessionID := newSessionID
-	if persistSessionID == "" {
-		persistSessionID = req.SessionID
-	}
 
 	// 8. Detect completion via the result sentinel, scoped to the per-instance
 	// nonce persisted by InteractiveExecutor. If the conversation was never
@@ -839,11 +857,13 @@ func (h *conversationHandler) streamChatResponse(
 		}
 		if chunk.Token != "" {
 			responseBuilder.WriteString(chunk.Token)
-			bus.Publish(instanceID, Event{
-				Type:      EventTypeInteractiveToken,
-				Timestamp: time.Now(),
-				Data:      map[string]any{"token": chunk.Token},
-			})
+			turn, _ := TurnIdentityFromContext(ctx)
+			if turn.Validate() == nil {
+				publishSessionEvent(bus, turn, EventTypeInteractiveToken, map[string]any{"token": chunk.Token})
+			} else {
+				// Legacy sessions have no durable lease generation.
+				bus.Publish(instanceID, Event{Type: EventTypeInteractiveToken, Timestamp: time.Now(), Data: map[string]any{"token": chunk.Token}})
+			}
 		}
 		if chunk.SessionID != "" {
 			sessionID = chunk.SessionID
@@ -1034,6 +1054,8 @@ func nextConversation(prev map[string]any, sessionID string, messages []map[stri
 	out[ConversationKeySessionID] = sessionID
 	out[ConversationKeyNonce] = conversationNonce(prev)
 	out[ConversationKeyMessages] = messages
+	delete(out, ConversationKeyPendingRebuild)
+	delete(out, ConversationKeyProvisionalResume)
 	return out
 }
 
@@ -1095,7 +1117,8 @@ func (h *conversationHandler) handleNormalResponse(
 	}
 
 	// 3. Publish interactive.message event for assistant.
-	publishInteractiveMessage(conversationEvents(h.eventBus, nodeExec.LLMConversation, nodeExec.NodeID), instanceID, "assistant", fullResponse)
+	publishTurnEvent(ctx, conversationEvents(h.eventBus, nodeExec.LLMConversation, nodeExec.NodeID), instanceID,
+		EventTypeInteractiveMessage, map[string]any{"role": "assistant", "content": fullResponse})
 
 	return nil
 }

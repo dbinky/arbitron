@@ -9,6 +9,9 @@ import (
 // the session and resending, rather than retrying on the same pin.
 var ErrSessionMoveRequired = errors.New("engine: interactive session must move to another runner")
 
+// ErrRecoveryBudgetExhausted yields this pass while keeping the accepted intent pending.
+var ErrRecoveryBudgetExhausted = errors.New("engine: session recovery budget for this pass is exhausted")
+
 // SessionMoveRequiredError retains the interrupted runner, source and cause.
 type SessionMoveRequiredError struct {
 	Reason string
