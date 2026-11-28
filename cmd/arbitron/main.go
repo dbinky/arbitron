@@ -1338,7 +1338,7 @@ func initDomainWithModelDependencies(ctx context.Context, configPath string, mod
 	runnerPool.dispatcher.SetAgentToolPolicy(providerFactory.EffectiveAgentTools)
 	runnerPool.service.SetDrainController(mobility.Drain)
 	scriptExec.SetBundleStore(mobility.Bundles)
-	eng.SetStepCommitter(mobility.Commits)
+	eng.SetStepCommitter(mobility.StepCommitter)
 	eng.SetStepCompletionReleaser(runnerPool.dispatcher)
 	eng.SetWorkspaceBaselineInitializer(mobility.Baseline)
 	eng.SetRecoveryNoticeSource(mobility.Notices)

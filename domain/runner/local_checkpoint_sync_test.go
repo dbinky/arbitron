@@ -46,8 +46,30 @@ type lcLedger struct{ runner.Ledger }
 func (lcLedger) FenceCheck(context.Context, runner.Fence) error             { return nil }
 func (lcLedger) ListByRun(context.Context, uuid.UUID) ([]runner.Job, error) { return nil, nil }
 
+// lcSyncLeases: the run's active claim is held by the fixture job's exact
+// ledger fence (FinishFailure checks Active before rollback); Release records.
+type lcSyncLeases struct {
+	*lcLeases
+	claim    engine.ResourceFenceRef
+	job      runner.Fence
+	released []engine.ResourceFenceRef
+}
+
+func (l *lcSyncLeases) Active(_ context.Context, key string) (runner.LeaseRecord, bool, error) {
+	if key != l.claim.Key {
+		return runner.LeaseRecord{}, false, nil
+	}
+	job := l.job
+	return runner.LeaseRecord{Fence: l.claim, Holder: "job", Job: &job}, true, nil
+}
+func (l *lcSyncLeases) Release(_ context.Context, f engine.ResourceFenceRef) error {
+	l.released = append(l.released, f)
+	return nil
+}
+
 type lcSync struct {
 	*lcFixture
+	leases2  *lcSyncLeases
 	sync     *runner.WorkspaceSync
 	baseline *runner.BaselineInitializer
 	att      runner.WorkspaceAttempt
@@ -61,18 +83,18 @@ func newLCSync(t *testing.T) *lcSync {
 	store := lcPromisorStore{f.catalog}
 	ledger := lcLedger{}
 	status := runner.NewExecutionStatusProjector(ledger)
-	s := &lcSync{lcFixture: f}
+	job := runner.Job{ID: uuid.New(), Key: runner.JobKey{RunID: f.run, InvocationID: uuid.New(), OperationID: "edit", Attempt: 1},
+		NodeID: "edit", Op: runner.OpAgent, RunnerID: runner.BuiltInRunnerID, Generation: 1, State: runner.JobRunning}
+	s := &lcSync{lcFixture: f, leases2: &lcSyncLeases{lcLeases: f.leases, claim: f.claim, job: job.Fence()}}
 	s.sync = runner.NewWorkspaceSync(runner.SyncDeps{
-		Checkpoints: store, Homes: homes, Leases: f.leases, Ledger: ledger, Local: f.local,
+		Checkpoints: store, Homes: homes, Leases: s.leases2, Ledger: ledger, Local: f.local,
 		Events: runner.NewEventRecorder(&memoryEventLog{}, &recordingBus{}, 100, time.Now), Status: status,
 		Clock: time.Now,
 	})
 	s.baseline = runner.NewWorkspaceBaselineInitializer(runner.BaselineDeps{
 		Checkpoints: store, Ledger: ledger, Leases: f.leases, Homes: homes, Local: f.local,
 	})
-	job := runner.Job{ID: uuid.New(), Key: runner.JobKey{RunID: f.run, InvocationID: uuid.New(), OperationID: "edit", Attempt: 1},
-		NodeID: "edit", Op: runner.OpAgent, RunnerID: runner.BuiltInRunnerID, Generation: 1, State: runner.JobRunning}
-	s.asg = runner.Assignment{Job: job}
+	s.asg = runner.Assignment{Job: job, Fence: job.Fence()}
 	s.att = runner.WorkspaceAttempt{RunID: f.run, WorkDir: "/srv/ws/instances/" + f.run.String(), Runner: runner.BuiltInRunnerID, Resource: f.claim}
 	return s
 }
@@ -119,6 +141,7 @@ func TestWorkspaceSync_NonPortableFailureRestoresTheLocalCheckpoint(t *testing.T
 	s.nonPortable(4)
 	require.NoError(t, s.sync.FinishFailure(context.Background(), s.asg, s.att))
 	assert.Equal(t, []string{s.homes.homes[s.run].LocalCheckpoint + "|" + s.att.WorkDir}, s.local.restored)
+	assert.Equal(t, []engine.ResourceFenceRef{s.claim}, s.leases2.released, "SINK: only this attempt's exact claim is released")
 }
 
 // The recovery restorer PoolRecovery uses (P3 T10) restores the local copy.

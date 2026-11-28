@@ -16,6 +16,22 @@ type CheckpointDeleter interface {
 	Delete(ctx context.Context, runID uuid.UUID) error
 }
 
+// JoinCheckpointDeleters deletes a run's checkpoints from every store,
+// attempting all of them and joining the errors.
+func JoinCheckpointDeleters(ds ...CheckpointDeleter) CheckpointDeleter { return joinedDeleters(ds) }
+
+type joinedDeleters []CheckpointDeleter
+
+func (j joinedDeleters) Delete(ctx context.Context, runID uuid.UUID) error {
+	var errs []error
+	for _, d := range j {
+		if err := d.Delete(ctx, runID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // RemovalDeps are all required. Homes is the undecorated home repository:
 // the notifier sends its own deletes.
 type RemovalDeps struct {

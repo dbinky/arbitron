@@ -57,6 +57,7 @@ type workspaceMobility struct {
 	Bundles         *checkpoint.BundleStore
 	Transfers       *adapthttp.RunnerTransferHandler
 	Commits         *adaptsqlite.StepCommitRepo
+	StepCommitter   engine.StepCommitter
 	Resources       *adaptsqlite.ResourceCommitRepo
 	Supervisor      *builtin.ProcessSupervisor
 	Recovery        *runner.PoolRecovery
@@ -173,6 +174,10 @@ func buildWorkspaceMobility(in workspaceMobilityInputs) (*workspaceMobility, err
 
 	// Durable commits (P3 T5 steps; Cycle 3a group mutations).
 	m.Commits = adaptsqlite.NewStepCommitRepo(in.DB)
+	m.StepCommitter, err = runner.NewLocalCheckpointRetention(m.Commits, m.Local)
+	if err != nil {
+		return nil, fmt.Errorf("workspace mobility: %w", err)
+	}
 	m.Resources = adaptsqlite.NewResourceCommitRepo(in.DB)
 
 	// Recovery and adoption (P3 T10).
@@ -194,7 +199,7 @@ func buildWorkspaceMobility(in workspaceMobilityInputs) (*workspaceMobility, err
 
 	// Removal (P3 T11): the engine fires the hook; group code gets the decorated manager.
 	if m.Removal, err = runner.NewRemovalNotifier(runner.RemovalDeps{
-		Inventory: copies, Homes: in.Homes, Checkpoints: m.Checkpoints, Deleter: in.Hub, Leases: leases, // undecorated homes: the notifier sends its own deletes (P3 T11)
+		Inventory: copies, Homes: in.Homes, Checkpoints: runner.JoinCheckpointDeleters(m.Checkpoints, m.Local), Deleter: in.Hub, Leases: leases, // undecorated homes: the notifier sends its own deletes (P3 T11)
 	}); err != nil {
 		return nil, fmt.Errorf("workspace mobility: removal notifier: %w", err)
 	}
