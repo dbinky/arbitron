@@ -531,26 +531,10 @@ func commitNonPortableTx(ctx context.Context, tx groupQueryer, runID uuid.UUID, 
 		return fmt.Errorf("%w: non-portable home of run %s is on %q and job %s ran on %q; both must be the built-in server home",
 			engine.ErrInvalidStepCompletion, runID, owner, f.JobID, f.RunnerID)
 	}
-	local, err := runner.ParseLocalCheckpointRef(localRef)
-	if err != nil || local.RunID != runID {
-		return fmt.Errorf("%w: local checkpoint %q for run %s", engine.ErrInvalidStepCompletion, localRef, runID)
-	}
-	var cur string
-	if err := tx.QueryRowContext(ctx, `SELECT local_checkpoint FROM workspace_homes WHERE run_id = ?`, runID.String()).Scan(&cur); err != nil {
+	if err := promoteLocalCheckpointTx(ctx, tx, runID, localRef); err != nil {
 		return err
 	}
-	next := int64(1)
-	if cur != "" {
-		prev, err := runner.ParseLocalCheckpointRef(cur)
-		if err != nil {
-			return err
-		}
-		next = prev.Version + 1
-	}
-	if local.Version != next {
-		return fmt.Errorf("%w: local checkpoint %s is not the successor of %q", engine.ErrInvalidStepCompletion, local, cur)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET local_checkpoint = ?, dirty = 0, updated_at = ? WHERE run_id = ?`, localRef, now, runID.String()); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE workspace_homes SET updated_at = ? WHERE run_id = ?`, now, runID.String()); err != nil {
 		return err
 	}
 	return nil

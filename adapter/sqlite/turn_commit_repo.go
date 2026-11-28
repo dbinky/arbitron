@@ -137,6 +137,18 @@ func (r *TurnCommitRepo) CommitTurn(ctx context.Context, c engine.TurnCommit) er
 			return err
 		}
 		runID := resourceRun
+		if w.NonPortable {
+			if w.Ref != "" {
+				return fmt.Errorf("%w: non-portable receipt carries a catalog ref", engine.ErrInvalidStepCompletion)
+			}
+			if err := commitNonPortableTx(ctx, tx, runID, f, w.LocalRef, timeToString(r.now())); err != nil {
+				return err
+			}
+			continue
+		}
+		if w.LocalRef != "" {
+			return fmt.Errorf("%w: portable receipt carries a local ref", engine.ErrInvalidStepCompletion)
+		}
 		if err := promoteCandidateTx(ctx, tx, runID, runner.Fence{JobID: comp.JobFence.JobID, RunnerID: runner.RunnerID(comp.JobFence.RunnerID), Generation: comp.JobFence.Generation}, *w, timeToString(r.now())); err != nil {
 			return err
 		}

@@ -35,6 +35,7 @@ type InteractiveExecutor struct {
 	leases     TurnLeaseStore
 	leaseTTL   time.Duration
 	intents    TurnIntentStore
+	sessions   *SessionCheckpointDeps
 }
 
 // SetTurnBindingRestorer installs the accepted policy restorer for replay and recovery.
@@ -80,6 +81,14 @@ func (e *InteractiveExecutor) SetTurnIntents(store TurnIntentStore) {
 		panic("engine: interactive executor SetTurnIntents requires a store")
 	}
 	e.intents = store
+}
+
+// SetSessionCheckpoints enables receipt-gated first-turn persistence.
+func (e *InteractiveExecutor) SetSessionCheckpoints(d SessionCheckpointDeps) {
+	if err := d.validate(); err != nil {
+		panic("engine: interactive executor SetSessionCheckpoints: " + err.Error())
+	}
+	e.sessions = &d
 }
 
 func (e *InteractiveExecutor) pendingFirstIntent(ctx context.Context, key, nodeID string) (*TurnIntent, error) {
@@ -188,7 +197,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	}
 	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
 	defer func() {
-		if e.intents != nil && (retErr == nil || (ctx.Err() == nil && !recoverableTurnError(retErr))) {
+		if e.sessions == nil && e.intents != nil && (retErr == nil || (ctx.Err() == nil && !recoverableTurnError(retErr))) {
 			_ = e.intents.Complete(context.WithoutCancel(ctx), intent.ID)
 		}
 	}()
@@ -212,6 +221,12 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		// For an agent binding this bounds the tool-enabled stream to the
 		// profile's explicit minimal allowlist; a chat binding ignores it.
 		ToolScope: binding.AllowedTools,
+	}
+
+	// TurnCommit owns this receipt, not the engine's ordinary suspension
+	// transaction. Keep it out of an enclosing workflow attempt's collector.
+	if e.sessions != nil {
+		ctx = ContextWithStepCompletionSink(ctx, NewStepCompletionSink())
 	}
 
 	// 7. Call the LLM provider with streaming.
@@ -327,7 +342,15 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	if sink, ok := PlacementSinkFromContext(ctx); ok {
 		applyPlacement(nodeExec, sink.Facts())
 	}
-	if err := e.nodeExecs.Create(ctx, nodeExec); err != nil {
+	if e.sessions != nil {
+		if err := e.sessions.checkpointAndCommit(ctx, nodeExec, turnCheckpointPlan{
+			binding: binding, accepted: intent.Binding, workDir: workDirStr, turnIndex: 1,
+			intentID: intent.ID, requestID: intent.RequestID, invocationID: intent.InvocationID,
+			kind: TurnIntentFirst, create: true, lease: hold.Lease(),
+		}); err != nil {
+			return nil, fmt.Errorf("interactive %q: checkpoint first turn: %w", node.ID, err)
+		}
+	} else if err := e.nodeExecs.Create(ctx, nodeExec); err != nil {
 		return nil, fmt.Errorf("interactive %q: persist initial conversation: %w", node.ID, err)
 	}
 

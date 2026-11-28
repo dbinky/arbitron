@@ -97,6 +97,7 @@ type conversationHandler struct {
 	leases         TurnLeaseStore
 	leaseTTL       time.Duration
 	intents        TurnIntentStore
+	sessions       *SessionCheckpointDeps
 }
 
 // groupSessionTarget holds the validated session record and its staging directory.
@@ -195,6 +196,14 @@ func (h *conversationHandler) SetTurnIntents(store TurnIntentStore) {
 	h.intents = store
 }
 
+// SetSessionCheckpoints enables receipt-gated turn persistence.
+func (h *conversationHandler) SetSessionCheckpoints(d SessionCheckpointDeps) {
+	if err := d.validate(); err != nil {
+		panic("engine: conversation SetSessionCheckpoints: " + err.Error())
+	}
+	h.sessions = &d
+}
+
 func userTurnCount(messages []map[string]any) int {
 	n := 0
 	for _, m := range messages {
@@ -235,7 +244,7 @@ func recoverableTurnError(err error) bool {
 }
 
 func (h *conversationHandler) finishIntent(ctx context.Context, id uuid.UUID, opErr error) {
-	if h.intents == nil || id == uuid.Nil {
+	if h.sessions != nil || h.intents == nil || id == uuid.Nil {
 		return
 	}
 	if opErr != nil && (ctx.Err() != nil || recoverableTurnError(opErr)) {
@@ -462,11 +471,16 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		WorkDir:              workDir,
 	}
 
+	// The turn transaction consumes its own dispatcher completion.
+	if h.sessions != nil {
+		ctx = ContextWithStepCompletionSink(ctx, NewStepCompletionSink())
+	}
+
 	// 7. Call the provider with streaming.
 	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, streamProvider, req, bus)
 	applyPlacement(nodeExec, sink.Facts())
 	if err != nil {
-		if len(sink.Facts()) > 0 {
+		if h.sessions == nil && len(sink.Facts()) > 0 {
 			if persistErr := h.persistTurn(context.WithoutCancel(ctx), nodeExec, group); persistErr != nil {
 				return persistErr
 			}
@@ -508,6 +522,9 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 
 	if err := turnLeaseErr(ctx, nil); err != nil {
 		return err
+	}
+	if h.sessions != nil {
+		ctx = withTurnCheckpointPlan(ctx, h.turnPlan(binding, intent, hold, workDir, group, intent.Kind))
 	}
 	if completed {
 		return turnLeaseErr(ctx, h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput, group))
@@ -551,6 +568,13 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 		return nil, err
 	}
 
+	if h.sessions != nil {
+		inv, err := h.invocations.Begin(ctx, instanceID, nodeID)
+		if err != nil {
+			return nil, fmt.Errorf("conversation: begin invocation: %w", err)
+		}
+		ctx = ContextWithStepIdentity(ctx, StepIdentity{RunID: instanceID, NodeID: nodeID, InvocationID: inv.ID, OperationID: "end", Kind: OperationTurn, Attempt: 1})
+	}
 	turns := userTurnCount(parseConversation(nodeExec.LLMConversation))
 	intent := newTurnIntent(ctx, hold.Lease(), instanceID, nodeID, TurnIntentEnd, turnOperationID(turns), turns, nodeExec)
 	if err := h.persistIntent(ctx, intent); err != nil {
@@ -559,13 +583,20 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
 	defer func() { h.finishIntent(ctx, intent.ID, retErr) }()
 
+	if h.sessions != nil {
+		ctx = withTurnCheckpointPlan(ctx, h.turnPlan(provider.ResolvedBinding{}, intent, hold, "", group, intent.Kind))
+	}
+
 	// 3. Determine output: use existing if present, otherwise empty object.
 	output := nodeExec.Output
-	if output == nil {
+	outputMissing := output == nil
+	if outputMissing {
 		output = map[string]any{}
 		nodeExec.Output = output
+	}
+	if h.sessions != nil || outputMissing {
 		if err := h.persistTurn(ctx, nodeExec, group); err != nil {
-			return nil, fmt.Errorf("conversation: persist empty output: %w", err)
+			return nil, fmt.Errorf("conversation: persist session end: %w", err)
 		}
 	}
 
@@ -594,15 +625,34 @@ func (h *conversationHandler) AbandonSession(ctx context.Context, instanceID uui
 	}
 	defer hold.Release()
 
+	if h.sessions != nil {
+		inv, err := h.invocations.Begin(ctx, instanceID, nodeID)
+		if err != nil {
+			return fmt.Errorf("conversation: begin invocation: %w", err)
+		}
+		ctx = ContextWithStepIdentity(ctx, StepIdentity{RunID: instanceID, NodeID: nodeID, InvocationID: inv.ID, OperationID: "abandon", Kind: OperationTurn, Attempt: 1})
+		// Do not mutate a repository-owned record before the turn commit.
+		exec := *group.exec
+		exec.LLMConversation = copyConversation(exec.LLMConversation)
+		group.exec = &exec
+	}
 	turns := userTurnCount(parseConversation(group.exec.LLMConversation))
 	intent := newTurnIntent(ctx, hold.Lease(), instanceID, nodeID, TurnIntentAbandon, turnOperationID(turns), turns, group.exec)
 	if err := h.persistIntent(ctx, intent); err != nil {
 		return err
 	}
 	ctx = ContextWithTurnIdentity(ctx, TurnIdentityFromIntent(intent))
+	if h.sessions != nil {
+		ctx = withTurnCheckpointPlan(ctx, h.turnPlan(provider.ResolvedBinding{}, intent, hold, "", group, intent.Kind))
+	}
 	output := group.exec.Output
 	if output == nil {
 		output = map[string]any{}
+	}
+	if h.sessions != nil {
+		if err := h.persistTurn(ctx, group.exec, group); err != nil {
+			return fmt.Errorf("conversation: commit session abandon: %w", err)
+		}
 	}
 	err = h.completeSession(ctx, inst, instanceID, nodeID, output, "abandoned", group, true)
 	h.finishIntent(ctx, intent.ID, err)
@@ -613,11 +663,21 @@ func (h *conversationHandler) AbandonSession(ctx context.Context, instanceID uui
 // session record, or the node's (newest) record for an interactive node.
 func (h *conversationHandler) sessionExecution(ctx context.Context, instanceID uuid.UUID, nodeID string, group *groupSessionTarget) (*instance.NodeExecution, error) {
 	if group != nil {
+		if h.sessions != nil {
+			exec := *group.exec
+			exec.LLMConversation = copyConversation(exec.LLMConversation)
+			group.exec = &exec
+		}
 		return group.exec, nil
 	}
 	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("conversation: load node execution: %w", err)
+	}
+	if h.sessions != nil {
+		exec := *nodeExec
+		exec.LLMConversation = copyConversation(exec.LLMConversation)
+		nodeExec = &exec
 	}
 	return nodeExec, nil
 }
@@ -1040,9 +1100,27 @@ func (h *conversationHandler) handleNormalResponse(
 	return nil
 }
 
-// persistTurn writes a turn's record: unconditionally for an interactive
-// node, guarded by "still open" for a group resolution session.
+// turnPlan carries only the persisted intent and held lease into the commit.
+func (h *conversationHandler) turnPlan(binding provider.ResolvedBinding, in TurnIntent, hold *turnLeaseHold, workDir string, group *groupSessionTarget, kind string) turnCheckpointPlan {
+	return turnCheckpointPlan{
+		binding: binding, accepted: in.Binding, workDir: workDir, turnIndex: in.TurnIndex,
+		intentID: in.ID, requestID: in.RequestID, invocationID: in.InvocationID, kind: kind,
+		group: group != nil, lease: hold.Lease(),
+	}
+}
+
+// persistTurn gates session writes on the receipt pair when checkpoints are wired.
 func (h *conversationHandler) persistTurn(ctx context.Context, exec *instance.NodeExecution, group *groupSessionTarget) error {
+	if h.sessions != nil {
+		plan, ok := turnCheckpointPlanFrom(ctx)
+		if !ok {
+			return fmt.Errorf("persist turn: %w: no commit plan", ErrMissingTurnReceipt)
+		}
+		if plan.kind == TurnIntentEnd || plan.kind == TurnIntentAbandon {
+			return h.sessions.commitOperation(ctx, exec, plan)
+		}
+		return h.sessions.checkpointAndCommit(ctx, exec, plan)
+	}
 	if group != nil {
 		return h.persistGroupSession(ctx, exec)
 	}
