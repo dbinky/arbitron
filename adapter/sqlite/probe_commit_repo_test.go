@@ -76,6 +76,35 @@ func TestProbeCommit_ExactModelValidatedBeforeRelease(t *testing.T) {
 	got, err = f.ledger.Get(ctx, node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, runner.JobRunning, got.State)
+
+	t.Run("source-bound ordinary operation is not a probe", func(t *testing.T) {
+		run := uuid.New()
+		req := anthropicRequirements(run)
+		req.RequiredSource = f.src
+		req.RequireExecutedModel = true
+		ordinary, err := f.ledger.EnsureIntent(ctx, runner.JobKey{
+			RunID: run, InvocationID: uuid.New(), OperationID: "node", Attempt: 1,
+		}, "A", req)
+		require.NoError(t, err)
+		ordinary, err = f.ledger.Reserve(ctx, ordinary.ID, f.decision(f.src), 8, ledgerNow)
+		require.NoError(t, err)
+		ordinaryFence := runner.Fence{JobID: ordinary.ID, RunnerID: ordinary.RunnerID, Generation: ordinary.Generation}
+		require.NoError(t, f.ledger.MarkRunning(ctx, ordinaryFence))
+		slots := f.slots(t)
+
+		require.ErrorIs(t, repo.CommitProbe(ctx, probeFence(ordinaryFence), runner.ProbeCompletion{
+			RequestedModel: ordinary.Model, ExecutedModel: ordinary.Model, Validated: true,
+		}), runner.ErrInvalidProbeCompletion, "source pinning and exact model evidence do not authorize the synthetic probe exception")
+		got, err := f.ledger.Get(ctx, ordinary.ID)
+		require.NoError(t, err)
+		assert.Equal(t, runner.JobRunning, got.State)
+		assert.Empty(t, got.ResultRef)
+		assert.Equal(t, slots, f.slots(t), "refusing the exception must not release an ordinary operation's slot")
+		attempts, err := f.ledger.Attempts(ctx, ordinary.ID)
+		require.NoError(t, err)
+		require.Len(t, attempts, 1)
+		assert.Nil(t, attempts[0].EndedAt)
+	})
 }
 
 func TestProbeCommit_FailureDoesNotLeakSlot(t *testing.T) {
