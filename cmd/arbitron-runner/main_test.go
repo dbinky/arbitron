@@ -204,6 +204,7 @@ func TestBuildAgentDeliversChatResultToServer(t *testing.T) {
 
 	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
+	cfg.CodexBinary = filepath.Join(home, "no-codex")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	agent, err := buildAgent(ctx, cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -229,13 +230,13 @@ func TestBuildAgentDeliversChatResultToServer(t *testing.T) {
 	assert.Equal(t, "ok", got.hello.Sources[0].Health.Auth, "auth status was probed before admission")
 	assert.Empty(t, got.rejected)
 	require.Len(t, got.heartbeat.Sources, 1)
-	require.Len(t, got.heartbeat.Sources[0].Capabilities, 3, "chat, stream and P2 T13's native confirm capability")
+	require.Len(t, got.heartbeat.Sources[0].Capabilities, 4, "chat, stream, native confirm and workspace agent capabilities")
 	var ops []string
 	for _, c := range got.heartbeat.Sources[0].Capabilities {
 		ops = append(ops, c.Op)
 		assert.Equal(t, []string{"claude-sonnet-4-5"}, c.Models)
 	}
-	assert.ElementsMatch(t, []string{"chat", "stream", "confirm"}, ops)
+	assert.ElementsMatch(t, []string{"chat", "stream", "confirm", "agent"}, ops)
 	assert.True(t, got.result.OK)
 	require.NotNil(t, got.result.Chat)
 	assert.Equal(t, "ok", got.result.Chat.Output)

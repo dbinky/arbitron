@@ -27,6 +27,7 @@ func capabilityRootRun(t *testing.T, models []string, mutate func(*runnerproto.W
 	cfg := config.Config{ServerURL: srv.URL, RunnerKey: testRunnerKey, ConfigDir: home, WorkspaceRoot: filepath.Join(home, "workspaces"), ScratchRoot: filepath.Join(home, "scratch"), SpoolDir: filepath.Join(home, "spool"), Heartbeat: time.Second, ProbeInterval: time.Hour, OutputBufferFrames: 100}
 	require.NoError(t, os.MkdirAll(cfg.WorkspaceRoot, 0700))
 	cfg.ClaudeBinary = writeFakeClaude(t, t.TempDir())
+	cfg.CodexBinary = filepath.Join(home, "no-codex")
 	// Native execution proves only sonnet; opus is silently substituted.
 	b, err := os.ReadFile(cfg.ClaudeBinary)
 	require.NoError(t, err)
@@ -64,7 +65,7 @@ func TestBuildAgent_ServerRequestedModelsAreVerifiedThenAdvertised(t *testing.T)
 			got := capabilityRootRun(t, []string{"claude-sonnet-4-5", "claude-opus-5-5"}, func(c *runnerproto.WireChat) { c.Model = tc.model })
 			require.Len(t, got.heartbeat.Sources, 1)
 			caps := got.heartbeat.Sources[0].Capabilities
-			require.Len(t, caps, 3, "chat, stream and P2 T13's native confirm capability")
+			require.Len(t, caps, 4, "chat, stream, native confirm and workspace agent capabilities")
 			fp, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: "claude-cli"})
 			require.NoError(t, err)
 			confirmFP, err := runner.EndpointFingerprint(provider.ResolvedBinding{Provider: "claude-cli", Backend: "claude-code"})
@@ -73,7 +74,7 @@ func TestBuildAgent_ServerRequestedModelsAreVerifiedThenAdvertised(t *testing.T)
 			for _, c := range caps {
 				ops = append(ops, c.Op)
 				assert.Equal(t, "claude-cli", c.Provider)
-				if c.Op == "confirm" {
+				if c.Op == "confirm" || c.Op == "agent" {
 					assert.Equal(t, "claude-code", c.Backend)
 					assert.Equal(t, confirmFP, c.EndpointFingerprint)
 				} else {
@@ -83,7 +84,7 @@ func TestBuildAgent_ServerRequestedModelsAreVerifiedThenAdvertised(t *testing.T)
 				assert.Equal(t, sources.ClaudeCodeTools, c.Tools)
 				assert.True(t, c.ExecutedModel)
 			}
-			assert.ElementsMatch(t, []string{"chat", "stream", "confirm"}, ops)
+			assert.ElementsMatch(t, []string{"chat", "stream", "confirm", "agent"}, ops)
 			if tc.rejected == "" {
 				assert.Empty(t, got.rejected)
 				assert.True(t, got.result.OK)
@@ -112,7 +113,7 @@ func TestBuildAgent_UnprovenCapabilityRefusalReachesHello(t *testing.T) {
 	cfg := config.Config{
 		ServerURL: srv.URL, RunnerKey: testRunnerKey, ConfigDir: home,
 		WorkspaceRoot: filepath.Join(home, "workspaces"), ScratchRoot: filepath.Join(home, "scratch"), SpoolDir: filepath.Join(home, "spool"),
-		ClaudeBinary: writeFakeClaude(t, t.TempDir()), OutputBufferFrames: 64,
+		ClaudeBinary: writeFakeClaude(t, t.TempDir()), CodexBinary: filepath.Join(home, "no-codex"), OutputBufferFrames: 64,
 		Heartbeat: time.Second, ProbeInterval: time.Hour,
 	}
 	require.NoError(t, os.MkdirAll(cfg.WorkspaceRoot, 0o700))

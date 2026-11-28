@@ -23,7 +23,7 @@ func TestBuildAgent_UnsupportedVersionRefusalReachesHello(t *testing.T) {
 	cfg := config.Config{
 		ServerURL: srv.URL, RunnerKey: testRunnerKey, ConfigDir: home,
 		WorkspaceRoot: filepath.Join(home, "workspaces"), ScratchRoot: filepath.Join(home, "scratch"), SpoolDir: filepath.Join(home, "spool"),
-		ClaudeBinary: bin, OutputBufferFrames: 64, Heartbeat: time.Second, ProbeInterval: time.Hour,
+		ClaudeBinary: bin, CodexBinary: filepath.Join(home, "no-codex"), OutputBufferFrames: 64, Heartbeat: time.Second, ProbeInterval: time.Hour,
 	}
 	require.NoError(t, os.MkdirAll(cfg.WorkspaceRoot, 0o700))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

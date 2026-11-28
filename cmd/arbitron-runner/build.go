@@ -2,11 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/arbitron/arbitron/adapter/process"
-	"github.com/arbitron/arbitron/adapter/runneragent/copies"
-	"github.com/arbitron/arbitron/adapter/runneragent/transfer"
-	"github.com/arbitron/arbitron/adapter/runneragent/workspace"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -16,15 +13,20 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/codex"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adapterprobe "github.com/arbitron/arbitron/adapter/probe"
+	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	runnerprobe "github.com/arbitron/arbitron/adapter/runner/probe"
 	"github.com/arbitron/arbitron/adapter/runneragent/config"
+	"github.com/arbitron/arbitron/adapter/runneragent/copies"
 	"github.com/arbitron/arbitron/adapter/runneragent/executor"
 	"github.com/arbitron/arbitron/adapter/runneragent/identity"
 	"github.com/arbitron/arbitron/adapter/runneragent/sources"
 	"github.com/arbitron/arbitron/adapter/runneragent/spool"
+	"github.com/arbitron/arbitron/adapter/runneragent/transfer"
+	"github.com/arbitron/arbitron/adapter/runneragent/workspace"
 	"github.com/arbitron/arbitron/adapter/runneragent/wsclient"
 	"github.com/arbitron/arbitron/adapter/runnerproto"
 	"github.com/arbitron/arbitron/adapter/telemetry"
@@ -41,15 +43,15 @@ const (
 
 // buildExecutor uses this machine's native verifier and local credentials.
 func buildExecutor(cfg config.Config, local *providersadapter.Factory) (*executor.Executor, error) {
-	return buildExecutorFor(cfg, local, nil, nil)
+	return buildExecutorFor(cfg, local, runnerprobe.NewConfirmationExecutor(local), nil, nil)
 }
 
-func buildExecutorFor(cfg config.Config, local *providersadapter.Factory, advertised func(runner.CredentialKind, string) []runner.ExecutionCapability, ws *executor.WorkspaceJobs) (*executor.Executor, error) {
+func buildExecutorFor(cfg config.Config, local *providersadapter.Factory, confirmations runner.ConfirmationExecutor, advertised func(runner.CredentialKind, string) []runner.ExecutionCapability, ws *executor.WorkspaceJobs) (*executor.Executor, error) {
 	var lr *executor.LunaRoute
 	if cfg.LunaRoute.Enabled() {
 		lr = &executor.LunaRoute{ConnectionRef: cfg.LunaRoute.ConnectionRef, APIKey: cfg.LunaRoute.APIKey}
 	}
-	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: runnerprobe.NewConfirmationExecutor(local), Advertised: advertised, Workspace: ws})
+	return executor.New(local, executor.Config{ScratchRoot: cfg.ScratchRoot, LunaRoute: lr, Confirmations: confirmations, Advertised: advertised, Workspace: ws})
 }
 
 // buildAgent is the runner's composition root: every adapter is constructed
@@ -60,9 +62,12 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 			return nil, fmt.Errorf("arbitron-runner: %w", err)
 		}
 	}
-	rules, err := configadapter.LoadCapabilityRules("")
+	rules, err := configadapter.LoadCapabilityRules(filepath.Join(cfg.ConfigDir, "capabilities.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("arbitron-runner: capability rules: %w", err)
+	}
+	if rules.Empty() {
+		return nil, errors.New("arbitron-runner: capability rules: empty ruleset")
 	}
 	httpClient := &http.Client{}
 	claudeRunner := claudecli.NewExecRunner()
@@ -74,6 +79,7 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		HTTPTimeout:       chatHTTPTimeout,
 		MaxResponseBytes:  maxResponseBytes,
 		CapabilityRules:   rules,
+		CodexBinaryPath:   cfg.CodexBinary,
 	})
 
 	var lrProbe provider.ConnectionProbe
@@ -84,10 +90,6 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 			return nil, fmt.Errorf("arbitron-runner: lunaroute probe: %w", err)
 		}
 	}
-	discoverIn := sources.DiscoverInput{ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe, Rules: rules, Confirmations: runnerprobe.NewConfirmationExecutor(factory)}
-	verifier := sources.NewClaudeModelVerifier(runnerprobe.NewConfirmationExecutor(factory), cfg.ScratchRoot, logger)
-	inv := sources.NewRefreshing(ctx, sources.VerifiedDiscover(discoverIn, verifier), time.Now)
-	inv.EnableClaudeVerification(verifier, discoverIn)
 	wsRoot, wsReason := config.VerifyWorkspaceRoot(cfg.WorkspaceRoot)
 	if wsReason != "" {
 		logger.Warn("workspace root not advertised; this runner is chat-only", "reason", wsReason)
@@ -102,7 +104,22 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 		}
 		pulls, janitor = syncer, syncer
 	}
-	exec, err := buildExecutorFor(cfg, factory, inv.CapabilitiesFor, wsJobs)
+	confirmations := runnerprobe.NewConfirmationExecutor(factory)
+	codexCfg := codex.Config{BinaryPath: cfg.CodexBinary, Runner: claudeRunner, MaxResponseBytes: maxResponseBytes, CapabilityRules: rules}
+	discoverIn := sources.DiscoverInput{
+		ClaudeBinary: cfg.ClaudeBinary, Runner: claudeRunner, LunaRoute: cfg.LunaRoute, LunaRouteProbe: lrProbe,
+		Rules: rules, Confirmations: confirmations,
+		Native: sources.NativeExecutionInput{Codex: codexCfg, Rules: rules, WorkspaceEnabled: wsJobs != nil && wsReason == ""},
+	}
+	verifier := sources.NewClaudeModelVerifier(confirmations, cfg.ScratchRoot, logger)
+	inv := sources.NewRefreshing(ctx, sources.VerifiedDiscover(discoverIn, verifier), time.Now)
+	inv.EnableClaudeVerification(verifier, discoverIn)
+	capabilities := []string{runneragent.OpChat, runneragent.OpStream}
+	if wsJobs != nil && wsReason == "" {
+		wsJobs.SetInventory(inv)
+		capabilities = append(capabilities, runneragent.OpProcess, runneragent.OpAgent)
+	}
+	exec, err := buildExecutorFor(cfg, factory, confirmations, inv.CapabilitiesFor, wsJobs)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +135,7 @@ func buildAgent(ctx context.Context, cfg config.Config, logger *slog.Logger) (*r
 	return runneragent.New(runneragent.Config{
 		OS: runtime.GOOS, Arch: runtime.GOARCH, ProtocolVersion: runnerproto.ProtocolVersion, RunnerVersion: version,
 		HarnessVersions: inv.HarnessVersions(), WorkspaceRoot: wsRoot, ScratchRoot: cfg.ScratchRoot,
-		Capabilities: []string{runneragent.OpChat, runneragent.OpStream},
+		Capabilities: capabilities,
 		Heartbeat:    cfg.Heartbeat, ProbeInterval: cfg.ProbeInterval,
 	}, runneragent.Deps{
 		Copies: janitor, Pulls: pulls, Conn: conn, Exec: exec, Sources: inv, Models: inv, Telemetry: telemetry.NewForRoot(cfg.WorkspaceRoot),

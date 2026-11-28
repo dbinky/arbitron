@@ -42,11 +42,17 @@ type WorkspaceJobsDeps struct {
 // WorkspaceJobs executes OpProcess and OpAgent dispatches:
 // pull → mark dirty → run → push → result. A failed step is not pushed (the
 // copy stays dirty and the next pull restores the committed checkpoint).
-type WorkspaceJobs struct{ d WorkspaceJobsDeps }
+type WorkspaceJobs struct {
+	d   WorkspaceJobsDeps
+	inv runneragent.LocalSources
+}
 
 func NewWorkspaceJobs(d WorkspaceJobsDeps) (*WorkspaceJobs, error) {
 	if d.Syncer == nil || d.Bundles == nil || d.Process == nil {
 		return nil, errors.New("workspace jobs: Syncer, Bundles and Process are required")
+	}
+	if d.Rules.Empty() {
+		return nil, errors.New("workspace jobs: local capability rules are required")
 	}
 	if d.LookPath == nil {
 		d.LookPath = exec.LookPath
@@ -104,6 +110,9 @@ func (w *WorkspaceJobs) check(d runneragent.Dispatch) error {
 		if err != nil {
 			return err
 		}
+		if _, _, err := MatchNativeAgent(w.nativeSources(context.Background()), d.Agent, w.d.Rules); err != nil {
+			return err
+		}
 		if _, err := w.d.LookPath(bin); err != nil {
 			return fmt.Errorf("%w: %s", ErrCommandUnavailable, bin)
 		}
@@ -153,6 +162,11 @@ func (w *WorkspaceJobs) Execute(ctx context.Context, d runneragent.Dispatch) run
 		if err != nil {
 			return jobFailure(err)
 		}
+		if d.Agent.RequireExecutedModel {
+			if err := VerifyExecutedModel(d.Agent.Model, ar); err != nil {
+				return jobFailure(err)
+			}
+		}
 		res = runneragent.Result{OK: true, Agent: toAgentResult(ar)}
 	}
 	if _, err := w.d.Syncer.Push(ctx, *d.Workspace); err != nil {
@@ -184,15 +198,16 @@ func (w *WorkspaceJobs) runProcess(ctx context.Context, p *runneragent.ProcessJo
 }
 
 func (w *WorkspaceJobs) runAgent(ctx context.Context, a *runneragent.AgentJob, local string) (*engine.AgentResult, error) {
+	_, c, err := MatchNativeAgent(w.nativeSources(ctx), a, w.d.Rules)
+	if err != nil {
+		return nil, err
+	}
 	binding := provider.ResolvedBinding{
-		Kind: provider.ProfileKindAgent, Provider: a.Provider, Model: a.Model, Backend: a.Backend,
+		Kind: provider.ProfileKindAgent, Provider: c.Provider, Model: a.Model, Backend: a.Backend,
 		Pinned: a.RequireExecutedModel, AllowedTools: append([]string(nil), a.ToolScope...),
 		Effort: provider.Effort(a.Effort), ContextWindow: provider.ContextWindow(a.ContextWindow),
 	}
 	rules := w.d.Rules // the same runner-local rules used to advertise capabilities
-	if rules.Empty() {
-		return nil, errors.New("workspace jobs: local capability rules required")
-	}
 	mission := engine.AgentMission{
 		Model: a.Model, Prompt: a.Prompt, WorkDir: local, ToolScope: a.ToolScope, SessionID: a.SessionID,
 		Timeout: time.Duration(a.TimeoutSecs) * time.Second,

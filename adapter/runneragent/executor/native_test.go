@@ -176,6 +176,8 @@ func TestWorkspaceJobs_WrongExecutedModelFailsBeforePush(t *testing.T) {
 	require.True(t, res.OK, res.ErrorText)
 	require.NotNil(t, res.Agent)
 	assert.Equal(t, []runneragent.ModelEvidence{{Model: "claude-opus-5-5", Source: "claude_model_usage", Kind: "reported_execution"}}, res.Agent.ModelEvidence)
+	_, err = f2.srv.PromotePrepared(context.Background()) // server validation commits the prepared push
+	require.NoError(t, err)
 	b, err := f2.srv.ReadLatest(context.Background(), "agent-out.md")
 	require.NoError(t, err)
 	assert.Equal(t, "edited", string(b))
