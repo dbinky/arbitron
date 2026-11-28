@@ -275,10 +275,16 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 		Wake:                   wake,
 	})
 	d.Confirmer.Attach(dispatcher)
+	// Keep an absent repo a nil interface, not a typed-nil HomeStore.
+	var homes runner.HomeStore
+	if d.Homes != nil {
+		homes = d.Homes
+	}
 	service := runner.NewService(runner.ServiceDeps{
 		Registry: d.Registry, Ledger: ledger, Events: poolEvents, Recorder: recorder, Audit: d.Audit,
 		Visibility: runner.NewInstanceVisibility(d.Instances), Monitor: monitor,
 		Telemetry: remoteStack.Hub, Window: remoteStack.Hub,
+		Homes:    homes,
 		Notifier: notifier, Clock: clock,
 	})
 	return &runnerStack{
