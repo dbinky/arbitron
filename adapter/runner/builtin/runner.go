@@ -61,6 +61,8 @@ func isNilDep(v any) bool {
 func (r *Runner) Run(ctx context.Context, a runner.Assignment, job runner.StepJob) (runner.StepOutput, error) {
 	ctx = runner.ContextWithAssignment(ctx, a)
 	switch job.Op {
+	case runner.OpSessionImport:
+		return r.importSession(ctx, job)
 	case runner.OpChat:
 		if job.Chat == nil {
 			return runner.StepOutput{}, fmt.Errorf("%w: chat op without request", ErrMalformedJob)
@@ -117,6 +119,34 @@ func (r *Runner) Run(ctx context.Context, a runner.Assignment, job runner.StepJo
 	default:
 		return runner.StepOutput{}, fmt.Errorf("%w: unknown op %q", ErrMalformedJob, job.Op)
 	}
+}
+
+// importSession installs native bytes on this machine. Export remains inside
+// the originating stream assignment, never a second slotted operation.
+func (r *Runner) importSession(ctx context.Context, job runner.StepJob) (runner.StepOutput, error) {
+	s := job.Session
+	if s == nil || s.Bundle == nil || s.WorkDir == "" {
+		return runner.StepOutput{}, fmt.Errorf("%w: session_import requires a bundle and workdir", ErrMalformedJob)
+	}
+	backend := s.Backend
+	if backend == "" {
+		backend = "claude-code"
+	}
+	if s.Bundle.Backend != "" && s.Bundle.Backend != backend {
+		return runner.StepOutput{}, fmt.Errorf("%w: session bundle backend differs from target", ErrMalformedJob)
+	}
+	if r.d.Sessions == nil {
+		return runner.StepOutput{}, errors.New("builtin: no session portability registry configured")
+	}
+	p, ok := r.d.Sessions.For(backend)
+	if !ok {
+		return runner.StepOutput{}, fmt.Errorf("builtin: no session portability for backend %q", backend)
+	}
+	id, err := p.Import(ctx, *s.Bundle, s.WorkDir)
+	if err != nil {
+		return runner.StepOutput{}, err
+	}
+	return runner.StepOutput{Session: &runner.SessionOpResult{SessionID: id}}, nil
 }
 
 // streamProvider mirrors the interactive selector's split: agent-kind bindings

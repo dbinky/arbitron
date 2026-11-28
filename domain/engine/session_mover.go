@@ -37,6 +37,10 @@ const SessionLossNotice = "tool details and reasoning may be lost"
 // BuildRebuildPrompt(conversation, message). Cleared by the next successful turn.
 const ConversationKeyPendingRebuild = "pendingRebuild"
 
+// ConversationKeyProvisionalResume marks a native import until its first
+// actual resume succeeds or the turn's fenced fallback rebuilds it.
+const ConversationKeyProvisionalResume = "provisionalResume"
+
 // SessionMoveRequest mirrors runner.MoveRequest so domain/engine never imports
 // domain/runner. Binding carries the exact accepted model/route/backend/tools.
 type SessionMoveRequest struct {

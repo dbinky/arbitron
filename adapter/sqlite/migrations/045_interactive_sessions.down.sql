@@ -1,5 +1,6 @@
 -- Column additions on node_executions are forward-only (see migrations/README.md).
 DROP TABLE IF EXISTS resolution_resources;
+DROP INDEX IF EXISTS idx_session_moves_open_intent;
 DROP INDEX IF EXISTS idx_session_moves_run;
 DROP TABLE IF EXISTS session_moves;
 DROP INDEX IF EXISTS idx_turn_intents_pending;

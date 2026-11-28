@@ -24,6 +24,7 @@ type StepJob struct {
 	Agent        *engine.AgentMission
 	Process      *engine.ProcessSpec
 	Confirmation *ConfirmationRequest // OpConfirm
+	Session      *SessionOp           // OpSessionImport
 }
 
 // Assignment is a reserved, fenced job handed to a StepRunner.
@@ -41,6 +42,7 @@ type StepOutput struct {
 	Confirmation *ConfirmationResult
 	// Completion is the exact operation receipt, not an output payload.
 	Completion *engine.StepCompletion
+	Session    *SessionOpResult // OpSessionImport
 }
 
 // StepRunner executes an assignment on one runner. Errors carry a classified
@@ -496,7 +498,7 @@ func (s *StepDispatcher) backoff(try int, retryAfter time.Duration) time.Duratio
 
 func validOutput(op OpType, out StepOutput) bool {
 	count := 0
-	for _, present := range []bool{out.Chat != nil, out.Stream != nil, out.Agent != nil, out.Process != nil, out.Confirmation != nil} {
+	for _, present := range []bool{out.Chat != nil, out.Stream != nil, out.Agent != nil, out.Process != nil, out.Confirmation != nil, out.Session != nil} {
 		if present {
 			count++
 		}
@@ -515,6 +517,8 @@ func validOutput(op OpType, out StepOutput) bool {
 		return out.Process != nil
 	case OpConfirm:
 		return out.Confirmation != nil
+	case OpSessionImport:
+		return out.Session != nil
 	}
 	return false
 }

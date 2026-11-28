@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
@@ -70,7 +71,19 @@ func (r *NodeExecutionRepo) RecordSessionMove(ctx context.Context, execID uuid.U
 		return fmt.Errorf("begin session move: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(ctx, `UPDATE node_executions SET session_pin_runner = ?, session_generation = ?, session_invocation_id = ?
+	if err := recordSessionMoveTx(ctx, tx, execID, m); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit session move: %w", err)
+	}
+	return nil
+}
+
+// recordSessionMoveTx joins the invocation-scoped pin/generation CAS and move
+// history write to the caller's transaction.
+func recordSessionMoveTx(ctx context.Context, q sqlExecQuerier, execID uuid.UUID, m instance.SessionMoveRecord) error {
+	res, err := q.ExecContext(ctx, `UPDATE node_executions SET session_pin_runner = ?, session_generation = ?, session_invocation_id = ?
 WHERE id = ? AND instance_id = ? AND node_id = ? AND session_generation < ?
 AND (session_invocation_id IS NULL OR session_invocation_id = ? OR session_invocation_id = ?)`, m.ToRunner, m.Generation, uuidToString(m.InvocationID), uuidToString(execID), uuidToString(m.RunID), m.NodeID, m.Generation, uuidToString(uuid.Nil), uuidToString(m.InvocationID))
 	if err != nil {
@@ -81,21 +94,25 @@ AND (session_invocation_id IS NULL OR session_invocation_id = ? OR session_invoc
 		return fmt.Errorf("recording session move: %w", err)
 	}
 	if n != 1 {
-		return missingOrStale(ctx, tx, execID)
+		return missingOrStale(ctx, q, execID)
 	}
 	lossy := 0
 	if m.Lossy {
 		lossy = 1
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO session_moves
-(id, run_id, invocation_id, node_id, from_runner, to_runner, reason, lossy, notice, generation, at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err = q.ExecContext(ctx, `INSERT INTO session_moves
+(id, run_id, invocation_id, node_id, from_runner, to_runner, reason, lossy, notice, generation, at, state, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?)
+ON CONFLICT(id) DO UPDATE SET to_runner = excluded.to_runner, lossy = excluded.lossy, notice = excluded.notice,
+    generation = excluded.generation, at = excluded.at, state = 'committed', updated_at = excluded.updated_at
+WHERE session_moves.state IN ('preparing', 'restoring', 'importing')`,
 		uuidToString(m.ID), uuidToString(m.RunID), uuidToString(m.InvocationID), m.NodeID, m.FromRunner, m.ToRunner,
-		m.Reason, lossy, m.Notice, m.Generation, m.At.UTC().UnixMilli()); err != nil {
+		m.Reason, lossy, m.Notice, m.Generation, m.At.UTC().UnixMilli(), m.At.UTC().UnixMilli())
+	if err != nil {
 		return fmt.Errorf("inserting session move: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit session move: %w", err)
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("session move %s is already closed: %w", m.ID, engine.ErrTurnFenced)
 	}
 	return nil
 }
@@ -171,7 +188,7 @@ FROM node_executions WHERE instance_id = ?`, uuidToString(instanceID))
 	rows.Close()
 
 	mrows, err := r.db.QueryContext(ctx, `SELECT id, run_id, invocation_id, node_id, from_runner, to_runner, reason, lossy, notice, generation, at
-FROM session_moves WHERE run_id = ? ORDER BY at, generation`, uuidToString(instanceID))
+FROM session_moves WHERE run_id = ? AND state = 'committed' ORDER BY at, generation`, uuidToString(instanceID))
 	if err != nil {
 		return fmt.Errorf("reading session moves: %w", err)
 	}

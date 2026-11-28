@@ -5,6 +5,7 @@ import "time"
 const (
 	EventTypeInteractiveTurnRestarted = "interactive.turn_restarted"
 	EventTypeInteractiveContextNotice = "interactive.context_notice"
+	EventTypeSessionMoved             = "session.moved"
 )
 
 // PublishTurnRestarted marks a replay of the accepted turn. Incomplete

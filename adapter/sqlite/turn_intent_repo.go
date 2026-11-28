@@ -28,6 +28,11 @@ func (r *TurnIntentRepo) SetClock(now func() time.Time) { r.now = now }
 const turnIntentColumns = `id, request_id, accepted_binding, lease_key, run_id, invocation_id, node_id, turn_index, kind, prompt, system_prompt, nonce, message, model, tools, prior_checkpoint_ref, session_generation, operation_id, created_at, completed_at`
 
 func (r *TurnIntentRepo) Persist(ctx context.Context, in engine.TurnIntent) error {
+	return persistTurnIntentTx(ctx, r.db, in, r.now())
+}
+
+// persistTurnIntentTx lets a move row and its resend intent commit together.
+func persistTurnIntentTx(ctx context.Context, q groupQueryer, in engine.TurnIntent, now time.Time) error {
 	if in.ID == uuid.Nil || in.RequestID == uuid.Nil || in.CompletedAt != nil {
 		return errors.New("turn intent: id and request id required; new intents must be pending")
 	}
@@ -41,9 +46,9 @@ func (r *TurnIntentRepo) Persist(ctx context.Context, in engine.TurnIntent) erro
 	}
 	created := in.CreatedAt
 	if created.IsZero() {
-		created = r.now()
+		created = now
 	}
-	res, err := r.db.ExecContext(ctx, `INSERT INTO turn_intents (`+turnIntentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(request_id) DO NOTHING`,
+	res, err := q.ExecContext(ctx, `INSERT INTO turn_intents (`+turnIntentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(request_id) DO NOTHING`,
 		in.ID.String(), in.RequestID.String(), string(binding), in.LeaseKey, in.RunID.String(), in.InvocationID.String(), in.NodeID, in.TurnIndex, in.Kind, in.Prompt, in.SystemPrompt, in.Nonce, in.Message, in.Model, string(tools), in.PriorCheckpointRef, in.SessionGeneration, in.OperationID, created.UTC().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("persisting turn intent: %w", err)
@@ -55,7 +60,7 @@ func (r *TurnIntentRepo) Persist(ctx context.Context, in engine.TurnIntent) erro
 	if n == 1 {
 		return nil
 	}
-	existing, err := scanTurnIntent(r.db.QueryRowContext(ctx, `SELECT `+turnIntentColumns+` FROM turn_intents WHERE request_id = ?`, in.RequestID.String()))
+	existing, err := scanTurnIntent(q.QueryRowContext(ctx, `SELECT `+turnIntentColumns+` FROM turn_intents WHERE request_id = ?`, in.RequestID.String()))
 	if err != nil {
 		return err
 	}

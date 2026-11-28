@@ -55,6 +55,25 @@ CREATE TABLE session_moves (
 );
 CREATE INDEX idx_session_moves_run ON session_moves (run_id, node_id, at);
 
+-- Durable move intent and progress; legacy history remains committed.
+ALTER TABLE session_moves ADD COLUMN state TEXT NOT NULL DEFAULT 'committed'
+    CHECK (state IN ('preparing', 'restoring', 'importing', 'committed', 'failed'));
+ALTER TABLE session_moves ADD COLUMN intent_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN owns_intent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE session_moves ADD COLUMN execution_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN target_source TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN job_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN requirements TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE session_moves ADD COLUMN work_dir TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN resource_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN restore_workspace INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE session_moves ADD COLUMN old_jobs TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE session_moves ADD COLUMN new_resource TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN failure TEXT NOT NULL DEFAULT '';
+ALTER TABLE session_moves ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX idx_session_moves_open_intent ON session_moves (intent_id)
+    WHERE state IN ('preparing', 'restoring', 'importing');
+
 ALTER TABLE node_executions ADD COLUMN session_invocation_id TEXT;
 ALTER TABLE node_executions ADD COLUMN session_checkpoint_ref TEXT;
 ALTER TABLE node_executions ADD COLUMN session_pin_runner TEXT;
