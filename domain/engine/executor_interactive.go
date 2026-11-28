@@ -90,9 +90,16 @@ func (e *InteractiveExecutor) pendingFirstIntent(ctx context.Context, key, nodeI
 	if err != nil {
 		return nil, err
 	}
-	id, _ := StepIdentityFromContext(ctx)
-	if in == nil || in.Kind != TurnIntentFirst || in.NodeID != nodeID || in.InvocationID != id.InvocationID {
+	if in == nil {
 		return nil, nil
+	}
+	id, _ := StepIdentityFromContext(ctx)
+	if in.Kind != TurnIntentFirst || in.NodeID != nodeID || in.InvocationID != id.InvocationID {
+		// One unresolved operation per session (migration 046, contracts
+		// "Intent ownership"): another visit's or operation's pending intent is
+		// neither reused nor completed here; only its commit or P4 T10's
+		// recorded terminal restoration outcome resolves it.
+		return nil, fmt.Errorf("lease %s has unresolved %s intent %s of another operation: %w", key, in.Kind, in.ID, ErrInteractiveTurnInProgress)
 	}
 	return in, nil
 }

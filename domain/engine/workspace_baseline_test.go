@@ -34,7 +34,8 @@ func realBaseline(t *testing.T, opts ...checkpoint.Option) (*runner.BaselineInit
 	store := checkpoint.NewStore(filepath.Join(t.TempDir(), "checkpoints"),
 		append([]checkpoint.Option{checkpoint.WithCatalog(adaptsqlite.NewCheckpointCatalogRepo(db))}, opts...)...)
 	init := runner.NewWorkspaceBaselineInitializer(runner.BaselineDeps{Checkpoints: store, Ledger: adaptsqlite.NewRunnerLedgerRepo(db),
-		Leases: adaptsqlite.NewResourceLeaseRepo(db, "boot-"+uuid.NewString()), Homes: adaptsqlite.NewWorkspaceHomeRepo(db)})
+		Leases: adaptsqlite.NewResourceLeaseRepo(db, "boot-"+uuid.NewString()), Homes: adaptsqlite.NewWorkspaceHomeRepo(db),
+		Local: checkpoint.NewLocalStore(filepath.Join(t.TempDir(), "local"))})
 	return init, store
 }
 

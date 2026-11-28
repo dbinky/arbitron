@@ -72,11 +72,11 @@ func TestInteractiveExecutor_Intent_OlderVisitIntentIsNotReused(t *testing.T) {
 	currentVisit := uuid.New()
 	ctx = engine.ContextWithStepIdentity(ctx, engine.StepIdentity{RunID: run, NodeID: "interact", InvocationID: currentVisit, OperationID: "node"})
 	_, err := exec.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
-	require.NoError(t, err)
-	reqs := llm.getCapturedReqs()
-	require.Len(t, reqs, 1)
-	assert.Contains(t, reqs[0].Prompt, "CURRENT TEMPLATE")
-	assert.NotContains(t, reqs[0].Prompt, "OLD VISIT")
+	require.ErrorIs(t, err, engine.ErrInteractiveTurnInProgress, "one unresolved operation per session: the new visit is refused, not stacked")
+	for _, req := range llm.getCapturedReqs() {
+		assert.NotContains(t, req.Prompt, "OLD VISIT", "an older visit's intent is never reused")
+	}
+	assert.Empty(t, llm.getCapturedReqs(), "nothing is dispatched while another visit's intent is unresolved")
 	pending, err := repo.Pending(context.Background())
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
