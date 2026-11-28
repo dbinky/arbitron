@@ -305,10 +305,25 @@ func rhCallsWith(dir string, subs ...string) int {
 // rhAwaitAdmissionVerification waits until the runner has natively verified
 // both models the server's profiles request at admission (contracts D1:
 // rh-opus and rh-sonnet), and returns the --safe-mode call count so far.
-func rhAwaitAdmissionVerification(t *testing.T, r *rhRunner) int {
+func rhAwaitAdmissionVerification(t *testing.T, st *rrStack, r *rhRunner) int {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return rhCallsWith(r.dir, "--safe-mode", "claude-opus-4-1") >= 1 && rhCallsWith(r.dir, "--safe-mode", "claude-sonnet-4-5") >= 1
+		source, err := st.ds.runners.registry.GetSource(context.Background(), r.source())
+		if err != nil {
+			return false
+		}
+		// calls.log records starts. Only the advertised capability proves the
+		// native result was verified and reached the server (contracts D1).
+		verified := map[string]bool{}
+		for _, capability := range source.Capabilities {
+			if capability.Op == runner.OpChat && capability.ExecutedModel {
+				for _, model := range capability.Models {
+					verified[model] = true
+				}
+			}
+		}
+		return rhCallsWith(r.dir, "--safe-mode", "claude-opus-4-1") >= 1 && rhCallsWith(r.dir, "--safe-mode", "claude-sonnet-4-5") >= 1 &&
+			verified["claude-opus-4-1"] && verified["claude-sonnet-4-5"]
 	}, 30*time.Second, 50*time.Millisecond, "admission verification of the requested models")
 	return rhCalls(r.dir, "--safe-mode")
 }
@@ -334,7 +349,7 @@ func TestRemoteConfirmation_UnknownResetRecoversExactSourceAutomatically(t *test
 	r := rhStartRunner(t, st, "mac-quota")
 	ctx := adminCtxForLocalUser(t, st.ds)
 	sid := r.source()
-	base := rhAwaitAdmissionVerification(t, r)
+	base := rhAwaitAdmissionVerification(t, st, r)
 	baseSonnet := rhCallsWith(r.dir, "--safe-mode", "claude-sonnet")
 
 	rwTouch(t, r.dir, "exhausted")
@@ -381,7 +396,7 @@ func TestRemoteConfirmation_FullRunnerWaitsWithoutOversubscription(t *testing.T)
 	ctx := adminCtxForLocalUser(t, st.ds)
 	sid := r.source()
 	require.Eventually(t, func() bool { return rwSourceHealth(t, st.ds, sid).Auth == runner.AuthOK }, 30*time.Second, 50*time.Millisecond)
-	base := rhAwaitAdmissionVerification(t, r)
+	base := rhAwaitAdmissionVerification(t, st, r)
 
 	rwTouch(t, r.dir, "hold")
 	held, _, err := st.ds.eng.Trigger(ctx, "rh-sonnet", map[string]any{}, "normal")
