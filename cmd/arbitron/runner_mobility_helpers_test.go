@@ -343,6 +343,7 @@ func startWorkspaceRunner(t *testing.T, st *p3Stack, name string, caps ...string
 	verifier := sources.NewClaudeModelVerifier(runnerprobe.NewConfirmationExecutor(factory), scratch, nil)
 	inv := sources.NewRefreshing(context.Background(), sources.VerifiedDiscover(discover, verifier), time.Now)
 	inv.EnableClaudeVerification(verifier, discover)
+	jobs.SetInventory(inv)
 	agent, err := runneragent.New(runneragent.Config{
 		OS: "darwin", Arch: "arm64",
 		ProtocolVersion: runnerproto.ProtocolVersion, RunnerVersion: rrReleasedVersion,
