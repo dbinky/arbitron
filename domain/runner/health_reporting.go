@@ -12,7 +12,8 @@ import (
 // reports OutcomeNone (plus any adapter headroom hint) to h. This is what moves
 // a probation source to available after one successful step. Failures stay the
 // dispatcher's job (it classifies and applies them); process jobs hold a slot
-// only and carry no source health.
+// only and carry no source health. Confirmations validate here, but their
+// monitor recovers the source only after the dispatcher's fenced probe commit.
 func NewHealthReportingRunnerSet(inner RunnerSet, h HealthTransitioner) RunnerSet {
 	if inner == nil || h == nil {
 		panic("runner: NewHealthReportingRunnerSet requires an inner set and a transitioner")
@@ -61,10 +62,11 @@ func (r healthReportingRunner) Run(ctx context.Context, a Assignment, job StepJo
 		return out, err
 	}
 	if job.Op == OpConfirm {
+		defer cancel()
 		if verr := VerifyConfirmation(job.Binding.Model, out.Confirmation); verr != nil {
-			cancel()
 			return StepOutput{}, WithOutcome(verr, SourceOutcome{Class: OutcomeOther})
 		}
+		return out, nil
 	}
 	report := func() {
 		mu.Lock()

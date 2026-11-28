@@ -35,8 +35,9 @@ func TestRunnerWiring_RejectsMissingDependencies(t *testing.T) {
 				runner.CredOpenAISubscription:    runnerprobe.NewCodexProber(codex.Config{}),
 				runner.CredLunaRoute:             runnerprobe.NewLunaRouteProber(ds.connStore, adaptprobe.NewProbeFactory(adaptprobe.Deps{Timeout: time.Minute})),
 			},
-			Confirmer: runnerprobe.NewDispatchConfirmer(adaptsqlite.NewProfileRepo(ds.db), t.TempDir(), time.Minute),
-			Alerts:    ds.runners.alerts, Audit: ds.auditSvc, Instances: ds.instanceRepo,
+			Confirmer:    runnerprobe.NewDispatchConfirmer(adaptsqlite.NewProfileRepo(ds.db), t.TempDir(), time.Minute),
+			ProbeCommits: adaptsqlite.NewProbeCommitRepo(ds.db),
+			Alerts:       ds.runners.alerts, Audit: ds.auditSvc, Instances: ds.instanceRepo,
 		}
 	}
 	cases := map[string]func(*runnerStackDeps){
@@ -49,6 +50,7 @@ func TestRunnerWiring_RejectsMissingDependencies(t *testing.T) {
 		"supervisor":      func(d *runnerStackDeps) { d.Supervisor = nil },
 		"process":         func(d *runnerStackDeps) { d.Process = nil },
 		"confirmer":       func(d *runnerStackDeps) { d.Confirmer = nil },
+		"probe committer": func(d *runnerStackDeps) { d.ProbeCommits = nil },
 		"alerts":          func(d *runnerStackDeps) { d.Alerts = nil },
 		"audit":           func(d *runnerStackDeps) { d.Audit = nil },
 		"instances":       func(d *runnerStackDeps) { d.Instances = nil },

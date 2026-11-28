@@ -37,7 +37,5 @@ func TestHealthReporting_ConfirmSuccessRequiresExactEvidence(t *testing.T) {
 	out, err := r.Run(context.Background(), a, job)
 	require.NoError(t, err)
 	assert.Equal(t, exact, out.Confirmation)
-	require.Len(t, h.got[src], 1)
-	assert.Equal(t, OutcomeNone, h.got[src][0].Class)
-	assert.Equal(t, "claude-opus-4-1", h.got[src][0].Model)
+	assert.Empty(t, h.got[src], "exact evidence alone is insufficient: the dispatcher must commit and release the slot before recovery")
 }

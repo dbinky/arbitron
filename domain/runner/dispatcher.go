@@ -84,15 +84,17 @@ func (EmptyTelemetry) Latest() map[RunnerID]Telemetry { return map[RunnerID]Tele
 
 // DispatcherDeps wires a StepDispatcher.
 type DispatcherDeps struct {
-	Registry  Registry
-	Ledger    Ledger
-	Runners   RunnerSet
-	Events    *EventRecorder
-	Status    *ExecutionStatusProjector
-	Health    HealthTransitioner
-	Telemetry TelemetrySource
-	Policy    PlacementPolicy
-	Clock     func() time.Time
+	Registry Registry
+	Ledger   Ledger
+	Runners  RunnerSet
+	Events   *EventRecorder
+	Status   *ExecutionStatusProjector
+	Health   HealthTransitioner
+	// ProbeCommits owns synthetic quota confirmations, separately from node commits.
+	ProbeCommits ProbeCommitter
+	Telemetry    TelemetrySource
+	Policy       PlacementPolicy
+	Clock        func() time.Time
 
 	TransientMaxAttempts   int
 	BackoffMin, BackoffMax time.Duration

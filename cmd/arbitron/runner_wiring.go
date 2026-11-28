@@ -181,6 +181,7 @@ type runnerStackDeps struct {
 	Process             engine.ProcessRunner // the local process runner
 	Probers             map[runner.CredentialKind]runner.SourceProber
 	Confirmer           *runnerprobe.DispatchConfirmer
+	ProbeCommits        *adaptsqlite.ProbeCommitRepo
 	Alerts              *adaptnotif.SourceAlerts
 	Audit               runner.AuditRecorder
 	Instances           instance.InstanceRepository
@@ -223,7 +224,7 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 	if err := d.Config.Validate(); err != nil {
 		panic(err)
 	}
-	if d.RefreshInventory == nil || d.Registry == nil || d.Factory == nil || d.Streams == nil || d.BuiltinFactory == nil || d.BuiltinStreams == nil || d.Supervisor == nil || d.Process == nil || d.Confirmer == nil || d.Alerts == nil || d.Audit == nil || d.Instances == nil {
+	if d.RefreshInventory == nil || d.Registry == nil || d.Factory == nil || d.Streams == nil || d.BuiltinFactory == nil || d.BuiltinStreams == nil || d.Supervisor == nil || d.Process == nil || d.Confirmer == nil || d.ProbeCommits == nil || d.Alerts == nil || d.Audit == nil || d.Instances == nil {
 		panic("arbitron: incomplete runner stack")
 	}
 	for _, kind := range []runner.CredentialKind{runner.CredAnthropicSubscription, runner.CredOpenAISubscription, runner.CredLunaRoute} {
@@ -264,7 +265,8 @@ func newRunnerStack(d runnerStackDeps) (*runnerStack, error) {
 		Registry: d.Registry, Ledger: ledger,
 		Runners: runner.NewHealthReportingRunnerSet(remoteStack.Runners, monitor),
 		Events:  recorder, Status: projector, Health: monitor,
-		Telemetry: remoteStack.Hub, Clock: clock,
+		ProbeCommits: d.ProbeCommits,
+		Telemetry:    remoteStack.Hub, Clock: clock,
 		// contracts §21: a sample is fresh for three heartbeats; zero would discard every sample.
 		Policy: placementPolicy(d.Config),
 		// Explicit rollout mode; SetWorkspace ends it when mobility is installed.

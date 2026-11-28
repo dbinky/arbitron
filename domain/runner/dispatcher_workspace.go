@@ -189,8 +189,8 @@ type pendingStep struct {
 }
 
 // completeStep records the exact receipt once, leaving the job running for the
-// validated engine commit. Earlier-phase dispatch and synthetic probes retain
-// their separate immediate completion boundary.
+// validated engine commit. Synthetic confirmations instead use their explicit
+// fenced probe committer before returning success to the health monitor.
 func (s *StepDispatcher) completeStep(ctx context.Context, a Assignment, att *WorkspaceAttempt, out *StepOutput, sink *engine.PlacementSink) error {
 	bg := context.WithoutCancel(ctx)
 	fail := func(err error) error {
@@ -199,11 +199,30 @@ func (s *StepDispatcher) completeStep(ctx context.Context, a Assignment, att *Wo
 		s.release(bg, a, OutcomeOther)
 		return err
 	}
+	if a.Job.Op == OpConfirm {
+		id, _ := engine.StepIdentityFromContext(ctx)
+		if id.Kind != engine.OperationProbe || !strings.HasPrefix(id.OperationID, "probe/") || a.Job.SourceID == "" || att != nil {
+			return fail(ErrInvalidProbeCompletion)
+		}
+		if s.d.ProbeCommits == nil {
+			return fail(ErrNoProbeCommitter)
+		}
+		if err := VerifyConfirmation(a.Job.Model, out.Confirmation); err != nil {
+			return fail(err)
+		}
+		rec := ProbeCompletion{RequestedModel: out.Confirmation.RequestedModel, ExecutedModel: out.Confirmation.ExecutedModel, Validated: true}
+		f := engine.JobFenceRef{JobID: a.Fence.JobID, RunnerID: string(a.Fence.RunnerID), Generation: a.Fence.Generation}
+		if err := s.d.ProbeCommits.CommitProbe(bg, f, rec); err != nil {
+			return fail(fmt.Errorf("runner: commit quota confirmation: %w", err))
+		}
+		s.fact(sink, a, "completed")
+		s.wake()
+		return nil
+	}
 	csink, deferred := engine.StepCompletionSinkFromContext(ctx)
 	if !deferred {
-		id, _ := engine.StepIdentityFromContext(ctx)
 		w, _ := s.workspace()
-		if att != nil || (w != nil && id.Kind != engine.OperationProbe) {
+		if att != nil || w != nil {
 			return fail(ErrNoCompletionSink)
 		}
 		return s.complete(ctx, a, sink)

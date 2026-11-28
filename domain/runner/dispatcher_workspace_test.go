@@ -414,6 +414,6 @@ func TestDispatch_ProductionOperationWithoutSinkFailsClosedExceptProbe(t *testin
 	pctx := engine.ContextWithStepIdentity(context.Background(), engine.StepIdentity{RunID: probeRun, NodeID: "probe",
 		InvocationID: uuid.New(), OperationID: "probe", Kind: engine.OperationProbe, Attempt: 1})
 	_, err = f.d.Dispatch(pctx, chatReq(probeRun, runner.OpChat, runner.AffinityBuiltIn), chatJob(runner.OpChat))
-	require.NoError(t, err)
-	assert.Equal(t, runner.JobCompleted, f.pool.jobFor(probeRun).State)
+	require.ErrorIs(t, err, runner.ErrNoCompletionSink, "a legacy chat probe has neither native evidence nor an explicit completion owner")
+	assert.Equal(t, runner.JobFailed, f.pool.jobFor(probeRun).State, "only an owned native confirmation may bypass node completion")
 }

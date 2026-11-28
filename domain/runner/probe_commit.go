@@ -20,6 +20,9 @@ type ProbeCompletion struct {
 // synthetic probe job. The caller takes the ordinary failed-job branch.
 var ErrInvalidProbeCompletion = errors.New("runner: probe completion is not validated exact-model evidence")
 
+// ErrNoProbeCommitter prevents confirmation success without its durable owner.
+var ErrNoProbeCommitter = errors.New("runner: quota confirmation has no probe committer")
+
 // Validate requires validated evidence that the requested model executed.
 func (p ProbeCompletion) Validate() error {
 	if !p.Validated || p.RequestedModel == "" || p.ExecutedModel != p.RequestedModel {
