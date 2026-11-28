@@ -33,9 +33,9 @@ type DrainSizes interface {
 	WorkspaceBytes(ctx context.Context, runID uuid.UUID) int64
 }
 
-// DrainDeps: every field is required except Policy (zero is valid), Sizes
-// (bytes recorded as 0) and Interval (default 30 s). Homes must be the
-// copy-tracking store (P3 T11) so the drained copy's delete follows the handoff.
+// DrainDeps supplies drain operations and their shared removal maintenance.
+// Homes must be the copy-tracking store (P3 T11) so the drained copy's delete
+// follows the handoff. Interval defaults to 30 s.
 type DrainDeps struct {
 	Pulls        DrainPuller
 	Sessions     PinnedSessions
@@ -53,6 +53,7 @@ type DrainDeps struct {
 	Sizes        DrainSizes
 	Clock        func() time.Time
 	Interval     time.Duration
+	Removal      *RemovalNotifier
 }
 
 // DrainController runs idempotent drain passes per draining runner.
@@ -152,13 +153,18 @@ func (c *DrainController) Progress(ctx context.Context, id RunnerID) (DrainProgr
 	return c.progress(ctx, id)
 }
 
-// Tick runs one pass for every draining runner.
+// Tick retries deferred workspace removals and runs a pass for every draining runner.
 func (c *DrainController) Tick(ctx context.Context) error {
+	var errs []error
+	if c.d.Removal != nil {
+		if err := c.d.Removal.RetryDeferred(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("retrying workspace removals: %w", err))
+		}
+	}
 	rs, err := c.d.Registry.ListRunners(ctx)
 	if err != nil {
-		return err
+		return errors.Join(append(errs, err)...)
 	}
-	var errs []error
 	for _, r := range rs {
 		if r.Draining {
 			if _, err := c.Step(ctx, r.ID); err != nil {

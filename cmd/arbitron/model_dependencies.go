@@ -114,6 +114,9 @@ func (ds *domainStack) startRuntime(ctx context.Context, mode identity.Mode, spa
 		ds.runners.startInventory(ctx, &ds.background)
 	}
 	if ds.mobility != nil {
+		if err := ds.mobility.Removal.RetryDeferred(ctx); err != nil {
+			ds.logger.Warn("retrying workspace removals at startup", "error", err)
+		}
 		ds.mobility.Drain.Start(ctx)
 	}
 	if err := spawn.Reconcile(ctx); err != nil {

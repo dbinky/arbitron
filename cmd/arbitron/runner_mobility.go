@@ -217,7 +217,7 @@ func buildWorkspaceMobility(in workspaceMobilityInputs) (*workspaceMobility, err
 		Pulls: m.Pulls, Sessions: in.Sessions, Leases: leases, Registry: in.Registry, Ledger: in.Ledger,
 		Requirements: adaptsqlite.NewRunnerLedgerRepo(in.DB), Checkpoints: m.Checkpoints, Telemetry: in.Hub, // P3 T12 Cycle 2 (unstick 2026-11-24)
 		Homes: m.Homes, Store: drainItems, Events: in.Events, Notifier: in.Notifier, Policy: m.Policy,
-		Sizes: m.Sync, Clock: clock,
+		Sizes: m.Sync, Clock: clock, Removal: m.Removal,
 	}); err != nil {
 		return nil, fmt.Errorf("workspace mobility: drain controller: %w", err)
 	}
